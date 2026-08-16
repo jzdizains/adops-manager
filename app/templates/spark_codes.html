@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div><h1>✦ Spark Codes</h1>
+    <div class="muted">Creator post auth codes — grouped by creator, ready for launches.</div></div>
+  <div class="actions">
+    <form method="get" action="/spark-codes" style="display:flex;gap:6px;">
+      <input type="text" name="q" value="{{ q }}" placeholder="Search codes…" style="width:170px;">
+      {% if mine_only %}<input type="hidden" name="mine" value="1">{% endif %}
+      <button class="btn" type="submit">Search</button>
+    </form>
+    <a class="btn {{ 'primary' if mine_only else '' }}" href="/spark-codes{{ '' if mine_only else '?mine=1' }}">
+      {{ '★ My creators' if not mine_only else '★ Showing mine' }}</a>
+    <form method="post" action="/spark-codes/grab">
+      <button class="btn primary" type="submit">⇓ Auto-grab from creators</button></form>
+  </div>
+</div>
+
+{% if ok %}<div class="flash ok">{{ ok }}</div>{% endif %}
+{% if err %}<div class="flash err">{{ err }}</div>{% endif %}
+
+<div class="card">
+  <div class="card-header"><span class="card-title">Add a code by hand</span></div>
+  <form method="post" action="/spark-codes/add">
+    <div class="form-row-3">
+      <label class="field"><span class="field-label">Name</span>
+        <input type="text" name="name" placeholder="hook v3 - blue bg"></label>
+      <label class="field"><span class="field-label">Spark auth code</span>
+        <input type="text" name="code" required placeholder="CT7Q…"></label>
+      <label class="field"><span class="field-label">Creator / group</span>
+        <input type="text" name="group_name" placeholder="@creatorhandle"></label>
+    </div>
+    <div class="form-row-3">
+      <label class="field"><span class="field-label">Media type</span>
+        <select name="media_type"><option value="VIDEO">Video</option><option value="CAROUSEL">Carousel</option></select></label>
+      <label class="field"><span class="field-label">TikTok post URL</span>
+        <input type="url" name="tiktok_post_url" placeholder="https://www.tiktok.com/@…/video/…"></label>
+      <div class="field" style="display:flex;align-items:flex-end;">
+        <button class="btn primary" type="submit">＋ Add code</button></div>
+    </div>
+  </form>
+</div>
+
+{% macro code_row(c) %}
+  <tr>
+    <td>
+      {% if c.thumbnail_url %}<img src="{{ c.thumbnail_url }}" alt="" style="width:34px;height:44px;object-fit:cover;border-radius:6px;vertical-align:middle;margin-right:8px;">{% endif %}
+      {{ c.name or "—" }}
+    </td>
+    <td class="mono" style="max-width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ c.code or "(no code — grabbed item)" }}</td>
+    <td><span class="pill dim">{{ c.media_type }}</span></td>
+    <td>
+      {% if c.status == 'active' %}<span class="pill ok">active</span>
+      {% elif c.status == 'used' %}<span class="pill warn">used</span>
+      {% else %}<span class="pill err">{{ c.status }}</span>{% endif %}
+      {% if c.use_count %}<span class="muted" style="font-size:11px;">×{{ c.use_count }}</span>{% endif %}
+    </td>
+    <td class="num" style="white-space:nowrap;">
+      {% if c.tiktok_post_url %}<a class="btn sm" href="{{ c.tiktok_post_url }}" target="_blank">↗</a>{% endif %}
+      <button class="btn sm" type="button" onclick="navigator.clipboard.writeText('{{ c.code }}');this.textContent='✓';">copy</button>
+      <form method="post" action="/spark-codes/{{ c.id }}/delete" style="display:inline;"
+            onsubmit="return confirm('Delete this code?');">
+        <button class="btn sm danger" type="submit">✕</button></form>
+    </td>
+  </tr>
+{% endmacro %}
+
+{% for grp in groups %}
+<div class="card">
+  <div class="card-header">
+    <span class="card-title">{{ grp.g.name }}
+      {% if grp.g.name in my_creators %}<span class="pill ok">mine</span>{% endif %}</span>
+    <span class="card-meta">
+      {{ grp.codes|length }} code(s) ·
+      <form method="post" action="/spark-codes/creators/toggle" style="display:inline;">
+        <input type="hidden" name="creator_handle" value="{{ grp.g.name }}">
+        <button class="btn sm" type="submit">{{ 'remove from mine' if grp.g.name in my_creators else 'mark as mine' }}</button>
+      </form>
+    </span>
+  </div>
+  {% if grp.codes %}
+  <table class="data">
+    <thead><tr><th>Post</th><th>Code</th><th>Type</th><th>Status</th><th class="num">Actions</th></tr></thead>
+    <tbody>{% for c in grp.codes %}{{ code_row(c) }}{% endfor %}</tbody>
+  </table>
+  {% else %}<div class="empty">No codes match.</div>{% endif %}
+</div>
+{% endfor %}
+
+{% if ungrouped %}
+<div class="card">
+  <div class="card-header"><span class="card-title">Ungrouped</span></div>
+  <table class="data">
+    <thead><tr><th>Post</th><th>Code</th><th>Type</th><th>Status</th><th class="num">Actions</th></tr></thead>
+    <tbody>{% for c in ungrouped %}{{ code_row(c) }}{% endfor %}</tbody>
+  </table>
+</div>
+{% endif %}
+
+{% if not groups and not ungrouped %}
+<div class="card"><div class="empty">No spark codes yet — add one above or auto-grab from connected creators.</div></div>
+{% endif %}
+{% endblock %}

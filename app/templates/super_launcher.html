@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div><h1>🚀 Super Launcher</h1>
+    <div class="muted">Pick accounts + a preset → one click launches everywhere.</div></div>
+</div>
+
+{% if request.query_params.get('err') %}
+  <div class="flash err">Pick at least one account and a preset.</div>
+{% endif %}
+
+<form method="post" action="/super-launcher/launch" id="slForm">
+<div class="grid cols-2">
+  <div class="card mb0">
+    <div class="card-header">
+      <span class="card-title">Accounts</span>
+      <span class="card-meta">
+        <button class="btn sm" type="button" id="slAll">All</button>
+        <button class="btn sm" type="button" id="slNone">None</button>
+        <span id="slCount" class="muted">0 selected</span>
+      </span>
+    </div>
+    {% if accounts %}
+    <div style="max-height:420px;overflow:auto;">
+      {% for a in accounts %}
+      <label style="display:flex;align-items:center;gap:9px;padding:7px 4px;border-bottom:1px solid var(--border-soft);cursor:pointer;">
+        <input type="checkbox" name="advertiser_ids" value="{{ a.advertiser_id }}" class="sl-acct" style="width:auto;">
+        <span>{{ a.advertiser_name or a.advertiser_id }}</span>
+        <span class="mono muted" style="margin-left:auto;font-size:11px;">{{ a.advertiser_id }}</span>
+      </label>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty">No accounts — <a href="/oauth/connect">connect TikTok</a> first.</div>
+    {% endif %}
+  </div>
+
+  <div class="card mb0">
+    <div class="card-header"><span class="card-title">Preset & creative</span></div>
+    <label class="field"><span class="field-label">Preset</span>
+      <select name="template_id" id="slPreset" required>
+        <option value="">— pick a preset —</option>
+        {% for p in presets %}
+          <option value="{{ p.id }}">{{ p.name }}</option>
+        {% endfor %}
+      </select></label>
+
+    <label class="field"><span class="field-label">Destination (auto-locked by preset)</span>
+      <input type="text" id="slDest" value="—" disabled
+             style="background:var(--panel-hover);font-weight:700;"></label>
+
+    <label class="field"><span class="field-label">Spark code (optional override)</span>
+      <select name="spark_code_id">
+        <option value="">— use preset default —</option>
+        {% for s in sparks %}
+          <option value="{{ s.id }}">{{ s.name or s.code[:18] }} ({{ s.media_type }})</option>
+        {% endfor %}
+      </select></label>
+
+    <button class="btn primary" type="submit" id="slLaunch"
+            style="width:100%;justify-content:center;font-size:15px;padding:12px;">
+      🚀 Launch to selected accounts</button>
+    <div class="hint" style="text-align:center;margin-top:8px;">
+      Builds campaign → ad group(s) → ad per account. Failures never stop the batch.</div>
+  </div>
+</div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  var DEST_LABELS = {{ dest_labels_json | safe }};
+  var boxes = Array.prototype.slice.call(document.querySelectorAll(".sl-acct"));
+  var count = document.getElementById("slCount");
+  function syncCount() {
+    var n = boxes.filter(function (b) { return b.checked; }).length;
+    count.textContent = n + " selected";
+  }
+  boxes.forEach(function (b) { b.addEventListener("change", syncCount); });
+  document.getElementById("slAll").addEventListener("click", function () {
+    boxes.forEach(function (b) { b.checked = true; }); syncCount();
+  });
+  document.getElementById("slNone").addEventListener("click", function () {
+    boxes.forEach(function (b) { b.checked = false; }); syncCount();
+  });
+  var preset = document.getElementById("slPreset"), dest = document.getElementById("slDest");
+  preset.addEventListener("change", function () {
+    dest.value = DEST_LABELS[preset.value] || "—";
+  });
+  document.getElementById("slForm").addEventListener("submit", function (e) {
+    var n = boxes.filter(function (b) { return b.checked; }).length;
+    if (!n || !preset.value) { e.preventDefault(); alert("Pick at least one account and a preset."); return; }
+    if (!confirm("Launch “" + preset.options[preset.selectedIndex].text + "” to " + n + " account(s)?")) {
+      e.preventDefault(); return;
+    }
+    var btn = document.getElementById("slLaunch");
+    btn.disabled = true; btn.textContent = "Launching… this can take a minute";
+  });
+  syncCount();
+</script>
+{% endblock %}

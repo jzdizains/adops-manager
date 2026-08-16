@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Launch result</h1>
+    <div class="muted">ref <span class="mono">{{ batch_ref }}</span> ·
+      <span style="color:var(--ok);font-weight:700;">{{ ok_count }} ok</span> ·
+      <span style="color:var(--err);font-weight:700;">{{ fail_count }} failed</span></div></div>
+  <div class="actions">
+    <a class="btn" href="/super-launcher">← Super Launcher</a>
+    <a class="btn primary" href="/status">View Status</a>
+  </div>
+</div>
+
+{% for l in logs %}
+<div class="card">
+  <div class="card-header">
+    <span class="card-title">
+      {% if l.ok %}<span class="pill ok">✓ launched</span>{% else %}<span class="pill err">✕ failed</span>{% endif %}
+      {{ l.advertiser_name or l.advertiser_id }}
+    </span>
+    <span class="card-meta mono">{{ l.advertiser_id }}{% if l.campaign_id %} · campaign {{ l.campaign_id }}{% endif %}</span>
+  </div>
+  {% if not l.ok %}
+    <p style="margin:0 0 8px;font-weight:600;">{{ l.error_message }}</p>
+    <details>
+      <summary class="muted" style="cursor:pointer;font-size:12px;">technical details (copy for debugging)</summary>
+      <pre class="mono" style="background:var(--panel-hover);padding:10px;border-radius:8px;overflow:auto;white-space:pre-wrap;">{{ l.error_technical }}</pre>
+    </details>
+  {% else %}
+    <p class="muted" style="margin:0;">Preset “{{ l.template_name }}” — campaign created{% if l.campaign_id %} (id {{ l.campaign_id }}){% endif %}.</p>
+  {% endif %}
+</div>
+{% endfor %}
+
+{% if not logs %}<div class="card"><div class="empty">Nothing here — that ref has no launches.</div></div>{% endif %}
+{% endblock %}

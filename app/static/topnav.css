@@ -1,0 +1,104 @@
+/* ==========================================================================
+   topnav.css — TOP NAV + the CURRENT PRODUCTION LIGHT THEME.
+   Loaded LAST in base.html so these :root overrides WIN over style.css.
+   Cache-bust the <link> (?v=N) whenever this file changes (§9.9).
+   ========================================================================== */
+
+:root {
+  --bg: #f7f8fa;
+  --panel: #ffffff;
+  --panel-hover: #f3f4f6;
+  --border: #e5e7eb;
+  --border-soft: #eef0f2;
+  --border-strong: #d1d5db;
+  --text: #0f1115;
+  --text-soft: #4b5563;
+  --text-dim: #9ca3af;
+  --accent: #7c3aed;            /* purple — primary buttons, active nav */
+  --accent-strong: #6d28d9;
+  --accent-soft: rgba(124, 58, 237, 0.10);
+  --ok: #16a34a;   --ok-bg: rgba(22, 163, 74, 0.12);
+  --warn: #d97706; --warn-bg: rgba(217, 119, 6, 0.12);
+  --err: #dc2626;  --err-bg: rgba(220, 38, 38, 0.10);
+  --radius: 12px; --radius-sm: 8px; --radius-xs: 6px;
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
+  --shadow: 0 4px 16px rgba(16, 24, 40, 0.08);
+}
+
+input[type="text"], input[type="password"], input[type="number"], input[type="date"],
+input[type="datetime-local"], input[type="url"], select, textarea {
+  background: #fff;
+}
+
+/* ---- top nav bar (not a sidebar) ---------------------------------------- */
+.topnav {
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 50;
+}
+.topnav-inner {
+  max-width: 1280px; margin: 0 auto; padding: 0 20px;
+  display: flex; align-items: center; gap: 4px; height: 52px;
+}
+.brand {
+  display: flex; align-items: center; gap: 9px;
+  font-weight: 800; font-size: 15px; color: var(--text);
+  margin-right: 14px; text-decoration: none; flex: none;
+}
+.brand:hover { text-decoration: none; }
+.brand .brand-mark {
+  width: 28px; height: 28px; border-radius: 8px;
+  background: var(--accent); color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 800; font-size: 15px;
+}
+.topnav .nav-links {
+  display: flex; align-items: center; gap: 2px;
+  overflow-x: auto; scrollbar-width: none; flex: 1;
+}
+.topnav .nav-links::-webkit-scrollbar { display: none; }
+.topnav .nav-links a {
+  color: var(--text-soft); font-weight: 600; font-size: 13px;
+  padding: 6px 10px; border-radius: var(--radius-sm);
+  white-space: nowrap; text-decoration: none;
+}
+.topnav .nav-links a:hover { background: var(--panel-hover); color: var(--text); }
+.topnav .nav-links a.active { color: var(--accent); background: var(--accent-soft); }
+
+.topnav .nav-right { display: flex; align-items: center; gap: 8px; flex: none; }
+.nav-bell {
+  width: 32px; height: 32px; border-radius: 8px; border: none;
+  background: transparent; color: var(--text-soft);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; font-size: 15px;
+}
+.nav-bell:hover { background: var(--panel-hover); }
+
+.avatar-menu { position: relative; }
+.avatar {
+  width: 30px; height: 30px; border-radius: 50%;
+  background: var(--accent-soft); color: var(--accent);
+  font-weight: 800; font-size: 13px; border: none; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.avatar-dropdown {
+  display: none; position: absolute; right: 0; top: 38px;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); box-shadow: var(--shadow);
+  min-width: 180px; padding: 6px; z-index: 60;
+}
+.avatar-dropdown.open { display: block; }
+.avatar-dropdown a {
+  display: block; padding: 8px 10px; border-radius: var(--radius-xs);
+  color: var(--text); font-size: 13px; font-weight: 600; text-decoration: none;
+}
+.avatar-dropdown a:hover { background: var(--panel-hover); }
+.avatar-dropdown .sep { border-top: 1px solid var(--border-soft); margin: 6px 0; }
+
+/* ---- page header row ------------------------------------------------------ */
+.page-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; margin-bottom: 16px; flex-wrap: wrap;
+}
+.page-head h1 { margin: 0; }
+.page-head .actions { display: flex; gap: 8px; align-items: center; }

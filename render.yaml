@@ -1,0 +1,37 @@
+services:
+  - type: web
+    name: adops-manager
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt && playwright install chromium || true
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    autoDeploy: true            # deploys on every push to main
+    disk:                        # ⚠ REQUIRED — SQLite + cookie file live here (§9.8)
+      name: adops-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: DATA_DIR
+        value: /data
+      - key: BUSINESS_TZ
+        value: America/New_York
+      - key: TIKTOK_APP_ID
+        sync: false              # set in the Render dashboard — never commit
+      - key: TIKTOK_APP_SECRET
+        sync: false
+      - key: OAUTH_REDIRECT_URI
+        sync: false              # https://<your-domain>/oauth/callback — EXACT match
+      - key: APP_PASSWORD
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: SECURITY_PIN
+        sync: false              # optional; empty disables the PIN gate
+      - key: EVERFLOW_API_KEY
+        sync: false              # optional
+      - key: CAKE_API_URL
+        sync: false              # optional
+      - key: CAKE_API_KEY
+        sync: false              # optional
+      - key: TAPRAIN_API_KEY
+        sync: false              # optional

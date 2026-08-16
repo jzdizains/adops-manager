@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Timesheet</h1><div class="muted">Per-day totals with frozen rates.</div></div>
+  <div class="actions"><a class="btn" href="/time/">← VA Dash</a></div>
+</div>
+
+<div class="card">
+  {% if rows %}
+  <table class="data">
+    <thead><tr><th>Day</th><th class="num">Sessions</th><th class="num">Hours</th>
+      <th class="num">Pay</th><th class="num">Status</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr>
+        <td>{{ r.day }}</td>
+        <td class="num">{{ r.count }}</td>
+        <td class="num">{{ r.hours }}</td>
+        <td class="num">${{ "%.2f"|format(r.pay) }}</td>
+        <td class="num">
+          {% if r.paid %}<span class="pill ok">paid</span>
+          {% else %}
+            <form method="post" action="/time/mark-paid" style="display:inline;">
+              <input type="hidden" name="ids" value="{{ r.ids }}">
+              <button class="btn sm" type="submit">mark paid</button>
+            </form>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<div class="empty">No completed sessions yet.</div>{% endif %}
+</div>
+{% endblock %}

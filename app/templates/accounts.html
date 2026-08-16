@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Ad Accounts</h1>
+    <div class="muted">{{ accounts|length }} accounts under your Business Center{% if synced_at %} · last synced {{ synced_at[:16].replace('T',' ') }} UTC{% endif %}</div>
+  </div>
+  <div class="actions">
+    <form method="post" action="/oauth/refresh"><button class="btn" type="submit">↻ Refresh token</button></form>
+    <form method="post" action="/oauth/sync-accounts"><button class="btn" type="submit">⇄ Sync accounts</button></form>
+    <a class="btn primary" href="/oauth/connect">Connect TikTok</a>
+  </div>
+</div>
+
+{% if ok %}<div class="flash ok">{{ ok }}</div>{% endif %}
+{% if err %}<div class="flash err">{{ err }}</div>{% endif %}
+
+<div class="card">
+  {% if accounts %}
+  <table class="data">
+    <thead><tr>
+      <th>Account</th><th>Advertiser ID</th><th>Status</th><th>Currency</th>
+      <th>Token expires</th><th class="num">Enabled</th>
+    </tr></thead>
+    <tbody>
+    {% for a in accounts %}
+      <tr>
+        <td>{{ a.advertiser_name or "—" }}</td>
+        <td class="mono">{{ a.advertiser_id }}</td>
+        <td>{% if a.status %}<span class="pill {{ 'ok' if 'ENABLE' in a.status or a.status == 'STATUS_ENABLE' else 'warn' }}">{{ a.status.replace('STATUS_','') }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td>{{ a.currency }}</td>
+        <td class="muted">{{ a.token_expires_at.strftime("%Y-%m-%d %H:%M") if a.token_expires_at else "—" }}</td>
+        <td class="num">
+          <form method="post" action="/accounts/{{ a.advertiser_id }}/toggle">
+            <button class="btn sm {{ '' if a.enabled else 'danger' }}" type="submit">
+              {{ "on" if a.enabled else "off" }}</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">
+    No accounts yet. <a href="/oauth/connect">Connect TikTok</a> to pull every advertiser under your Business Center.
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

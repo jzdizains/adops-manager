@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Status</h1>
+    <div class="muted">{{ active_count }} active · ${{ "%.2f"|format(total_spend) }} spent today · synced {{ synced_ago }}</div>
+  </div>
+  <div class="actions">
+    <form method="get" action="/status" style="display:flex;gap:6px;">
+      <input type="text" name="q" value="{{ q }}" placeholder="Filter campaigns…" style="width:200px;">
+      <button class="btn" type="submit">Search</button>
+    </form>
+    <form method="post" action="/status/sync"><button class="btn primary" type="submit">↻ Sync now</button></form>
+  </div>
+</div>
+
+<div class="card">
+  {% if rows %}
+  <table class="data">
+    <thead><tr>
+      <th>Campaign</th><th>Account</th><th>Objective</th><th>Status</th>
+      <th class="num">Budget</th><th class="num">Spend today</th><th class="num">Actions</th>
+    </tr></thead>
+    <tbody>
+    {% for row in rows %}
+      {% set r = row.r %}
+      <tr>
+        <td>{{ r.campaign_name[:44] }}</td>
+        <td class="muted">{{ row.account_name[:26] }}</td>
+        <td class="muted">{{ r.objective_type.replace('_',' ')|title }}</td>
+        <td>
+          {% if r.operation_status == "ENABLE" %}<span class="pill ok">Active</span>
+          {% elif r.operation_status == "DISABLE" %}<span class="pill warn">Paused</span>
+          {% else %}<span class="pill dim">{{ r.operation_status or "—" }}</span>{% endif %}
+          {% if r.secondary_status and "DISABLE" not in r.operation_status %}
+            <span class="muted" style="font-size:11px;">{{ r.secondary_status.replace('CAMPAIGN_STATUS_','').replace('_',' ')|lower }}</span>
+          {% endif %}
+        </td>
+        <td class="num">{% if r.budget %}${{ "%.0f"|format(r.budget) }}{% if r.budget_mode == 'BUDGET_MODE_DAY' %}/d{% endif %}{% else %}—{% endif %}</td>
+        <td class="num">${{ "%.2f"|format(r.spend_today) }}</td>
+        <td class="num">
+          <form method="post" action="/campaigns/{{ r.advertiser_id }}/{{ r.campaign_id }}/status" style="display:inline;">
+            {% if r.operation_status == "ENABLE" %}
+              <input type="hidden" name="operation_status" value="DISABLE">
+              <button class="btn sm" type="submit">⏸ Pause</button>
+            {% else %}
+              <input type="hidden" name="operation_status" value="ENABLE">
+              <button class="btn sm" type="submit">▶ Resume</button>
+            {% endif %}
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">No campaigns cached yet — hit “Sync now” to pull them from every account.</div>
+  {% endif %}
+</div>
+{% endblock %}

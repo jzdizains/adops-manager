@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Log in · {{ APP_NAME }}</title>
+  <link rel="stylesheet" href="/static/style.css?v={{ STATIC_V }}">
+  <link rel="stylesheet" href="/static/topnav.css?v={{ STATIC_V }}">
+  <style>
+    .login-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+    .login-card { width: 340px; }
+    .login-brand { display: flex; align-items: center; gap: 10px; justify-content: center; margin-bottom: 18px; }
+  </style>
+</head>
+<body>
+<div class="login-wrap">
+  <div class="card login-card">
+    <div class="login-brand">
+      <span class="brand-mark" style="width:34px;height:34px;border-radius:9px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:17px;">A</span>
+      <h1 style="margin:0;">AdOps Manager</h1>
+    </div>
+    {% if error %}<div class="flash err">Wrong password — try again.</div>{% endif %}
+    <form method="post" action="/login">
+      <label class="field">
+        <span class="field-label">Password</span>
+        <input type="password" name="password" autofocus autocomplete="current-password">
+      </label>
+      <button class="btn primary" type="submit" style="width:100%;justify-content:center;">Log in</button>
+    </form>
+  </div>
+</div>
+</body>
+</html>
