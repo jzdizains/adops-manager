@@ -8,6 +8,57 @@
 {% if ok %}<div class="flash ok">{{ ok }}</div>{% endif %}
 {% if err %}<div class="flash err">{{ err }}</div>{% endif %}
 
+<div class="card">
+  <div class="card-header"><span class="card-title">⚡ Create & share pixel</span>
+    <span class="card-meta">create → event → BC transfer → link to every account, in one click</span></div>
+  <form method="post" action="/pixels/provision">
+    <div class="form-row-3">
+      <label class="field"><span class="field-label">Pixel name</span>
+        <input type="text" name="pixel_name" required placeholder="Main purchase pixel"></label>
+      <label class="field"><span class="field-label">Create on account (its BC gets the pixel)</span>
+        <select name="advertiser_id" required>
+          {% for a in accounts %}
+            <option value="{{ a.advertiser_id }}">{{ a.advertiser_name or a.advertiser_id }}</option>
+          {% endfor %}
+        </select></label>
+      <label class="field"><span class="field-label">Event to create on it</span>
+        <select name="event_type">
+          {% for ev, label in pixel_events %}
+            <option value="{{ ev }}">{{ label }} ({{ ev }})</option>
+          {% endfor %}
+        </select></label>
+    </div>
+    <div class="form-row">
+      <label class="field"><span class="field-label">Event name (optional)</span>
+        <input type="text" name="event_name" placeholder="defaults to the event label"></label>
+      <label class="field" style="display:flex;align-items:flex-end;">
+        <label style="display:flex;align-items:center;gap:8px;font-weight:600;cursor:pointer;">
+          <input type="checkbox" name="do_share" checked style="width:auto;">
+          Share across the whole Business Center after creating
+        </label></label>
+    </div>
+    <button class="btn primary" type="submit">⚡ Create pixel</button>
+    <span class="hint" style="display:block;margin-top:8px;">The event will exist on the pixel
+      (launch-ready). Firing it happens on the offer page / via Glitchy — URL trigger rules can be
+      added later in TikTok Events Manager if needed.</span>
+  </form>
+
+  {% if provision_report %}
+  <div style="margin-top:14px;border-top:1px solid var(--border-soft);padding-top:12px;">
+    <div class="stat-label" style="font-size:12px;font-weight:600;color:var(--text-dim);margin-bottom:6px;">
+      Last run — “{{ provision_report.name }}”{% if provision_report.pixel_id %} · pixel {{ provision_report.pixel_id }}{% endif %}
+    </div>
+    {% for s in provision_report.steps %}
+    <div class="attn-row">
+      <span class="attn-dot" style="color:var(--{{ 'ok' if s.ok else 'err' }});">●</span>
+      <span style="font-weight:600;">{{ s.step }}</span>
+      <span class="muted" style="font-size:12px;">{{ s.detail }}</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+
 <div class="grid cols-2">
   <div class="card mb0">
     <div class="card-header"><span class="card-title">1 · Move a pixel into BC ownership</span></div>

@@ -186,6 +186,26 @@ def bc_transfer(access_token: str, bc_id: str, advertiser_id: str, amount: float
     })
 
 
+def pixel_create(access_token: str, advertiser_id: str, pixel_name: str,
+                 pixel_category: str | None = None) -> dict:
+    """Create a pixel on an ad account (POST /pixel/create/ — verified in
+    TikTok's official SDK). Returns the new pixel's data (pixel_id, code)."""
+    payload: dict = {"advertiser_id": advertiser_id, "pixel_name": pixel_name}
+    if pixel_category:
+        payload["pixel_category"] = pixel_category
+    return api_post("/pixel/create/", access_token, payload)
+
+
+def pixel_event_create(access_token: str, advertiser_id: str, pixel_id: str,
+                       events: list[dict]) -> dict:
+    """Define events on a pixel (POST /pixel/event/create/). Each event dict
+    carries event_type (+ optional event_name / currency / rules)."""
+    return api_post("/pixel/event/create/", access_token, {
+        "advertiser_id": advertiser_id, "pixel_id": pixel_id,
+        "pixel_events": events,
+    })
+
+
 # ---------------------------------------------------------------------------
 # BC pixel sharing (verified endpoints: bc/pixel/transfer, bc/pixel/link/*)
 # ---------------------------------------------------------------------------
