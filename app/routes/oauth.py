@@ -118,7 +118,8 @@ def sync_accounts(db: Session, access_token: str, refresh_token: str = "",
             bc_members[bc_id] = members   # authoritative membership for this BC
         except tiktok_api.TikTokError as e:
             fetch_complete = False   # this BC's account list is incomplete
-            sync_errors.append(f"BC {bc_id} account list failed (code {e.code})")
+            sync_errors.append(f"BC {bc_id} account list failed "
+                               f"(code {e.code}: {str(e.message)[:60]})")
         _time.sleep(0.15)            # gentle throttle between BCs (rate limits)
     db.commit()
     # BCs that vanished from the login's list: mark, don't delete

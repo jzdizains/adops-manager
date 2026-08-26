@@ -129,7 +129,8 @@ def list_business_centers(access_token: str) -> list[dict]:
     return data.get("list", [])
 
 
-def list_bc_advertisers(access_token: str, bc_id: str, page: int = 1, page_size: int = 100) -> dict:
+def list_bc_advertisers(access_token: str, bc_id: str, page: int = 1, page_size: int = 50) -> dict:
+    # ⚠ BC endpoints cap page_size at 50 — 100 gets a 40002 "must be most 50"
     return api_get_retry("/bc/asset/get/", access_token, {
         "bc_id": bc_id, "asset_type": "ADVERTISER", "page": page, "page_size": page_size,
     })
@@ -164,9 +165,10 @@ def parse_bc_balance(data: dict) -> tuple[float, str]:
 
 
 def get_advertiser_balances(access_token: str, bc_id: str, page: int = 1,
-                            page_size: int = 100) -> dict:
+                            page_size: int = 50) -> dict:
     """Ad account balances under a BC (`/advertiser/balance/get/`).
-    Returns the raw page; the list items carry advertiser_id + balance."""
+    Returns the raw page; the list items carry advertiser_id + balance.
+    ⚠ BC endpoints cap page_size at 50 — 100 gets a 40002 "must be most 50"."""
     return api_get_retry("/advertiser/balance/get/", access_token, {
         "bc_id": bc_id, "page": page, "page_size": page_size,
     })
