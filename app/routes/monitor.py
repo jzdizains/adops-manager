@@ -97,10 +97,24 @@ def monitor(request: Request, db: Session = Depends(get_db)):
         "spend_today": sum(r["spend_today"] for r in balance_rows),
     }
 
+    # sync health reports (written by the sync paths — surfaced, never silent)
+    import json as _json
+    reports = []
+    for key in ("sync_report", "balance_report"):
+        raw = queries.get_setting(db, key, "")
+        if raw:
+            try:
+                data = _json.loads(raw)
+                if data.get("errors") or data.get("complete") is False:
+                    reports.append({"key": key, **data})
+            except _json.JSONDecodeError:
+                pass
+
     return render(request, "monitor.html", {
         "title": "Monitor", "groups": groups, "orphans": orphans,
         "synced_ago": queries.campaigns_synced_ago(db),
         "inventory": {"fresh": fresh, "active": with_active, "cooling": cooling},
         "view": request.query_params.get("view", "accounts"),
         "balance_rows": balance_rows, "btotals": btotals,
+        "sync_reports": reports,
     })

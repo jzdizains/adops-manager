@@ -60,15 +60,20 @@ def sync_accounts(db: Session, access_token: str, refresh_token: str = "",
                   refresh_expires_at: datetime | None = None) -> dict:
     """Pull the advertiser list (BC assets preferred, OAuth advertisers as
     fallback) and upsert AdAccount rows. The shared token lands on every row."""
+    import time as _time
+
     advertisers: list[dict] = []   # each: {advertiser_id, advertiser_name, bc_id}
     bc_ids: list[str] = []
+    bc_members: dict[str, set[str]] = {}   # bc_id -> account ids (SUCCESSFUL listings only)
+    sync_errors: list[str] = []
     fetch_complete = True          # False when ANY listing call failed — then we
     now = datetime.now(timezone.utc)  # must NOT retire missing accounts (§ stale rule)
     try:
         bcs = tiktok_api.list_business_centers(access_token)
-    except tiktok_api.TikTokError:
+    except tiktok_api.TikTokError as e:
         bcs = []
         fetch_complete = False
+        sync_errors.append(f"BC list failed (code {e.code})")
     # Loop EVERY Business Center under this login (multi-BC support).
     # Errors are isolated PER BC — one broken BC must not sink the others.
     for bc in bcs:
@@ -93,20 +98,28 @@ def sync_accounts(db: Session, access_token: str, refresh_token: str = "",
         except tiktok_api.TikTokError:
             pass
         try:
+            members: set[str] = set()
             page = 1
             while True:
                 data = tiktok_api.list_bc_advertisers(access_token, bc_id, page=page)
                 batch = data.get("list", [])
-                advertisers += [{"advertiser_id": str(a.get("asset_id", a.get("advertiser_id", ""))),
-                                 "advertiser_name": a.get("asset_name", a.get("advertiser_name", "")),
-                                 "bc_id": bc_id}
-                                for a in batch]
+                for a in batch:
+                    aid = str(a.get("asset_id", a.get("advertiser_id", "")))
+                    if aid:
+                        members.add(aid)
+                        advertisers.append({
+                            "advertiser_id": aid,
+                            "advertiser_name": a.get("asset_name", a.get("advertiser_name", "")),
+                            "bc_id": bc_id})
                 total_pages = (data.get("page_info", {}) or {}).get("total_page", 1)
                 if page >= int(total_pages or 1):
                     break
                 page += 1
-        except tiktok_api.TikTokError:
+            bc_members[bc_id] = members   # authoritative membership for this BC
+        except tiktok_api.TikTokError as e:
             fetch_complete = False   # this BC's account list is incomplete
+            sync_errors.append(f"BC {bc_id} account list failed (code {e.code})")
+        _time.sleep(0.15)            # gentle throttle between BCs (rate limits)
     db.commit()
     # BCs that vanished from the login's list: mark, don't delete
     if fetch_complete and bcs is not None:
@@ -120,6 +133,15 @@ def sync_accounts(db: Session, access_token: str, refresh_token: str = "",
                            for a in tiktok_api.get_authorized_advertisers(access_token)]
         except tiktok_api.TikTokError:
             fetch_complete = False
+
+    # Authoritative ownership FIRST: for every BC whose listing SUCCEEDED,
+    # accounts it did not list cannot belong to it. Clears stale
+    # mass-assignments left by the old single-BC sync — then the upsert below
+    # stamps the fresh, correct owner.
+    for row in db.query(models.AdAccount).all():
+        if row.owner_bc_id in bc_members and \
+                row.advertiser_id not in bc_members[row.owner_bc_id]:
+            row.owner_bc_id = ""     # unknown until its real BC lists it
 
     seen_ids: set[str] = set()
     for adv in advertisers:
@@ -149,6 +171,14 @@ def sync_accounts(db: Session, access_token: str, refresh_token: str = "",
                 row.enabled = False
                 row.status = "ACCESS_LOST"
     db.commit()
+    # persist a human-readable sync report (surfaced in the UI — never silent)
+    import json as _json
+    queries.set_setting(db, "sync_report", _json.dumps({
+        "at": now.isoformat(),
+        "bcs": len(bc_ids), "bcs_listed_ok": len(bc_members),
+        "accounts": len(seen_ids), "complete": fetch_complete,
+        "errors": sync_errors[:10],
+    }))
     # enrich with advertiser info (status, currency, timezone) — best effort
     try:
         ids = [a["advertiser_id"] for a in advertisers if a["advertiser_id"]][:100]

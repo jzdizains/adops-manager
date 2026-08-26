@@ -17,6 +17,19 @@
   <a class="btn {{ 'primary' if view == 'balances' else '' }}" href="/monitor?view=balances">💰 Balances</a>
 </div>
 
+{% if sync_reports %}
+<div class="flash err" style="font-size:12.5px;">
+  ⚠️ The last sync hit problems — numbers below may be stale or incomplete:
+  <ul style="margin:6px 0 0 18px;padding:0;">
+    {% for rep in sync_reports %}
+      {% for e in rep.get('errors', []) %}<li>{{ e }}</li>{% endfor %}
+      {% if rep.get('complete') is false %}<li>account list fetch was incomplete — no accounts were retired this pass</li>{% endif %}
+    {% endfor %}
+  </ul>
+  Retries with backoff are built in — if this persists, TikTok is rate-limiting the token; raise the sweep interval in Settings.
+</div>
+{% endif %}
+
 {% if view == 'balances' %}
 <div class="card">
   <div class="card-header">

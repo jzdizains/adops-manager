@@ -62,33 +62,58 @@ def sync_bc_balances(db: Session) -> int:
     return updated
 
 
+def _parse_account_balance(item: dict) -> float | None:
+    """TikTok returns account balances under varying keys/shapes — try them all."""
+    for key in ("balance", "cash_balance", "available_balance", "valid_balance",
+                "advertiser_balance", "total_balance"):
+        v = item.get(key)
+        if isinstance(v, dict):   # e.g. {"amount": "12.34", "currency": "USD"}
+            v = v.get("amount", v.get("balance"))
+        if v is None or v == "":
+            continue
+        try:
+            return float(str(v).replace(",", ""))
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
 def sync_account_balances(db: Session) -> int:
     """Refresh ad-account balances per BC via /advertiser/balance/get/."""
+    import json as _json
+    import time as _time
     token = queries.any_access_token(db)
     if not token:
         return 0
     accounts = {a.advertiser_id: a for a in db.query(models.AdAccount).all()}
     updated = 0
+    errors: list[str] = []
     for bc in db.query(models.BusinessCenter).all():
         page = 1
         while True:
             try:
                 data = tiktok_api.get_advertiser_balances(token, bc.bc_id, page=page)
-            except tiktok_api.TikTokError:
+            except tiktok_api.TikTokError as e:
+                errors.append(f"BC {bc.bc_id} balances failed (code {e.code}: {str(e.message)[:60]})")
                 break
-            for item in data.get("list", []):
-                acct = accounts.get(str(item.get("advertiser_id", "")))
-                if acct is not None:
-                    try:
-                        acct.balance = float(item.get("balance", item.get("cash_balance", 0)) or 0)
-                        updated += 1
-                    except (TypeError, ValueError):
-                        pass
+            items = (data.get("list") or data.get("balance_list")
+                     or data.get("advertiser_balances") or [])
+            for item in items:
+                acct = accounts.get(str(item.get("advertiser_id", item.get("adv_id", ""))))
+                if acct is None:
+                    continue
+                bal = _parse_account_balance(item)
+                if bal is not None:
+                    acct.balance = bal
+                    updated += 1
             total_pages = int((data.get("page_info", {}) or {}).get("total_page", 1) or 1)
             if page >= total_pages:
                 break
             page += 1
+        _time.sleep(0.15)
     db.commit()
+    queries.set_setting(db, "balance_report", _json.dumps({
+        "updated": updated, "errors": errors[:10]}))
     return updated
 
 

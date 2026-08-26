@@ -50,6 +50,26 @@ def api_get(path: str, access_token: str, params: dict | None = None) -> Any:
     return _parse(resp)
 
 
+RETRYABLE_CODES = {"40100", "50000"}  # rate limit / TikTok internal error
+
+
+def api_get_retry(path: str, access_token: str, params: dict | None = None,
+                  attempts: int = 3, backoff: float = 0.6) -> Any:
+    """api_get with retry+backoff on transient codes — used by the sync paths,
+    where a rate limit must not silently drop a whole BC's account list."""
+    import time as _time
+    last: TikTokError | None = None
+    for i in range(attempts):
+        try:
+            return api_get(path, access_token, params)
+        except TikTokError as e:
+            if str(e.code) not in RETRYABLE_CODES or i == attempts - 1:
+                raise
+            last = e
+            _time.sleep(backoff * (i + 1))
+    raise last  # pragma: no cover
+
+
 def api_post(path: str, access_token: str, payload: dict) -> Any:
     with httpx.Client(timeout=TIMEOUT) as client:
         resp = client.post(
@@ -105,25 +125,25 @@ def get_authorized_advertisers(access_token: str) -> list[dict]:
 
 
 def list_business_centers(access_token: str) -> list[dict]:
-    data = api_get("/bc/get/", access_token, {"page": 1, "page_size": 50})
+    data = api_get_retry("/bc/get/", access_token, {"page": 1, "page_size": 50})
     return data.get("list", [])
 
 
 def list_bc_advertisers(access_token: str, bc_id: str, page: int = 1, page_size: int = 100) -> dict:
-    return api_get("/bc/asset/get/", access_token, {
+    return api_get_retry("/bc/asset/get/", access_token, {
         "bc_id": bc_id, "asset_type": "ADVERTISER", "page": page, "page_size": page_size,
     })
 
 
 def get_advertiser_info(access_token: str, advertiser_ids: list[str]) -> list[dict]:
-    data = api_get("/advertiser/info/", access_token, {"advertiser_ids": advertiser_ids})
+    data = api_get_retry("/advertiser/info/", access_token, {"advertiser_ids": advertiser_ids})
     return data.get("list", [])
 
 
 def get_bc_balance(access_token: str, bc_id: str) -> dict:
     """BC wallet balance. Returns the raw data dict; callers use
     parse_bc_balance() to get a float out of the varying shapes."""
-    return api_get("/bc/balance/get/", access_token, {"bc_id": bc_id})
+    return api_get_retry("/bc/balance/get/", access_token, {"bc_id": bc_id})
 
 
 def parse_bc_balance(data: dict) -> tuple[float, str]:
@@ -147,7 +167,7 @@ def get_advertiser_balances(access_token: str, bc_id: str, page: int = 1,
                             page_size: int = 100) -> dict:
     """Ad account balances under a BC (`/advertiser/balance/get/`).
     Returns the raw page; the list items carry advertiser_id + balance."""
-    return api_get("/advertiser/balance/get/", access_token, {
+    return api_get_retry("/advertiser/balance/get/", access_token, {
         "bc_id": bc_id, "page": page, "page_size": page_size,
     })
 
