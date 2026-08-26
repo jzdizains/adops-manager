@@ -27,6 +27,19 @@ def bc_threshold(bc: models.BusinessCenter) -> float:
     return float(bc.alert_threshold or config.BC_LOW_BALANCE_THRESHOLD or 50.0)
 
 
+def resync_structure(db: Session) -> dict:
+    """Re-pull the BC list + account↔BC mapping with the stored token — the
+    same sync 'Connect' runs. Heals: BCs synced before multi-BC support,
+    accounts whose access was lost/regained, and BC ownership changes."""
+    acct = (db.query(models.AdAccount)
+            .filter(models.AdAccount.access_token != "").first())
+    if not acct:
+        return {"count": 0, "bc_count": 0}
+    from .routes.oauth import sync_accounts  # local import — no cycle at load time
+    return sync_accounts(db, acct.access_token, acct.refresh_token or "",
+                         acct.token_expires_at, acct.refresh_expires_at)
+
+
 def sync_bc_balances(db: Session) -> int:
     """Refresh every BC wallet balance. Returns how many BCs were updated."""
     token = queries.any_access_token(db)

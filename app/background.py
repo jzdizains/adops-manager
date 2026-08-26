@@ -54,6 +54,7 @@ def _loop():
 
             if slow:
                 # full pass: every account, balances, alerts, top-ups, inventory
+                balances.resync_structure(db)   # BC list + account mapping + access-lost
                 live_spend.sync_campaigns(db)
                 balances.sync_bc_balances(db)
                 balances.sync_account_balances(db)

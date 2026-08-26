@@ -70,13 +70,25 @@ def monitor(request: Request, db: Session = Depends(get_db)):
         spend_today = g["spend"]
         runway = (total / spend_today) if spend_today > 0 else None
         balance_rows.append({
-            "bc": bc, "low": g["low"],
+            "name": bc.name or bc.bc_id, "bc_id": bc.bc_id,
+            "currency": bc.currency or "USD", "low": g["low"],
             "wallet": float(bc.balance or 0),
             "in_accounts": acct_balance,
             "total": total,
             "accounts": len(g["rows"]),
             "spend_today": spend_today,
             "runway": runway,
+        })
+    if orphans:
+        # accounts not mapped to any synced BC still hold money — show them
+        acct_balance = sum(float(r["a"].balance or 0) for r in orphans)
+        spend_today = sum(r["spend"] for r in orphans)
+        balance_rows.append({
+            "name": "No Business Center (unmapped accounts)", "bc_id": "",
+            "currency": "USD", "low": False,
+            "wallet": 0.0, "in_accounts": acct_balance, "total": acct_balance,
+            "accounts": len(orphans), "spend_today": spend_today,
+            "runway": (acct_balance / spend_today) if spend_today > 0 else None,
         })
     btotals = {
         "wallet": sum(r["wallet"] for r in balance_rows),

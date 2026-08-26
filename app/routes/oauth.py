@@ -62,30 +62,37 @@ def sync_accounts(db: Session, access_token: str, refresh_token: str = "",
     fallback) and upsert AdAccount rows. The shared token lands on every row."""
     advertisers: list[dict] = []   # each: {advertiser_id, advertiser_name, bc_id}
     bc_ids: list[str] = []
-    now = datetime.now(timezone.utc)
+    fetch_complete = True          # False when ANY listing call failed — then we
+    now = datetime.now(timezone.utc)  # must NOT retire missing accounts (§ stale rule)
     try:
-        # Loop EVERY Business Center under this login (multi-BC support).
-        for bc in tiktok_api.list_business_centers(access_token):
-            info = bc.get("bc_info", bc) or {}
-            bc_id = str(info.get("bc_id") or bc.get("bc_id", ""))
-            if not bc_id:
-                continue
-            bc_ids.append(bc_id)
-            bc_row = db.query(models.BusinessCenter).filter_by(bc_id=bc_id).first()
-            if not bc_row:
-                bc_row = models.BusinessCenter(bc_id=bc_id)
-                db.add(bc_row)
-            bc_row.name = info.get("name", info.get("bc_name", "")) or bc_row.name
-            bc_row.status = str(info.get("status", "")) or bc_row.status
-            bc_row.last_synced_at = now
-            try:
-                bal, cur = tiktok_api.parse_bc_balance(
-                    tiktok_api.get_bc_balance(access_token, bc_id))
-                bc_row.balance = bal
-                if cur:
-                    bc_row.currency = cur
-            except tiktok_api.TikTokError:
-                pass
+        bcs = tiktok_api.list_business_centers(access_token)
+    except tiktok_api.TikTokError:
+        bcs = []
+        fetch_complete = False
+    # Loop EVERY Business Center under this login (multi-BC support).
+    # Errors are isolated PER BC — one broken BC must not sink the others.
+    for bc in bcs:
+        info = bc.get("bc_info", bc) or {}
+        bc_id = str(info.get("bc_id") or bc.get("bc_id", ""))
+        if not bc_id:
+            continue
+        bc_ids.append(bc_id)
+        bc_row = db.query(models.BusinessCenter).filter_by(bc_id=bc_id).first()
+        if not bc_row:
+            bc_row = models.BusinessCenter(bc_id=bc_id)
+            db.add(bc_row)
+        bc_row.name = info.get("name", info.get("bc_name", "")) or bc_row.name
+        bc_row.status = str(info.get("status", "")) or bc_row.status
+        bc_row.last_synced_at = now
+        try:
+            bal, cur = tiktok_api.parse_bc_balance(
+                tiktok_api.get_bc_balance(access_token, bc_id))
+            bc_row.balance = bal
+            if cur:
+                bc_row.currency = cur
+        except tiktok_api.TikTokError:
+            pass
+        try:
             page = 1
             while True:
                 data = tiktok_api.list_bc_advertisers(access_token, bc_id, page=page)
@@ -98,21 +105,34 @@ def sync_accounts(db: Session, access_token: str, refresh_token: str = "",
                 if page >= int(total_pages or 1):
                     break
                 page += 1
-        db.commit()
-    except tiktok_api.TikTokError:
-        db.rollback()
+        except tiktok_api.TikTokError:
+            fetch_complete = False   # this BC's account list is incomplete
+    db.commit()
+    # BCs that vanished from the login's list: mark, don't delete
+    if fetch_complete and bcs is not None:
+        for bc_row in db.query(models.BusinessCenter).all():
+            if bc_row.bc_id not in bc_ids:
+                bc_row.status = "ACCESS_LOST"
     if not advertisers:
-        advertisers = [{"advertiser_id": str(a.get("advertiser_id", "")),
-                        "advertiser_name": a.get("advertiser_name", ""), "bc_id": ""}
-                       for a in tiktok_api.get_authorized_advertisers(access_token)]
+        try:
+            advertisers = [{"advertiser_id": str(a.get("advertiser_id", "")),
+                            "advertiser_name": a.get("advertiser_name", ""), "bc_id": ""}
+                           for a in tiktok_api.get_authorized_advertisers(access_token)]
+        except tiktok_api.TikTokError:
+            fetch_complete = False
 
+    seen_ids: set[str] = set()
     for adv in advertisers:
         if not adv["advertiser_id"]:
             continue
+        seen_ids.add(adv["advertiser_id"])
         row = db.query(models.AdAccount).filter_by(advertiser_id=adv["advertiser_id"]).first()
         if not row:
             row = models.AdAccount(advertiser_id=adv["advertiser_id"])
             db.add(row)
+        elif row.status == "ACCESS_LOST":
+            row.enabled = True         # access came back — reactivate
+            row.status = ""
         row.advertiser_name = adv["advertiser_name"] or row.advertiser_name
         row.access_token = access_token
         row.refresh_token = refresh_token or row.refresh_token
@@ -120,6 +140,14 @@ def sync_accounts(db: Session, access_token: str, refresh_token: str = "",
         row.refresh_expires_at = refresh_expires_at
         row.owner_bc_id = adv.get("bc_id") or row.owner_bc_id
         row.last_synced_at = now
+
+    # Retire accounts that no longer came back — ONLY when the fetch was
+    # complete (a partial/failed fetch must never mass-disable real accounts).
+    if fetch_complete and seen_ids:
+        for row in db.query(models.AdAccount).all():
+            if row.advertiser_id not in seen_ids and row.status != "ACCESS_LOST":
+                row.enabled = False
+                row.status = "ACCESS_LOST"
     db.commit()
     # enrich with advertiser info (status, currency, timezone) — best effort
     try:
