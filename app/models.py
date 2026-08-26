@@ -192,7 +192,7 @@ class ConversionSample(Base):
     __tablename__ = "conversion_samples"
 
     id = Column(Integer, primary_key=True)
-    network = Column(String, nullable=False)               # everflow | cake | taprain
+    network = Column(String, nullable=False)               # legacy network samples (unused)
     sub_id = Column(String, default="")                    # maps back to campaign/account
     conversions = Column(Integer, default=0)
     revenue = Column(Float, default=0.0)

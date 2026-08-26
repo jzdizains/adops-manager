@@ -9,8 +9,8 @@ from starlette.middleware.sessions import SessionMiddleware
 from . import background, config
 from .database import init_db
 from .routes import (
-    alerts, auth, automation, cake, campaigns, cookies_admin, dashboard,
-    everflow, instant_pages, issues_page, lead_forms, monitor, oauth,
+    alerts, auth, automation, campaigns, cookies_admin, dashboard,
+    instant_pages, issues_page, lead_forms, monitor, oauth,
     performance, pixels, postback, security, settings_page, spark_codes,
     status, super_launcher, templates_routes,
 )
@@ -47,7 +47,6 @@ for r in (auth.router, security.router, oauth.router, dashboard.router,
           templates_routes.router, campaigns.router, super_launcher.router,
           status.router, performance.router, spark_codes.router,
           instant_pages.router, lead_forms.router, cookies_admin.router,
-          everflow.router, cake.router,
           monitor.router, alerts.router,
           settings_page.router, postback.router, pixels.router,
           automation.router, issues_page.router):

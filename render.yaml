@@ -27,11 +27,3 @@ services:
         generateValue: true
       - key: SECURITY_PIN
         sync: false              # optional; empty disables the PIN gate
-      - key: EVERFLOW_API_KEY
-        sync: false              # optional
-      - key: CAKE_API_URL
-        sync: false              # optional
-      - key: CAKE_API_KEY
-        sync: false              # optional
-      - key: TAPRAIN_API_KEY
-        sync: false              # optional

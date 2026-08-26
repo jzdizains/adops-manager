@@ -14,7 +14,6 @@
   <div class="topnav-inner">
     {% set launch_active = active.startswith('/super-launcher') or active.startswith('/campaigns') or active.startswith('/queue') %}
     {% set assets_active = active.startswith('/presets') or active.startswith('/spark-codes') or active.startswith('/pixels') or active.startswith('/accounts') or active.startswith('/instant-pages') or active.startswith('/lead-forms') %}
-    {% set reports_active = active.startswith('/performance') or active.startswith('/revenue') or active.startswith('/everflow') or active.startswith('/cake') or active.startswith('/taprain') %}
     <div class="nav-links">
       <a href="/" class="{{ 'active' if active == '/' else '' }}">Overview</a>
       <a href="/monitor" class="{{ 'active' if active.startswith('/monitor') else '' }}">Monitor</a>
@@ -47,17 +46,7 @@
         </div>
       </div>
 
-      <div class="nav-group">
-        <button type="button" class="nav-group-btn {{ 'active' if reports_active else '' }}">Reports <span class="chev">▾</span></button>
-        <div class="nav-group-menu">
-          <a href="/performance" class="{{ 'active' if active.startswith('/performance') else '' }}">Performance (live)</a>
-          <a href="/revenue" class="{{ 'active' if active.startswith('/revenue') else '' }}">Revenue</a>
-          <div class="menu-sep"></div>
-          <a href="/everflow" class="{{ 'active' if active.startswith('/everflow') else '' }}">Everflow</a>
-          <a href="/cake" class="{{ 'active' if active.startswith('/cake') else '' }}">CAKE</a>
-          <a href="/taprain" class="{{ 'active' if active.startswith('/taprain') else '' }}">Taprain</a>
-        </div>
-      </div>
+      <a href="/performance" class="{{ 'active' if active.startswith('/performance') else '' }}">Live</a>
     </div>
     <div class="nav-right">
       <div class="avatar-menu">

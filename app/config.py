@@ -8,7 +8,6 @@ The new owner supplies (see README):
   SECURITY_PIN                       — optional extra PIN gate ("" disables it)
   DATA_DIR                           — persistent disk path (Render: /data)
   BUSINESS_TZ                        — business timezone, default America/New_York
-  EVERFLOW_API_KEY / CAKE_API_KEY / CAKE_API_URL / TAPRAIN_API_KEY — optional
 """
 import os
 from pathlib import Path
@@ -33,12 +32,6 @@ COOKIE_FILE = DATA_DIR / "tiktok_cookies.json"   # pasted web cookies persist he
 
 # --- Business timezone ------------------------------------------------------
 BUSINESS_TZ = os.environ.get("BUSINESS_TZ", "America/New_York")
-
-# --- Affiliate networks (optional) -------------------------------------------
-EVERFLOW_API_KEY = os.environ.get("EVERFLOW_API_KEY", "")
-CAKE_API_URL = os.environ.get("CAKE_API_URL", "")
-CAKE_API_KEY = os.environ.get("CAKE_API_KEY", "")
-TAPRAIN_API_KEY = os.environ.get("TAPRAIN_API_KEY", "")
 
 # --- Background sync ---------------------------------------------------------
 SYNC_INTERVAL_MIN = int(os.environ.get("SYNC_INTERVAL_MIN", "15"))

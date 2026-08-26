@@ -36,8 +36,6 @@ the TikTok connection works immediately (presets, cookies page, etc.).
 5. **Your TikTok web cookies** (paste on the TikTok Cookies page, or push them
    with a Cookie-Editor-style Chrome extension to `POST /cookies/push`) — only
    needed for web-only features: instant-page cloning and some lead-form reads.
-6. **Affiliate-network API keys** (Everflow / CAKE / Taprain) — optional; those
-   pages simply stay in "not configured" mode without them.
 
 ## Environment variables
 
@@ -50,7 +48,6 @@ the TikTok connection works immediately (presets, cookies page, etc.).
 | `DATA_DIR` | prod: yes | Persistent disk path (Render: `/data`) — SQLite + cookies live here |
 | `BUSINESS_TZ` | no | Business timezone (default `America/New_York`) |
 | `SECURITY_PIN` | no | Optional PIN gate for sensitive actions; empty = disabled |
-| `EVERFLOW_API_KEY`, `CAKE_API_URL`, `CAKE_API_KEY`, `TAPRAIN_API_KEY` | no | Network integrations |
 
 Never commit any of these.
 
