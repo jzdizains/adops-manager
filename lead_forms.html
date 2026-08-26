@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Lead Forms</h1>
+    <div class="muted">Per-account lead-gen forms, synced via the API (cookie web fallback).</div></div>
+  <div class="actions">
+    <form method="post" action="/lead-forms/sync"><button class="btn primary" type="submit">⇄ Sync from accounts</button></form>
+  </div>
+</div>
+
+{% if ok %}<div class="flash ok">{{ ok }}</div>{% endif %}
+{% if err %}<div class="flash err">{{ err }}</div>{% endif %}
+
+<div class="card">
+  {% if forms %}
+  <table class="data">
+    <thead><tr><th>Name</th><th>Form ID</th><th>Owner account</th><th>Status</th></tr></thead>
+    <tbody>
+    {% for f in forms %}
+      <tr>
+        <td>{{ f.name or f.form_id }}</td>
+        <td class="mono">{{ f.form_id }}</td>
+        <td class="muted">{{ names.get(f.owner_advertiser_id, f.owner_advertiser_id) }}</td>
+        <td>{{ f.status or "—" }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<div class="empty">No lead forms synced yet.</div>{% endif %}
+</div>
+{% endblock %}

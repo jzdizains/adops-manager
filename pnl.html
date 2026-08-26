@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div><h1>P&L</h1>
+    <div class="muted">Revenue (Glitchy postbacks) vs spend (TikTok), joined by source.</div></div>
+  <div class="actions" data-daterange></div>
+</div>
+
+<div class="grid cols-4">
+  <div class="card mb0"><div class="stat">
+    <div class="stat-icon ok">$</div>
+    <div><div class="stat-label">Revenue</div>
+      <div class="stat-value">${{ "%.2f"|format(totals.revenue) }}</div></div>
+  </div></div>
+  <div class="card mb0"><div class="stat">
+    <div class="stat-icon">−</div>
+    <div><div class="stat-label">Spend</div>
+      <div class="stat-value">${{ "%.2f"|format(totals.spend) }}</div></div>
+  </div></div>
+  <div class="card mb0"><div class="stat">
+    <div class="stat-icon {{ 'ok' if totals.profit >= 0 else 'err' }}">±</div>
+    <div><div class="stat-label">Profit</div>
+      <div class="stat-value" style="color:var(--{{ 'ok' if totals.profit >= 0 else 'err' }});">
+        ${{ "%.2f"|format(totals.profit) }}</div></div>
+  </div></div>
+  <div class="card mb0"><div class="stat">
+    <div class="stat-icon warn">×</div>
+    <div><div class="stat-label">ROAS</div>
+      <div class="stat-value">{{ "%.2f"|format(totals.roas) }}</div></div>
+  </div></div>
+</div>
+
+<div style="height:16px;"></div>
+
+<div class="card">
+  <div class="card-header"><span class="card-title">By source</span></div>
+  {% if sources %}
+  <table class="data">
+    <thead><tr><th>Source</th><th>Spark code</th><th class="num">Clicks</th>
+      <th class="num">Conv</th><th class="num">Revenue</th><th class="num">Spend</th>
+      <th class="num">Profit</th></tr></thead>
+    <tbody>
+    {% for r in sources %}
+      <tr>
+        <td class="mono">{{ r.source }}</td>
+        <td class="muted">{{ r.spark }}</td>
+        <td class="num">{{ r.clicks or "—" }}</td>
+        <td class="num">{{ r.conversions or "—" }}</td>
+        <td class="num">${{ "%.2f"|format(r.revenue) }}</td>
+        <td class="num">${{ "%.2f"|format(r.spend) }}</td>
+        <td class="num" style="color:var(--{{ 'ok' if r.profit >= 0 else 'err' }});font-weight:700;">
+          ${{ "%.2f"|format(r.profit) }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">No data in this range yet. Launches record spend per source;
+    revenue arrives once the postback URL (see Settings) is placed on Glitchy.</div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="card-header"><span class="card-title">By spark code</span></div>
+  {% if spark_rows %}
+  <table class="data">
+    <thead><tr><th>Spark code</th><th class="num">Sources</th><th class="num">Revenue</th>
+      <th class="num">Spend</th><th class="num">Profit</th></tr></thead>
+    <tbody>
+    {% for r in spark_rows %}
+      <tr>
+        <td>{{ r.spark }}</td>
+        <td class="num">{{ r.sources }}</td>
+        <td class="num">${{ "%.2f"|format(r.revenue) }}</td>
+        <td class="num">${{ "%.2f"|format(r.spend) }}</td>
+        <td class="num" style="color:var(--{{ 'ok' if r.profit >= 0 else 'err' }});font-weight:700;">
+          ${{ "%.2f"|format(r.profit) }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<div class="empty">Nothing yet.</div>{% endif %}
+</div>
+
+<div class="card">
+  <div class="card-header"><span class="card-title">Recent postbacks</span></div>
+  {% if recent %}
+  <table class="data">
+    <thead><tr><th>When (UTC)</th><th>Source</th><th class="num">Revenue</th>
+      <th class="num">Conv</th><th class="num">Clicks</th></tr></thead>
+    <tbody>
+    {% for e in recent %}
+      <tr>
+        <td class="muted">{{ e.created_at.strftime("%m-%d %H:%M:%S") }}</td>
+        <td class="mono">{{ e.source }}</td>
+        <td class="num">${{ "%.2f"|format(e.revenue) }}</td>
+        <td class="num">{{ e.conversions }}</td>
+        <td class="num">{{ e.clicks }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<div class="empty">No postbacks received yet.</div>{% endif %}
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/daterange.js?v={{ STATIC_V }}"></script>{% endblock %}

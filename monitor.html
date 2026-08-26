@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Monitor</h1>
+    <div class="muted">Every Business Center, account, campaign and balance · synced {{ synced_ago }} ·
+      inventory: <strong style="color:var(--ok);">{{ inventory.fresh }} fresh</strong> ·
+      {{ inventory.active }} running ·
+      {% if inventory.cooling %}<strong style="color:var(--warn);">{{ inventory.cooling }} cooling down</strong>{% else %}0 cooling down{% endif %}
+    </div></div>
+  <div class="actions">
+    <form method="post" action="/balances/sync"><button class="btn primary" type="submit">↻ Sync balances & metrics</button></form>
+  </div>
+</div>
+
+{% macro metric(v, money=False, pct=False) -%}
+  {%- if v is none or v == 0 -%}<span class="muted">—</span>
+  {%- elif money -%}${{ "%.2f"|format(v) }}
+  {%- elif pct -%}{{ "%.2f"|format(v) }}%
+  {%- else -%}{{ "%.2f"|format(v) }}{%- endif -%}
+{%- endmacro %}
+
+{% macro bc_section(title, rows, bc=None, low=False, spend=0) %}
+<div class="card">
+  <div class="card-header">
+    <span class="card-title">
+      {% if bc %}
+        <a href="https://business.tiktok.com/manage/overview?org_id={{ bc.bc_id }}"
+           target="_blank" rel="noopener" title="Open this Business Center on TikTok"
+           style="color:inherit;">{{ title }} ↗</a>
+        {% if low %}<span class="pill err">wallet {{ bc.currency }} {{ "%.2f"|format(bc.balance or 0) }} — LOW</span>
+        {% else %}<span class="pill ok">wallet {{ bc.currency }} {{ "%.2f"|format(bc.balance or 0) }}</span>{% endif %}
+        {% if bc.status and 'ENABLE' not in bc.status|upper %}<span class="pill warn">{{ bc.status }}</span>{% endif %}
+      {% else %}
+        {{ title }}
+      {% endif %}
+    </span>
+    <span class="card-meta num">{{ rows|length }} account(s) · ${{ "%.2f"|format(spend) }} today</span>
+  </div>
+  {% if rows %}
+  <div class="table-scroll">
+  <table class="data">
+    <thead><tr>
+      <th>Account</th><th>Status</th><th class="num">Balance</th>
+      <th>Campaign</th><th class="num">Spend</th><th class="num">CPM</th>
+      <th class="num">CPC</th><th class="num">CPA</th><th class="num">CTR</th>
+      <th>Launched</th><th>Last error</th>
+    </tr></thead>
+    <tbody>
+    {% for r in rows %}
+      {% set a = r.a %}
+      {% if r.campaigns %}
+        {% for c in r.campaigns %}
+        <tr>
+          {% if loop.first %}
+          <td rowspan="{{ r.campaigns|length }}">
+            <a href="https://ads.tiktok.com/i18n/dashboard?aadvid={{ a.advertiser_id }}"
+               target="_blank" rel="noopener" style="color:inherit;"
+               title="Open in TikTok Ads Manager">{{ a.advertiser_name or a.advertiser_id }} ↗</a>
+            <div class="mono muted" style="font-size:10px;">{{ a.advertiser_id }}</div></td>
+          <td rowspan="{{ r.campaigns|length }}">
+            {% if a.status and 'ENABLE' in a.status %}<span class="pill ok">OK</span>
+            {% elif a.status %}<span class="pill err">{{ a.status.replace('STATUS_','') }}</span>
+            {% else %}<span class="muted">—</span>{% endif %}
+            {% if not a.enabled %}<span class="pill dim">hidden</span>{% endif %}</td>
+          <td rowspan="{{ r.campaigns|length }}" class="num
+            {%- if a.balance is not none and a.balance < 50 %}" style="color:var(--err);font-weight:700;{% endif %}">
+            ${{ "%.2f"|format(a.balance or 0) }}</td>
+          {% endif %}
+          <td>
+            {% if c.operation_status == 'ENABLE' %}<span class="pill ok">▶</span>
+            {% else %}<span class="pill warn">⏸</span>{% endif %}
+            {{ c.campaign_name[:30] }}
+          </td>
+          <td class="num">{{ metric(c.spend_today, money=True) }}</td>
+          <td class="num">{{ metric(c.cpm, money=True) }}</td>
+          <td class="num">{{ metric(c.cpc, money=True) }}</td>
+          <td class="num">{{ metric(c.cpa, money=True) }}</td>
+          <td class="num">{{ metric(c.ctr, pct=True) }}</td>
+          <td class="muted" style="white-space:nowrap;">{{ c.launched_at.strftime("%m-%d %H:%M") if c.launched_at else "—" }}</td>
+          {% if loop.first %}
+          <td rowspan="{{ r.campaigns|length }}" style="max-width:190px;">
+            {% if r.err %}
+              <span style="color:var(--err);font-size:12px;" title="{{ r.err.error_technical }}">{{ r.err.error_message[:70] }}</span>
+            {% else %}<span class="muted">—</span>{% endif %}</td>
+          {% endif %}
+        </tr>
+        {% endfor %}
+      {% else %}
+        <tr>
+          <td>
+            <a href="https://ads.tiktok.com/i18n/dashboard?aadvid={{ a.advertiser_id }}"
+               target="_blank" rel="noopener" style="color:inherit;"
+               title="Open in TikTok Ads Manager">{{ a.advertiser_name or a.advertiser_id }} ↗</a>
+            <div class="mono muted" style="font-size:10px;">{{ a.advertiser_id }}</div></td>
+          <td>{% if a.status and 'ENABLE' in a.status %}<span class="pill ok">OK</span>
+            {% elif a.status %}<span class="pill err">{{ a.status.replace('STATUS_','') }}</span>
+            {% else %}<span class="muted">—</span>{% endif %}</td>
+          <td class="num {%- if a.balance is not none and a.balance < 50 %}" style="color:var(--err);font-weight:700;{% endif %}">
+            ${{ "%.2f"|format(a.balance or 0) }}</td>
+          <td colspan="7" class="muted">no campaigns</td>
+          <td>{% if r.err %}<span style="color:var(--err);font-size:12px;" title="{{ r.err.error_technical }}">{{ r.err.error_message[:70] }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+        </tr>
+      {% endif %}
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}<div class="empty">No accounts under this Business Center.</div>{% endif %}
+</div>
+{% endmacro %}
+
+{% for g in groups %}
+  {{ bc_section((g.bc.name or g.bc.bc_id), g.rows, bc=g.bc, low=g.low, spend=g.spend) }}
+{% endfor %}
+
+{% if orphans %}
+  {{ bc_section("No Business Center", orphans, spend=orphans|sum(attribute='spend')) }}
+{% endif %}
+
+{% if not groups and not orphans %}
+<div class="card"><div class="empty">Nothing to monitor yet — connect TikTok and sync.</div></div>
+{% endif %}
+{% endblock %}

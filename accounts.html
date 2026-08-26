@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Ad Accounts</h1>
+    <div class="muted">{{ accounts|length }} accounts under your Business Center{% if synced_at %} · last synced {{ synced_at[:16].replace('T',' ') }} UTC{% endif %}</div>
+  </div>
+  <div class="actions">
+    <form method="post" action="/oauth/refresh"><button class="btn" type="submit">↻ Refresh token</button></form>
+    <form method="post" action="/oauth/sync-accounts"><button class="btn" type="submit">⇄ Sync accounts</button></form>
+    <a class="btn primary" href="/oauth/connect">Connect TikTok</a>
+  </div>
+</div>
+
+{% if ok %}<div class="flash ok">{{ ok }}</div>{% endif %}
+{% if err %}<div class="flash err">{{ err }}</div>{% endif %}
+
+{% if not accounts %}
+<div class="card">
+  <div class="card-header"><span class="card-title">Manual connect (no redirect URI needed)</span>
+    <span class="card-meta">use this if the Connect TikTok button isn't set up yet</span></div>
+  <form method="post" action="/oauth/manual">
+    <div class="form-row">
+      <label class="field"><span class="field-label">Auth code</span>
+        <input type="text" name="auth_code" placeholder="paste the auth_code from TikTok's redirect URL">
+        <span class="hint">In the TikTok developer portal, open your app's authorization link, authorize,
+          then copy the <span class="mono">auth_code=…</span> value from the address bar of the page it
+          lands on. Codes are single-use and expire in minutes — paste it right away.</span></label>
+      <label class="field"><span class="field-label">…or a ready access token</span>
+        <input type="text" name="access_token" placeholder="long-term access token, if you have one">
+        <span class="hint">E.g. a sandbox token generated in the portal. Either field works — fill one.</span></label>
+    </div>
+    <button class="btn primary" type="submit">Connect manually</button>
+  </form>
+</div>
+{% endif %}
+
+<div class="card">
+  {% if accounts %}
+  <table class="data">
+    <thead><tr>
+      <th>Account</th><th>Advertiser ID</th><th>Status</th><th>Currency</th>
+      <th>Token expires</th><th class="num">Enabled</th>
+    </tr></thead>
+    <tbody>
+    {% for a in accounts %}
+      <tr>
+        <td><a href="https://ads.tiktok.com/i18n/dashboard?aadvid={{ a.advertiser_id }}"
+               target="_blank" rel="noopener" style="color:inherit;"
+               title="Open in TikTok Ads Manager">{{ a.advertiser_name or a.advertiser_id }} ↗</a></td>
+        <td class="mono">{{ a.advertiser_id }}</td>
+        <td>{% if a.status %}<span class="pill {{ 'ok' if 'ENABLE' in a.status or a.status == 'STATUS_ENABLE' else 'warn' }}">{{ a.status.replace('STATUS_','') }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td>{{ a.currency }}</td>
+        <td class="muted">{{ a.token_expires_at.strftime("%Y-%m-%d %H:%M") if a.token_expires_at else "—" }}</td>
+        <td class="num">
+          <form method="post" action="/accounts/{{ a.advertiser_id }}/toggle">
+            <button class="btn sm {{ '' if a.enabled else 'danger' }}" type="submit">
+              {{ "on" if a.enabled else "off" }}</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">
+    No accounts yet. <a href="/oauth/connect">Connect TikTok</a> to pull every advertiser under your Business Center.
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

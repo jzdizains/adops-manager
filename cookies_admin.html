@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div><h1>TikTok Cookies</h1>
+    <div class="muted">The second auth path — powers web-only actions (instant page cloning, some lead-form reads).</div></div>
+</div>
+
+{% if ok %}<div class="flash ok">{{ ok }}</div>{% endif %}
+{% if err %}<div class="flash err">{{ err }}</div>{% endif %}
+
+<div class="grid cols-2">
+  <div class="card mb0">
+    <div class="card-header"><span class="card-title">Health</span>
+      {% if saved_at %}<span class="card-meta">saved {{ saved_at[:16].replace('T',' ') }} UTC</span>{% endif %}</div>
+    <div class="stat">
+      {% if health.verdict == 'live' %}
+        <div class="stat-icon ok">✓</div>
+        <div><div class="stat-value" style="font-size:16px;color:var(--ok);">Session live</div>
+          <div class="muted">{{ health.detail }}</div></div>
+      {% elif health.verdict == 'live_no_permission' %}
+        <div class="stat-icon ok">✓</div>
+        <div><div class="stat-value" style="font-size:16px;color:var(--ok);">Session live</div>
+          <div class="muted">Permission error on the probe — that means the session works but doesn't
+            cover the probed advertiser. NOT an expiry (§9.6).</div></div>
+      {% elif health.verdict == 'expired' %}
+        <div class="stat-icon err">!</div>
+        <div><div class="stat-value" style="font-size:16px;color:var(--err);">Expired</div>
+          <div class="muted">{{ health.detail }}</div></div>
+      {% else %}
+        <div class="stat-icon warn">–</div>
+        <div><div class="stat-value" style="font-size:16px;">No cookies stored</div>
+          <div class="muted">{{ health.detail }}</div></div>
+      {% endif %}
+    </div>
+    {% if cookie_names %}
+    <div style="margin-top:12px;">
+      <div class="stat-label" style="font-size:12px;font-weight:600;color:var(--text-dim);margin-bottom:6px;">Stored cookie names</div>
+      <div style="display:flex;gap:4px;flex-wrap:wrap;">
+        {% for n in cookie_names %}<span class="pill dim mono" style="font-weight:400;">{{ n }}</span>{% endfor %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="card mb0">
+    <div class="card-header"><span class="card-title">Paste cookies</span></div>
+    <form method="post" action="/cookies/save">
+      <label class="field">
+        <span class="field-label">Cookie-Editor export (JSON) — or a raw cookie header string</span>
+        <textarea name="raw" placeholder='[{"name":"csrftoken","value":"…"}, {"name":"sid_guard_ads","value":"…"}, …]'></textarea>
+      </label>
+      <button class="btn primary" type="submit">Save & validate</button>
+    </form>
+    <div class="hint" style="margin-top:10px;">
+      How: log into <span class="mono">ads.tiktok.com</span> → open the Cookie-Editor extension →
+      Export → paste here. Accepts the classic <span class="mono">sessionid</span> family OR the
+      Ads-SSO family (<span class="mono">sid_guard_ads</span> etc.) — <span class="mono">csrftoken</span> is always required.
+      The companion Chrome extension can POST them straight to <span class="mono">/cookies/push</span>.
+    </div>
+  </div>
+</div>
+{% endblock %}

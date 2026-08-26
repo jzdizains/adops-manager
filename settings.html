@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div><h1>⚙ Settings</h1>
+    <div class="muted">All automation knobs live here — changes apply within one sweep, no redeploy.</div></div>
+</div>
+
+{% if ok %}<div class="flash ok">{{ ok }}</div>{% endif %}
+
+<form method="post" action="/settings/save">
+
+<div class="card">
+  <div class="card-header"><span class="card-title">Auto-pause rules</span>
+    <span class="card-meta">a rule with 0 is disabled; campaigns are paused once and logged</span></div>
+  <label style="display:flex;align-items:center;gap:8px;margin-bottom:14px;font-weight:700;">
+    <input type="checkbox" name="rules_enabled" {{ 'checked' if s.rules_enabled }} style="width:auto;">
+    Enable auto-pause rules
+  </label>
+  <div class="form-row-3">
+    <label class="field"><span class="field-label">Pause when CPM above ($)</span>
+      <input type="number" step="0.01" name="rule_cpm_max" value="{{ s.rule_cpm_max }}"></label>
+    <label class="field"><span class="field-label">Pause when CPC above ($)</span>
+      <input type="number" step="0.01" name="rule_cpc_max" value="{{ s.rule_cpc_max }}"></label>
+    <label class="field"><span class="field-label">Pause when CPA above ($)</span>
+      <input type="number" step="0.01" name="rule_cpa_max" value="{{ s.rule_cpa_max }}"></label>
+  </div>
+  <div class="form-row">
+    <label class="field"><span class="field-label">Minimum spend before rules judge ($)</span>
+      <input type="number" step="0.01" name="rule_min_spend" value="{{ s.rule_min_spend }}">
+      <span class="hint">Protects fresh campaigns — below this spend, no rule fires.</span></label>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><span class="card-title">Profit-based rules</span>
+    <span class="card-meta">P&L truth from Glitchy postbacks — the smarter kill switch</span></div>
+  <label style="display:flex;align-items:center;gap:8px;margin-bottom:14px;font-weight:700;">
+    <input type="checkbox" name="profit_rules_enabled" {{ 'checked' if s.profit_rules_enabled }} style="width:auto;">
+    Enable profit-based auto-pause
+  </label>
+  <div class="form-row-3">
+    <label class="field"><span class="field-label">Pause a source losing more than ($ today)</span>
+      <input type="number" step="0.01" name="profit_loss_limit" value="{{ s.profit_loss_limit }}">
+      <span class="hint">Pauses EVERY campaign on that source.</span></label>
+    <label class="field"><span class="field-label">Only judge sources past ($ spend today)</span>
+      <input type="number" step="0.01" name="profit_min_spend" value="{{ s.profit_min_spend }}"></label>
+    <label class="field" style="display:flex;align-items:flex-end;">
+      <label style="display:flex;align-items:center;gap:8px;font-weight:600;cursor:pointer;">
+        <input type="checkbox" name="protect_profitable" {{ 'checked' if s.protect_profitable }} style="width:auto;">
+        Metric rules skip profitable sources
+      </label></label>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><span class="card-title">Account lifecycle & launch queue</span></div>
+  <div class="form-row-3">
+    <label class="field"><span class="field-label">Cooldown after N launch failures</span>
+      <input type="number" min="1" name="account_error_threshold" value="{{ s.account_error_threshold }}"></label>
+    <label class="field"><span class="field-label">Cooldown length (hours)</span>
+      <input type="number" min="1" name="cooldown_hours" value="{{ s.cooldown_hours }}"></label>
+    <label class="field"><span class="field-label">Alert when fresh accounts below</span>
+      <input type="number" min="0" name="min_fresh_accounts" value="{{ s.min_fresh_accounts }}">
+      <span class="hint">0 disables the inventory alert.</span></label>
+  </div>
+  <div class="form-row">
+    <label class="field"><span class="field-label">Queue launches per sweep</span>
+      <input type="number" min="1" name="queue_per_sweep" value="{{ s.queue_per_sweep }}"></label>
+    <label class="field"><span class="field-label">Max attempts for transient errors</span>
+      <input type="number" min="1" name="launch_retry_max" value="{{ s.launch_retry_max }}"></label>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><span class="card-title">Auto top-ups</span>
+    <span class="card-meta">moves money from each BC wallet to its own accounts via the TikTok API</span></div>
+  <label style="display:flex;align-items:center;gap:8px;margin-bottom:14px;font-weight:700;">
+    <input type="checkbox" name="topup_enabled" {{ 'checked' if s.topup_enabled }} style="width:auto;">
+    Enable auto top-ups
+  </label>
+  <div class="form-row-3">
+    <label class="field"><span class="field-label">Top up when account balance below ($)</span>
+      <input type="number" step="0.01" name="topup_below" value="{{ s.topup_below }}"></label>
+    <label class="field"><span class="field-label">Transfer amount ($)</span>
+      <input type="number" step="0.01" name="topup_amount" value="{{ s.topup_amount }}"></label>
+    <label class="field"><span class="field-label">Daily cap per account ($)</span>
+      <input type="number" step="0.01" name="topup_daily_cap" value="{{ s.topup_daily_cap }}">
+      <span class="hint">Hard stop — no account receives more than this per day ({{ tz }}).</span></label>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><span class="card-title">Sweeps</span>
+    <span class="card-meta">how often the background worker checks</span></div>
+  <div class="form-row">
+    <label class="field"><span class="field-label">Fast sweep interval (seconds)</span>
+      <input type="number" min="30" name="sweep_interval_sec" value="{{ s.sweep_interval_sec }}">
+      <span class="hint">Active-campaign metrics + rules. Minimum 30s; 60s recommended.</span></label>
+    <label class="field"><span class="field-label">Slow cycle every N sweeps</span>
+      <input type="number" min="1" name="slow_every_n_sweeps" value="{{ s.slow_every_n_sweeps }}">
+      <span class="hint">Balances, top-ups and full account sync run on this slower cycle.</span></label>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><span class="card-title">Sources & postback</span></div>
+  <div class="form-row">
+    <label class="field"><span class="field-label">URL parameter name</span>
+      <input type="text" name="url_param" value="{{ s.url_param }}">
+      <span class="hint">Appended to the landing URL at launch: ?{{ s.url_param }}=&lt;spark's source&gt;</span></label>
+    <label class="field"><span class="field-label">Postback mode</span>
+      <select name="postback_mode">
+        <option value="incremental" {{ 'selected' if s.postback_mode == 'incremental' }}>Incremental — each postback adds revenue</option>
+        <option value="snapshot" {{ 'selected' if s.postback_mode == 'snapshot' }}>Snapshot — each postback replaces today's totals</option>
+      </select>
+      <span class="hint">Pick by how Glitchy fires: per-conversion → incremental; running totals → snapshot.</span></label>
+  </div>
+  <label class="field"><span class="field-label">Your postback URL — paste this into Glitchy</span>
+    <input type="text" readonly value="{{ postback_template }}" onclick="this.select()"
+           style="font-family:var(--font-mono);font-size:12px;background:var(--panel-hover);">
+    <span class="hint">Replace the {curly} placeholders with Glitchy's own macros for those values.
+      The <span class="mono">key</span> is this dashboard's postback password — keep the URL private.</span></label>
+</div>
+
+<button class="btn primary" type="submit" style="font-size:15px;padding:10px 22px;">Save settings</button>
+</form>
+{% endblock %}

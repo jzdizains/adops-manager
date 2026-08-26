@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Issues</h1>
+    <div class="muted">Everything TikTok is complaining about — payment, account, campaign, ad and spark
+      problems · last scan {{ scanned_at }}</div></div>
+  <div class="actions">
+    <form method="post" action="/issues/scan">
+      <button class="btn primary" type="submit">🔍 Scan now</button></form>
+  </div>
+</div>
+
+{% if ok %}<div class="flash ok">{{ ok }}</div>{% endif %}
+
+{% if not groups %}
+<div class="card">
+  <div class="empty" style="padding:48px 0;">
+    <div style="font-size:32px;margin-bottom:8px;">✓</div>
+    <div style="font-weight:700;color:var(--ok);font-size:15px;">No issues found</div>
+    <div class="muted" style="margin-top:4px;">The last scan came back clean. Scans also run
+      automatically on the slow sweep.</div>
+  </div>
+</div>
+{% endif %}
+
+{% for g in groups %}
+<div class="card">
+  <div class="card-header">
+    <span class="card-title">{{ g.icon }} {{ g.label }}</span>
+    <span class="card-meta">{{ g.rows|length }} issue(s)</span>
+  </div>
+  <table class="data">
+    <thead><tr><th style="width:26%;">Where</th><th>Problem</th><th class="num">Fix</th></tr></thead>
+    <tbody>
+    {% for i in g.rows %}
+      <tr>
+        <td>
+          {% if i.advertiser_id %}
+            {{ i.advertiser_name }}
+            <div class="mono muted" style="font-size:10px;">{{ i.advertiser_id }}</div>
+          {% else %}{{ i.advertiser_name or "—" }}{% endif %}
+        </td>
+        <td>
+          <span style="color:var(--{{ 'err' if i.level == 'err' else 'warn' }});">●</span>
+          {{ i.message }}
+          {% if i.detail %}
+          <details style="margin-top:4px;">
+            <summary class="muted" style="cursor:pointer;font-size:11px;">raw TikTok detail</summary>
+            <span class="mono" style="font-size:11px;color:var(--text-dim);word-break:break-all;">{{ i.detail }}</span>
+          </details>
+          {% endif %}
+        </td>
+        <td class="num" style="white-space:nowrap;">
+          {% if g.key == 'bc' %}
+            <a class="btn sm" target="_blank" rel="noopener"
+               href="https://business.tiktok.com/manage/overview?org_id={{ i.ref }}">Open BC ↗</a>
+          {% elif i.advertiser_id %}
+            <a class="btn sm" target="_blank" rel="noopener"
+               href="https://ads.tiktok.com/i18n/dashboard?aadvid={{ i.advertiser_id }}">Open account ↗</a>
+          {% endif %}
+          {% if g.key == 'spark' %}
+            <a class="btn sm" href="/spark-codes">Spark codes</a>
+          {% elif g.key == 'payment' %}
+            <a class="btn sm" href="/monitor">Monitor</a>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endfor %}
+{% endblock %}

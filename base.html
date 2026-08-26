@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title }}</title>
+  <link rel="stylesheet" href="/static/style.css?v={{ STATIC_V }}">
+  {% block head %}{% endblock %}
+  <!-- topnav.css loads LAST — its :root overrides win (light production theme) -->
+  <link rel="stylesheet" href="/static/topnav.css?v={{ STATIC_V }}">
+</head>
+<body>
+<nav class="topnav">
+  <div class="topnav-inner">
+    {% set launch_active = active.startswith('/super-launcher') or active.startswith('/campaigns') or active.startswith('/queue') %}
+    {% set assets_active = active.startswith('/presets') or active.startswith('/spark-codes') or active.startswith('/pixels') or active.startswith('/accounts') or active.startswith('/instant-pages') or active.startswith('/lead-forms') %}
+    {% set reports_active = active.startswith('/performance') or active.startswith('/revenue') or active.startswith('/everflow') or active.startswith('/cake') or active.startswith('/taprain') %}
+    <div class="nav-links">
+      <a href="/" class="{{ 'active' if active == '/' else '' }}">Overview</a>
+      <a href="/monitor" class="{{ 'active' if active.startswith('/monitor') else '' }}">Monitor</a>
+      <a href="/issues" class="{{ 'active' if active.startswith('/issues') else '' }}">Issues</a>
+      <a href="/pnl" class="{{ 'active' if active.startswith('/pnl') else '' }}">P&L</a>
+      <a href="/status" class="{{ 'active' if active.startswith('/status') else '' }}">Status</a>
+      <a href="/automation" class="{{ 'active' if active.startswith('/automation') else '' }}">Automation</a>
+
+      <div class="nav-group">
+        <button type="button" class="nav-group-btn {{ 'active' if launch_active else '' }}">🚀 Launch <span class="chev">▾</span></button>
+        <div class="nav-group-menu">
+          <a href="/super-launcher" class="{{ 'active' if active.startswith('/super-launcher') else '' }}">Super Launcher
+            <span class="nav-sub">one preset → many accounts</span></a>
+          <a href="/campaigns/launch" class="{{ 'active' if active == '/campaigns/launch' else '' }}">Create Campaign
+            <span class="nav-sub">single account</span></a>
+          <a href="/queue" class="{{ 'active' if active.startswith('/queue') else '' }}">Launch Queue
+            <span class="nav-sub">background launches & retries</span></a>
+        </div>
+      </div>
+
+      <div class="nav-group">
+        <button type="button" class="nav-group-btn {{ 'active' if assets_active else '' }}">Assets <span class="chev">▾</span></button>
+        <div class="nav-group-menu">
+          <a href="/presets" class="{{ 'active' if active.startswith('/presets') else '' }}">Presets</a>
+          <a href="/spark-codes" class="{{ 'active' if active.startswith('/spark-codes') else '' }}">Spark Codes</a>
+          <a href="/pixels" class="{{ 'active' if active.startswith('/pixels') else '' }}">Pixels</a>
+          <a href="/accounts" class="{{ 'active' if active.startswith('/accounts') else '' }}">Ad Accounts</a>
+          <a href="/instant-pages" class="{{ 'active' if active.startswith('/instant-pages') else '' }}">Instant Pages</a>
+          <a href="/lead-forms" class="{{ 'active' if active.startswith('/lead-forms') else '' }}">Lead Forms</a>
+        </div>
+      </div>
+
+      <div class="nav-group">
+        <button type="button" class="nav-group-btn {{ 'active' if reports_active else '' }}">Reports <span class="chev">▾</span></button>
+        <div class="nav-group-menu">
+          <a href="/performance" class="{{ 'active' if active.startswith('/performance') else '' }}">Performance (live)</a>
+          <a href="/revenue" class="{{ 'active' if active.startswith('/revenue') else '' }}">Revenue</a>
+          <div class="menu-sep"></div>
+          <a href="/everflow" class="{{ 'active' if active.startswith('/everflow') else '' }}">Everflow</a>
+          <a href="/cake" class="{{ 'active' if active.startswith('/cake') else '' }}">CAKE</a>
+          <a href="/taprain" class="{{ 'active' if active.startswith('/taprain') else '' }}">Taprain</a>
+        </div>
+      </div>
+    </div>
+    <div class="nav-right">
+      <div class="avatar-menu">
+        <button class="nav-bell" type="button" title="Alerts" id="bellBtn" style="position:relative;">🔔<span id="bellCount"
+          style="display:none;position:absolute;top:-2px;right:-4px;background:var(--err);color:#fff;font-size:10px;font-weight:800;border-radius:999px;padding:1px 5px;line-height:1.4;"></span></button>
+        <div class="avatar-dropdown" id="bellDropdown" style="min-width:320px;max-height:380px;overflow:auto;">
+          <div id="bellList"><div style="padding:10px;color:var(--text-dim);font-size:13px;">No alerts.</div></div>
+          <div class="sep"></div>
+          <a href="#" id="bellAckAll" style="color:var(--text-dim);">Mark all as read</a>
+        </div>
+      </div>
+      <div class="avatar-menu">
+        <button class="avatar" type="button" id="avatarBtn">Op</button>
+        <div class="avatar-dropdown" id="avatarDropdown">
+          <a href="/settings">⚙ Settings</a>
+          <a href="/cookies">TikTok Cookies</a>
+          <div class="sep"></div>
+          <a href="/oauth/connect">Connect TikTok</a>
+          <a href="/logout">Log out</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</nav>
+<div class="container">
+  {% block content %}{% endblock %}
+</div>
+<script>
+  (function () {
+    var btn = document.getElementById("avatarBtn"), dd = document.getElementById("avatarDropdown");
+    if (btn && dd) {
+      btn.addEventListener("click", function (e) { e.stopPropagation(); dd.classList.toggle("open"); });
+      document.addEventListener("click", function () { dd.classList.remove("open"); });
+    }
+    // ---- nav group dropdowns (click to open, one at a time) ----------------
+    var groups = document.querySelectorAll(".nav-group");
+    groups.forEach(function (g) {
+      var btn = g.querySelector(".nav-group-btn");
+      btn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        groups.forEach(function (o) { if (o !== g) o.classList.remove("open"); });
+        g.classList.toggle("open");
+      });
+    });
+    document.addEventListener("click", function () {
+      groups.forEach(function (g) { g.classList.remove("open"); });
+    });
+
+    // ---- alerts bell -------------------------------------------------------
+    var bell = document.getElementById("bellBtn"), bdd = document.getElementById("bellDropdown");
+    var bcount = document.getElementById("bellCount"), blist = document.getElementById("bellList");
+    if (!bell) return;
+    function esc(s) { var d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
+    function refresh() {
+      fetch("/alerts/data").then(function (r) { return r.json(); }).then(function (d) {
+        bcount.style.display = d.count ? "" : "none";
+        bcount.textContent = d.count > 9 ? "9+" : d.count;
+        if (!d.count) {
+          blist.innerHTML = '<div style="padding:10px;color:var(--text-dim);font-size:13px;">No alerts.</div>';
+          return;
+        }
+        blist.innerHTML = d.alerts.map(function (a) {
+          var color = a.level === "err" ? "var(--err)" : (a.level === "warn" ? "var(--warn)" : "var(--text-soft)");
+          var link = "";
+          if (a.href) {
+            var ext = a.external ? ' target="_blank" rel="noopener"' : '';
+            var label = a.external ? "Open BC ↗" : "View →";
+            link = '<a href="' + esc(a.href) + '"' + ext +
+              ' style="flex:none;font-size:11.5px;font-weight:700;color:var(--accent);' +
+              'text-decoration:none;white-space:nowrap;padding:2px 6px;border-radius:6px;' +
+              'background:var(--accent-soft);">' + label + '</a>';
+          }
+          return '<div style="padding:8px 10px;border-bottom:1px solid var(--border-soft);font-size:12.5px;display:flex;gap:8px;align-items:flex-start;">' +
+            '<span style="color:' + color + ';">●</span>' +
+            '<span style="flex:1;">' + esc(a.message) + '</span>' + link +
+            '<button data-ack="' + a.id + '" style="border:none;background:none;cursor:pointer;color:var(--text-dim);font-size:12px;" title="Dismiss">✕</button></div>';
+        }).join("");
+        blist.querySelectorAll("[data-ack]").forEach(function (b) {
+          b.addEventListener("click", function (e) {
+            e.stopPropagation();
+            fetch("/alerts/" + b.dataset.ack + "/ack", { method: "POST" }).then(refresh);
+          });
+        });
+      }).catch(function () {});
+    }
+    bell.addEventListener("click", function (e) { e.stopPropagation(); bdd.classList.toggle("open"); });
+    document.addEventListener("click", function () { bdd.classList.remove("open"); });
+    bdd.addEventListener("click", function (e) { e.stopPropagation(); });
+    document.getElementById("bellAckAll").addEventListener("click", function (e) {
+      e.preventDefault();
+      fetch("/alerts/ack-all", { method: "POST" }).then(refresh);
+    });
+    refresh();
+    setInterval(refresh, 60000);
+  })();
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

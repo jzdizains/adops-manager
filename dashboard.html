@@ -1,0 +1,207 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Overview</h1>
+    <div class="muted">The whole operation at a glance.</div>
+  </div>
+  <div class="actions" data-daterange></div>
+</div>
+
+{# ---- Needs attention -------------------------------------------------- #}
+{% if attention %}
+<div class="card">
+  <div class="card-header">
+    <span class="card-title">Needs attention</span>
+    <span class="card-meta">{{ attention|length }} item(s)</span>
+  </div>
+  {% for a in attention %}
+  <div class="attn-row">
+    <span class="attn-dot" style="color:var(--{{ a.level }});">●</span>
+    <span>{{ a.text }}</span>
+    <a class="btn sm" href="{{ a.href }}"
+       {% if a.get('external') %}target="_blank" rel="noopener"{% endif %}>{{ a.label }}{{ '' if '↗' in a.label else ' →' }}</a>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{# ---- Hero: profit + supporting KPI tiles -------------------------------- #}
+<div class="grid cols-2" style="grid-template-columns: 1.2fr 2fr;">
+  <div class="card mb0" style="display:flex;flex-direction:column;justify-content:center;">
+    <div class="stat-label" style="font-size:12px;font-weight:600;color:var(--text-dim);">Profit</div>
+    <div class="hero-value" style="color:var(--{{ 'ok' if kpis.profit >= 0 else 'err' }});">
+      {{ "-" if kpis.profit < 0 }}${{ "%.2f"|format(kpis.profit|abs) }}</div>
+    <div class="muted" style="margin-top:4px;">
+      ${{ "%.2f"|format(kpis.revenue) }} revenue − ${{ "%.2f"|format(kpis.spend) }} spend
+      · ROAS {{ "%.2f"|format(kpis.roas) }}</div>
+  </div>
+  <div class="grid cols-2 mb0" style="gap:14px;">
+    <div class="card mb0"><div class="stat">
+      <div class="stat-icon">$</div>
+      <div><div class="stat-label">Spend</div>
+        <div class="stat-value">${{ "%.2f"|format(kpis.spend) }}</div></div>
+    </div></div>
+    <div class="card mb0"><div class="stat">
+      <div class="stat-icon ok">▲</div>
+      <div><div class="stat-label">Revenue</div>
+        <div class="stat-value">${{ "%.2f"|format(kpis.revenue) }}</div></div>
+    </div></div>
+    <div class="card mb0"><div class="stat">
+      <div><div class="stat-label">Clicks</div>
+        <div class="stat-value" style="font-size:19px;">{{ "{:,}".format(kpis.clicks) }}</div></div>
+    </div></div>
+    <div class="card mb0"><div class="stat">
+      <div><div class="stat-label">Conversions · CVR · CPA</div>
+        <div class="stat-value" style="font-size:19px;">
+          {{ "{:,}".format(kpis.conversions) }} · {{ "%.2f"|format(kpis.cvr) }}%
+          · {% if kpis.conversions %}${{ "%.2f"|format(kpis.cpa) }}{% else %}—{% endif %}</div></div>
+    </div></div>
+  </div>
+</div>
+
+<div style="height:16px;"></div>
+
+{# ---- Trend chart --------------------------------------------------------- #}
+<div class="card">
+  <div class="card-header">
+    <span class="card-title">Last 14 days</span>
+    <span class="card-meta">
+      <select id="chartA" style="width:auto;display:inline-block;font-size:12px;padding:4px 8px;"></select>
+      vs
+      <select id="chartB" style="width:auto;display:inline-block;font-size:12px;padding:4px 8px;"></select>
+    </span>
+  </div>
+  <div id="cmpChart"></div>
+</div>
+
+<div class="grid cols-2">
+  <div class="card mb0">
+    <div class="card-header">
+      <span class="card-title">Top Ad Accounts</span>
+      <span class="card-meta">by spend today</span>
+    </div>
+    {% if top_accounts %}
+    <table class="data">
+      <thead><tr><th>Account</th><th class="num">Campaigns</th><th class="num">Spend</th></tr></thead>
+      <tbody>
+      {% for a in top_accounts %}
+        <tr><td>{{ a.name }}</td><td class="num">{{ a.campaigns }}</td>
+            <td class="num">${{ "%.2f"|format(a.spend) }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty">No campaign data yet.<br>
+      <a class="btn sm" href="/status" style="margin-top:8px;">Sync campaigns →</a></div>
+    {% endif %}
+  </div>
+
+  <div class="card mb0">
+    <div class="card-header">
+      <span class="card-title">Active Campaigns</span>
+      <span class="card-meta">synced {{ synced_ago }} ·
+        <form method="post" action="/status/sync" style="display:inline;">
+          <button class="btn sm" type="submit">↻ refresh</button></form>
+      </span>
+    </div>
+    {% if active_campaigns %}
+    <table class="data">
+      <thead><tr><th>Campaign</th><th>Account</th><th class="num">Spend</th></tr></thead>
+      <tbody>
+      {% for c in active_campaigns %}
+        <tr>
+          <td>{{ c.campaign_name[:38] }}</td>
+          <td class="muted">{{ (account_names.get(c.advertiser_id) or c.advertiser_id)[:24] }}</td>
+          <td class="num">${{ "%.2f"|format(c.spend_today) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty">No active campaigns.<br>
+      <a class="btn sm primary" href="/super-launcher" style="margin-top:8px;">🚀 Launch one →</a></div>
+    {% endif %}
+  </div>
+</div>
+
+<div style="height:16px;"></div>
+
+{% if bcs %}
+<div class="card">
+  <div class="card-header"><span class="card-title">Business Center wallets</span>
+    <span class="card-meta"><a href="/monitor">Monitor →</a></span></div>
+  <div class="grid cols-4">
+    {% for b in bcs %}
+    <a class="stat" href="https://business.tiktok.com/manage/overview?org_id={{ b.bc_id }}"
+       target="_blank" rel="noopener" title="Open this Business Center on TikTok"
+       style="text-decoration:none;color:inherit;border-radius:10px;padding:4px;margin:-4px;">
+      <div class="stat-icon {{ 'err' if b in low_bcs else 'ok' }}">{{ '!' if b in low_bcs else '$' }}</div>
+      <div><div class="stat-label">{{ (b.name or b.bc_id)[:22] }} ↗</div>
+        <div class="stat-value" style="font-size:17px;{{ 'color:var(--err);' if b in low_bcs else '' }}">
+          {{ b.currency }} {{ "%.2f"|format(b.balance or 0) }}</div></div>
+    </a>
+    {% endfor %}
+  </div>
+</div>
+
+<div style="height:16px;"></div>
+{% endif %}
+
+<div class="card">
+  <div class="card-header"><span class="card-title">System Status</span></div>
+  <div class="grid cols-3">
+    <div class="stat">
+      <div class="stat-icon {{ 'ok' if token_ok else 'err' }}">{{ '✓' if token_ok else '!' }}</div>
+      <div><div class="stat-label">TikTok API token</div>
+        <div class="stat-value" style="font-size:14px;">{{ 'Connected' if token_ok else 'Not connected' }}</div>
+        {% if not token_ok %}<a href="/oauth/connect" style="font-size:12px;">Connect →</a>{% endif %}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-icon" id="cookieIcon">…</div>
+      <div><div class="stat-label">Web cookies</div>
+        <div class="stat-value" style="font-size:14px;" id="cookieVerdict">checking…</div>
+        <a href="/cookies" style="font-size:12px;">Manage →</a></div>
+    </div>
+    <div class="stat">
+      <div class="stat-icon">◎</div>
+      <div><div class="stat-label">Ad accounts</div>
+        <div class="stat-value" style="font-size:14px;">{{ accounts_count }} synced</div></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/daterange.js?v={{ STATIC_V }}"></script>
+<script src="/static/chart.js?v={{ STATIC_V }}"></script>
+<script>
+  fetch("/admin/cookie-check").then(function (r) { return r.json(); }).then(function (h) {
+    var icon = document.getElementById("cookieIcon"), v = document.getElementById("cookieVerdict");
+    var map = { live: ["ok", "✓", "Live"], live_no_permission: ["ok", "✓", "Live (scoped)"],
+                expired: ["err", "!", "Expired"], missing: ["warn", "–", "Not set"],
+                unknown: ["warn", "?", "Unknown"] };
+    var m = map[h.verdict] || map.unknown;
+    icon.className = "stat-icon " + m[0]; icon.textContent = m[1]; v.textContent = m[2];
+  }).catch(function () {});
+
+  // ---- trend chart: two validated series colors (purple × orange) ---------
+  var DATA = {{ chart_json | safe }};
+  var METRICS = { revenue: "Revenue", spend: "Spend", profit: "Profit" };
+  var COLORS = { a: "#9085e9", b: "#d95926" };   // dark-surface validated pair (CVD ΔE 26.0)
+  var selA = document.getElementById("chartA"), selB = document.getElementById("chartB");
+  Object.keys(METRICS).forEach(function (k) {
+    selA.add(new Option(METRICS[k], k)); selB.add(new Option(METRICS[k], k));
+  });
+  selA.value = "revenue"; selB.value = "spend";
+  function draw() {
+    var series = [];
+    if (DATA.series[selA.value]) series.push({ name: METRICS[selA.value], values: DATA.series[selA.value], color: COLORS.a });
+    if (selB.value !== selA.value && DATA.series[selB.value])
+      series.push({ name: METRICS[selB.value], values: DATA.series[selB.value], color: COLORS.b });
+    AdopsChart(document.getElementById("cmpChart"), { labels: DATA.labels, series: series });
+  }
+  selA.addEventListener("change", draw); selB.addEventListener("change", draw);
+  draw();
+</script>
+{% endblock %}

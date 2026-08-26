@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Edit campaign</h1>
+    <div class="muted">{{ rec.campaign_name if rec else campaign_id }} ·
+      {{ acct.advertiser_name if acct else advertiser_id }}</div></div>
+  <div class="actions"><a class="btn" href="/status">← Status</a></div>
+</div>
+
+{% if ok %}<div class="flash ok">{{ ok }}</div>{% endif %}
+{% if err %}<div class="flash err">{{ err }}</div>{% endif %}
+
+<div class="grid cols-2">
+  <div class="card mb0">
+    <div class="card-header"><span class="card-title">Change budgets & caps</span></div>
+    <form method="post" action="/campaigns/{{ advertiser_id }}/{{ campaign_id }}/edit">
+      <label class="field"><span class="field-label">Campaign budget (CBO campaigns only)</span>
+        <input type="number" step="0.01" name="campaign_budget"
+               placeholder="{{ 'current: $%.2f'|format(rec.budget) if rec and rec.budget else 'leave empty to keep' }}">
+        <span class="hint">Only applies when the campaign carries its own budget (CBO).</span></label>
+      <label class="field"><span class="field-label">Set ALL ad group budgets to ($/day)</span>
+        <input type="number" step="0.01" name="adgroup_budget_all" placeholder="leave empty to keep"></label>
+      <label class="field"><span class="field-label">Set ALL cost caps to ($)</span>
+        <input type="number" step="0.01" name="cost_cap_all" placeholder="leave empty to keep">
+        <span class="hint">Applies BID_TYPE_CUSTOM with this conversion bid to every ad group.</span></label>
+      <button class="btn primary" type="submit">Apply changes</button>
+      <span class="hint" style="display:block;margin-top:8px;">Only filled fields are changed.
+        Every edit is logged on the Automation page.</span>
+    </form>
+  </div>
+
+  <div class="card mb0">
+    <div class="card-header"><span class="card-title">Current ad groups</span>
+      <span class="card-meta">live from TikTok</span></div>
+    {% if adgroups %}
+    <table class="data">
+      <thead><tr><th>Ad group</th><th class="num">Budget</th><th class="num">Cost cap</th><th>Status</th></tr></thead>
+      <tbody>
+      {% for ag in adgroups %}
+        <tr>
+          <td>{{ (ag.get('adgroup_name') or ag.get('adgroup_id'))[:30] }}</td>
+          <td class="num">{% if ag.get('budget') %}${{ "%.2f"|format(ag.get('budget')|float) }}{% else %}—{% endif %}</td>
+          <td class="num">{% if ag.get('conversion_bid_price') %}${{ "%.2f"|format(ag.get('conversion_bid_price')|float) }}{% else %}—{% endif %}</td>
+          <td>{% if ag.get('operation_status') == 'ENABLE' %}<span class="pill ok">▶</span>{% else %}<span class="pill warn">⏸</span>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty">Couldn't load ad groups live — the edits above still apply to whatever exists.</div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

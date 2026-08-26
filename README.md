@@ -18,7 +18,7 @@ uvicorn app.main:app --reload
 ```
 
 Open http://localhost:8000 and log in with `APP_PASSWORD`. Everything except
-the TikTok connection works immediately (presets, VA dash, cookies page, etc.).
+the TikTok connection works immediately (presets, cookies page, etc.).
 
 ## What YOU must supply (none of this ships with the code)
 

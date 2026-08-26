@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Launch Queue</h1>
+    <div class="muted">{{ pending }} pending — the background worker processes a few each sweep
+      and retries transient TikTok errors automatically.</div></div>
+  <div class="actions">
+    <a class="btn" href="/automation">← Automation</a>
+    {% if pending %}
+    <form method="post" action="/queue/process-now">
+      <button class="btn primary" type="submit">⚡ Process a batch now</button></form>
+    {% endif %}
+  </div>
+</div>
+
+{% if ok %}<div class="flash ok">{{ ok }}</div>{% endif %}
+
+<div class="card">
+  {% if items %}
+  <table class="data">
+    <thead><tr><th>Queued (UTC)</th><th>Preset</th><th>Spark</th><th>Account</th>
+      <th>Status</th><th class="num">Attempts</th><th>Last error</th><th class="num"></th></tr></thead>
+    <tbody>
+    {% for i in items %}
+      <tr>
+        <td class="muted">{{ i.created_at.strftime("%m-%d %H:%M") }}</td>
+        <td>{{ templates.get(i.template_id, "?") }}</td>
+        <td class="muted">{{ sparks.get(i.spark_code_id, "preset default") }}</td>
+        <td class="muted">{{ names.get(i.advertiser_id) or i.advertiser_id or "auto-pick" }}</td>
+        <td>
+          {% if i.status == 'done' %}<span class="pill ok">done</span>
+          {% elif i.status == 'pending' %}<span class="pill dim">pending</span>
+          {% elif i.status == 'running' %}<span class="pill warn">running</span>
+          {% else %}<span class="pill err">failed</span>{% endif %}
+        </td>
+        <td class="num">{{ i.attempts }}</td>
+        <td style="max-width:230px;"><span class="muted" style="font-size:12px;">{{ i.last_error[:80] or "—" }}</span></td>
+        <td class="num" style="white-space:nowrap;">
+          {% if i.status == 'failed' %}
+          <form method="post" action="/queue/{{ i.id }}/retry" style="display:inline;">
+            <button class="btn sm" type="submit">↻ Retry</button></form>
+          {% endif %}
+          {% if i.status in ('pending', 'failed') %}
+          <form method="post" action="/queue/{{ i.id }}/cancel" style="display:inline;">
+            <button class="btn sm danger" type="submit">✕</button></form>
+          {% endif %}
+          {% if i.batch_ref and i.status == 'done' %}
+          <a class="btn sm" href="/campaigns/result/{{ i.batch_ref }}">result</a>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">Queue is empty — tick “Launch via background queue” on the Super Launcher.</div>
+  {% endif %}
+</div>
+{% endblock %}

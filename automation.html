@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div><h1>⚑ Automation</h1>
+    <div class="muted">Everything the rule engine did — with undo.</div></div>
+  <div class="actions">
+    <a class="btn" href="/queue">Launch queue →</a>
+    {% if still_paused_count %}
+    <form method="post" action="/automation/resume-all"
+          onsubmit="return confirm('Resume all {{ still_paused_count }} rule-paused campaign(s)?');">
+      <button class="btn primary" type="submit">▶ Resume all rule-paused ({{ still_paused_count }})</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+
+{% if ok %}<div class="flash ok">{{ ok }}</div>{% endif %}
+{% if err %}<div class="flash err">{{ err }}</div>{% endif %}
+
+<div class="card">
+  <div class="card-header"><span class="card-title">Rule actions</span>
+    <span class="card-meta">latest 200</span></div>
+  {% if actions %}
+  <table class="data">
+    <thead><tr><th>When (UTC)</th><th>Campaign</th><th>Account</th><th>Rule</th>
+      <th class="num">Value</th><th>Result</th><th class="num"></th></tr></thead>
+    <tbody>
+    {% for a in actions %}
+      <tr>
+        <td class="muted" style="white-space:nowrap;">{{ a.created_at.strftime("%m-%d %H:%M") }}</td>
+        <td>{{ a.campaign_name[:34] or a.campaign_id }}</td>
+        <td class="muted">{{ (names.get(a.advertiser_id) or a.advertiser_id)[:22] }}</td>
+        <td><span class="pill {{ 'warn' if a.action == 'pause' else 'dim' }}">{{ a.action }}</span>
+          <span class="mono" style="font-size:11px;">{{ a.rule }}</span></td>
+        <td class="num">{{ "%.2f"|format(a.metric_value) if a.metric_value else "—" }}</td>
+        <td>{% if a.ok %}<span class="pill ok">ok</span>{% else %}
+            <span class="pill err" title="{{ a.detail }}">failed</span>{% endif %}</td>
+        <td class="num">
+          {% if a.action == 'pause' and a.ok and a.campaign_id in paused_ids %}
+          <form method="post" action="/automation/resume" style="display:inline;">
+            <input type="hidden" name="advertiser_id" value="{{ a.advertiser_id }}">
+            <input type="hidden" name="campaign_id" value="{{ a.campaign_id }}">
+            <button class="btn sm" type="submit">▶ Resume</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<div class="empty">No rule actions yet — the engine logs every pause here.</div>{% endif %}
+</div>
+
+<div class="card">
+  <div class="card-header"><span class="card-title">Auto top-ups</span></div>
+  {% if topups %}
+  <table class="data">
+    <thead><tr><th>When (UTC)</th><th>Account</th><th>BC</th>
+      <th class="num">Amount</th><th>Result</th></tr></thead>
+    <tbody>
+    {% for t in topups %}
+      <tr>
+        <td class="muted">{{ t.created_at.strftime("%m-%d %H:%M") }}</td>
+        <td>{{ (names.get(t.advertiser_id) or t.advertiser_id)[:26] }}</td>
+        <td class="mono muted">{{ t.bc_id }}</td>
+        <td class="num">${{ "%.2f"|format(t.amount) }}</td>
+        <td>{% if t.ok %}<span class="pill ok">sent</span>{% else %}
+            <span class="pill err" title="{{ t.detail }}">failed</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<div class="empty">No auto top-ups yet.</div>{% endif %}
+</div>
+{% endblock %}

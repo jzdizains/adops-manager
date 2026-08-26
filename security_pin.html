@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card" style="max-width:360px;margin:60px auto;">
+  <h2>Enter PIN</h2>
+  <p class="muted">This action is behind the security gate.</p>
+  {% if error %}<div class="flash err">Wrong PIN.</div>{% endif %}
+  <form method="post" action="/security/unlock">
+    <input type="hidden" name="next" value="{{ next }}">
+    <label class="field">
+      <span class="field-label">PIN</span>
+      <input type="password" name="pin" autofocus inputmode="numeric">
+    </label>
+    <button class="btn primary" type="submit">Unlock</button>
+  </form>
+</div>
+{% endblock %}
