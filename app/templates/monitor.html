@@ -12,6 +12,72 @@
   </div>
 </div>
 
+<div style="display:flex;gap:6px;margin-bottom:16px;">
+  <a class="btn {{ 'primary' if view != 'balances' else '' }}" href="/monitor">Accounts & campaigns</a>
+  <a class="btn {{ 'primary' if view == 'balances' else '' }}" href="/monitor?view=balances">💰 Balances</a>
+</div>
+
+{% if view == 'balances' %}
+<div class="card">
+  <div class="card-header">
+    <span class="card-title">Balance per Business Center</span>
+    <span class="card-meta">wallet + money already in ad accounts</span>
+  </div>
+  {% if balance_rows %}
+  <table class="data">
+    <thead><tr>
+      <th>Business Center</th><th class="num">Wallet</th><th class="num">In ad accounts</th>
+      <th class="num">Total available</th><th class="num">Accounts</th>
+      <th class="num">Spend today</th><th class="num">Runway</th><th class="num"></th>
+    </tr></thead>
+    <tbody>
+    {% for r in balance_rows %}
+      <tr>
+        <td>
+          {{ r.bc.name or r.bc.bc_id }}
+          {% if r.low %}<span class="pill err">LOW</span>{% endif %}
+          <div class="mono muted" style="font-size:10px;">{{ r.bc.bc_id }}</div>
+        </td>
+        <td class="num" {% if r.low %}style="color:var(--err);font-weight:700;"{% endif %}>
+          {{ r.bc.currency }} {{ "%.2f"|format(r.wallet) }}</td>
+        <td class="num">{{ "%.2f"|format(r.in_accounts) }}</td>
+        <td class="num" style="font-weight:700;">{{ "%.2f"|format(r.total) }}</td>
+        <td class="num">{{ r.accounts }}</td>
+        <td class="num">{{ "%.2f"|format(r.spend_today) }}</td>
+        <td class="num">
+          {% if r.runway is not none %}
+            {% if r.runway < 2 %}<span style="color:var(--err);font-weight:700;">{{ "%.1f"|format(r.runway) }}d</span>
+            {% elif r.runway < 5 %}<span style="color:var(--warn);font-weight:700;">{{ "%.1f"|format(r.runway) }}d</span>
+            {% else %}{{ "%.1f"|format(r.runway) }}d{% endif %}
+          {% else %}<span class="muted">—</span>{% endif %}
+        </td>
+        <td class="num">
+          <a class="btn sm" target="_blank" rel="noopener"
+             href="https://business.tiktok.com/manage/overview?org_id={{ r.bc.bc_id }}">Open BC ↗</a>
+        </td>
+      </tr>
+    {% endfor %}
+      <tr style="border-top:2px solid var(--border-strong);">
+        <td style="font-weight:700;">Total</td>
+        <td class="num" style="font-weight:700;">{{ "%.2f"|format(btotals.wallet) }}</td>
+        <td class="num" style="font-weight:700;">{{ "%.2f"|format(btotals.in_accounts) }}</td>
+        <td class="num" style="font-weight:700;">{{ "%.2f"|format(btotals.total) }}</td>
+        <td class="num"></td>
+        <td class="num" style="font-weight:700;">{{ "%.2f"|format(btotals.spend_today) }}</td>
+        <td class="num" colspan="2"></td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="hint" style="margin-top:10px;">Runway = total available ÷ today's spend — how many
+    days the money lasts at today's pace. Red under 2 days, amber under 5.</div>
+  {% else %}
+  <div class="empty">No Business Centers synced yet.</div>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if view != 'balances' %}
+
 {% macro metric(v, money=False, pct=False) -%}
   {%- if v is none or v == 0 -%}<span class="muted">—</span>
   {%- elif money -%}${{ "%.2f"|format(v) }}
@@ -120,4 +186,5 @@
 {% if not groups and not orphans %}
 <div class="card"><div class="empty">Nothing to monitor yet — connect TikTok and sync.</div></div>
 {% endif %}
+{% endif %}{# end accounts view #}
 {% endblock %}

@@ -61,8 +61,34 @@ def monitor(request: Request, db: Session = Depends(get_db)):
     cooling = sum(1 for a in accounts if rules_mod.in_cooldown(a))
     with_active = len({c.advertiser_id for c in campaigns if c.operation_status == "ENABLE"})
 
+    # ---- Balances view: one summary row per BC ------------------------------
+    balance_rows = []
+    for g in groups:
+        bc = g["bc"]
+        acct_balance = sum(float(r["a"].balance or 0) for r in g["rows"])
+        total = float(bc.balance or 0) + acct_balance
+        spend_today = g["spend"]
+        runway = (total / spend_today) if spend_today > 0 else None
+        balance_rows.append({
+            "bc": bc, "low": g["low"],
+            "wallet": float(bc.balance or 0),
+            "in_accounts": acct_balance,
+            "total": total,
+            "accounts": len(g["rows"]),
+            "spend_today": spend_today,
+            "runway": runway,
+        })
+    btotals = {
+        "wallet": sum(r["wallet"] for r in balance_rows),
+        "in_accounts": sum(r["in_accounts"] for r in balance_rows),
+        "total": sum(r["total"] for r in balance_rows),
+        "spend_today": sum(r["spend_today"] for r in balance_rows),
+    }
+
     return render(request, "monitor.html", {
         "title": "Monitor", "groups": groups, "orphans": orphans,
         "synced_ago": queries.campaigns_synced_ago(db),
         "inventory": {"fresh": fresh, "active": with_active, "cooling": cooling},
+        "view": request.query_params.get("view", "accounts"),
+        "balance_rows": balance_rows, "btotals": btotals,
     })
