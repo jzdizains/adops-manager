@@ -363,6 +363,10 @@ def build_campaign_payload(fields: dict, acct: models.AdAccount) -> dict:
         payload["budget"] = float(fields["campaign_budget"])
         payload["bid_type"] = fields.get("bid_type", "BID_TYPE_NO_BID")
         payload["optimization_goal"] = fields.get("optimization_goal", "CLICK")
+    else:
+        # ABO: TikTok now REQUIRES budget_mode on campaign create even when the
+        # budget lives on the ad groups — INFINITE = no campaign-level budget
+        payload["budget_mode"] = "BUDGET_MODE_INFINITE"
     return payload
 
 
@@ -497,6 +501,8 @@ def build_spc_campaign_payload(fields: dict, acct: models.AdAccount) -> dict:
         payload["budget_optimize_on"] = True
         payload["budget_mode"] = mode
         payload["budget"] = float(fields["campaign_budget"])
+    else:
+        payload["budget_mode"] = "BUDGET_MODE_INFINITE"   # required even for ABO
     return payload
 
 
