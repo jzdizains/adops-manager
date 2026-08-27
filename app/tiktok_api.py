@@ -582,12 +582,20 @@ def create_spark_ad(access_token: str, advertiser_id: str, payload: dict) -> dic
 # ---------------------------------------------------------------------------
 
 def list_pixels(access_token: str, advertiser_id: str, code: str | None = None) -> list[dict]:
-    """Resolve a pixel CODE to its numeric pixel_id (§9.7). Cache results."""
-    params: dict = {"advertiser_id": advertiser_id, "page": 1, "page_size": 100}
-    if code:
-        params["code"] = code
-    data = api_get("/pixel/list/", access_token, params)
-    return data.get("pixels", data.get("list", []))
+    """All pixels on an account (§9.7). ⚠ /pixel/list/ caps page_size at 20 —
+    paginate to collect everything."""
+    out: list[dict] = []
+    page = 1
+    while True:
+        params: dict = {"advertiser_id": advertiser_id, "page": page, "page_size": 20}
+        if code:
+            params["code"] = code
+        data = api_get("/pixel/list/", access_token, params)
+        batch = data.get("pixels", data.get("list", []))
+        out.extend(batch)
+        if len(batch) < 20 or page >= 25:   # 25 pages = 500 pixels, plenty
+            return out
+        page += 1
 
 
 def list_instant_pages(access_token: str, advertiser_id: str, page: int = 1,
