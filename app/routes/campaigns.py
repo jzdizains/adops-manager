@@ -342,9 +342,15 @@ def resolve_pixel(db: Session, acct: models.AdAccount, pixel_code: str) -> str:
         raise ConfigError(
             f"No pixel picked in the preset and account {acct.advertiser_id} has "
             f"{len(pixels)} pixels — pick the pixel in the preset (Optimization location).")
+    def _numeric_id(p: dict) -> str:
+        for key in ("pixel_id", "id"):
+            v = str(p.get(key, "") or "")
+            if v.isdigit():
+                return v
+        return str(p.get("pixel_id", "") or "")
     for p in pixels:
-        if p.get("pixel_code") == pixel_code or str(p.get("pixel_id")) == pixel_code:
-            pid = str(p.get("pixel_id"))
+        if pixel_code in (str(p.get("pixel_code", "")), str(p.get("pixel_id", "")), str(p.get("id", ""))):
+            pid = _numeric_id(p)
             db.add(models.PixelCache(advertiser_id=acct.advertiser_id, pixel_code=pixel_code,
                                      pixel_id=pid, pixel_name=p.get("pixel_name", "")))
             db.commit()
@@ -860,9 +866,19 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
             fields = dict(fields)
             fields["lead_form_id"] = resolve_page_asset(db, acct, "lead_form", name)
 
-        pixel_id = fields.get("pixel_id") or ""
+        pixel_id = str(fields.get("pixel_id") or "").strip()
+        if pixel_id and not pixel_id.isdigit():
+            # the preset stored the pixel CODE (alphanumeric) — TikTok's ad group
+            # API wants the NUMERIC pixel id; resolve it per account (cached)
+            fields = dict(fields)
+            fields["pixel_code"] = pixel_id
+            pixel_id = ""
         if needs_pixel and not pixel_id:
             pixel_id = resolve_pixel(db, acct, fields["pixel_code"])
+            if not str(pixel_id).isdigit():
+                raise ConfigError(
+                    f"Could not obtain a numeric pixel id (got '{pixel_id}') — re-sync "
+                    "the Pixels page and re-pick the pixel in the preset.")
 
         if fields.get("smart_plus"):
             log.campaign_id = _launch_smart_plus(acct, fields, spark_ref, spark, pixel_id)
