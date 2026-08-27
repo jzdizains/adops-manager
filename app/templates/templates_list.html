@@ -30,6 +30,7 @@
             · {{ blob.get('optimization_event') }}{% endif %}</td>
         <td class="num">{{ blob.get('cost_cap_ladder')|length if blob.get('cost_cap_ladder') else blob.get('duplicates', 1) }}</td>
         <td class="num" style="white-space:nowrap;">
+          <a class="btn sm" href="/presets/{{ t.id }}/edit">✎ Edit</a>
           <form method="post" action="/presets/{{ t.id }}/duplicate" style="display:inline;">
             <button class="btn sm" type="submit">⧉ Copy</button></form>
           <form method="post" action="/presets/{{ t.id }}/delete" style="display:inline;"

@@ -118,6 +118,12 @@
   <div class="card">
     <div class="card-header"><span class="card-title">Placements</span></div>
     <div class="form-row">
+      <label class="field"><span class="field-label">TikTok Search</span>
+        <span style="display:flex;align-items:center;gap:8px;">
+          <input type="checkbox" name="search_enabled" value="1" style="width:auto;"
+                 {{ 'checked' if blob.get('search_enabled') }}>
+          <span>Also show ads in TikTok search results</span>
+        </span></label>
       <label class="field"><span class="field-label">Placement</span>
         <select name="placement_mode">
           <option value="tiktok" {{ 'selected' if not blob.get('placement_auto') else '' }}>TikTok only (recommended — no Pangle)</option>
@@ -316,18 +322,14 @@
         </select></label>
     </div>
     <div class="form-row-3" id="poolModes" style="display:none;">
-      <label class="field"><span class="field-label">Identity on ads</span>
-        <select name="identity_mode">
-          <option value="fixed" {{ 'selected' if blob.get('identity_mode', 'fixed') == 'fixed' }}>Same identity on all (Creatives page)</option>
-          <option value="pool" {{ 'selected' if blob.get('identity_mode') == 'pool' }}>Unique per launch — from Identities pool</option>
-        </select>
-        <span class="hint">Pool mode consumes one name+avatar from <a href="/identities">Identities</a> per launch.</span></label>
-      <label class="field"><span class="field-label">Ad text on ads</span>
+      <label class="field"><span class="field-label">Ad text (required by TikTok)</span>
         <select name="ad_text_mode">
-          <option value="fixed" {{ 'selected' if blob.get('ad_text_mode', 'fixed') == 'fixed' }}>Fixed text (above)</option>
-          <option value="pool" {{ 'selected' if blob.get('ad_text_mode') == 'pool' }}>Unique per launch — from Ad Texts pool</option>
+          <option value="fixed" {{ 'selected' if blob.get('ad_text_mode', 'fixed') == 'fixed' }}>Enter manually — the Ad text field above</option>
+          <option value="pool" {{ 'selected' if blob.get('ad_text_mode') == 'pool' }}>From the Ad Texts list — unique per launch</option>
         </select>
-        <span class="hint">Pool mode consumes one text from <a href="/ad-texts">Ad Texts</a> per launch.</span></label>
+        <span class="hint">TikTok requires ad text on every ad. Manual = the text above (must not be empty); list mode consumes one text from <a href="/ad-texts">Ad Texts</a> per launch.</span></label>
+      <label class="field"><span class="field-label">Identity on ads</span>
+        <span class="hint" style="margin-top:8px;">TikTok no longer supports custom identities — ads publish under the account's own TikTok identity as ad-only (dark) posts, automatically.</span></label>
     </div>
   </div>
 

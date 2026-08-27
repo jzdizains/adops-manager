@@ -10,7 +10,6 @@ from . import background, config
 from .database import init_db
 from .routes import (
     ad_texts, alerts, auth, automation, campaigns, cookies_admin, creatives, dashboard,
-    identities,
     instant_pages, issues_page, lead_forms, monitor, oauth,
     performance, pixels, postback, security, settings_page, spark_codes,
     status, super_launcher, templates_routes,
@@ -51,5 +50,5 @@ for r in (auth.router, security.router, oauth.router, dashboard.router,
           monitor.router, alerts.router,
           settings_page.router, postback.router, pixels.router,
           automation.router, issues_page.router, creatives.router,
-          identities.router, ad_texts.router):
+          ad_texts.router):
     app.include_router(r)

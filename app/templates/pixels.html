@@ -22,7 +22,12 @@
     {% for r in rows %}
       {% set p = r.p %}
       <tr>
-        <td>{{ p.pixel_name or "—" }}
+        <td>
+          <form method="post" action="/pixels/{{ p.id }}/rename" style="display:flex;gap:4px;align-items:center;">
+            <input type="text" name="pixel_name" value="{{ p.pixel_name or '' }}" placeholder="pixel name"
+                   style="width:170px;font-size:12px;padding:4px 8px;">
+            <button class="btn sm" type="submit" title="Rename on TikTok">💾</button>
+          </form>
           <div class="mono muted" style="font-size:10px;">{{ p.pixel_id }}</div></td>
         <td>
           {% if r.is_bc %}<span class="pill ok">{{ r.owner_label }}</span>

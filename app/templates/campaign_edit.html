@@ -14,6 +14,10 @@
   <div class="card mb0">
     <div class="card-header"><span class="card-title">Change budgets & caps</span></div>
     <form method="post" action="/campaigns/{{ advertiser_id }}/{{ campaign_id }}/edit">
+      <label class="field"><span class="field-label">Campaign name</span>
+        <input type="text" name="campaign_name" value="{{ rec.campaign_name if rec else '' }}"
+               placeholder="leave unchanged to keep">
+        <span class="hint">Renames the campaign on TikTok.</span></label>
       <label class="field"><span class="field-label">Campaign budget (CBO campaigns only)</span>
         <input type="number" step="0.01" name="campaign_budget"
                placeholder="{{ 'current: $%.2f'|format(rec.budget) if rec and rec.budget else 'leave empty to keep' }}">

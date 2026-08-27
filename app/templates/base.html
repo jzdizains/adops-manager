@@ -13,7 +13,7 @@
 <nav class="topnav">
   <div class="topnav-inner">
     {% set launch_active = active.startswith('/super-launcher') or active.startswith('/campaigns') or active.startswith('/queue') %}
-    {% set assets_active = active.startswith('/presets') or active.startswith('/spark-codes') or active.startswith('/creatives') or active.startswith('/identities') or active.startswith('/ad-texts') or active.startswith('/pixels') or active.startswith('/accounts') or active.startswith('/instant-pages') or active.startswith('/lead-forms') %}
+    {% set assets_active = active.startswith('/presets') or active.startswith('/spark-codes') or active.startswith('/creatives') or active.startswith('/ad-texts') or active.startswith('/pixels') or active.startswith('/accounts') or active.startswith('/instant-pages') or active.startswith('/lead-forms') %}
     <div class="nav-links">
       <a href="/" class="{{ 'active' if active == '/' else '' }}">Overview</a>
       <a href="/monitor" class="{{ 'active' if active.startswith('/monitor') else '' }}">Monitor</a>
@@ -40,7 +40,6 @@
           <a href="/presets" class="{{ 'active' if active.startswith('/presets') else '' }}">Presets</a>
           <a href="/spark-codes" class="{{ 'active' if active.startswith('/spark-codes') else '' }}">Spark Codes</a>
           <a href="/creatives" class="{{ 'active' if active.startswith('/creatives') else '' }}">Creatives</a>
-          <a href="/identities" class="{{ 'active' if active.startswith('/identities') else '' }}">Identities</a>
           <a href="/ad-texts" class="{{ 'active' if active.startswith('/ad-texts') else '' }}">Ad Texts</a>
           <a href="/pixels" class="{{ 'active' if active.startswith('/pixels') else '' }}">Pixels</a>
           <a href="/accounts" class="{{ 'active' if active.startswith('/accounts') else '' }}">Ad Accounts</a>

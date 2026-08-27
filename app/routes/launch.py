@@ -119,6 +119,7 @@ def synthesize(template: models.Template, overrides: dict[str, Any] | None = Non
         # -- full Ads-Manager surface (all optional; omitted from payloads when empty)
         "special_industries": s.get("special_industries") or [],
         "placement_auto": bool(s.get("placement_auto")),
+        "search_enabled": bool(s.get("search_enabled")),
         "languages": s.get("languages") or [],
         "spending_power": s.get("spending_power") or "",
         "interest_category_ids": s.get("interest_category_ids") or [],
@@ -149,7 +150,6 @@ def synthesize(template: models.Template, overrides: dict[str, Any] | None = Non
         "optimization_event": s.get("optimization_event") or "",
         # -- creative / spark --
         "creative_source": s.get("creative_source") or "spark",   # spark | library
-        "identity_mode": s.get("identity_mode") or "fixed",       # fixed | pool (library only)
         "ad_text_mode": s.get("ad_text_mode") or "fixed",         # fixed | pool (library only)
         "spark_code_id": s.get("spark_code_id"),
         "ad_text": s.get("ad_text") or "",

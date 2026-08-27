@@ -204,7 +204,7 @@ def check_pool_inventory(db: Session, settings: dict | None = None):
     low — but only for pools some preset actually uses, so automation never
     silently drains one and starts failing with CONFIG errors."""
     import json as _json
-    uses_library = uses_identity_pool = uses_text_pool = False
+    uses_library = uses_text_pool = False
     for t in db.query(models.Template).all():
         try:
             blob = _json.loads(t.adgroup_settings or "{}")
@@ -212,15 +212,11 @@ def check_pool_inventory(db: Session, settings: dict | None = None):
             continue
         if blob.get("creative_source") == "library":
             uses_library = True
-            if blob.get("identity_mode") == "pool":
-                uses_identity_pool = True
             if blob.get("ad_text_mode") == "pool":
                 uses_text_pool = True
     checks = []
     if uses_library:
         checks.append(("creatives", models.Creative, "/creatives"))
-    if uses_identity_pool:
-        checks.append(("identities", models.AdIdentity, "/identities"))
     if uses_text_pool:
         checks.append(("ad texts", models.AdText, "/ad-texts"))
     if not checks:

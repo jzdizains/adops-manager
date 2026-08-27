@@ -36,11 +36,37 @@ class SparkResolveError(Exception):
 # Spark identity resolution (§9.2–9.4) — never guess.
 # ---------------------------------------------------------------------------
 
+def _bc_id_for(acct: models.AdAccount, identity_type: str) -> str:
+    """TikTok requires identity_authorized_bc_id on every BC_AUTH_TT call."""
+    return (acct.owner_bc_id or "") if identity_type == "BC_AUTH_TT" else ""
+
+
+def _account_identities(acct: models.AdAccount) -> list[dict]:
+    """All identities usable on this account. BC-authorized TikTok accounts
+    (BC_AUTH_TT) only list when queried WITH the BC id — merge both queries."""
+    identities = tiktok_api.list_identities(acct.access_token, acct.advertiser_id)
+    if acct.owner_bc_id:
+        try:
+            bc_idents = tiktok_api.list_identities(
+                acct.access_token, acct.advertiser_id,
+                identity_type="BC_AUTH_TT",
+                identity_authorized_bc_id=acct.owner_bc_id)
+        except tiktok_api.TikTokError:
+            bc_idents = []
+        seen = {i.get("identity_id") for i in identities}
+        for i in bc_idents:
+            i.setdefault("identity_type", "BC_AUTH_TT")
+            if i.get("identity_id") not in seen:
+                identities.append(i)
+    return identities
+
+
 def _identity_lists_item(acct: models.AdAccount, identity: dict, item_id: str) -> bool:
     try:
         data = tiktok_api.list_tt_videos(
             acct.access_token, acct.advertiser_id,
-            identity["identity_id"], identity.get("identity_type", "TT_USER"))
+            identity["identity_id"], identity.get("identity_type", "TT_USER"),
+            identity_authorized_bc_id=_bc_id_for(acct, identity.get("identity_type", "")))
         for item in data.get("list", []):
             info = item.get("item_info", item)
             if str(info.get("item_id", "")) == str(item_id):
@@ -58,30 +84,36 @@ def resolve_spark(db: Session, acct: models.AdAccount, spark: models.SparkCode) 
     code is NOT TikTok's internal `#LQRA…=` auth_code, so code matching alone
     is unreliable — ownership verification is the real test.
     """
-    identities = tiktok_api.list_identities(acct.access_token, acct.advertiser_id)
+    identities = _account_identities(acct)
+
+    def _ref(ident: dict, item_id: str) -> dict:
+        itype = ident.get("identity_type", "TT_USER")
+        ref = {"identity_id": ident["identity_id"], "identity_type": itype,
+               "item_id": str(item_id)}
+        bc = _bc_id_for(acct, itype)
+        if bc:
+            ref["identity_authorized_bc_id"] = bc
+        return ref
 
     # 1) exact code match across identities' ad-authorized posts
     for ident in identities:
         try:
             data = tiktok_api.list_tt_videos(
                 acct.access_token, acct.advertiser_id,
-                ident["identity_id"], ident.get("identity_type", "TT_USER"))
+                ident["identity_id"], ident.get("identity_type", "TT_USER"),
+                identity_authorized_bc_id=_bc_id_for(acct, ident.get("identity_type", "")))
         except tiktok_api.TikTokError:
             continue
         for item in data.get("list", []):
             info = item.get("item_info", item)
             if spark.code and info.get("auth_code") == spark.code:
-                return {"identity_id": ident["identity_id"],
-                        "identity_type": ident.get("identity_type", "TT_USER"),
-                        "item_id": str(info.get("item_id", ""))}
+                return _ref(ident, info.get("item_id", ""))
 
     # 2) known item_id (auto-grabbed sparks) → any identity that LISTS it
     if spark.tiktok_item_id:
         for ident in identities:
             if _identity_lists_item(acct, ident, spark.tiktok_item_id):
-                return {"identity_id": ident["identity_id"],
-                        "identity_type": ident.get("identity_type", "TT_USER"),
-                        "item_id": str(spark.tiktok_item_id)}
+                return _ref(ident, spark.tiktok_item_id)
 
     # 3) authorize the pasted code on this advertiser, then VERIFY ownership (§9.3)
     if spark.code:
@@ -96,9 +128,7 @@ def resolve_spark(db: Session, acct: models.AdAccount, spark: models.SparkCode) 
                 # BC-connected creator: the post belongs to the shared BC_AUTH_TT identity
                 for ident in identities:
                     if ident.get("identity_type") == "BC_AUTH_TT" and _identity_lists_item(acct, ident, item_id):
-                        return {"identity_id": ident["identity_id"],
-                                "identity_type": "BC_AUTH_TT",
-                                "item_id": item_id}
+                        return _ref(ident, item_id)
         except tiktok_api.TikTokError:
             pass
 
@@ -108,7 +138,8 @@ def resolve_spark(db: Session, acct: models.AdAccount, spark: models.SparkCode) 
         try:
             data = tiktok_api.list_tt_videos(
                 acct.access_token, acct.advertiser_id,
-                ident["identity_id"], ident.get("identity_type", "TT_USER"))
+                ident["identity_id"], ident.get("identity_type", "TT_USER"),
+                identity_authorized_bc_id=_bc_id_for(acct, ident.get("identity_type", "")))
             for item in data.get("list", []):
                 info = item.get("item_info", item)
                 all_items.append((ident, str(info.get("item_id", ""))))
@@ -116,9 +147,7 @@ def resolve_spark(db: Session, acct: models.AdAccount, spark: models.SparkCode) 
             continue
     if len(all_items) == 1:
         ident, item_id = all_items[0]
-        return {"identity_id": ident["identity_id"],
-                "identity_type": ident.get("identity_type", "TT_USER"),
-                "item_id": item_id}
+        return _ref(ident, item_id)
 
     raise SparkResolveError(
         f"Could not resolve spark '{spark.name or spark.code[:12]}' on account "
@@ -258,6 +287,8 @@ def build_adgroup_payload(fields: dict, acct: models.AdAccount, campaign_id: str
     else:
         payload["placement_type"] = "PLACEMENT_TYPE_NORMAL"
         payload["placements"] = ["PLACEMENT_TIKTOK"]
+    if fields.get("search_enabled"):
+        payload["search_result_enabled"] = True
     # targeting extras — only sent when set (omit = TikTok defaults)
     if fields.get("age_groups"):
         payload["age_groups"] = fields["age_groups"]
@@ -336,6 +367,8 @@ def build_ad_payload(fields: dict, adgroup_id: str, spark_ref: dict | None,
         creative["identity_id"] = spark_ref["identity_id"]
         creative["identity_type"] = spark_ref["identity_type"]
         creative["tiktok_item_id"] = spark_ref["item_id"]
+        if spark_ref.get("identity_authorized_bc_id"):
+            creative["identity_authorized_bc_id"] = spark_ref["identity_authorized_bc_id"]
     dest = fields["destination_type"]
     if dest == "instant_page" and fields.get("instant_page_id"):
         creative["page_id"] = fields["instant_page_id"]
@@ -405,6 +438,8 @@ def build_spc_adgroup_payload(fields: dict, campaign_id: str, spark_ref: dict | 
     if spark_ref:
         payload["identity_id"] = spark_ref["identity_id"]
         payload["identity_type"] = spark_ref["identity_type"]
+        if spark_ref.get("identity_authorized_bc_id"):
+            payload["identity_authorized_bc_id"] = spark_ref["identity_authorized_bc_id"]
     # advanced settings
     if fields.get("comment_disabled"):
         payload["comment_disabled"] = True
@@ -457,36 +492,27 @@ def build_spc_ad_payload(fields: dict, adgroup_id: str, spark_ref: dict,
 # Creative library — per-account upload + custom identity (§Creatives)
 # ---------------------------------------------------------------------------
 
-def _ensure_custom_identity(db: Session, acct: models.AdAccount, settings: dict) -> str:
-    """Get-or-create the CUSTOMIZED_USER identity for this account (cached)."""
-    from .creatives import AVATAR_PATH
-    name = (settings.get("ad_identity_name") or "").strip()
-    if not name:
-        raise ConfigError("Set the ad identity display name on the Creatives page "
-                          "before launching library creatives.")
-    row = (db.query(models.CustomIdentity)
-           .filter_by(advertiser_id=acct.advertiser_id).first())
-    if row and row.identity_id and row.display_name == name:
-        return row.identity_id
-    if not AVATAR_PATH.exists():
-        raise ConfigError("Upload an ad identity avatar (square image) on the "
-                          "Creatives page before launching library creatives.")
-    stamp = datetime.now(timezone.utc).strftime("%m%d%H%M%S")
-    img = tiktok_api.upload_image_file(acct.access_token, acct.advertiser_id,
-                                       str(AVATAR_PATH), f"identity_avatar_{stamp}.jpg")
-    image_id = str(img.get("image_id", ""))
-    ident = tiktok_api.create_custom_identity(acct.access_token, acct.advertiser_id,
-                                              name, image_id)
-    identity_id = str(ident.get("identity_id", ""))
-    if not identity_id:
-        raise tiktok_api.TikTokError("APP", "identity create returned no identity_id")
-    if not row:
-        row = models.CustomIdentity(advertiser_id=acct.advertiser_id)
-        db.add(row)
-    row.identity_id = identity_id
-    row.display_name = name
-    db.commit()
-    return identity_id
+def resolve_account_identity(db: Session, acct: models.AdAccount) -> dict:
+    """Pick the TikTok-account identity library ads publish under.
+
+    TikTok no longer supports custom identities — non-spark ads must use a real
+    TikTok account identity ("only show as ads" dark posts). Prefer the
+    BC-linked identity (BC_AUTH_TT), else the first available one."""
+    identities = _account_identities(acct)
+    if not identities:
+        raise ConfigError(
+            f"Account {acct.advertiser_name or acct.advertiser_id} has no TikTok "
+            "identity — connect a TikTok account to it (or the Business Center) "
+            "before launching library creatives.")
+    for ident in identities:
+        if ident.get("identity_type") == "BC_AUTH_TT":
+            out = {"identity_id": ident["identity_id"], "identity_type": "BC_AUTH_TT"}
+            if acct.owner_bc_id:
+                out["identity_authorized_bc_id"] = acct.owner_bc_id
+            return out
+    first = identities[0]
+    return {"identity_id": first["identity_id"],
+            "identity_type": first.get("identity_type", "TT_USER")}
 
 
 def _upload_creative_to_account(db: Session, acct: models.AdAccount,
@@ -520,44 +546,20 @@ def _upload_creative_to_account(db: Session, acct: models.AdAccount,
     return video_id, cover_image_id
 
 
-def _create_identity_from_pool(db: Session, acct: models.AdAccount,
-                               ident: models.AdIdentity) -> str:
-    """Create THIS pool identity (name+avatar) in the target account. Cached per
-    row+account so a retried launch never creates a duplicate on TikTok."""
-    if ident.created_advertiser_id == acct.advertiser_id and ident.created_identity_id:
-        return ident.created_identity_id
-    from pathlib import Path
-    if not ident.avatar_path or not Path(ident.avatar_path).exists():
-        raise ConfigError(f"Identity '{ident.display_name}' has no avatar file — "
-                          "delete it and re-upload on the Identities page.")
-    stamp = datetime.now(timezone.utc).strftime("%m%d%H%M%S")
-    ext = ident.avatar_path.rsplit(".", 1)[-1].lower() if "." in ident.avatar_path else "jpg"
-    img = tiktok_api.upload_image_file(acct.access_token, acct.advertiser_id,
-                                       ident.avatar_path, f"avatar_i{ident.id}_{stamp}.{ext}")
-    image_id = str(img.get("image_id", ""))
-    resp = tiktok_api.create_custom_identity(acct.access_token, acct.advertiser_id,
-                                             ident.display_name, image_id)
-    identity_id = str(resp.get("identity_id", ""))
-    if not identity_id:
-        raise tiktok_api.TikTokError("APP", "identity create returned no identity_id")
-    ident.created_advertiser_id = acct.advertiser_id
-    ident.created_identity_id = identity_id
-    db.commit()
-    return identity_id
-
-
-def build_library_ad_payload(fields: dict, adgroup_id: str, identity_id: str,
+def build_library_ad_payload(fields: dict, adgroup_id: str, identity: dict,
                              video_id: str, cover_image_id: str) -> dict:
     creative: dict = {
         "ad_name": f"{fields['template_name']} ad"[:512],
         "ad_format": "SINGLE_VIDEO",
-        "ad_text": fields["ad_text"] or " ",
+        "ad_text": fields["ad_text"],
         "call_to_action": fields["call_to_action"],
-        "identity_id": identity_id,
-        "identity_type": "CUSTOMIZED_USER",
+        "identity_id": identity["identity_id"],
+        "identity_type": identity["identity_type"],
         "video_id": video_id,
         "landing_page_url": fields["landing_page_url"],
     }
+    if identity.get("identity_authorized_bc_id"):
+        creative["identity_authorized_bc_id"] = identity["identity_authorized_bc_id"]
     if cover_image_id:
         creative["image_ids"] = [cover_image_id]
     return {"adgroup_id": adgroup_id, "creatives": [creative]}
@@ -598,7 +600,6 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
         advertiser_name=acct.advertiser_name,
         template_id=fields.get("template_id"), template_name=fields.get("template_name", ""))
     creative: models.Creative | None = None      # library creative (reserved below)
-    pool_identity: models.AdIdentity | None = None
     pool_text: models.AdText | None = None
     creative_committed = False                    # True once an ad actually exists
     try:
@@ -620,10 +621,13 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
             if not fields.get("landing_page_url"):
                 raise ConfigError("Library-creative presets need a landing page URL "
                                   "(the video ad's destination).")
-        elif fields.get("identity_mode") == "pool" or fields.get("ad_text_mode") == "pool":
-            raise ConfigError("Unique identity / ad-text pools work with the Creative "
-                              "library only — spark ads always show the creator's own "
-                              "handle and caption.")
+            # TikTok now REQUIRES ad text on ads
+            if fields.get("ad_text_mode") != "pool" and not (fields.get("ad_text") or "").strip():
+                raise ConfigError("TikTok requires ad text on every ad — enter it in the "
+                                  "preset, or switch to pulling from the Ad Texts list.")
+        elif fields.get("ad_text_mode") == "pool":
+            raise ConfigError("The Ad Texts pool works with the Creative library only — "
+                              "spark ads always show the post's own caption.")
         strategy = fields.get("bid_strategy") or ""
         if strategy == "cost_cap" and not (fields.get("cost_cap_ladder") or []):
             raise ConfigError("Preset bid strategy is Cost cap but no cap value is set. "
@@ -652,7 +656,8 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
 
         # creative library: reserve the next unused creative, then upload it and
         # the ad identity into THIS account — all before creating anything
-        creative_video_id = creative_cover_id = creative_identity_id = ""
+        creative_video_id = creative_cover_id = ""
+        creative_identity: dict = {}
         if use_library:
             settings = get_settings(db)
             creative = (db.query(models.Creative).filter_by(status="available")
@@ -665,17 +670,6 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
             creative.status = "used"
             creative.used_advertiser_id = acct.advertiser_id
             creative.used_at = now_naive
-            # unique-identity pool: reserve the next name+avatar pair too
-            if fields.get("identity_mode") == "pool":
-                pool_identity = (db.query(models.AdIdentity)
-                                 .filter_by(status="available")
-                                 .order_by(models.AdIdentity.id).first())
-                if not pool_identity:
-                    raise ConfigError("No available identities left in the pool — "
-                                      "add more on the Identities page.")
-                pool_identity.status = "used"
-                pool_identity.used_advertiser_id = acct.advertiser_id
-                pool_identity.used_at = now_naive
             # unique-ad-text pool: reserve the next text too
             if fields.get("ad_text_mode") == "pool":
                 pool_text = (db.query(models.AdText)
@@ -690,10 +684,8 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                 fields = dict(fields)
                 fields["ad_text"] = pool_text.text
             db.commit()
-            if pool_identity is not None:
-                creative_identity_id = _create_identity_from_pool(db, acct, pool_identity)
-            else:
-                creative_identity_id = _ensure_custom_identity(db, acct, settings)
+            # ads publish under the account's own TikTok identity (dark post)
+            creative_identity = resolve_account_identity(db, acct)
             creative_video_id, creative_cover_id = _upload_creative_to_account(db, acct, creative)
             if (creative.source or "").strip():
                 log.source = creative.source.strip()
@@ -750,14 +742,12 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                 adgroup_id = str(ag.get("adgroup_id"))
                 if creative is not None:
                     ad_payload = build_library_ad_payload(
-                        fields, adgroup_id, creative_identity_id,
+                        fields, adgroup_id, creative_identity,
                         creative_video_id, creative_cover_id)
                     tiktok_api.create_ad(acct.access_token, acct.advertiser_id, ad_payload)
                     creative_committed = True
                     if not creative.used_campaign_id:
                         creative.used_campaign_id = campaign_id
-                    if pool_identity is not None and not pool_identity.used_campaign_id:
-                        pool_identity.used_campaign_id = campaign_id
                     if pool_text is not None and not pool_text.used_campaign_id:
                         pool_text.used_campaign_id = campaign_id
                 elif spark_ref or fields.get("landing_page_url") or fields.get("instant_page_id") \
@@ -803,7 +793,7 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
     # reserved pool assets go back when NO ad was created (per-account upload &
     # identity caches are kept, so a retry is instant and duplicate-free)
     if not log.ok and not creative_committed:
-        for reserved in (creative, pool_identity, pool_text):
+        for reserved in (creative, pool_text):
             if reserved is not None:
                 reserved.status = "available"
                 reserved.used_advertiser_id = ""
@@ -893,12 +883,13 @@ def edit_campaign(request: Request, advertiser_id: str, campaign_id: str,
 
 @router.post("/campaigns/{advertiser_id}/{campaign_id}/edit")
 def apply_campaign_edit(advertiser_id: str, campaign_id: str,
+                        campaign_name: str = Form(""),
                         campaign_budget: str = Form(""),
                         adgroup_budget_all: str = Form(""),
                         cost_cap_all: str = Form(""),
                         db: Session = Depends(get_db)):
-    """Apply whichever fields were filled: CBO campaign budget, all ad-group
-    budgets, and/or all cost caps."""
+    """Apply whichever fields were filled: campaign name, CBO campaign budget,
+    all ad-group budgets, and/or all cost caps."""
     acct = db.query(models.AdAccount).filter_by(advertiser_id=advertiser_id).first()
     if not acct or not acct.access_token:
         return RedirectResponse(
@@ -914,6 +905,20 @@ def apply_campaign_edit(advertiser_id: str, campaign_id: str,
     new_ag_budget = _f(adgroup_budget_all)
     new_cap = _f(cost_cap_all)
     changed, errors = [], []
+
+    rec = (db.query(models.CampaignRecord)
+           .filter_by(advertiser_id=advertiser_id, campaign_id=campaign_id).first())
+    new_name = campaign_name.strip()
+    if new_name and new_name != ((rec.campaign_name if rec else "") or ""):
+        try:
+            tiktok_api.update_campaign_name(
+                acct.access_token, advertiser_id, campaign_id, new_name,
+                smart_plus=bool(rec.is_smart_plus) if rec else False)
+            changed.append(f"name → {new_name[:40]}")
+            if rec:
+                rec.campaign_name = new_name
+        except tiktok_api.TikTokError as e:
+            errors.append(f"rename: code {e.code} {e.message[:80]}")
 
     if new_camp_budget is not None:
         try:

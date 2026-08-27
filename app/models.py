@@ -137,25 +137,6 @@ class CreativeUpload(Base):
     created_at = Column(DateTime, default=utcnow)
 
 
-class AdIdentity(Base):
-    """Identity pool — a name + avatar pair, consumed by exactly ONE launch so
-    every campaign can carry a unique identity on its ads."""
-    __tablename__ = "ad_identities"
-
-    id = Column(Integer, primary_key=True)
-    display_name = Column(String, default="")
-    avatar_path = Column(String, default="")               # under DATA_DIR/identity_avatars/
-    status = Column(String, default="available")           # available | used
-    used_advertiser_id = Column(String, default="")
-    used_campaign_id = Column(String, default="")
-    used_at = Column(DateTime, nullable=True)
-    # cache of the TikTok identity created from this row (survives a revert so
-    # a retried launch on the same account never creates a duplicate)
-    created_advertiser_id = Column(String, default="")
-    created_identity_id = Column(String, default="")
-    created_at = Column(DateTime, default=utcnow)
-
-
 class AdText(Base):
     """Ad-text pool — each text is consumed by exactly ONE launch so every
     campaign can carry unique copy."""
@@ -167,18 +148,6 @@ class AdText(Base):
     used_advertiser_id = Column(String, default="")
     used_campaign_id = Column(String, default="")
     used_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=utcnow)
-
-
-class CustomIdentity(Base):
-    """Cache: the CUSTOMIZED_USER identity (name+avatar shown on non-spark ads)
-    created in each ad account."""
-    __tablename__ = "custom_identities"
-
-    id = Column(Integer, primary_key=True)
-    advertiser_id = Column(String, unique=True, index=True)
-    identity_id = Column(String, default="")
-    display_name = Column(String, default="")
     created_at = Column(DateTime, default=utcnow)
 
 

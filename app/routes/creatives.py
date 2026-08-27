@@ -2,8 +2,8 @@
 
 Each creative is consumed by exactly ONE launch (the engine reserves the next
 available one, uploads it into the target account's TikTok asset library, and
-records where it went). The ad identity (display name + avatar shown on these
-non-spark ads) is configured here too.
+records where it went). Ads publish under each account's own TikTok identity
+as ad-only (dark) posts — TikTok no longer supports custom identities.
 """
 from __future__ import annotations
 
@@ -18,13 +18,11 @@ from sqlalchemy.orm import Session
 
 from .. import config, models
 from ..database import get_db
-from ..settings_store import get_settings, save_settings
 from ..templating import render
 
 router = APIRouter()
 
 CREATIVES_DIR = config.DATA_DIR / "creatives"
-AVATAR_PATH = config.DATA_DIR / "identity_avatar.jpg"
 
 ALLOWED_VIDEO = {".mp4", ".mov", ".mpeg", ".avi", ".3gp", ".webm"}
 MAX_VIDEO_BYTES = 500 * 1024 * 1024
@@ -40,12 +38,9 @@ def creatives_page(request: Request, db: Session = Depends(get_db)):
             .order_by(models.Creative.status, models.Creative.id.desc()).all())
     accounts = {a.advertiser_id: (a.advertiser_name or a.advertiser_id)
                 for a in db.query(models.AdAccount).all()}
-    settings = get_settings(db)
     available = sum(1 for r in rows if r.status == "available")
     return render(request, "creatives.html", {
         "rows": rows, "accounts": accounts, "available": available,
-        "identity_name": settings.get("ad_identity_name", ""),
-        "has_avatar": AVATAR_PATH.exists(),
         "ok": request.query_params.get("ok", ""),
         "err": request.query_params.get("err", ""),
         "title": "Creatives",
@@ -131,24 +126,3 @@ def delete_creative(creative_id: int, db: Session = Depends(get_db)):
     db.delete(row)
     db.commit()
     return RedirectResponse("/creatives?ok=deleted", status_code=303)
-
-
-@router.post("/creatives/identity")
-async def save_identity(request: Request, db: Session = Depends(get_db)):
-    form = await request.form()
-    name = str(form.get("identity_name") or "").strip()[:100]
-    settings = get_settings(db)
-    settings["ad_identity_name"] = name
-    save_settings(db, settings)
-    avatar = form.get("avatar")
-    if isinstance(avatar, UploadFile) and avatar.filename:
-        data = await avatar.read()
-        if data:
-            if len(data) > 5 * 1024 * 1024:
-                return RedirectResponse("/creatives?err=avatar+over+5MB", status_code=303)
-            AVATAR_PATH.parent.mkdir(parents=True, exist_ok=True)
-            AVATAR_PATH.write_bytes(data)
-            # a new avatar means per-account identities must be recreated
-            db.query(models.CustomIdentity).delete()
-            db.commit()
-    return RedirectResponse("/creatives?ok=identity+saved", status_code=303)

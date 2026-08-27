@@ -192,6 +192,30 @@ def link_one(record_id: int, advertiser_id: str = Form(...), db: Session = Depen
     return RedirectResponse("/pixels?ok=Linked", status_code=303)
 
 
+@router.post("/pixels/{record_id}/rename")
+def rename(record_id: int, pixel_name: str = Form(...), db: Session = Depends(get_db)):
+    """Rename the pixel ON TIKTOK (and in our cache)."""
+    p = db.get(models.PixelRecord, record_id)
+    new_name = pixel_name.strip()[:128]
+    if not p or not new_name:
+        return RedirectResponse("/pixels?err=nothing+to+rename", status_code=303)
+    acct = (db.query(models.AdAccount)
+            .filter_by(advertiser_id=p.owner_advertiser_id).first())
+    if not acct or not acct.access_token:
+        return RedirectResponse(
+            "/pixels?err=owner+account+not+connected+—+can't+rename+on+TikTok",
+            status_code=303)
+    try:
+        tiktok_api.pixel_update(acct.access_token, acct.advertiser_id,
+                                p.pixel_id, new_name)
+    except tiktok_api.TikTokError as e:
+        return RedirectResponse(
+            f"/pixels?err=TikTok+refused+rename+(code+{e.code})", status_code=303)
+    p.pixel_name = new_name
+    db.commit()
+    return RedirectResponse("/pixels?ok=Renamed+on+TikTok", status_code=303)
+
+
 @router.post("/pixels/{record_id}/delete")
 def remove(record_id: int, db: Session = Depends(get_db)):
     p = db.get(models.PixelRecord, record_id)

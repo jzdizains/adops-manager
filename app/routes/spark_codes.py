@@ -73,6 +73,31 @@ def set_source(code_id: int, source: str = Form(""), db: Session = Depends(get_d
     return RedirectResponse("/spark-codes?ok=source+saved", status_code=303)
 
 
+@router.post("/spark-codes/{code_id}/update")
+def update_code(code_id: int, name: str = Form(""), source: str = Form(""),
+                code: str = Form(""), db: Session = Depends(get_db)):
+    """Edit a spark code row: name + source anytime; the pasted code itself only
+    while the spark has never launched (editing it after would break history)."""
+    c = db.get(models.SparkCode, code_id)
+    if not c:
+        return RedirectResponse("/spark-codes?err=not+found", status_code=303)
+    c.name = name.strip()[:120]
+    if (c.source or "").strip() != source.strip() and (c.use_count or 0) > 0 and (c.source or "").strip():
+        return RedirectResponse(
+            "/spark-codes?err=source+is+locked+after+the+spark+has+launched+(P%26L+history)",
+            status_code=303)
+    c.source = source.strip()
+    new_code = code.strip()
+    if new_code and new_code != (c.code or ""):
+        if (c.use_count or 0) > 0:
+            return RedirectResponse(
+                "/spark-codes?err=code+is+locked+after+the+spark+has+launched",
+                status_code=303)
+        c.code = new_code
+    db.commit()
+    return RedirectResponse("/spark-codes?ok=saved", status_code=303)
+
+
 @router.post("/spark-codes/{code_id}/delete")
 def delete_code(code_id: int, db: Session = Depends(get_db)):
     c = db.get(models.SparkCode, code_id)
@@ -106,7 +131,8 @@ def auto_grab(request: Request, db: Session = Depends(get_db)):
     errors = []
     for acct in accounts:
         try:
-            identities = tiktok_api.list_identities(acct.access_token, acct.advertiser_id)
+            from .campaigns import _account_identities
+            identities = _account_identities(acct)   # includes BC_AUTH_TT (needs bc id)
         except tiktok_api.TikTokError as e:
             errors.append(f"{acct.advertiser_id}: {e.code}")
             continue
@@ -116,8 +142,10 @@ def auto_grab(request: Request, db: Session = Depends(get_db)):
                 continue  # only real creator identities carry grabbable posts
             handle = ident.get("display_name", "") or ident.get("identity_id", "")
             try:
-                data = tiktok_api.list_tt_videos(acct.access_token, acct.advertiser_id,
-                                                 ident["identity_id"], itype)
+                data = tiktok_api.list_tt_videos(
+                    acct.access_token, acct.advertiser_id,
+                    ident["identity_id"], itype,
+                    identity_authorized_bc_id=(acct.owner_bc_id or "") if itype == "BC_AUTH_TT" else "")
             except tiktok_api.TikTokError:
                 continue
             for item in data.get("list", []):

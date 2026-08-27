@@ -46,16 +46,24 @@
 {% macro code_row(c) %}
   <tr>
     <td>
+      <form id="scf{{ c.id }}" method="post" action="/spark-codes/{{ c.id }}/update"></form>
       {% if c.thumbnail_url %}<img src="{{ c.thumbnail_url }}" alt="" style="width:34px;height:44px;object-fit:cover;border-radius:6px;vertical-align:middle;margin-right:8px;">{% endif %}
-      {{ c.name or "—" }}
+      <input form="scf{{ c.id }}" type="text" name="name" value="{{ c.name or '' }}" placeholder="name"
+             style="width:150px;font-size:12px;padding:4px 8px;">
     </td>
-    <td class="mono" style="max-width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ c.code or "(no code — grabbed item)" }}</td>
+    <td class="mono" style="max-width:210px;">
+      {% if c.use_count %}
+        <span style="display:inline-block;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle;">{{ c.code or "(no code — grabbed item)" }}</span>
+      {% else %}
+        <input form="scf{{ c.id }}" type="text" name="code" value="{{ c.code or '' }}"
+               placeholder="(no code — grabbed item)"
+               style="width:190px;font-size:12px;padding:4px 8px;font-family:var(--font-mono);">
+      {% endif %}
+    </td>
     <td>
-      <form method="post" action="/spark-codes/{{ c.id }}/source" style="display:flex;gap:4px;">
-        <input type="text" name="source" value="{{ c.source or '' }}" placeholder="source"
-               style="width:110px;font-size:12px;padding:4px 8px;font-family:var(--font-mono);">
-        <button class="btn sm" type="submit">✓</button>
-      </form>
+      <input form="scf{{ c.id }}" type="text" name="source" value="{{ c.source or '' }}" placeholder="source"
+             style="width:110px;font-size:12px;padding:4px 8px;font-family:var(--font-mono);"
+             {{ 'readonly' if c.use_count and c.source }}>
     </td>
     <td><span class="pill dim">{{ c.media_type }}</span></td>
     <td>
@@ -65,6 +73,7 @@
       {% if c.use_count %}<span class="muted" style="font-size:11px;">×{{ c.use_count }}</span>{% endif %}
     </td>
     <td class="num" style="white-space:nowrap;">
+      <button form="scf{{ c.id }}" class="btn sm" type="submit">💾 Save</button>
       {% if c.tiktok_post_url %}<a class="btn sm" href="{{ c.tiktok_post_url }}" target="_blank">↗</a>{% endif %}
       <button class="btn sm" type="button" onclick="navigator.clipboard.writeText('{{ c.code }}');this.textContent='✓';">copy</button>
       <form method="post" action="/spark-codes/{{ c.id }}/delete" style="display:inline;"

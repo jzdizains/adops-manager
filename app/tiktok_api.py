@@ -194,6 +194,15 @@ def bc_transfer(access_token: str, bc_id: str, advertiser_id: str, amount: float
     })
 
 
+def pixel_update(access_token: str, advertiser_id: str, pixel_id: str,
+                 pixel_name: str) -> dict:
+    """Rename a pixel (POST /pixel/update/ — verified in TikTok's official SDK)."""
+    return api_post("/pixel/update/", access_token, {
+        "advertiser_id": advertiser_id, "pixel_id": pixel_id,
+        "pixel_name": pixel_name,
+    })
+
+
 def pixel_create(access_token: str, advertiser_id: str, pixel_name: str,
                  pixel_category: str | None = None) -> dict:
     """Create a pixel on an ad account (POST /pixel/create/ — verified in
@@ -313,36 +322,6 @@ def upload_image_by_url(access_token: str, advertiser_id: str, image_url: str,
     return api_post("/file/image/ad/upload/", access_token, payload)
 
 
-def upload_image_file(access_token: str, advertiser_id: str, file_path: str,
-                      file_name: str) -> dict:
-    """Upload a local image file (identity avatars). Returns {image_id,...}."""
-    import hashlib
-    from pathlib import Path
-    data = Path(file_path).read_bytes()
-    signature = hashlib.md5(data).hexdigest()
-    try:
-        with httpx.Client(timeout=httpx.Timeout(60.0, connect=10.0)) as client:
-            resp = client.post(
-                f"{BASE}/file/image/ad/upload/",
-                headers={"Access-Token": access_token},
-                data={"advertiser_id": advertiser_id, "upload_type": "UPLOAD_BY_FILE",
-                      "image_signature": signature, "file_name": file_name},
-                files={"image_file": (file_name, data, "image/jpeg")},
-            )
-    except httpx.HTTPError as e:
-        raise TikTokError("HTTP", f"Network error uploading image: {e!r}")
-    return _parse(resp)
-
-
-def create_custom_identity(access_token: str, advertiser_id: str,
-                           display_name: str, image_uri: str) -> dict:
-    """Create a CUSTOMIZED_USER identity (name + avatar shown on non-spark ads)."""
-    return api_post("/identity/create/", access_token, {
-        "advertiser_id": advertiser_id, "display_name": display_name,
-        "image_uri": image_uri,
-    })
-
-
 # ---------------------------------------------------------------------------
 # Smart+ (SDK-verified endpoints — /smart_plus/*, each create needs a client
 # request_id for idempotency)
@@ -404,6 +383,16 @@ def update_campaign_budget(access_token: str, advertiser_id: str, campaign_id: s
     return api_post("/campaign/update/", access_token, {
         "advertiser_id": advertiser_id, "campaign_id": campaign_id,
         "budget": round(float(budget), 2),
+    })
+
+
+def update_campaign_name(access_token: str, advertiser_id: str, campaign_id: str,
+                         campaign_name: str, smart_plus: bool = False) -> dict:
+    """Rename a campaign (/campaign/update/ — or the Smart+ variant)."""
+    path = "/smart_plus/campaign/update/" if smart_plus else "/campaign/update/"
+    return api_post(path, access_token, {
+        "advertiser_id": advertiser_id, "campaign_id": campaign_id,
+        "campaign_name": campaign_name[:512],
     })
 
 
@@ -471,33 +460,42 @@ def get_report(access_token: str, advertiser_id: str, *, dimensions: list[str],
 # Identities & Spark
 # ---------------------------------------------------------------------------
 
-def list_identities(access_token: str, advertiser_id: str, identity_type: str | None = None) -> list[dict]:
-    """Identities connected to an account: TT_USER / BC_AUTH_TT / CUSTOMIZED_USER / AUTH_CODE.
+def list_identities(access_token: str, advertiser_id: str, identity_type: str | None = None,
+                    identity_authorized_bc_id: str = "") -> list[dict]:
+    """Identities connected to an account: TT_USER / BC_AUTH_TT / AUTH_CODE.
 
     Crucial for spark launches (§9.2–9.3): the identity used must actually OWN
-    the post being promoted.
+    the post being promoted. ⚠ identity_authorized_bc_id is REQUIRED by TikTok
+    whenever identity_type is BC_AUTH_TT.
     """
     params: dict = {"advertiser_id": advertiser_id, "page": 1, "page_size": 100}
     if identity_type:
         params["identity_type"] = identity_type
+    if identity_authorized_bc_id:
+        params["identity_authorized_bc_id"] = identity_authorized_bc_id
     data = api_get("/identity/get/", access_token, params)
     return data.get("identity_list", data.get("list", []))
 
 
 def list_tt_videos(access_token: str, advertiser_id: str, identity_id: str,
-                   identity_type: str, page: int = 1, page_size: int = 50) -> dict:
+                   identity_type: str, page: int = 1, page_size: int = 50,
+                   identity_authorized_bc_id: str = "") -> dict:
     """Lists a creator identity's AD-AUTHORIZED posts (⚠ §9.4 — nothing else).
 
     Each item carries item_info: auth_code, item_id, item_type (VIDEO/CAROUSEL)
     and cover image URLs. This powers Spark auto-grab.
+    ⚠ identity_authorized_bc_id is REQUIRED when identity_type is BC_AUTH_TT.
     """
-    return api_get("/identity/video/get/", access_token, {
+    params: dict = {
         "advertiser_id": advertiser_id,
         "identity_id": identity_id,
         "identity_type": identity_type,
         "page": page,
         "page_size": page_size,
-    })
+    }
+    if identity_authorized_bc_id:
+        params["identity_authorized_bc_id"] = identity_authorized_bc_id
+    return api_get("/identity/video/get/", access_token, params)
 
 
 def authorize_tt_video(access_token: str, advertiser_id: str, auth_code: str) -> dict:

@@ -74,7 +74,6 @@ def parse_form(form) -> dict:
         "optimization_event": val("optimization_event"),
         "optimization_goal": val("optimization_goal"),
         "creative_source": val("creative_source", "spark"),    # spark | library
-        "identity_mode": val("identity_mode", "fixed"),        # fixed | pool
         "ad_text_mode": val("ad_text_mode", "fixed"),          # fixed | pool
         "spark_code_id": int(val("spark_code_id")) if val("spark_code_id") else None,
         "ad_text": val("ad_text"),
@@ -84,6 +83,7 @@ def parse_form(form) -> dict:
         # -- full Ads-Manager surface ------------------------------------------
         "special_industries": multi("special_industries"),
         "placement_auto": val("placement_mode") == "auto",
+        "search_enabled": val("search_enabled") == "1",
         "languages": id_list("languages"),
         "spending_power": val("spending_power"),
         "interest_category_ids": id_list("interest_category_ids"),

@@ -23,20 +23,6 @@
   </form>
 </div>
 
-<div class="card" style="margin-bottom:14px;">
-  <div class="card-header"><span class="card-title">Ad identity</span>
-    <span class="card-meta">the name + avatar shown on uploaded-creative ads</span></div>
-  <form method="post" action="/creatives/identity" enctype="multipart/form-data"
-        style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-    <input type="text" name="identity_name" value="{{ identity_name }}"
-           placeholder="Display name (required to launch)" style="width:240px;">
-    <input type="file" name="avatar" accept="image/*" style="width:auto;">
-    {% if has_avatar %}<span class="pill ok">avatar set</span>{% else %}<span class="pill warn">avatar missing</span>{% endif %}
-    <button class="btn" type="submit">Save identity</button>
-    <span class="hint">Square image (1:1). Both are required before launching library creatives — the identity is created once per ad account automatically.</span>
-  </form>
-</div>
-
 <div class="card">
   {% if rows %}
   <table class="data">
