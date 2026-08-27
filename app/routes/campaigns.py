@@ -29,7 +29,9 @@ router = APIRouter()
 
 
 class SparkResolveError(Exception):
-    pass
+    def __init__(self, message: str, technical: str = ""):
+        super().__init__(message)
+        self.technical = technical
 
 
 # ---------------------------------------------------------------------------
@@ -84,7 +86,18 @@ def resolve_spark(db: Session, acct: models.AdAccount, spark: models.SparkCode) 
     code is NOT TikTok's internal `#LQRA…=` auth_code, so code matching alone
     is unreliable — ownership verification is the real test.
     """
-    identities = _account_identities(acct)
+    diag: list[str] = []
+    diag.append(f"account BC: {acct.owner_bc_id or 'NONE RECORDED — run a sync (Monitor page)'}")
+    try:
+        identities = _account_identities(acct)
+    except tiktok_api.TikTokError as e:
+        raise SparkResolveError(
+            f"Could not list identities on account {acct.advertiser_id} "
+            f"(TikTok code {e.code}).",
+            technical=f"identity/get failed: code={e.code} message={e.message}")
+    diag.append("identities: " + (", ".join(
+        f"{i.get('identity_type', '?')}·…{str(i.get('identity_id', ''))[-4:]}"
+        for i in identities) or "NONE"))
 
     def _ref(ident: dict, item_id: str) -> dict:
         itype = ident.get("identity_type", "TT_USER")
@@ -97,14 +110,18 @@ def resolve_spark(db: Session, acct: models.AdAccount, spark: models.SparkCode) 
 
     # 1) exact code match across identities' ad-authorized posts
     for ident in identities:
+        itype = ident.get("identity_type", "TT_USER")
         try:
             data = tiktok_api.list_tt_videos(
                 acct.access_token, acct.advertiser_id,
-                ident["identity_id"], ident.get("identity_type", "TT_USER"),
-                identity_authorized_bc_id=_bc_id_for(acct, ident.get("identity_type", "")))
-        except tiktok_api.TikTokError:
+                ident["identity_id"], itype,
+                identity_authorized_bc_id=_bc_id_for(acct, itype))
+        except tiktok_api.TikTokError as e:
+            diag.append(f"{itype} post list FAILED: code {e.code} {e.message[:60]}")
             continue
-        for item in data.get("list", []):
+        posts = data.get("list", [])
+        diag.append(f"{itype}·…{str(ident.get('identity_id', ''))[-4:]}: {len(posts)} ad-authorized post(s)")
+        for item in posts:
             info = item.get("item_info", item)
             if spark.code and info.get("auth_code") == spark.code:
                 return _ref(ident, info.get("item_id", ""))
@@ -120,6 +137,7 @@ def resolve_spark(db: Session, acct: models.AdAccount, spark: models.SparkCode) 
         try:
             authz = tiktok_api.authorize_tt_video(acct.access_token, acct.advertiser_id, spark.code)
             item_id = str(authz.get("item_id", "") or spark.tiktok_item_id or "")
+            diag.append(f"authorize code: OK, item_id={item_id or '?'}")
             auth_identity = {"identity_id": authz.get("identity_id", ""),
                              "identity_type": authz.get("identity_type", "AUTH_CODE")}
             if item_id:
@@ -129,8 +147,11 @@ def resolve_spark(db: Session, acct: models.AdAccount, spark: models.SparkCode) 
                 for ident in identities:
                     if ident.get("identity_type") == "BC_AUTH_TT" and _identity_lists_item(acct, ident, item_id):
                         return _ref(ident, item_id)
-        except tiktok_api.TikTokError:
-            pass
+                diag.append("authorized item not listed by any identity (ownership unverified)")
+        except tiktok_api.TikTokError as e:
+            diag.append(f"authorize code FAILED: code {e.code} {e.message[:80]}")
+    else:
+        diag.append("spark has no pasted code (and no known item_id matched)")
 
     # 4) unambiguous fallback: exactly ONE authorized post on the whole account
     all_items = []
@@ -145,6 +166,7 @@ def resolve_spark(db: Session, acct: models.AdAccount, spark: models.SparkCode) 
                 all_items.append((ident, str(info.get("item_id", ""))))
         except tiktok_api.TikTokError:
             continue
+    diag.append(f"fallback: {len(all_items)} authorized post(s) total across identities")
     if len(all_items) == 1:
         ident, item_id = all_items[0]
         return _ref(ident, item_id)
@@ -153,7 +175,8 @@ def resolve_spark(db: Session, acct: models.AdAccount, spark: models.SparkCode) 
         f"Could not resolve spark '{spark.name or spark.code[:12]}' on account "
         f"{acct.advertiser_id}: no identity verifiably owns the post. "
         "Check the creator is connected to this account (or the Business Center) "
-        "and the post is ad-authorized. Refusing to guess.")
+        "and the post is ad-authorized. Refusing to guess.",
+        technical=" → ".join(diag))
 
 
 # ---------------------------------------------------------------------------
@@ -767,7 +790,7 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
         log.ok = False
         log.error_code = "SPARK"
         log.error_message = str(e)
-        log.error_technical = str(e)
+        log.error_technical = getattr(e, "technical", "") or str(e)
     except AssetResolveError as e:
         log.ok = False
         log.error_code = "ASSET"
