@@ -324,12 +324,24 @@ def resolve_page_asset(db: Session, acct: models.AdAccount, kind: str, name: str
 # ---------------------------------------------------------------------------
 
 def resolve_pixel(db: Session, acct: models.AdAccount, pixel_code: str) -> str:
-    """pixel CODE -> numeric pixel_id, cached per advertiser."""
+    """pixel CODE -> numeric pixel_id, cached per advertiser. With no code set,
+    an account with exactly ONE pixel uses it (unambiguous); several = refuse."""
+    pixel_code = (pixel_code or "").strip()
     cached = (db.query(models.PixelCache)
               .filter_by(advertiser_id=acct.advertiser_id, pixel_code=pixel_code).first())
     if cached:
         return cached.pixel_id
     pixels = tiktok_api.list_pixels(acct.access_token, acct.advertiser_id)
+    if not pixel_code:
+        if len(pixels) == 1:
+            pid = str(pixels[0].get("pixel_id"))
+            db.add(models.PixelCache(advertiser_id=acct.advertiser_id, pixel_code="",
+                                     pixel_id=pid, pixel_name=pixels[0].get("pixel_name", "")))
+            db.commit()
+            return pid
+        raise ConfigError(
+            f"No pixel picked in the preset and account {acct.advertiser_id} has "
+            f"{len(pixels)} pixels — pick the pixel in the preset (Optimization location).")
     for p in pixels:
         if p.get("pixel_code") == pixel_code or str(p.get("pixel_id")) == pixel_code:
             pid = str(p.get("pixel_id"))
@@ -458,8 +470,9 @@ def build_adgroup_payload(fields: dict, acct: models.AdAccount, campaign_id: str
 
     # destination wiring
     dest = fields["destination_type"]
-    if dest == "pixel":
-        # ⚠ §5/§9.7: pixel ad groups carry pixel_id + optimization_event and
+    if dest == "pixel" or (dest == "website"
+                           and fields.get("optimization_goal") == "CONVERT" and pixel_id):
+        # ⚠ §5/§9.7: conversion ad groups carry pixel_id + optimization_event and
         # MUST NOT send promotion_website_type (omit = UNSET).
         payload["promotion_type"] = "WEBSITE"
         payload["pixel_id"] = pixel_id
@@ -522,15 +535,16 @@ def build_spc_campaign_payload(fields: dict, acct: models.AdAccount) -> dict:
 def build_spc_adgroup_payload(fields: dict, campaign_id: str, spark_ref: dict | None,
                               pixel_id: str, bid_price: float | None) -> dict:
     dest = fields["destination_type"]
+    convert = dest == "pixel" or fields.get("objective_type") == "WEB_CONVERSIONS"
     payload: dict = {
         "campaign_id": campaign_id,
         "adgroup_name": f"{fields['template_name']} · smart+"[:512],
         "promotion_type": "WEBSITE",
-        "optimization_goal": "CONVERT" if dest == "pixel" else "CLICK",
-        "billing_event": "OCPM" if dest == "pixel" else "CPC",
+        "optimization_goal": "CONVERT" if convert else "CLICK",
+        "billing_event": "OCPM" if convert else "CPC",
         "schedule_type": fields["schedule_type"],
     }
-    if dest == "pixel":
+    if convert and pixel_id:
         payload["pixel_id"] = pixel_id
         payload["optimization_event"] = fields["optimization_event"]
     # schedule_start_time is REQUIRED on smart+ ad groups
@@ -745,6 +759,13 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
         elif fields.get("ad_text_mode") == "pool":
             raise ConfigError("The Ad Texts pool works with the Creative library only — "
                               "spark ads always show the post's own caption.")
+        needs_pixel = (fields["destination_type"] == "pixel"
+                       or (fields["destination_type"] == "website"
+                           and fields.get("optimization_goal") == "CONVERT"))
+        if needs_pixel and not fields.get("optimization_event"):
+            raise ConfigError("Conversion campaigns need a pixel + optimization event — "
+                              "pick both in the preset (Optimization location section). "
+                              "The event must already exist on the pixel — §9.7.")
         needs_end = (fields.get("adgroup_budget_mode") == "BUDGET_MODE_TOTAL"
                      or (fields.get("campaign_budget_mode") == "BUDGET_MODE_TOTAL"))
         if needs_end and not (fields.get("schedule_type") == "SCHEDULE_START_END"
@@ -840,12 +861,8 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
             fields["lead_form_id"] = resolve_page_asset(db, acct, "lead_form", name)
 
         pixel_id = fields.get("pixel_id") or ""
-        if fields["destination_type"] == "pixel":
-            if not fields.get("optimization_event"):
-                raise ConfigError("Preset has destination=pixel but no optimization event. "
-                                  "Edit the preset and pick one (it must already exist on the pixel — §9.7).")
-            if not pixel_id:
-                pixel_id = resolve_pixel(db, acct, fields["pixel_code"])
+        if needs_pixel and not pixel_id:
+            pixel_id = resolve_pixel(db, acct, fields["pixel_code"])
 
         if fields.get("smart_plus"):
             log.campaign_id = _launch_smart_plus(acct, fields, spark_ref, spark, pixel_id)
