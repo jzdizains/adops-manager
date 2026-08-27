@@ -495,7 +495,48 @@ def list_tt_videos(access_token: str, advertiser_id: str, identity_id: str,
     }
     if identity_authorized_bc_id:
         params["identity_authorized_bc_id"] = identity_authorized_bc_id
-    return api_get("/identity/video/get/", access_token, params)
+    data = api_get("/identity/video/get/", access_token, params)
+    if not isinstance(data, dict):
+        return {"list": [], "_keys": []}
+    # normalize: TikTok has shipped the items under different keys over time
+    items: list = []
+    for key in ("list", "video_list", "item_list", "videos", "identity_video_list",
+                "tiktok_item_list", "items"):
+        v = data.get(key)
+        if isinstance(v, list) and v:
+            items = v
+            break
+    raw_keys = [k for k in data.keys() if k != "list"]
+    data["list"] = items
+    data["_keys"] = raw_keys
+    return data
+
+
+def tt_video_info(access_token: str, advertiser_id: str, auth_code: str = "",
+                  item_id: str = "") -> dict:
+    """Post info behind a spark auth code (/tt_video/info/ — the endpoint TikTok's
+    SDK names as the source of `tiktok_item_id` for code-authorized sparks).
+    Accepts either the auth code or a known item id."""
+    params: dict = {"advertiser_id": advertiser_id}
+    if auth_code:
+        params["auth_code"] = auth_code
+    if item_id:
+        params["item_id"] = item_id
+    return api_get("/tt_video/info/", access_token, params)
+
+
+def identity_video_info(access_token: str, advertiser_id: str, identity_id: str,
+                        identity_type: str, item_id: str,
+                        identity_authorized_bc_id: str = "") -> dict:
+    """Direct ownership probe (/identity/video/info/ — SDK-verified): succeeds
+    only when THIS identity can use THIS post. No listing involved."""
+    params: dict = {
+        "advertiser_id": advertiser_id, "identity_id": identity_id,
+        "identity_type": identity_type, "item_id": item_id,
+    }
+    if identity_authorized_bc_id:
+        params["identity_authorized_bc_id"] = identity_authorized_bc_id
+    return api_get("/identity/video/info/", access_token, params)
 
 
 def authorize_tt_video(access_token: str, advertiser_id: str, auth_code: str) -> dict:
