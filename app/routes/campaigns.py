@@ -133,13 +133,31 @@ def resolve_spark(db: Session, acct: models.AdAccount, spark: models.SparkCode) 
                 return _ref(ident, spark.tiktok_item_id)
 
     # 3) authorize the pasted code on this advertiser, then VERIFY ownership (§9.3)
+    def _authz_item_id(data: dict) -> str:
+        """The authorize response's item id arrives in several shapes."""
+        for key in ("item_id", "tiktok_item_id"):
+            if data.get(key):
+                return str(data[key])
+        for key in ("item_info", "video_info"):
+            node = data.get(key)
+            if isinstance(node, dict) and (node.get("item_id") or node.get("tiktok_item_id")):
+                return str(node.get("item_id") or node.get("tiktok_item_id"))
+        for key in ("item_list", "list", "video_list"):
+            node = data.get(key)
+            if isinstance(node, list) and node:
+                first = node[0].get("item_info", node[0]) if isinstance(node[0], dict) else {}
+                if first.get("item_id"):
+                    return str(first["item_id"])
+        return ""
+
     if spark.code:
         try:
             authz = tiktok_api.authorize_tt_video(acct.access_token, acct.advertiser_id, spark.code)
-            item_id = str(authz.get("item_id", "") or spark.tiktok_item_id or "")
+            item_id = _authz_item_id(authz if isinstance(authz, dict) else {}) \
+                or str(spark.tiktok_item_id or "")
             diag.append(f"authorize code: OK, item_id={item_id or '?'}")
-            auth_identity = {"identity_id": authz.get("identity_id", ""),
-                             "identity_type": authz.get("identity_type", "AUTH_CODE")}
+            auth_identity = {"identity_id": (authz or {}).get("identity_id", ""),
+                             "identity_type": (authz or {}).get("identity_type", "AUTH_CODE")}
             if item_id:
                 if auth_identity["identity_id"] and _identity_lists_item(acct, auth_identity, item_id):
                     return {**auth_identity, "item_id": item_id}
@@ -147,7 +165,44 @@ def resolve_spark(db: Session, acct: models.AdAccount, spark: models.SparkCode) 
                 for ident in identities:
                     if ident.get("identity_type") == "BC_AUTH_TT" and _identity_lists_item(acct, ident, item_id):
                         return _ref(ident, item_id)
+                # fall back to ANY identity that lists the freshly authorized item
+                for ident in identities:
+                    if _identity_lists_item(acct, ident, item_id):
+                        return _ref(ident, item_id)
                 diag.append("authorized item not listed by any identity (ownership unverified)")
+            # ⚠ the newly authorized post only shows up in post listings AFTER the
+            # authorize call — RE-LIST now and match the code / the new arrival
+            relisted: list[tuple[dict, dict]] = []   # (identity, item_info)
+            for ident in sorted(identities,
+                                key=lambda i: 0 if i.get("identity_type") == "AUTH_CODE" else 1):
+                itype = ident.get("identity_type", "TT_USER")
+                try:
+                    data = tiktok_api.list_tt_videos(
+                        acct.access_token, acct.advertiser_id,
+                        ident["identity_id"], itype,
+                        identity_authorized_bc_id=_bc_id_for(acct, itype))
+                except tiktok_api.TikTokError:
+                    continue
+                for item in data.get("list", []):
+                    relisted.append((ident, item.get("item_info", item)))
+            diag.append(f"re-list after authorize: {len(relisted)} post(s)")
+            # exact code match first
+            for ident, info in relisted:
+                if info.get("auth_code") == spark.code or (
+                        item_id and str(info.get("item_id", "")) == item_id):
+                    ref = _ref(ident, info.get("item_id", ""))
+                    if not spark.tiktok_item_id:      # remember for future launches
+                        spark.tiktok_item_id = ref["item_id"]
+                        db.commit()
+                    return ref
+            # single unambiguous arrival
+            if len(relisted) == 1:
+                ident, info = relisted[0]
+                ref = _ref(ident, info.get("item_id", ""))
+                if not spark.tiktok_item_id:
+                    spark.tiktok_item_id = ref["item_id"]
+                    db.commit()
+                return ref
         except tiktok_api.TikTokError as e:
             diag.append(f"authorize code FAILED: code {e.code} {e.message[:80]}")
     else:
