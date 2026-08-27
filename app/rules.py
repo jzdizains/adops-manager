@@ -199,6 +199,49 @@ def check_fresh_inventory(db: Session, settings: dict | None = None):
     db.commit()
 
 
+def check_pool_inventory(db: Session, settings: dict | None = None):
+    """Alert (24h-repeat max) when the creative / identity / ad-text pools run
+    low — but only for pools some preset actually uses, so automation never
+    silently drains one and starts failing with CONFIG errors."""
+    import json as _json
+    uses_library = uses_identity_pool = uses_text_pool = False
+    for t in db.query(models.Template).all():
+        try:
+            blob = _json.loads(t.adgroup_settings or "{}")
+        except (ValueError, TypeError):
+            continue
+        if blob.get("creative_source") == "library":
+            uses_library = True
+            if blob.get("identity_mode") == "pool":
+                uses_identity_pool = True
+            if blob.get("ad_text_mode") == "pool":
+                uses_text_pool = True
+    checks = []
+    if uses_library:
+        checks.append(("creatives", models.Creative, "/creatives"))
+    if uses_identity_pool:
+        checks.append(("identities", models.AdIdentity, "/identities"))
+    if uses_text_pool:
+        checks.append(("ad texts", models.AdText, "/ad-texts"))
+    if not checks:
+        return
+    low_water = 5
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    for label, model, page in checks:
+        n = db.query(model).filter_by(status="available").count()
+        if n >= low_water:
+            continue
+        last = (db.query(models.Alert).filter_by(kind="pool_low", ref_id=label)
+                .order_by(models.Alert.created_at.desc()).first())
+        if last and last.created_at and (now - last.created_at) < timedelta(hours=24):
+            continue
+        db.add(models.Alert(
+            kind="pool_low", ref_id=label, level="warn",
+            message=f"Only {n} unused {label} left in the pool — launches will start "
+                    f"refusing once it's empty. Refill on {page}."))
+    db.commit()
+
+
 # ---------------------------------------------------------------------------
 # Auto top-ups
 # ---------------------------------------------------------------------------

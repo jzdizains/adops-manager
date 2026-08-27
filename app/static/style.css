@@ -123,6 +123,23 @@ table.data tr:hover td { background: var(--panel-hover); }
 table.data td.num, table.data th.num {
   text-align: right; font-variant-numeric: tabular-nums;
 }
+table.data tfoot td { border-top: 1px solid var(--border); border-bottom: none; }
+.pos { color: var(--ok); }
+.neg { color: var(--err); }
+/* dense variant for metric-heavy tables (Campaigns manager) */
+table.data.dense { font-size: 12.5px; }
+table.data.dense th { padding: 7px 7px; font-size: 10.5px; }
+table.data.dense td { padding: 7px 7px; }
+table.data.dense td.num { white-space: nowrap; }
+/* keep row actions visible while the wide table scrolls */
+table.data th.sticky-r, table.data td.sticky-r {
+  position: sticky; right: 0; background: var(--panel);
+  box-shadow: -6px 0 8px -6px rgba(0, 0, 0, 0.55);
+}
+table.data tr:hover td.sticky-r { background: var(--panel-hover); }
+a.th-sort { color: var(--text-dim); text-decoration: none; }
+a.th-sort:hover { color: var(--text); }
+a.th-sort.on { color: var(--accent); }
 
 /* ---- buttons -------------------------------------------------------------- */
 .btn {

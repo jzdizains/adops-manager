@@ -3,7 +3,13 @@
 <div class="page-head">
   <div>
     <h1>Ad Accounts</h1>
-    <div class="muted">{{ accounts|length }} accounts under your Business Center{% if synced_at %} · last synced {{ synced_at[:16].replace('T',' ') }} UTC{% endif %}</div>
+    <div class="muted">{{ accounts|length }} accounts under your Business Center{% if synced_at %} · last synced {{ synced_at[:16].replace('T',' ') }} UTC{% endif %}
+      {% if lost_count and not show_lost %}
+        · <a href="/accounts?show_lost=1">{{ lost_count }} lost-access hidden — show</a>
+      {% elif show_lost and lost_count %}
+        · showing {{ lost_count }} lost-access · <a href="/accounts">hide them</a>
+      {% endif %}
+    </div>
   </div>
   <div class="actions">
     <form method="post" action="/oauth/refresh"><button class="btn" type="submit">↻ Refresh token</button></form>

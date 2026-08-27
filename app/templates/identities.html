@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Identities</h1>
+    <div class="muted">{{ available }} available · {{ rows|length - available }} used — each identity (name + avatar) fronts exactly one campaign's ads.</div>
+  </div>
+</div>
+
+{% if ok %}<div class="flash ok">{{ ok }}</div>{% endif %}
+{% if err %}<div class="flash err">{{ err }}</div>{% endif %}
+
+<div class="card" style="margin-bottom:14px;">
+  <div class="card-header"><span class="card-title">Add identities</span>
+    <span class="card-meta">avatar images + display names, paired in order</span></div>
+  <form method="post" action="/identities/upload" enctype="multipart/form-data"
+        style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start;">
+    <label class="field" style="min-width:260px;"><span class="field-label">Avatar images (square, ≤5MB)</span>
+      <input type="file" name="avatars" accept="image/*" multiple required style="width:auto;"></label>
+    <label class="field" style="flex:1;min-width:260px;"><span class="field-label">Display names — one per line (optional)</span>
+      <textarea name="names" rows="4" placeholder="Best Daily Deals&#10;Smart Savings Club&#10;…"></textarea>
+      <span class="hint">1st name → 1st image, 2nd → 2nd… Images without a name get one from their file name (editable below).</span></label>
+    <button class="btn primary" type="submit" style="align-self:center;">⬆ Add</button>
+  </form>
+</div>
+
+<div class="card">
+  {% if rows %}
+  <table class="data">
+    <thead><tr>
+      <th>Display name</th><th>Avatar</th><th>Status</th><th>Used on</th><th class="num">Actions</th>
+    </tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr>
+        <td>
+          <form id="idf{{ r.id }}" method="post" action="/identities/{{ r.id }}/update"></form>
+          <input form="idf{{ r.id }}" type="text" name="display_name" value="{{ r.display_name }}"
+                 style="width:220px;" {{ 'readonly' if r.status == 'used' }}>
+        </td>
+        <td class="muted">{{ r.avatar_path.rsplit('/', 1)[-1][:36] if r.avatar_path else '—' }}</td>
+        <td>
+          {% if r.status == 'available' %}<span class="pill ok">Available</span>
+          {% else %}<span class="pill dim">Used</span>{% endif %}
+        </td>
+        <td class="muted">
+          {% if r.used_advertiser_id %}
+            {{ accounts.get(r.used_advertiser_id, r.used_advertiser_id)[:26] }}
+            {% if r.used_at %}<div style="font-size:11px;">{{ r.used_at.strftime('%b %d %H:%M') }}</div>{% endif %}
+          {% else %}—{% endif %}
+        </td>
+        <td class="num" style="white-space:nowrap;">
+          {% if r.status == 'available' %}
+          <button form="idf{{ r.id }}" class="btn sm" type="submit">Save</button>
+          <form method="post" action="/identities/{{ r.id }}/delete" style="display:inline;"
+                onsubmit="return confirm('Delete this identity?');">
+            <button class="btn sm danger" type="submit">✕</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">No identities yet — upload avatar images and names above. Presets with “Unique identity per launch” pull the next available one.</div>
+  {% endif %}
+</div>
+{% endblock %}

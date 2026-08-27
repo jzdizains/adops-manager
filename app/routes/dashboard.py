@@ -113,9 +113,14 @@ def overview(request: Request, db: Session = Depends(get_db)):
 
 @router.get("/accounts")
 def accounts_page(request: Request, db: Session = Depends(get_db)):
-    accounts = db.query(models.AdAccount).order_by(models.AdAccount.advertiser_name).all()
+    show_lost = request.query_params.get("show_lost") == "1"
+    all_accounts = db.query(models.AdAccount).order_by(models.AdAccount.advertiser_name).all()
+    lost = [a for a in all_accounts if a.status == "ACCESS_LOST"]
+    accounts = all_accounts if show_lost else [a for a in all_accounts
+                                               if a.status != "ACCESS_LOST"]
     return render(request, "accounts.html", {
         "accounts": accounts, "title": "Ad Accounts",
+        "lost_count": len(lost), "show_lost": show_lost,
         "ok": request.query_params.get("ok", ""), "err": request.query_params.get("err", ""),
         "synced_at": queries.get_setting(db, "accounts_synced_at", ""),
     })

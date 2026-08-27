@@ -2,45 +2,95 @@
 {% block content %}
 <div class="page-head">
   <div><h1>Pixels</h1>
-    <div class="muted">Share one pixel across every account in a Business Center.</div></div>
+    <div class="muted">Your pixels across all accounts{% if synced_at %} · synced {{ synced_at }} UTC{% endif %}</div></div>
+  <div class="actions">
+    <form method="post" action="/pixels/sync">
+      <button class="btn primary" type="submit">↻ Sync pixels</button></form>
+  </div>
 </div>
 
 {% if ok %}<div class="flash ok">{{ ok }}</div>{% endif %}
 {% if err %}<div class="flash err">{{ err }}</div>{% endif %}
 
 <div class="card">
-  <div class="card-header"><span class="card-title">⚡ Create & share pixel</span>
-    <span class="card-meta">create → event → BC transfer → link to every account, in one click</span></div>
-  <form method="post" action="/pixels/provision">
+  {% if rows %}
+  <table class="data">
+    <thead><tr>
+      <th>Pixel</th><th>Owned by</th><th class="num">Actions</th>
+    </tr></thead>
+    <tbody>
+    {% for r in rows %}
+      {% set p = r.p %}
+      <tr>
+        <td>{{ p.pixel_name or "—" }}
+          <div class="mono muted" style="font-size:10px;">{{ p.pixel_id }}</div></td>
+        <td>
+          {% if r.is_bc %}<span class="pill ok">{{ r.owner_label }}</span>
+          {% else %}<span class="pill dim">{{ r.owner_label }}</span>{% endif %}
+        </td>
+        <td class="num" style="white-space:nowrap;">
+          {% if r.is_bc %}
+            <form method="post" action="/pixels/{{ p.id }}/link-one" style="display:inline-flex;gap:4px;">
+              <select name="advertiser_id" style="width:170px;font-size:12px;padding:4px 8px;">
+                {% for a in accounts %}{% if a.owner_bc_id == p.owner_bc_id %}
+                  <option value="{{ a.advertiser_id }}">{{ a.advertiser_name or a.advertiser_id }}</option>
+                {% endif %}{% endfor %}
+              </select>
+              <button class="btn sm" type="submit">Link</button>
+            </form>
+            <form method="post" action="/pixels/{{ p.id }}/link-all" style="display:inline;"
+                  onsubmit="return confirm('Link this pixel to all {{ r.bc_account_count }} account(s) in the BC?');">
+              <button class="btn sm primary" type="submit">⛓ Link all ({{ r.bc_account_count }})</button>
+            </form>
+          {% elif r.target_bc %}
+            <form method="post" action="/pixels/{{ p.id }}/move-to-bc" style="display:inline;"
+                  onsubmit="return confirm('Move pixel {{ p.pixel_id }} into “{{ r.target_bc.name or r.target_bc.bc_id }}”? TikTok pixel moves into a BC are one-way.');">
+              <button class="btn sm primary" type="submit">⇪ Move to {{ (r.target_bc.name or r.target_bc.bc_id)[:18] }}</button>
+            </form>
+          {% else %}
+            <span class="muted" style="font-size:12px;">owner account has no BC — sync accounts</span>
+          {% endif %}
+          <form method="post" action="/pixels/{{ p.id }}/delete" style="display:inline;">
+            <button class="btn sm danger" type="submit" title="Remove from this list only">✕</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">No pixels yet — hit <strong>↻ Sync pixels</strong> to pull them from your
+    accounts, or create one below.</div>
+  {% endif %}
+</div>
+
+<details class="card" {% if provision_report %}open{% endif %}>
+  <summary style="cursor:pointer;font-weight:700;font-size:14px;">＋ Create a new pixel</summary>
+  <form method="post" action="/pixels/provision" style="margin-top:14px;">
     <div class="form-row-3">
       <label class="field"><span class="field-label">Pixel name</span>
         <input type="text" name="pixel_name" required placeholder="Main purchase pixel"></label>
-      <label class="field"><span class="field-label">Create on account (its BC gets the pixel)</span>
+      <label class="field"><span class="field-label">Create on account</span>
         <select name="advertiser_id" required>
           {% for a in accounts %}
             <option value="{{ a.advertiser_id }}">{{ a.advertiser_name or a.advertiser_id }}</option>
           {% endfor %}
         </select></label>
-      <label class="field"><span class="field-label">Event to create on it</span>
+      <label class="field"><span class="field-label">Event</span>
         <select name="event_type">
           {% for ev, label in pixel_events %}
             <option value="{{ ev }}">{{ label }} ({{ ev }})</option>
           {% endfor %}
         </select></label>
     </div>
-    <div class="form-row">
-      <label class="field"><span class="field-label">Event name (optional)</span>
-        <input type="text" name="event_name" placeholder="defaults to the event label"></label>
-      <label class="field" style="display:flex;align-items:flex-end;">
-        <label style="display:flex;align-items:center;gap:8px;font-weight:600;cursor:pointer;">
-          <input type="checkbox" name="do_share" checked style="width:auto;">
-          Share across the whole Business Center after creating
-        </label></label>
+    <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;">
+      <button class="btn primary" type="submit">Create pixel</button>
+      <label style="display:flex;align-items:center;gap:8px;font-weight:600;font-size:13px;cursor:pointer;">
+        <input type="checkbox" name="do_share" checked style="width:auto;">
+        Move to BC + link to all its accounts after creating
+      </label>
+      <input type="hidden" name="event_name" value="">
     </div>
-    <button class="btn primary" type="submit">⚡ Create pixel</button>
-    <span class="hint" style="display:block;margin-top:8px;">The event will exist on the pixel
-      (launch-ready). Firing it happens on the offer page / via Glitchy — URL trigger rules can be
-      added later in TikTok Events Manager if needed.</span>
   </form>
 
   {% if provision_report %}
@@ -57,74 +107,5 @@
     {% endfor %}
   </div>
   {% endif %}
-</div>
-
-<div class="grid cols-2">
-  <div class="card mb0">
-    <div class="card-header"><span class="card-title">1 · Move a pixel into BC ownership</span></div>
-    <form method="post" action="/pixels/transfer">
-      <label class="field"><span class="field-label">Pixel ID (numeric)</span>
-        <input type="text" name="pixel_id" required placeholder="e.g. 7134567890123456789"></label>
-      <label class="field"><span class="field-label">Currently owned by (ad account)</span>
-        <select name="owner_advertiser_id" required>
-          {% for a in accounts %}
-            <option value="{{ a.advertiser_id }}">{{ a.advertiser_name or a.advertiser_id }}</option>
-          {% endfor %}
-        </select></label>
-      <label class="field"><span class="field-label">Business Center</span>
-        <select name="bc_id" required>
-          {% for b in bcs %}<option value="{{ b.bc_id }}">{{ b.name or b.bc_id }}</option>{% endfor %}
-        </select></label>
-      <label class="field"><span class="field-label">Label (optional)</span>
-        <input type="text" name="pixel_name" placeholder="Main purchase pixel"></label>
-      <button class="btn primary" type="submit">⇪ Transfer to BC</button>
-      <div class="hint" style="margin-top:8px;">Heads-up: TikTok pixel transfers into a BC are
-        one-way. Already BC-owned? Register it below instead.</div>
-    </form>
-    <div class="sep" style="border-top:1px solid var(--border-soft);margin:14px 0;"></div>
-    <form method="post" action="/pixels/register">
-      <div class="form-row-3">
-        <label class="field"><span class="field-label">Already-BC-owned pixel ID</span>
-          <input type="text" name="pixel_id" required></label>
-        <label class="field"><span class="field-label">Business Center</span>
-          <select name="bc_id">{% for b in bcs %}<option value="{{ b.bc_id }}">{{ b.name or b.bc_id }}</option>{% endfor %}</select></label>
-        <label class="field"><span class="field-label">Label</span>
-          <input type="text" name="pixel_name"></label>
-      </div>
-      <button class="btn" type="submit">＋ Register without transfer</button>
-    </form>
-  </div>
-
-  <div class="card mb0">
-    <div class="card-header"><span class="card-title">2 · Shared pixels</span>
-      <span class="card-meta">link to every enabled account in the BC</span></div>
-    {% if shared %}
-    <table class="data">
-      <thead><tr><th>Pixel</th><th>BC</th><th class="num">Accounts</th><th class="num">Actions</th></tr></thead>
-      <tbody>
-      {% for p in shared %}
-        {% set bc = (bcs | selectattr('bc_id', 'equalto', p.bc_id) | list | first) %}
-        <tr>
-          <td>{{ p.pixel_name or "—" }}<div class="mono muted" style="font-size:10px;">{{ p.pixel_id }}</div></td>
-          <td class="muted">{{ bc.name if bc else p.bc_id }}</td>
-          <td class="num">{{ counts.get(p.bc_id, 0) }}</td>
-          <td class="num" style="white-space:nowrap;">
-            <form method="post" action="/pixels/{{ p.id }}/link-all" style="display:inline;"
-                  onsubmit="return confirm('Link pixel {{ p.pixel_id }} to all {{ counts.get(p.bc_id, 0) }} enabled account(s) in this BC?');">
-              <button class="btn sm primary" type="submit">⛓ Link to all</button></form>
-            <form method="post" action="/pixels/{{ p.id }}/delete" style="display:inline;">
-              <button class="btn sm danger" type="submit">✕</button></form>
-          </td>
-        </tr>
-      {% endfor %}
-      </tbody>
-    </table>
-    {% else %}
-    <div class="empty">No shared pixels yet — transfer or register one on the left.</div>
-    {% endif %}
-    <div class="hint" style="margin-top:10px;">After linking, presets that use a pixel code will
-      resolve it on every account automatically. The optimization event must exist on the pixel
-      (fire it once on the live page) before optimizing on it.</div>
-  </div>
-</div>
+</details>
 {% endblock %}

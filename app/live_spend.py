@@ -32,6 +32,19 @@ def sync_campaigns(db: Session, accounts: list[models.AdAccount] | None = None) 
         try:
             data = tiktok_api.list_campaigns(acct.access_token, acct.advertiser_id)
             campaigns = data.get("list", [])
+            for c in campaigns:
+                c["_smart_plus"] = False
+            # Smart+ campaigns live behind their own endpoint — merge them in.
+            # Accounts without Smart+ access just error/return empty: ignore.
+            try:
+                spc = tiktok_api.smart_plus_campaign_get(acct.access_token, acct.advertiser_id)
+                known = {str(c.get("campaign_id", "")) for c in campaigns}
+                for c in spc.get("list", []):
+                    if str(c.get("campaign_id", "")) not in known:
+                        c["_smart_plus"] = True
+                        campaigns.append(c)
+            except tiktok_api.TikTokError:
+                pass
             metrics_by_campaign: dict[str, dict] = {}
             try:
                 rows = tiktok_api.get_report(
@@ -73,6 +86,7 @@ def sync_campaigns(db: Session, accounts: list[models.AdAccount] | None = None) 
                     cpa=_f(m, "cost_per_conversion"),
                     ctr=_f(m, "ctr"),
                     launched_at=launched_at,
+                    is_smart_plus=bool(c.get("_smart_plus")),
                 ))
                 # upsert today's spend snapshot (P&L history)
                 snap = (db.query(models.SpendSnapshot)

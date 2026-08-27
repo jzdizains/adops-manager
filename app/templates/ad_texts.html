@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Ad Texts</h1>
+    <div class="muted">{{ available }} available · {{ rows|length - available }} used — each text goes on exactly one campaign's ads.</div>
+  </div>
+</div>
+
+{% if ok %}<div class="flash ok">{{ ok }}</div>{% endif %}
+{% if err %}<div class="flash err">{{ err }}</div>{% endif %}
+
+<div class="card" style="margin-bottom:14px;">
+  <div class="card-header"><span class="card-title">Add texts</span>
+    <span class="card-meta">one per line · max {{ max_len }} characters (TikTok limit)</span></div>
+  <form method="post" action="/ad-texts/add" style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start;">
+    <label class="field" style="flex:1;min-width:300px;">
+      <textarea name="texts" rows="5" required
+                placeholder="This deal ends tonight — don't miss out 👀&#10;I wish I knew about this sooner…&#10;…"></textarea>
+      <span class="hint">Duplicates are skipped automatically; longer lines are trimmed to {{ max_len }} characters.</span></label>
+    <button class="btn primary" type="submit" style="align-self:center;">＋ Add</button>
+  </form>
+</div>
+
+<div class="card">
+  {% if rows %}
+  <table class="data">
+    <thead><tr>
+      <th>Text</th><th>Status</th><th>Used on</th><th class="num">Actions</th>
+    </tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr>
+        <td>
+          <form id="txf{{ r.id }}" method="post" action="/ad-texts/{{ r.id }}/update"></form>
+          <input form="txf{{ r.id }}" type="text" name="text" value="{{ r.text }}" maxlength="{{ max_len }}"
+                 style="width:100%;min-width:320px;" {{ 'readonly' if r.status == 'used' }}>
+        </td>
+        <td>
+          {% if r.status == 'available' %}<span class="pill ok">Available</span>
+          {% else %}<span class="pill dim">Used</span>{% endif %}
+        </td>
+        <td class="muted" style="white-space:nowrap;">
+          {% if r.used_advertiser_id %}
+            {{ accounts.get(r.used_advertiser_id, r.used_advertiser_id)[:26] }}
+            {% if r.used_at %}<div style="font-size:11px;">{{ r.used_at.strftime('%b %d %H:%M') }}</div>{% endif %}
+          {% else %}—{% endif %}
+        </td>
+        <td class="num" style="white-space:nowrap;">
+          {% if r.status == 'available' %}
+          <button form="txf{{ r.id }}" class="btn sm" type="submit">Save</button>
+          <form method="post" action="/ad-texts/{{ r.id }}/delete" style="display:inline;"
+                onsubmit="return confirm('Delete this text?');">
+            <button class="btn sm danger" type="submit">✕</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">No ad texts yet — paste a list above. Presets with “Unique text per launch” pull the next available one.</div>
+  {% endif %}
+</div>
+{% endblock %}

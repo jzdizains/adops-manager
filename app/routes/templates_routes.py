@@ -15,7 +15,11 @@ from sqlalchemy.orm import Session
 from .. import models
 from ..database import get_db
 from ..templating import render
-from .launch import DESTINATIONS, OBJECTIVES, PIXEL_EVENTS
+from .launch import (
+    BID_STRATEGY_OPTIONS, CLICK_ATTR_OPTIONS, CTA_OPTIONS, DESTINATIONS,
+    NETWORK_OPTIONS, OBJECTIVES, OPT_GOAL_OPTIONS, OS_OPTIONS, PACING_OPTIONS,
+    PIXEL_EVENTS, SPECIAL_INDUSTRIES, SPENDING_POWER_OPTIONS, VIEW_ATTR_OPTIONS,
+)
 
 router = APIRouter()
 
@@ -44,28 +48,61 @@ def parse_form(form) -> dict:
         except ValueError:
             pass
 
+    def id_list(key):
+        return [x for x in str(val(key)).replace(",", " ").split() if x]
+
+    def multi(key):
+        return form.getlist(key) if hasattr(form, "getlist") else []
+
     blob = {
         "destination_type": val("destination_type", "website"),
         "adgroup_budget": float(val("adgroup_budget") or 20),
+        "adgroup_budget_mode": val("adgroup_budget_mode", "BUDGET_MODE_DAY"),
         "duplicates": int(val("duplicates") or 1),
         "cost_cap_ladder": ladder,
-        "location_ids": [x for x in str(val("location_ids")).replace(",", " ").split() if x],
+        "location_ids": id_list("location_ids"),
         "gender": val("gender", "GENDER_UNLIMITED"),
-        "age_groups": form.getlist("age_groups") if hasattr(form, "getlist") else [],
+        "age_groups": multi("age_groups"),
         "schedule_type": val("schedule_type", "SCHEDULE_FROM_NOW"),
-        "schedule_start_time": val("schedule_start_time"),
+        "schedule_start_time": val("schedule_start_time").replace("T", " "),
+        "schedule_end_time": val("schedule_end_time").replace("T", " "),
         "landing_page_url": val("landing_page_url"),
-        "instant_page_id": val("instant_page_id"),
-        "lead_form_id": val("lead_form_id"),
+        "instant_page_name": val("instant_page_name"),
+        "lead_form_name": val("lead_form_name"),
         "pixel_code": val("pixel_code"),
         "pixel_id": val("pixel_id"),
         "optimization_event": val("optimization_event"),
+        "optimization_goal": val("optimization_goal"),
+        "creative_source": val("creative_source", "spark"),    # spark | library
+        "identity_mode": val("identity_mode", "fixed"),        # fixed | pool
+        "ad_text_mode": val("ad_text_mode", "fixed"),          # fixed | pool
         "spark_code_id": int(val("spark_code_id")) if val("spark_code_id") else None,
         "ad_text": val("ad_text"),
         "call_to_action": val("call_to_action", "LEARN_MORE"),
         # auto-pick policy: which accounts qualify when the launcher picks for you
         "account_policy": val("account_policy", "new_only"),   # new_only | reuse
+        # -- full Ads-Manager surface ------------------------------------------
+        "special_industries": multi("special_industries"),
+        "placement_auto": val("placement_mode") == "auto",
+        "languages": id_list("languages"),
+        "spending_power": val("spending_power"),
+        "interest_category_ids": id_list("interest_category_ids"),
+        "audience_ids": id_list("audience_ids"),
+        "excluded_audience_ids": id_list("excluded_audience_ids"),
+        "operating_systems": val("operating_systems"),
+        "network_types": multi("network_types"),
+        "pacing": val("pacing", "PACING_MODE_SMOOTH"),
+        "click_attribution_window": val("click_attribution_window"),
+        "view_attribution_window": val("view_attribution_window"),
+        # -- bid strategy + Smart+ + advanced settings --
+        "bid_strategy": val("bid_strategy"),                   # "" | cost_cap
+        "smart_plus": val("smart_plus") == "1",
+        "comment_disabled": val("comment_disabled") == "1",
+        "video_download_disabled": val("video_download_disabled") == "1",
+        "share_disabled": val("share_disabled") == "1",
     }
+    # (a cost-cap strategy with no cap values is caught at launch with a clear
+    # error rather than silently rewritten here)
     return {"top": top, "blob": blob}
 
 
@@ -74,11 +111,34 @@ def _form_ctx(db: Session) -> dict:
         "objectives": OBJECTIVES,
         "destinations": DESTINATIONS,
         "pixel_events": PIXEL_EVENTS,
+        "cta_options": CTA_OPTIONS,
+        "opt_goal_options": OPT_GOAL_OPTIONS,
+        "pacing_options": PACING_OPTIONS,
+        "click_attr_options": CLICK_ATTR_OPTIONS,
+        "view_attr_options": VIEW_ATTR_OPTIONS,
+        "network_options": NETWORK_OPTIONS,
+        "os_options": OS_OPTIONS,
+        "spending_power_options": SPENDING_POWER_OPTIONS,
+        "special_industries": SPECIAL_INDUSTRIES,
+        "bid_strategy_options": BID_STRATEGY_OPTIONS,
+        "pixels": db.query(models.PixelRecord)
+                    .order_by(models.PixelRecord.pixel_name).all(),
         "sparks": db.query(models.SparkCode).filter_by(status="active")
                     .order_by(models.SparkCode.name).all(),
-        "instant_pages": db.query(models.InstantPage).order_by(models.InstantPage.name).all(),
-        "lead_forms": db.query(models.LeadForm).order_by(models.LeadForm.name).all(),
+        # pages/forms deduped BY NAME with per-name account counts — the preset
+        # stores the name; launches resolve each account's own copy
+        "instant_pages": _assets_by_name(db.query(models.InstantPage).all()),
+        "lead_forms": _assets_by_name(db.query(models.LeadForm).all()),
     }
+
+
+def _assets_by_name(rows) -> list[dict]:
+    by_name: dict[str, int] = {}
+    for r in rows:
+        name = (r.name or "").strip()
+        if name:
+            by_name[name] = by_name.get(name, 0) + 1
+    return [{"name": n, "count": c} for n, c in sorted(by_name.items())]
 
 
 @router.get("/presets")

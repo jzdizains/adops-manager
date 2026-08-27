@@ -8,9 +8,10 @@
 <form method="post" action="/presets/save">
   {% if t %}<input type="hidden" name="preset_id" value="{{ t.id }}">{% endif %}
 
+  {# ============================ CAMPAIGN ================================= #}
   <div class="card">
     <div class="card-header"><span class="card-title">Campaign</span>
-      <span class="card-meta">top-level fields — CBO budget lives here, not in the ad-group blob</span></div>
+      <span class="card-meta">objective · budget · special categories</span></div>
     <div class="form-row-3">
       <label class="field"><span class="field-label">Preset name</span>
         <input type="text" name="name" value="{{ t.name if t else '' }}" required></label>
@@ -25,7 +26,7 @@
                placeholder="{account} · {date} · offer">
         <span class="hint">{{ '{account}' }} and {{ '{date}' }} are substituted at launch.</span></label>
     </div>
-    <div class="form-row">
+    <div class="form-row-3">
       <label class="field"><span class="field-label">Budget mode</span>
         <select name="campaign_budget_mode" id="budgetMode">
           <option value="ABO" {{ 'selected' if not t or t.campaign_budget_mode == 'ABO' else '' }}>ABO — budget per ad group</option>
@@ -35,51 +36,27 @@
       <label class="field" id="cboBudgetField"><span class="field-label">CBO campaign budget ($)</span>
         <input type="number" step="0.01" name="campaign_budget"
                value="{{ t.campaign_budget if t and t.campaign_budget else '' }}"></label>
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="card-header"><span class="card-title">Ad group</span>
-      <span class="card-meta">budget, duplicates, targeting</span></div>
-    <div class="form-row-3">
-      <label class="field"><span class="field-label">Ad group budget ($/day, ABO)</span>
-        <input type="number" step="0.01" name="adgroup_budget" value="{{ blob.get('adgroup_budget', 20) }}"></label>
-      <label class="field"><span class="field-label">Duplicate ad groups</span>
-        <input type="number" min="1" max="20" name="duplicates" value="{{ blob.get('duplicates', 1) }}"></label>
-      <label class="field"><span class="field-label">Cost-cap ladder (bids, space-separated)</span>
-        <input type="text" name="cost_cap_ladder"
-               value="{{ blob.get('cost_cap_ladder', [])|join(' ') }}" placeholder="e.g. 4 5 6 7">
-        <span class="hint">If set, one ad group per bid (overrides duplicates). A single value = one flat cost cap.</span></label>
+      <label class="field"><span class="field-label">Special ad categories</span>
+        <div data-chip-picker data-name="special_industries"
+             data-options='{{ special_industries|tojson }}'
+             data-selected='{{ blob.get("special_industries", [])|tojson }}'></div>
+        <span class="hint">Only if the offer touches housing / employment / credit.</span></label>
     </div>
     <div class="form-row">
-      <label class="field"><span class="field-label">Auto-pick account policy</span>
-        <select name="account_policy">
-          <option value="new_only" {{ 'selected' if blob.get('account_policy', 'new_only') == 'new_only' }}>New accounts only — never had any campaign</option>
-          <option value="reuse" {{ 'selected' if blob.get('account_policy') == 'reuse' }}>Reuse — any account with no ACTIVE campaign</option>
-        </select>
-        <span class="hint">Used when the Super Launcher auto-picks accounts for this preset.</span></label>
-    </div>
-    <div class="form-row-3">
-      <label class="field"><span class="field-label">Geo — location IDs</span>
-        <input type="text" name="location_ids" value="{{ blob.get('location_ids', [])|join(' ') }}"
-               placeholder="e.g. 6252001 (US)">
-        <span class="hint">TikTok numeric location IDs, space-separated.</span></label>
-      <label class="field"><span class="field-label">Gender</span>
-        <select name="gender">
-          {% for g in ["GENDER_UNLIMITED", "GENDER_MALE", "GENDER_FEMALE"] %}
-            <option value="{{ g }}" {{ 'selected' if blob.get('gender', 'GENDER_UNLIMITED') == g else '' }}>{{ g.replace('GENDER_','')|title }}</option>
-          {% endfor %}
-        </select></label>
-      <label class="field"><span class="field-label">Age groups</span>
-        <div data-chip-picker data-name="age_groups"
-             data-options='[["AGE_18_24","18–24"],["AGE_25_34","25–34"],["AGE_35_44","35–44"],["AGE_45_54","45–54"],["AGE_55_100","55+"]]'
-             data-selected='{{ blob.get("age_groups", [])|tojson }}'></div></label>
+      <label class="field"><span class="field-label">Smart+</span>
+        <span style="display:flex;align-items:center;gap:8px;">
+          <input type="checkbox" name="smart_plus" value="1" style="width:auto;"
+                 {{ 'checked' if blob.get('smart_plus') }}>
+          <span>Smart+ campaign — TikTok automates targeting, placements &amp; delivery</span>
+        </span>
+        <span class="hint">Needs Website or Pixel destination + a spark creative. One smart ad group per campaign — duplicates &amp; multi-cap ladders don't apply (first cap is used).</span></label>
     </div>
   </div>
 
+  {# ==================== OPTIMIZATION LOCATION & PIXEL ===================== #}
   <div class="card">
-    <div class="card-header"><span class="card-title">Destination</span>
-      <span class="card-meta">website / instant page / lead form / pixel</span></div>
+    <div class="card-header"><span class="card-title">Optimization location</span>
+      <span class="card-meta">where conversions happen — pixel + event per preset</span></div>
     <div class="form-row">
       <label class="field"><span class="field-label">Destination type</span>
         <select name="destination_type" id="destType">
@@ -88,58 +65,269 @@
           {% endfor %}
         </select></label>
       <label class="field" data-dest="website pixel"><span class="field-label">Landing page URL</span>
-        <input type="url" name="landing_page_url" value="{{ blob.get('landing_page_url', '') }}"></label>
+        <input type="url" name="landing_page_url" value="{{ blob.get('landing_page_url', '') }}"
+               placeholder="https://offer.example.com/page">
+        <span class="hint">The spark's source is appended automatically at launch.</span></label>
     </div>
     <div class="form-row-3">
-      <label class="field" data-dest="instant_page"><span class="field-label">Instant page</span>
-        <select name="instant_page_id">
-          <option value="">— pick —</option>
-          {% for p in instant_pages %}
-            <option value="{{ p.page_id }}" {{ 'selected' if blob.get('instant_page_id') == p.page_id else '' }}>{{ p.name or p.page_id }}</option>
+      <label class="field" data-dest="pixel website"><span class="field-label">Pixel</span>
+        <select name="pixel_id">
+          <option value="">— pick a pixel —</option>
+          {% for px in pixels %}
+            <option value="{{ px.pixel_id }}" {{ 'selected' if blob.get('pixel_id') == px.pixel_id else '' }}>
+              {{ px.pixel_name or px.pixel_id }}{{ ' · BC-shared' if px.owner_bc_id else '' }}</option>
           {% endfor %}
-        </select></label>
-      <label class="field" data-dest="lead_form"><span class="field-label">Lead form</span>
-        <select name="lead_form_id">
-          <option value="">— pick —</option>
-          {% for f in lead_forms %}
-            <option value="{{ f.form_id }}" {{ 'selected' if blob.get('lead_form_id') == f.form_id else '' }}>{{ f.name or f.form_id }}</option>
-          {% endfor %}
-        </select></label>
-      <label class="field" data-dest="pixel"><span class="field-label">Pixel code</span>
+        </select>
+        <span class="hint">From your <a href="/pixels">pixel inventory</a> — sync there if empty.</span></label>
+      <label class="field" data-dest="pixel website"><span class="field-label">…or pixel code (manual)</span>
         <input type="text" name="pixel_code" value="{{ blob.get('pixel_code', '') }}" placeholder="e.g. C0FFEE123">
-        <span class="hint">Resolved to the numeric pixel_id at launch and cached.</span></label>
-    </div>
-    <div class="form-row" data-dest="pixel">
-      <label class="field"><span class="field-label">Optimization event</span>
+        <span class="hint">Used only when no pixel is picked; resolved + cached at launch.</span></label>
+      <label class="field" data-dest="pixel website"><span class="field-label">Optimization event</span>
         <select name="optimization_event">
           <option value="">— pick —</option>
           {% for ev, label in pixel_events %}
             <option value="{{ ev }}" {{ 'selected' if blob.get('optimization_event') == ev else '' }}>{{ label }} ({{ ev }})</option>
           {% endfor %}
         </select>
-        <span class="hint">⚠ Must already exist on the pixel — fire it once on the live page first.</span></label>
+        <span class="hint">⚠ Must already exist on the pixel.</span></label>
+    </div>
+    <div class="form-row">
+      <label class="field" data-dest="instant_page"><span class="field-label">Instant page (by name)</span>
+        <select name="instant_page_name">
+          <option value="">— pick —</option>
+          {% for p in instant_pages %}
+            <option value="{{ p.name }}" {{ 'selected' if blob.get('instant_page_name') == p.name else '' }}>{{ p.name }} — on {{ p.count }} account(s)</option>
+          {% endfor %}
+        </select>
+        <span class="hint">At launch, each account's OWN copy of this page is used —
+          accounts without a copy fail with a clear message. Sync on
+          <a href="/instant-pages">Instant Pages</a> after sharing.</span></label>
+      <label class="field" data-dest="lead_form"><span class="field-label">Lead form (by name)</span>
+        <select name="lead_form_name">
+          <option value="">— pick —</option>
+          {% for f in lead_forms %}
+            <option value="{{ f.name }}" {{ 'selected' if blob.get('lead_form_name') == f.name else '' }}>{{ f.name }} — on {{ f.count }} account(s)</option>
+          {% endfor %}
+        </select>
+        <span class="hint">Same per-account matching as instant pages. Sync on
+          <a href="/lead-forms">Lead Forms</a> after sharing.</span></label>
     </div>
   </div>
 
+  {# ============================= PLACEMENTS =============================== #}
   <div class="card">
-    <div class="card-header"><span class="card-title">Creative</span>
-      <span class="card-meta">spark post + ad text</span></div>
+    <div class="card-header"><span class="card-title">Placements</span></div>
+    <div class="form-row">
+      <label class="field"><span class="field-label">Placement</span>
+        <select name="placement_mode">
+          <option value="tiktok" {{ 'selected' if not blob.get('placement_auto') else '' }}>TikTok only (recommended — no Pangle)</option>
+          <option value="auto" {{ 'selected' if blob.get('placement_auto') else '' }}>Automatic (TikTok decides)</option>
+        </select></label>
+    </div>
+  </div>
+
+  {# ============================== TARGETING =============================== #}
+  <div class="card">
+    <div class="card-header"><span class="card-title">Targeting</span>
+      <span class="card-meta">empty fields = TikTok defaults (broadest)</span></div>
     <div class="form-row-3">
-      <label class="field"><span class="field-label">Spark code (default)</span>
+      <label class="field"><span class="field-label">Geo — location IDs</span>
+        <input type="text" name="location_ids" value="{{ blob.get('location_ids', [])|join(' ') }}"
+               placeholder="e.g. 6252001 (US)">
+        <span class="hint">TikTok numeric location IDs, space-separated.</span></label>
+      <label class="field"><span class="field-label">Languages</span>
+        <input type="text" name="languages" value="{{ blob.get('languages', [])|join(' ') }}"
+               placeholder="e.g. en es">
+        <span class="hint">Language codes, space-separated. Empty = all.</span></label>
+      <label class="field"><span class="field-label">Gender</span>
+        <select name="gender">
+          {% for g in ["GENDER_UNLIMITED", "GENDER_MALE", "GENDER_FEMALE"] %}
+            <option value="{{ g }}" {{ 'selected' if blob.get('gender', 'GENDER_UNLIMITED') == g else '' }}>{{ g.replace('GENDER_','')|title }}</option>
+          {% endfor %}
+        </select></label>
+    </div>
+    <div class="form-row-3">
+      <label class="field"><span class="field-label">Age groups</span>
+        <div data-chip-picker data-name="age_groups"
+             data-options='[["AGE_18_24","18–24"],["AGE_25_34","25–34"],["AGE_35_44","35–44"],["AGE_45_54","45–54"],["AGE_55_100","55+"]]'
+             data-selected='{{ blob.get("age_groups", [])|tojson }}'></div></label>
+      <label class="field"><span class="field-label">Spending power</span>
+        <select name="spending_power">
+          {% for v, label in spending_power_options %}
+            <option value="{{ v }}" {{ 'selected' if blob.get('spending_power', '') == v else '' }}>{{ label }}</option>
+          {% endfor %}
+        </select></label>
+      <label class="field"><span class="field-label">Operating system</span>
+        <select name="operating_systems">
+          {% for v, label in os_options %}
+            <option value="{{ v }}" {{ 'selected' if blob.get('operating_systems', '') == v else '' }}>{{ label }}</option>
+          {% endfor %}
+        </select></label>
+    </div>
+    <div class="form-row-3">
+      <label class="field"><span class="field-label">Interest category IDs</span>
+        <input type="text" name="interest_category_ids" value="{{ blob.get('interest_category_ids', [])|join(' ') }}"
+               placeholder="numeric IDs, space-separated"></label>
+      <label class="field"><span class="field-label">Include custom audiences (IDs)</span>
+        <input type="text" name="audience_ids" value="{{ blob.get('audience_ids', [])|join(' ') }}"></label>
+      <label class="field"><span class="field-label">Exclude custom audiences (IDs)</span>
+        <input type="text" name="excluded_audience_ids" value="{{ blob.get('excluded_audience_ids', [])|join(' ') }}"></label>
+    </div>
+    <div class="form-row">
+      <label class="field"><span class="field-label">Connection type</span>
+        <div data-chip-picker data-name="network_types"
+             data-options='{{ network_options|tojson }}'
+             data-selected='{{ blob.get("network_types", [])|tojson }}'></div>
+        <span class="hint">Empty = all connections.</span></label>
+    </div>
+  </div>
+
+  {# ========================== BUDGET & SCHEDULE =========================== #}
+  <div class="card">
+    <div class="card-header"><span class="card-title">Budget & schedule</span></div>
+    <div class="form-row-3">
+      <label class="field"><span class="field-label">Ad group budget ($, ABO)</span>
+        <input type="number" step="0.01" name="adgroup_budget" value="{{ blob.get('adgroup_budget', 20) }}"></label>
+      <label class="field"><span class="field-label">Ad group budget type</span>
+        <select name="adgroup_budget_mode">
+          <option value="BUDGET_MODE_DAY" {{ 'selected' if blob.get('adgroup_budget_mode', 'BUDGET_MODE_DAY') == 'BUDGET_MODE_DAY' else '' }}>Daily</option>
+          <option value="BUDGET_MODE_TOTAL" {{ 'selected' if blob.get('adgroup_budget_mode') == 'BUDGET_MODE_TOTAL' else '' }}>Lifetime (total)</option>
+        </select></label>
+      <label class="field"><span class="field-label">Duplicate ad groups</span>
+        <input type="number" min="1" max="20" name="duplicates" value="{{ blob.get('duplicates', 1) }}"></label>
+    </div>
+    <div class="form-row-3">
+      <label class="field"><span class="field-label">Schedule</span>
+        <select name="schedule_type" id="schedType">
+          <option value="SCHEDULE_FROM_NOW" {{ 'selected' if blob.get('schedule_type', 'SCHEDULE_FROM_NOW') == 'SCHEDULE_FROM_NOW' else '' }}>Start immediately, run continuously</option>
+          <option value="SCHEDULE_START_END" {{ 'selected' if blob.get('schedule_type') == 'SCHEDULE_START_END' else '' }}>Set start & end time</option>
+        </select></label>
+      <label class="field" data-sched="SCHEDULE_START_END"><span class="field-label">Start (UTC)</span>
+        <input type="datetime-local" name="schedule_start_time"
+               value="{{ blob.get('schedule_start_time', '').replace(' ', 'T') }}"></label>
+      <label class="field" data-sched="SCHEDULE_START_END"><span class="field-label">End (UTC)</span>
+        <input type="datetime-local" name="schedule_end_time"
+               value="{{ blob.get('schedule_end_time', '').replace(' ', 'T') }}"></label>
+    </div>
+  </div>
+
+  {# ======================== BIDDING & OPTIMIZATION ======================== #}
+  <div class="card">
+    <div class="card-header"><span class="card-title">Bidding & optimization</span></div>
+    <div class="form-row-3">
+      <label class="field"><span class="field-label">Optimization goal</span>
+        <select name="optimization_goal">
+          {% for v, label in opt_goal_options %}
+            <option value="{{ v }}" {{ 'selected' if blob.get('optimization_goal', '') == v else '' }}>{{ label }}</option>
+          {% endfor %}
+        </select></label>
+      <label class="field"><span class="field-label">Bid strategy</span>
+        <select name="bid_strategy">
+          {% for v, label in bid_strategy_options %}
+            <option value="{{ v }}" {{ 'selected' if blob.get('bid_strategy', '') == v else '' }}>{{ label }}</option>
+          {% endfor %}
+        </select></label>
+      <label class="field"><span class="field-label">Cost cap(s) ($, space-separated)</span>
+        <input type="text" name="cost_cap_ladder"
+               value="{{ blob.get('cost_cap_ladder', [])|join(' ') }}" placeholder="empty = lowest cost (no cap)">
+        <span class="hint">One value = flat cap; several = one ad group per bid (overrides duplicates).</span></label>
+    </div>
+    <div class="form-row-3">
+      <label class="field"><span class="field-label">Delivery type</span>
+        <select name="pacing">
+          {% for v, label in pacing_options %}
+            <option value="{{ v }}" {{ 'selected' if blob.get('pacing', 'PACING_MODE_SMOOTH') == v else '' }}>{{ label }}</option>
+          {% endfor %}
+        </select></label>
+      <label class="field"><span class="field-label">Click attribution window</span>
+        <select name="click_attribution_window">
+          {% for v, label in click_attr_options %}
+            <option value="{{ v }}" {{ 'selected' if blob.get('click_attribution_window', '') == v else '' }}>{{ label }}</option>
+          {% endfor %}
+        </select></label>
+      <label class="field"><span class="field-label">View attribution window</span>
+        <select name="view_attribution_window">
+          {% for v, label in view_attr_options %}
+            <option value="{{ v }}" {{ 'selected' if blob.get('view_attribution_window', '') == v else '' }}>{{ label }}</option>
+          {% endfor %}
+        </select></label>
+    </div>
+    <div class="form-row-3">
+      <label class="field"><span class="field-label">Auto-pick account policy</span>
+        <select name="account_policy">
+          <option value="new_only" {{ 'selected' if blob.get('account_policy', 'new_only') == 'new_only' }}>New accounts only</option>
+          <option value="reuse" {{ 'selected' if blob.get('account_policy') == 'reuse' }}>Reuse — no active campaign</option>
+        </select></label>
+    </div>
+  </div>
+
+  {# ========================== ADVANCED SETTINGS =========================== #}
+  <div class="card">
+    <div class="card-header"><span class="card-title">Advanced settings</span>
+      <span class="card-meta">comments · downloads · sharing</span></div>
+    <div class="form-row-3">
+      <label class="field"><span class="field-label">Comments</span>
+        <span style="display:flex;align-items:center;gap:8px;">
+          <input type="checkbox" name="comment_disabled" value="1" style="width:auto;"
+                 {{ 'checked' if blob.get('comment_disabled') }}>
+          <span>Turn comments off on the ads</span>
+        </span></label>
+      <label class="field"><span class="field-label">Video download</span>
+        <span style="display:flex;align-items:center;gap:8px;">
+          <input type="checkbox" name="video_download_disabled" value="1" style="width:auto;"
+                 {{ 'checked' if blob.get('video_download_disabled') }}>
+          <span>Block video downloads</span>
+        </span></label>
+      <label class="field"><span class="field-label">Sharing</span>
+        <span style="display:flex;align-items:center;gap:8px;">
+          <input type="checkbox" name="share_disabled" value="1" style="width:auto;"
+                 {{ 'checked' if blob.get('share_disabled') }}>
+          <span>Block sharing of the ads</span>
+        </span></label>
+    </div>
+    <div class="muted" style="font-size:12px;">Applied per ad group at launch (works for both regular and Smart+ campaigns).</div>
+  </div>
+
+  {# ================================== AD ================================== #}
+  <div class="card">
+    <div class="card-header"><span class="card-title">Ad</span>
+      <span class="card-meta">spark creative · text · CTA</span></div>
+    <div class="form-row-3">
+      <label class="field"><span class="field-label">Creative source</span>
+        <select name="creative_source" id="creativeSource">
+          <option value="spark" {{ 'selected' if blob.get('creative_source', 'spark') == 'spark' }}>Spark code (organic post)</option>
+          <option value="library" {{ 'selected' if blob.get('creative_source') == 'library' }}>Creative library — next unused video</option>
+        </select>
+        <span class="hint" id="libraryHint" style="display:none;">Each launch consumes ONE unused creative from the <a href="/creatives">library</a>. Needs the ad identity (name + avatar) configured there.</span></label>
+      <label class="field" id="sparkField"><span class="field-label">Spark code (default)</span>
         <select name="spark_code_id">
           <option value="">— pick at launch —</option>
           {% for s in sparks %}
-            <option value="{{ s.id }}" {{ 'selected' if blob.get('spark_code_id') == s.id else '' }}>{{ s.name or s.code[:18] }} ({{ s.media_type }})</option>
+            <option value="{{ s.id }}" {{ 'selected' if blob.get('spark_code_id') == s.id else '' }}>{{ s.name or s.code[:18] }} ({{ s.media_type }}{{ ' · ' + s.source if s.source }})</option>
           {% endfor %}
         </select></label>
       <label class="field"><span class="field-label">Ad text</span>
         <input type="text" name="ad_text" value="{{ blob.get('ad_text', '') }}" maxlength="100"></label>
       <label class="field"><span class="field-label">Call to action</span>
         <select name="call_to_action">
-          {% for cta in ["LEARN_MORE","SHOP_NOW","SIGN_UP","APPLY_NOW","DOWNLOAD_NOW","GET_QUOTE","CONTACT_US","ORDER_NOW"] %}
+          {% for cta in cta_options %}
             <option value="{{ cta }}" {{ 'selected' if blob.get('call_to_action', 'LEARN_MORE') == cta else '' }}>{{ cta.replace('_',' ')|title }}</option>
           {% endfor %}
         </select></label>
+    </div>
+    <div class="form-row-3" id="poolModes" style="display:none;">
+      <label class="field"><span class="field-label">Identity on ads</span>
+        <select name="identity_mode">
+          <option value="fixed" {{ 'selected' if blob.get('identity_mode', 'fixed') == 'fixed' }}>Same identity on all (Creatives page)</option>
+          <option value="pool" {{ 'selected' if blob.get('identity_mode') == 'pool' }}>Unique per launch — from Identities pool</option>
+        </select>
+        <span class="hint">Pool mode consumes one name+avatar from <a href="/identities">Identities</a> per launch.</span></label>
+      <label class="field"><span class="field-label">Ad text on ads</span>
+        <select name="ad_text_mode">
+          <option value="fixed" {{ 'selected' if blob.get('ad_text_mode', 'fixed') == 'fixed' }}>Fixed text (above)</option>
+          <option value="pool" {{ 'selected' if blob.get('ad_text_mode') == 'pool' }}>Unique per launch — from Ad Texts pool</option>
+        </select>
+        <span class="hint">Pool mode consumes one text from <a href="/ad-texts">Ad Texts</a> per launch.</span></label>
     </div>
   </div>
 
@@ -153,7 +341,6 @@
 {% block scripts %}
 <script src="/static/chip-picker.js?v={{ STATIC_V }}"></script>
 <script>
-  // show/hide destination-specific fields + the CBO budget input
   var destSel = document.getElementById("destType");
   function syncDest() {
     document.querySelectorAll("[data-dest]").forEach(function (el) {
@@ -162,8 +349,28 @@
   }
   destSel.addEventListener("change", syncDest); syncDest();
 
+  var csSel = document.getElementById("creativeSource"),
+      sparkField = document.getElementById("sparkField"),
+      libraryHint = document.getElementById("libraryHint");
+  var poolModes = document.getElementById("poolModes");
+  function syncCreative() {
+    var lib = csSel.value === "library";
+    sparkField.style.display = lib ? "none" : "";
+    libraryHint.style.display = lib ? "" : "none";
+    poolModes.style.display = lib ? "" : "none";
+  }
+  csSel.addEventListener("change", syncCreative); syncCreative();
+
   var modeSel = document.getElementById("budgetMode"), cbo = document.getElementById("cboBudgetField");
   function syncMode() { cbo.style.display = modeSel.value === "ABO" ? "none" : ""; }
   modeSel.addEventListener("change", syncMode); syncMode();
+
+  var schedSel = document.getElementById("schedType");
+  function syncSched() {
+    document.querySelectorAll("[data-sched]").forEach(function (el) {
+      el.style.display = el.dataset.sched === schedSel.value ? "" : "none";
+    });
+  }
+  schedSel.addEventListener("change", syncSched); syncSched();
 </script>
 {% endblock %}

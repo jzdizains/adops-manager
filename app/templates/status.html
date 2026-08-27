@@ -1,59 +1,140 @@
 {% extends "base.html" %}
 {% block content %}
+{% macro sort_link(key, label) -%}
+  <a class="th-sort {{ 'on' if sort == key else '' }}"
+     href="?q={{ q|urlencode }}&state={{ state }}&account={{ account }}&sort={{ key }}">{{ label }}{% if sort == key %} ▾{% endif %}</a>
+{%- endmacro %}
 <div class="page-head">
   <div>
-    <h1>Status</h1>
-    <div class="muted">{{ active_count }} active · ${{ "%.2f"|format(total_spend) }} spent today · synced {{ synced_ago }}</div>
+    <h1>Campaigns</h1>
+    <div class="muted">{{ active_count }} active of {{ rows|length }} shown · ${{ "%.2f"|format(totals.spend) }} spent · ${{ "%.2f"|format(totals.revenue) }} revenue ·
+      <span class="{{ 'pos' if totals.profit >= 0 else 'neg' }}">${{ "%.2f"|format(totals.profit) }} profit</span> today · synced {{ synced_ago }}</div>
   </div>
   <div class="actions">
-    <form method="get" action="/status" style="display:flex;gap:6px;">
-      <input type="text" name="q" value="{{ q }}" placeholder="Filter campaigns…" style="width:200px;">
-      <button class="btn" type="submit">Search</button>
-    </form>
     <form method="post" action="/status/sync"><button class="btn primary" type="submit">↻ Sync now</button></form>
   </div>
 </div>
 
+{% if request.query_params.get('err') %}
+<div class="flash err">TikTok rejected the change — {{ request.query_params.get('err') }}</div>
+{% endif %}
+
+<div class="card" style="margin-bottom:14px;">
+  <form method="get" action="/status" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+    <input type="text" name="q" value="{{ q }}" placeholder="Filter by campaign or account…" style="width:230px;">
+    <select name="state" style="width:auto;">
+      <option value="all" {{ 'selected' if state == 'all' }}>All statuses</option>
+      <option value="active" {{ 'selected' if state == 'active' }}>Active only</option>
+      <option value="paused" {{ 'selected' if state == 'paused' }}>Paused only</option>
+    </select>
+    <select name="account" style="width:auto;max-width:260px;">
+      <option value="">All accounts</option>
+      {% for aid, label in account_options %}
+      <option value="{{ aid }}" {{ 'selected' if account == aid }}>{{ label[:34] }}</option>
+      {% endfor %}
+    </select>
+    <input type="hidden" name="sort" value="{{ sort }}">
+    <button class="btn" type="submit">Apply</button>
+    {% if q or state != 'all' or account %}<a class="btn sm" href="/status">✕ Clear</a>{% endif %}
+  </form>
+</div>
+
 <div class="card">
   {% if rows %}
-  <table class="data">
+  <div style="overflow-x:auto;">
+  <table class="data dense">
     <thead><tr>
-      <th>Campaign</th><th>Account</th><th>Objective</th><th>Status</th>
-      <th class="num">Budget</th><th class="num">Spend today</th><th class="num">Actions</th>
+      <th>{{ sort_link('name', 'Campaign') }}</th>
+      <th>Account</th>
+      <th>Status</th>
+      <th>{{ sort_link('source', 'Source') }}</th>
+      <th class="num">{{ sort_link('spend', 'Spend') }}</th>
+      <th class="num" title="Revenue from Glitchy postbacks (via source)">{{ sort_link('revenue', 'Revenue') }}</th>
+      <th class="num" title="Profit = postback revenue − TikTok spend">{{ sort_link('profit', 'Profit') }}</th>
+      <th class="num" title="Clicks reported by Glitchy postbacks">{{ sort_link('pb_clicks', 'PB clicks') }}</th>
+      <th class="num" title="CVR from Glitchy postbacks (conversions / clicks, source level)">{{ sort_link('cvr', 'CVR') }}</th>
+      <th class="num">{{ sort_link('budget', 'Budget') }}</th>
+      <th class="num">{{ sort_link('impr', 'Impr.') }}</th>
+      <th class="num">{{ sort_link('clicks', 'Clicks') }}</th>
+      <th class="num">{{ sort_link('ctr', 'CTR') }}</th>
+      <th class="num">{{ sort_link('cpc', 'CPC') }}</th>
+      <th class="num">{{ sort_link('cpm', 'CPM') }}</th>
+      <th class="num">{{ sort_link('conv', 'Conv.') }}</th>
+      <th class="num">{{ sort_link('cpa', 'CPA') }}</th>
+      <th class="num sticky-r">Actions</th>
     </tr></thead>
     <tbody>
     {% for row in rows %}
       {% set r = row.r %}
       <tr>
-        <td>{{ r.campaign_name[:44] }}</td>
-        <td class="muted">{{ row.account_name[:26] }}</td>
-        <td class="muted">{{ r.objective_type.replace('_',' ')|title }}</td>
-        <td>
+        <td style="min-width:170px;">{{ r.campaign_name[:42] }}{% if r.is_smart_plus %} <span class="pill dim" title="Smart+ campaign — TikTok automates targeting & placements">S+</span>{% endif %}</td>
+        <td class="muted" style="white-space:nowrap;">{{ row.account_name[:22] }}</td>
+        <td style="white-space:nowrap;">
           {% if r.operation_status == "ENABLE" %}<span class="pill ok">Active</span>
           {% elif r.operation_status == "DISABLE" %}<span class="pill warn">Paused</span>
           {% else %}<span class="pill dim">{{ r.operation_status or "—" }}</span>{% endif %}
           {% if r.secondary_status and "DISABLE" not in r.operation_status %}
-            <span class="muted" style="font-size:11px;">{{ r.secondary_status.replace('CAMPAIGN_STATUS_','').replace('_',' ')|lower }}</span>
+            <div class="muted" style="font-size:11px;">{{ r.secondary_status.replace('CAMPAIGN_STATUS_','').replace('_',' ')|lower }}</div>
           {% endif %}
         </td>
-        <td class="num">{% if r.budget %}${{ "%.0f"|format(r.budget) }}{% if r.budget_mode == 'BUDGET_MODE_DAY' %}/d{% endif %}{% else %}—{% endif %}</td>
+        <td style="white-space:nowrap;">
+          {% if row.source %}{{ row.source }}
+            {% if row.shared_n %}<span class="muted" title="This spark/source runs on {{ row.shared_n }} campaigns — revenue & clicks are split by spend share" style="font-size:11px;"> ÷{{ row.shared_n }}</span>{% endif %}
+          {% else %}<span class="muted">—</span>{% endif %}
+        </td>
         <td class="num">${{ "%.2f"|format(r.spend_today) }}</td>
-        <td class="num" style="white-space:nowrap;">
-          <a class="btn sm" href="/campaigns/{{ r.advertiser_id }}/{{ r.campaign_id }}/edit">✎ Edit</a>
+        <td class="num">{% if row.source %}${{ "%.2f"|format(row.revenue) }}{% else %}—{% endif %}</td>
+        <td class="num {{ 'pos' if row.profit >= 0 else 'neg' }}">{% if row.source %}{{ '−' if row.profit < 0 }}${{ "%.2f"|format(row.profit|abs) }}{% else %}—{% endif %}</td>
+        <td class="num">{% if row.source %}{{ "%.0f"|format(row.pb_clicks) }}{% else %}—{% endif %}</td>
+        <td class="num">{% if row.source and row.pb_clicks %}{{ "%.2f"|format(row.cvr) }}%{% else %}—{% endif %}</td>
+        <td class="num">{% if r.budget %}${{ "%.0f"|format(r.budget) }}{% if r.budget_mode == 'BUDGET_MODE_DAY' %}/d{% endif %}{% else %}—{% endif %}</td>
+        <td class="num">{{ "{:,}".format(r.impressions) }}</td>
+        <td class="num">{{ "{:,}".format(r.clicks) }}</td>
+        <td class="num">{{ "%.2f"|format(r.ctr) }}%</td>
+        <td class="num">{% if r.clicks %}${{ "%.2f"|format(r.cpc) }}{% else %}—{% endif %}</td>
+        <td class="num">{% if r.impressions %}${{ "%.2f"|format(r.cpm) }}{% else %}—{% endif %}</td>
+        <td class="num">{{ r.conversions }}</td>
+        <td class="num">{% if r.conversions %}${{ "%.2f"|format(r.cpa) }}{% else %}—{% endif %}</td>
+        <td class="num sticky-r" style="white-space:nowrap;">
           <form method="post" action="/campaigns/{{ r.advertiser_id }}/{{ r.campaign_id }}/status" style="display:inline;">
+            <input type="hidden" name="next" value="/status?q={{ q|urlencode }}&state={{ state }}&account={{ account }}&sort={{ sort }}">
             {% if r.operation_status == "ENABLE" %}
               <input type="hidden" name="operation_status" value="DISABLE">
-              <button class="btn sm" type="submit">⏸ Pause</button>
+              <button class="btn sm" type="submit" title="Pause this campaign on TikTok">⏸</button>
             {% else %}
               <input type="hidden" name="operation_status" value="ENABLE">
-              <button class="btn sm" type="submit">▶ Resume</button>
+              <button class="btn sm" type="submit" title="Resume this campaign on TikTok">▶</button>
             {% endif %}
           </form>
+          <a class="btn sm" href="/campaigns/{{ r.advertiser_id }}/{{ r.campaign_id }}/edit" title="Edit budgets & cost caps">✎</a>
         </td>
       </tr>
     {% endfor %}
     </tbody>
+    <tfoot>
+      <tr style="font-weight:600;">
+        <td colspan="4">Totals ({{ rows|length }} campaigns)</td>
+        <td class="num">${{ "%.2f"|format(totals.spend) }}</td>
+        <td class="num">${{ "%.2f"|format(totals.revenue) }}</td>
+        <td class="num {{ 'pos' if totals.profit >= 0 else 'neg' }}">{{ '−' if totals.profit < 0 }}${{ "%.2f"|format(totals.profit|abs) }}</td>
+        <td class="num">{{ "%.0f"|format(totals.pb_clicks) }}</td>
+        <td class="num">{% if totals.pb_clicks %}{{ "%.2f"|format(totals.cvr) }}%{% else %}—{% endif %}</td>
+        <td></td>
+        <td class="num">{{ "{:,}".format(totals.impressions) }}</td>
+        <td class="num">{{ "{:,}".format(totals.clicks) }}</td>
+        <td class="num">{{ "%.2f"|format(totals.ctr) }}%</td>
+        <td class="num">{% if totals.clicks %}${{ "%.2f"|format(totals.cpc) }}{% else %}—{% endif %}</td>
+        <td class="num">{% if totals.impressions %}${{ "%.2f"|format(totals.cpm) }}{% else %}—{% endif %}</td>
+        <td class="num">{{ totals.conversions }}</td>
+        <td class="num">{% if totals.conversions %}${{ "%.2f"|format(totals.cpa) }}{% else %}—{% endif %}</td>
+        <td></td>
+      </tr>
+    </tfoot>
   </table>
+  </div>
+  <div class="muted" style="font-size:11px;margin-top:8px;">
+    Revenue · PB clicks · CVR come from Glitchy postbacks (per source, today). “÷N” = that source runs on N campaigns, so its revenue and clicks are split between them by spend share; CVR stays source-level. Conv. / CPA are TikTok-pixel numbers.
+  </div>
   {% else %}
   <div class="empty">No campaigns cached yet — hit “Sync now” to pull them from every account.</div>
   {% endif %}

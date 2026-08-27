@@ -61,6 +61,7 @@ def _loop():
                 balances.evaluate_bc_alerts(db)
                 rules.evaluate_topups(db, settings)
                 rules.check_fresh_inventory(db, settings)
+                rules.check_pool_inventory(db, settings)
                 issues.scan(db)
             else:
                 # fast pass: only accounts with something running

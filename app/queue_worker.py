@@ -86,7 +86,8 @@ def process(db: Session, settings: dict | None = None) -> int:
         used_this_pass.add(acct.advertiser_id)
 
         log = engine.launch_to_account(db, acct, fields, item.batch_ref or "queue")
-        rules.record_launch_outcome(db, acct, log.ok, settings)
+        if log.error_code not in ("ASSET", "CONFIG"):   # preset problems, not account health
+            rules.record_launch_outcome(db, acct, log.ok, settings)
         item.attempts += 1
         item.processed_at = datetime.now(timezone.utc).replace(tzinfo=None)
         if log.ok:

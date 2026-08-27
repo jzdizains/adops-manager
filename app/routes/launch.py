@@ -42,6 +42,35 @@ PIXEL_EVENTS = [
 OBJECTIVES = ["TRAFFIC", "WEB_CONVERSIONS", "LEAD_GENERATION", "REACH", "VIDEO_VIEWS"]
 DESTINATIONS = ["website", "instant_page", "lead_form", "pixel"]
 
+# Full Ads-Manager option sets (used by the preset form + payload builders)
+CTA_OPTIONS = [
+    "LEARN_MORE", "SHOP_NOW", "SIGN_UP", "SUBSCRIBE", "CONTACT_US", "APPLY_NOW",
+    "BOOK_NOW", "DOWNLOAD_NOW", "GET_QUOTE", "ORDER_NOW", "PLAY_GAME",
+    "VISIT_STORE", "WATCH_NOW", "INTERESTED", "LISTEN_NOW", "READ_MORE",
+    "VIEW_NOW", "PRE_ORDER_NOW", "GET_TICKETS_NOW", "EXPERIENCE_NOW",
+]
+OPT_GOAL_OPTIONS = [
+    ("", "Auto (from objective)"),
+    ("CONVERT", "Conversions"), ("CLICK", "Clicks"), ("REACH", "Reach"),
+    ("ENGAGED_VIEW", "Engaged views"), ("TRAFFIC_LANDING_PAGE_VIEW", "Landing page views"),
+]
+PACING_OPTIONS = [("PACING_MODE_SMOOTH", "Standard (smooth)"),
+                  ("PACING_MODE_FAST", "Accelerated")]
+CLICK_ATTR_OPTIONS = [("", "TikTok default"), ("ONE_DAY", "1 day"),
+                      ("SEVEN_DAYS", "7 days"), ("FOURTEEN_DAYS", "14 days"),
+                      ("TWENTY_EIGHT_DAYS", "28 days")]
+VIEW_ATTR_OPTIONS = [("", "TikTok default"), ("OFF", "Off"),
+                     ("ONE_DAY", "1 day"), ("SEVEN_DAYS", "7 days")]
+NETWORK_OPTIONS = [["WIFI", "WiFi"], ["5G", "5G"], ["4G", "4G"], ["3G", "3G"], ["2G", "2G"]]
+OS_OPTIONS = [("", "All"), ("ANDROID", "Android only"), ("IOS", "iOS only")]
+SPENDING_POWER_OPTIONS = [("", "All"), ("HIGH", "High spending power")]
+SPECIAL_INDUSTRIES = [["HOUSING", "Housing"], ["EMPLOYMENT", "Employment"], ["CREDIT", "Credit"]]
+BID_STRATEGY_OPTIONS = [
+    ("", "Auto — cost cap when caps are set, else maximum delivery"),
+    ("max_delivery", "Maximum delivery (ignores any cost caps)"),
+    ("cost_cap", "Cost cap (requires cap value(s) below)"),
+]
+
 
 def optimization_for(objective_type: str, destination: str) -> tuple[str, str, str]:
     key = (objective_type, destination)
@@ -86,14 +115,42 @@ def synthesize(template: models.Template, overrides: dict[str, Any] | None = Non
         "age_groups": s.get("age_groups") or [],
         "schedule_type": s.get("schedule_type") or "SCHEDULE_FROM_NOW",
         "schedule_start_time": s.get("schedule_start_time") or "",
+        "schedule_end_time": s.get("schedule_end_time") or "",
+        # -- full Ads-Manager surface (all optional; omitted from payloads when empty)
+        "special_industries": s.get("special_industries") or [],
+        "placement_auto": bool(s.get("placement_auto")),
+        "languages": s.get("languages") or [],
+        "spending_power": s.get("spending_power") or "",
+        "interest_category_ids": s.get("interest_category_ids") or [],
+        "audience_ids": s.get("audience_ids") or [],
+        "excluded_audience_ids": s.get("excluded_audience_ids") or [],
+        "operating_systems": s.get("operating_systems") or "",
+        "network_types": s.get("network_types") or [],
+        "adgroup_budget_mode": s.get("adgroup_budget_mode") or "BUDGET_MODE_DAY",
+        "pacing": s.get("pacing") or "PACING_MODE_SMOOTH",
+        "click_attribution_window": s.get("click_attribution_window") or "",
+        "view_attribution_window": s.get("view_attribution_window") or "",
+        # -- bid strategy + Smart+ + advanced settings --
+        "bid_strategy": s.get("bid_strategy") or "",           # "" = max delivery | cost_cap
+        "smart_plus": bool(s.get("smart_plus")),
+        "comment_disabled": bool(s.get("comment_disabled")),
+        "video_download_disabled": bool(s.get("video_download_disabled")),
+        "share_disabled": bool(s.get("share_disabled")),
         # -- destination detail --
         "landing_page_url": s.get("landing_page_url") or "",
-        "instant_page_id": s.get("instant_page_id") or "",
-        "lead_form_id": s.get("lead_form_id") or "",
+        # pages/forms are selected BY NAME — per target account, the engine
+        # resolves that account's own copy at launch (per-account asset IDs)
+        "instant_page_name": s.get("instant_page_name") or "",
+        "lead_form_name": s.get("lead_form_name") or "",
+        "instant_page_id": s.get("instant_page_id") or "",   # legacy exact-id
+        "lead_form_id": s.get("lead_form_id") or "",         # legacy exact-id
         "pixel_code": s.get("pixel_code") or "",
         "pixel_id": s.get("pixel_id") or "",                     # numeric, if already resolved
         "optimization_event": s.get("optimization_event") or "",
         # -- creative / spark --
+        "creative_source": s.get("creative_source") or "spark",   # spark | library
+        "identity_mode": s.get("identity_mode") or "fixed",       # fixed | pool (library only)
+        "ad_text_mode": s.get("ad_text_mode") or "fixed",         # fixed | pool (library only)
         "spark_code_id": s.get("spark_code_id"),
         "ad_text": s.get("ad_text") or "",
         "call_to_action": s.get("call_to_action") or "LEARN_MORE",
@@ -111,7 +168,7 @@ def destination_label(fields: dict) -> str:
         ev = dict(PIXEL_EVENTS).get(fields.get("optimization_event", ""), fields.get("optimization_event", ""))
         return f"⚡ Pixel · {ev or 'no event set'}"
     if d == "instant_page":
-        return "Instant page"
+        return f"Instant page · {fields.get('instant_page_name') or '?'}"
     if d == "lead_form":
-        return "Lead form"
+        return f"Lead form · {fields.get('lead_form_name') or '?'}"
     return "Website"

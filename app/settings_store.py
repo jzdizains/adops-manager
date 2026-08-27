@@ -44,6 +44,10 @@ DEFAULTS: dict = {
     "postback_key": "",            # generated on first read; auths /postback
     "postback_mode": "incremental",  # incremental = sum every postback;
                                      # snapshot = latest value per source per day
+    # --- creative library ------------------------------------------------------
+    "ad_identity_name": "",        # display name for the CUSTOMIZED_USER identity
+                                   # shown on uploaded-creative ads (avatar file is
+                                   # managed on the /creatives page)
 }
 
 

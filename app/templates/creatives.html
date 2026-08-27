@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Creatives</h1>
+    <div class="muted">{{ available }} available · {{ rows|length - available }} used — each creative launches exactly once.</div>
+  </div>
+</div>
+
+{% if ok %}<div class="flash ok">{{ ok }}</div>{% endif %}
+{% if err %}<div class="flash err">{{ err }}</div>{% endif %}
+
+<div class="card" style="margin-bottom:14px;">
+  <div class="card-header"><span class="card-title">Upload videos</span>
+    <span class="card-meta">mp4 · mov · webm — up to 500MB each</span></div>
+  <form method="post" action="/creatives/upload" enctype="multipart/form-data"
+        style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+    <input type="file" name="files" accept="video/*" multiple required style="width:auto;">
+    <input type="text" name="source_prefix" placeholder="source prefix (optional, e.g. offerA)"
+           style="width:230px;">
+    <button class="btn primary" type="submit">⬆ Upload</button>
+    <span class="hint">With a prefix, each file gets source <code>prefix_id</code> automatically — or set sources per creative below.</span>
+  </form>
+</div>
+
+<div class="card" style="margin-bottom:14px;">
+  <div class="card-header"><span class="card-title">Ad identity</span>
+    <span class="card-meta">the name + avatar shown on uploaded-creative ads</span></div>
+  <form method="post" action="/creatives/identity" enctype="multipart/form-data"
+        style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+    <input type="text" name="identity_name" value="{{ identity_name }}"
+           placeholder="Display name (required to launch)" style="width:240px;">
+    <input type="file" name="avatar" accept="image/*" style="width:auto;">
+    {% if has_avatar %}<span class="pill ok">avatar set</span>{% else %}<span class="pill warn">avatar missing</span>{% endif %}
+    <button class="btn" type="submit">Save identity</button>
+    <span class="hint">Square image (1:1). Both are required before launching library creatives — the identity is created once per ad account automatically.</span>
+  </form>
+</div>
+
+<div class="card">
+  {% if rows %}
+  <table class="data">
+    <thead><tr>
+      <th>Creative</th><th>Source</th><th>Status</th><th>Launched on</th>
+      <th class="num">Size</th><th class="num">Actions</th>
+    </tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr>
+        <td>
+          <form id="cf{{ r.id }}" method="post" action="/creatives/{{ r.id }}/update"></form>
+          <input form="cf{{ r.id }}" type="text" name="name" value="{{ r.name }}" style="width:220px;">
+        </td>
+        <td>
+          <input form="cf{{ r.id }}" type="text" name="source" value="{{ r.source }}" placeholder="source for P&L"
+                 style="width:150px;" {{ 'readonly' if r.status == 'used' and r.source }}>
+        </td>
+        <td>
+          {% if r.status == 'available' %}<span class="pill ok">Available</span>
+          {% else %}<span class="pill dim">Used</span>{% endif %}
+        </td>
+        <td class="muted">
+          {% if r.used_advertiser_id %}
+            {{ accounts.get(r.used_advertiser_id, r.used_advertiser_id)[:26] }}
+            {% if r.used_at %}<div style="font-size:11px;">{{ r.used_at.strftime('%b %d %H:%M') }}</div>{% endif %}
+          {% else %}—{% endif %}
+        </td>
+        <td class="num">{{ "%.1f"|format(r.size_bytes / 1048576) }} MB</td>
+        <td class="num" style="white-space:nowrap;">
+          <button form="cf{{ r.id }}" class="btn sm" type="submit">Save</button>
+          {% if r.status == 'available' %}
+          <form method="post" action="/creatives/{{ r.id }}/delete" style="display:inline;"
+                onsubmit="return confirm('Delete this creative?');">
+            <button class="btn sm danger" type="submit">✕</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">No creatives yet — upload videos above. Launches with “Creative library” presets pull the next available one automatically.</div>
+  {% endif %}
+</div>
+{% endblock %}

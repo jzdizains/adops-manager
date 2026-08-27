@@ -18,8 +18,12 @@ router = APIRouter()
 
 @router.get("/monitor")
 def monitor(request: Request, db: Session = Depends(get_db)):
-    bcs = db.query(models.BusinessCenter).order_by(models.BusinessCenter.name).all()
-    accounts = db.query(models.AdAccount).order_by(models.AdAccount.advertiser_name).all()
+    bcs = (db.query(models.BusinessCenter)
+           .filter(models.BusinessCenter.status != "ACCESS_LOST")
+           .order_by(models.BusinessCenter.name).all())
+    accounts = (db.query(models.AdAccount)
+                .filter(models.AdAccount.status != "ACCESS_LOST")
+                .order_by(models.AdAccount.advertiser_name).all())
     campaigns = db.query(models.CampaignRecord).all()
 
     camps_by_acct: dict[str, list[models.CampaignRecord]] = {}

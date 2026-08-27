@@ -104,6 +104,84 @@ class Template(Base):
 # Spark codes
 # ---------------------------------------------------------------------------
 
+class Creative(Base):
+    """Uploaded video creative (Creative Library). Each creative is consumed by
+    exactly ONE launch — the engine reserves it, uploads it into the target
+    account's asset library, and marks where it went."""
+    __tablename__ = "creatives"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String, default="")                      # display label (defaults to file name)
+    file_name = Column(String, default="")                 # original upload name
+    file_path = Column(String, default="")                 # under DATA_DIR/creatives/
+    md5 = Column(String, default="", index=True)
+    size_bytes = Column(Integer, default=0)
+    source = Column(String, default="", index=True)        # P&L join key (like spark source)
+    status = Column(String, default="available")           # available | used
+    used_advertiser_id = Column(String, default="")
+    used_campaign_id = Column(String, default="")
+    used_at = Column(DateTime, nullable=True)
+    uploaded_at = Column(DateTime, default=utcnow)
+
+
+class CreativeUpload(Base):
+    """Cache: which TikTok video_id/cover a creative got in a given ad account
+    (so a retried launch never re-uploads the file)."""
+    __tablename__ = "creative_uploads"
+
+    id = Column(Integer, primary_key=True)
+    creative_id = Column(Integer, ForeignKey("creatives.id"), index=True)
+    advertiser_id = Column(String, index=True)
+    video_id = Column(String, default="")
+    cover_image_id = Column(String, default="")
+    created_at = Column(DateTime, default=utcnow)
+
+
+class AdIdentity(Base):
+    """Identity pool — a name + avatar pair, consumed by exactly ONE launch so
+    every campaign can carry a unique identity on its ads."""
+    __tablename__ = "ad_identities"
+
+    id = Column(Integer, primary_key=True)
+    display_name = Column(String, default="")
+    avatar_path = Column(String, default="")               # under DATA_DIR/identity_avatars/
+    status = Column(String, default="available")           # available | used
+    used_advertiser_id = Column(String, default="")
+    used_campaign_id = Column(String, default="")
+    used_at = Column(DateTime, nullable=True)
+    # cache of the TikTok identity created from this row (survives a revert so
+    # a retried launch on the same account never creates a duplicate)
+    created_advertiser_id = Column(String, default="")
+    created_identity_id = Column(String, default="")
+    created_at = Column(DateTime, default=utcnow)
+
+
+class AdText(Base):
+    """Ad-text pool — each text is consumed by exactly ONE launch so every
+    campaign can carry unique copy."""
+    __tablename__ = "ad_texts"
+
+    id = Column(Integer, primary_key=True)
+    text = Column(Text, default="")
+    status = Column(String, default="available")           # available | used
+    used_advertiser_id = Column(String, default="")
+    used_campaign_id = Column(String, default="")
+    used_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+
+
+class CustomIdentity(Base):
+    """Cache: the CUSTOMIZED_USER identity (name+avatar shown on non-spark ads)
+    created in each ad account."""
+    __tablename__ = "custom_identities"
+
+    id = Column(Integer, primary_key=True)
+    advertiser_id = Column(String, unique=True, index=True)
+    identity_id = Column(String, default="")
+    display_name = Column(String, default="")
+    created_at = Column(DateTime, default=utcnow)
+
+
 class SparkCodeGroup(Base):
     __tablename__ = "spark_code_groups"
 
@@ -248,6 +326,7 @@ class CampaignRecord(Base):
     cpa = Column(Float, default=0.0)
     ctr = Column(Float, default=0.0)
     launched_at = Column(DateTime, nullable=True)  # campaign create_time from TikTok
+    is_smart_plus = Column(Boolean, default=False)  # Smart+ campaigns use /smart_plus/* endpoints
     synced_at = Column(DateTime, default=utcnow)
 
 
@@ -348,6 +427,20 @@ class Issue(Base):
     message = Column(Text, default="")                  # plain-English problem
     detail = Column(Text, default="")                   # raw TikTok status/reason (copyable)
     detected_at = Column(DateTime, default=utcnow)
+
+
+class PixelRecord(Base):
+    """The pixel inventory — synced from accounts via /pixel/list/, plus the
+    ones this tool created/transferred. owner_bc_id set = BC-owned (shareable)."""
+    __tablename__ = "pixel_records"
+
+    id = Column(Integer, primary_key=True)
+    pixel_id = Column(String, unique=True, index=True, nullable=False)
+    pixel_name = Column(String, default="")
+    pixel_code = Column(String, default="")
+    owner_advertiser_id = Column(String, default="")   # account it was found/created on
+    owner_bc_id = Column(String, default="")           # set once moved into a BC
+    synced_at = Column(DateTime, default=utcnow)
 
 
 class SharedPixel(Base):

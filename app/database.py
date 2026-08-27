@@ -46,6 +46,7 @@ schema_additions: dict[str, dict[str, str]] = {
         "cpa": "REAL DEFAULT 0",
         "ctr": "REAL DEFAULT 0",
         "launched_at": "DATETIME",
+        "is_smart_plus": "BOOLEAN DEFAULT 0",
     },
 }
 

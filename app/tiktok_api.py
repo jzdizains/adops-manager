@@ -45,8 +45,13 @@ def api_get(path: str, access_token: str, params: dict | None = None) -> Any:
         if v is None:
             continue
         q[k] = json.dumps(v) if isinstance(v, (list, dict)) else v
-    with httpx.Client(timeout=TIMEOUT) as client:
-        resp = client.get(f"{BASE}{path}", params=q, headers={"Access-Token": access_token})
+    try:
+        with httpx.Client(timeout=TIMEOUT) as client:
+            resp = client.get(f"{BASE}{path}", params=q, headers={"Access-Token": access_token})
+    except httpx.HTTPError as e:
+        # network/timeout/proxy problems become a retryable "HTTP" TikTokError
+        # instead of crashing whole sync loops with a raw transport exception
+        raise TikTokError("HTTP", f"Network error calling TikTok: {e!r}")
     return _parse(resp)
 
 
@@ -71,11 +76,14 @@ def api_get_retry(path: str, access_token: str, params: dict | None = None,
 
 
 def api_post(path: str, access_token: str, payload: dict) -> Any:
-    with httpx.Client(timeout=TIMEOUT) as client:
-        resp = client.post(
-            f"{BASE}{path}", json=payload,
-            headers={"Access-Token": access_token, "Content-Type": "application/json"},
-        )
+    try:
+        with httpx.Client(timeout=TIMEOUT) as client:
+            resp = client.post(
+                f"{BASE}{path}", json=payload,
+                headers={"Access-Token": access_token, "Content-Type": "application/json"},
+            )
+    except httpx.HTTPError as e:
+        raise TikTokError("HTTP", f"Network error calling TikTok: {e!r}")
     return _parse(resp)
 
 
@@ -261,6 +269,118 @@ def create_adgroup(access_token: str, advertiser_id: str, payload: dict) -> dict
 
 def create_ad(access_token: str, advertiser_id: str, payload: dict) -> dict:
     return api_post("/ad/create/", access_token, {"advertiser_id": advertiser_id, **payload})
+
+
+# ---------------------------------------------------------------------------
+# Creative library uploads (SDK-verified: /file/video/ad/upload/,
+# /file/image/ad/upload/, /identity/create/)
+# ---------------------------------------------------------------------------
+
+def upload_video_file(access_token: str, advertiser_id: str, file_path: str,
+                      file_name: str) -> dict:
+    """Upload a local video file into an ad account's asset library.
+    Returns the first entry: {video_id, video_cover_url/poster_url, ...}."""
+    import hashlib
+    from pathlib import Path
+    data = Path(file_path).read_bytes()
+    signature = hashlib.md5(data).hexdigest()
+    try:
+        with httpx.Client(timeout=httpx.Timeout(180.0, connect=10.0)) as client:
+            resp = client.post(
+                f"{BASE}/file/video/ad/upload/",
+                headers={"Access-Token": access_token},
+                data={"advertiser_id": advertiser_id, "upload_type": "UPLOAD_BY_FILE",
+                      "video_signature": signature, "file_name": file_name,
+                      "flaw_detect": "true", "auto_fix_enabled": "true",
+                      "auto_bind_enabled": "true"},
+                files={"video_file": (file_name, data, "video/mp4")},
+            )
+    except httpx.HTTPError as e:
+        raise TikTokError("HTTP", f"Network error uploading video: {e!r}")
+    parsed = _parse(resp)
+    if isinstance(parsed, list):
+        return parsed[0] if parsed else {}
+    return parsed
+
+
+def upload_image_by_url(access_token: str, advertiser_id: str, image_url: str,
+                        file_name: str = "") -> dict:
+    """Upload an image (e.g. a video's poster/cover) by URL. Returns {image_id,...}."""
+    payload: dict = {"advertiser_id": advertiser_id, "upload_type": "UPLOAD_BY_URL",
+                     "image_url": image_url}
+    if file_name:
+        payload["file_name"] = file_name
+    return api_post("/file/image/ad/upload/", access_token, payload)
+
+
+def upload_image_file(access_token: str, advertiser_id: str, file_path: str,
+                      file_name: str) -> dict:
+    """Upload a local image file (identity avatars). Returns {image_id,...}."""
+    import hashlib
+    from pathlib import Path
+    data = Path(file_path).read_bytes()
+    signature = hashlib.md5(data).hexdigest()
+    try:
+        with httpx.Client(timeout=httpx.Timeout(60.0, connect=10.0)) as client:
+            resp = client.post(
+                f"{BASE}/file/image/ad/upload/",
+                headers={"Access-Token": access_token},
+                data={"advertiser_id": advertiser_id, "upload_type": "UPLOAD_BY_FILE",
+                      "image_signature": signature, "file_name": file_name},
+                files={"image_file": (file_name, data, "image/jpeg")},
+            )
+    except httpx.HTTPError as e:
+        raise TikTokError("HTTP", f"Network error uploading image: {e!r}")
+    return _parse(resp)
+
+
+def create_custom_identity(access_token: str, advertiser_id: str,
+                           display_name: str, image_uri: str) -> dict:
+    """Create a CUSTOMIZED_USER identity (name + avatar shown on non-spark ads)."""
+    return api_post("/identity/create/", access_token, {
+        "advertiser_id": advertiser_id, "display_name": display_name,
+        "image_uri": image_uri,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Smart+ (SDK-verified endpoints — /smart_plus/*, each create needs a client
+# request_id for idempotency)
+# ---------------------------------------------------------------------------
+
+def _request_id() -> str:
+    import uuid
+    return uuid.uuid4().hex
+
+
+def smart_plus_campaign_create(access_token: str, advertiser_id: str, payload: dict) -> dict:
+    return api_post("/smart_plus/campaign/create/", access_token, {
+        "advertiser_id": advertiser_id, "request_id": _request_id(), **payload})
+
+
+def smart_plus_adgroup_create(access_token: str, advertiser_id: str, payload: dict) -> dict:
+    return api_post("/smart_plus/adgroup/create/", access_token, {
+        "advertiser_id": advertiser_id, "request_id": _request_id(), **payload})
+
+
+def smart_plus_ad_create(access_token: str, advertiser_id: str, payload: dict) -> dict:
+    return api_post("/smart_plus/ad/create/", access_token, {
+        "advertiser_id": advertiser_id, **payload})
+
+
+def smart_plus_campaign_get(access_token: str, advertiser_id: str, page: int = 1,
+                            page_size: int = 100) -> dict:
+    return api_get("/smart_plus/campaign/get/", access_token, {
+        "advertiser_id": advertiser_id, "page": page, "page_size": page_size})
+
+
+def smart_plus_campaign_status_update(access_token: str, advertiser_id: str,
+                                      campaign_ids: list[str], operation_status: str) -> dict:
+    """operation_status: ENABLE | DISABLE | DELETE (Smart+ campaigns only)."""
+    return api_post("/smart_plus/campaign/status/update/", access_token, {
+        "advertiser_id": advertiser_id, "campaign_ids": campaign_ids,
+        "operation_status": operation_status,
+    })
 
 
 def delete_campaigns(access_token: str, advertiser_id: str, campaign_ids: list[str]) -> dict:

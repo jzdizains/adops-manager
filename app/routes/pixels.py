@@ -1,21 +1,19 @@
-"""Pixel sharing automation.
+"""Pixels — one inventory list with row actions.
 
-Flow per §API (verified endpoints):
-  1. A pixel lives on one ad account. `bc/pixel/transfer/` moves it into
-     Business Center ownership.
-  2. `bc/pixel/link/update/` links the BC-owned pixel to any of the BC's
-     ad accounts — the tool links it to ALL of them in one click.
-  3. `bc/pixel/link/get/` shows current links (health view).
+Sync pulls every account's pixels via /pixel/list/. Each row then offers what
+makes sense for it: an account-owned pixel can be MOVED into its BC (one-way,
+per TikTok); a BC-owned pixel can be LINKED to one account or to every account
+in the BC. Creation (with event) lives in a collapsed section.
 """
 from __future__ import annotations
+
+import json
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
-import json
-
-from .. import error_messages, models, queries, tiktok_api
+from .. import models, queries, tiktok_api
 from ..database import get_db
 from ..routes.launch import PIXEL_EVENTS
 from ..templating import render
@@ -24,11 +22,13 @@ router = APIRouter()
 
 
 def _link_pixel_to_bc_accounts(db: Session, token: str, bc_id: str,
-                               pixel_id: str) -> tuple[int, list[str]]:
-    """Link a BC-owned pixel to every enabled account under the BC.
+                               pixel_id: str,
+                               only: list[str] | None = None) -> tuple[int, list[str]]:
+    """Link a BC-owned pixel to accounts under the BC (all enabled, or `only`).
     Batches of 20 with per-account fallback so one bad account is isolated."""
-    targets = [a.advertiser_id for a in queries.enabled_accounts(db)
-               if a.owner_bc_id == bc_id]
+    targets = only if only is not None else [
+        a.advertiser_id for a in queries.enabled_accounts(db)
+        if a.owner_bc_id == bc_id]
     ok_count, failed = 0, []
     for i in range(0, len(targets), 20):
         batch = targets[i:i + 20]
@@ -45,36 +45,170 @@ def _link_pixel_to_bc_accounts(db: Session, token: str, bc_id: str,
     return ok_count, failed
 
 
+def _upsert(db: Session, pixel_id: str, name: str = "", code: str = "",
+            owner_adv: str = "", owner_bc: str = "") -> models.PixelRecord:
+    row = db.query(models.PixelRecord).filter_by(pixel_id=pixel_id).first()
+    if not row:
+        row = models.PixelRecord(pixel_id=pixel_id)
+        db.add(row)
+    if name:
+        row.pixel_name = name
+    if code:
+        row.pixel_code = code
+    if owner_adv:
+        row.owner_advertiser_id = owner_adv
+    if owner_bc:
+        row.owner_bc_id = owner_bc
+    return row
+
+
 @router.get("/pixels")
 def pixels_page(request: Request, db: Session = Depends(get_db)):
-    bcs = db.query(models.BusinessCenter).order_by(models.BusinessCenter.name).all()
-    shared = db.query(models.SharedPixel).order_by(models.SharedPixel.created_at.desc()).all()
+    # one-time fold-in of legacy SharedPixel rows
+    for sp in db.query(models.SharedPixel).all():
+        _upsert(db, sp.pixel_id, name=sp.pixel_name, owner_bc=sp.bc_id)
+    db.commit()
+
+    pixels = (db.query(models.PixelRecord)
+              .order_by(models.PixelRecord.pixel_name, models.PixelRecord.pixel_id).all())
+    bcs = {b.bc_id: b for b in db.query(models.BusinessCenter).all()}
     accounts = queries.enabled_accounts(db)
-    counts = {}
+    acct_names = {a.advertiser_id: (a.advertiser_name or a.advertiser_id) for a in accounts}
+    bc_counts: dict[str, int] = {}
     for a in accounts:
-        counts[a.owner_bc_id] = counts.get(a.owner_bc_id, 0) + 1
-    provision_report = None
+        bc_counts[a.owner_bc_id] = bc_counts.get(a.owner_bc_id, 0) + 1
+
+    rows = []
+    for p in pixels:
+        bc = bcs.get(p.owner_bc_id) if p.owner_bc_id else None
+        # the BC a move would target (the owner account's BC)
+        target_bc = None
+        if not p.owner_bc_id and p.owner_advertiser_id:
+            acct = next((a for a in accounts if a.advertiser_id == p.owner_advertiser_id), None)
+            if acct and acct.owner_bc_id:
+                target_bc = bcs.get(acct.owner_bc_id)
+        rows.append({
+            "p": p,
+            "owner_label": (f"BC · {(bc.name or bc.bc_id)}" if bc
+                            else acct_names.get(p.owner_advertiser_id,
+                                                p.owner_advertiser_id or "—")),
+            "is_bc": bool(p.owner_bc_id),
+            "bc_account_count": bc_counts.get(p.owner_bc_id, 0),
+            "target_bc": target_bc,
+        })
+
+    report = None
     raw = queries.get_setting(db, "pixel_provision_report", "")
     if raw:
         try:
-            provision_report = json.loads(raw)
+            report = json.loads(raw)
         except json.JSONDecodeError:
             pass
     return render(request, "pixels.html", {
-        "title": "Pixels", "bcs": bcs, "shared": shared, "counts": counts,
-        "accounts": accounts, "pixel_events": PIXEL_EVENTS,
-        "provision_report": provision_report,
+        "title": "Pixels", "rows": rows, "accounts": accounts,
+        "pixel_events": PIXEL_EVENTS, "provision_report": report,
+        "synced_at": queries.get_setting(db, "pixels_synced_at", "")[:16].replace("T", " "),
         "ok": request.query_params.get("ok", ""), "err": request.query_params.get("err", ""),
     })
 
+
+@router.post("/pixels/sync")
+def sync_pixels(db: Session = Depends(get_db)):
+    """Pull every enabled account's pixels into the inventory."""
+    import time as _time
+    from datetime import datetime, timezone
+    token = queries.any_access_token(db)
+    if not token:
+        return RedirectResponse("/pixels?err=Connect+TikTok+first", status_code=303)
+    found, errors = 0, 0
+    for acct in queries.enabled_accounts(db):
+        try:
+            for p in tiktok_api.list_pixels(acct.access_token, acct.advertiser_id):
+                pid = str(p.get("pixel_id", ""))
+                if not pid:
+                    continue
+                _upsert(db, pid, name=p.get("pixel_name", ""),
+                        code=p.get("pixel_code", ""),
+                        owner_adv=acct.advertiser_id)
+                found += 1
+        except tiktok_api.TikTokError:
+            errors += 1
+        _time.sleep(0.1)
+    db.commit()
+    queries.set_setting(db, "pixels_synced_at",
+                        datetime.now(timezone.utc).isoformat())
+    msg = f"Synced+{found}+pixel(s)"
+    if errors:
+        msg += f"&err={errors}+account(s)+failed"
+    return RedirectResponse(f"/pixels?ok={msg}", status_code=303)
+
+
+@router.post("/pixels/{record_id}/move-to-bc")
+def move_to_bc(record_id: int, db: Session = Depends(get_db)):
+    """Transfer an account-owned pixel into its account's Business Center."""
+    p = db.get(models.PixelRecord, record_id)
+    token = queries.any_access_token(db)
+    if not p or not token or p.owner_bc_id:
+        return RedirectResponse("/pixels?err=missing", status_code=303)
+    acct = (db.query(models.AdAccount)
+            .filter_by(advertiser_id=p.owner_advertiser_id).first())
+    if not acct or not acct.owner_bc_id:
+        return RedirectResponse("/pixels?err=Owner+account+has+no+BC+mapped+—+sync+first",
+                                status_code=303)
+    try:
+        tiktok_api.bc_pixel_transfer(token, acct.owner_bc_id, acct.advertiser_id, p.pixel_id)
+    except tiktok_api.TikTokError as e:
+        return RedirectResponse(f"/pixels?err=Transfer+failed+(code+{e.code}:+"
+                                f"{str(e.message)[:80].replace(' ', '+')})", status_code=303)
+    p.owner_bc_id = acct.owner_bc_id
+    db.commit()
+    return RedirectResponse("/pixels?ok=Moved+into+the+BC+—+now+link+it+to+accounts",
+                            status_code=303)
+
+
+@router.post("/pixels/{record_id}/link-all")
+def link_all(record_id: int, db: Session = Depends(get_db)):
+    p = db.get(models.PixelRecord, record_id)
+    token = queries.any_access_token(db)
+    if not p or not token or not p.owner_bc_id:
+        return RedirectResponse("/pixels?err=missing", status_code=303)
+    ok_count, failed = _link_pixel_to_bc_accounts(db, token, p.owner_bc_id, p.pixel_id)
+    msg = f"Linked+to+{ok_count}+account(s)"
+    if failed:
+        msg += f"&err=Failed:+{'+'.join(failed[:8])}"
+    return RedirectResponse(f"/pixels?ok={msg}", status_code=303)
+
+
+@router.post("/pixels/{record_id}/link-one")
+def link_one(record_id: int, advertiser_id: str = Form(...), db: Session = Depends(get_db)):
+    p = db.get(models.PixelRecord, record_id)
+    token = queries.any_access_token(db)
+    if not p or not token or not p.owner_bc_id:
+        return RedirectResponse("/pixels?err=missing", status_code=303)
+    ok_count, failed = _link_pixel_to_bc_accounts(db, token, p.owner_bc_id, p.pixel_id,
+                                                  only=[advertiser_id])
+    if failed:
+        return RedirectResponse(f"/pixels?err=Link+failed:+{failed[0]}", status_code=303)
+    return RedirectResponse("/pixels?ok=Linked", status_code=303)
+
+
+@router.post("/pixels/{record_id}/delete")
+def remove(record_id: int, db: Session = Depends(get_db)):
+    p = db.get(models.PixelRecord, record_id)
+    if p:
+        db.delete(p)
+        db.commit()
+    return RedirectResponse("/pixels?ok=Removed+from+the+list+(TikTok+unchanged)", status_code=303)
+
+
+# ---------------------------------------------------------------------------
+# Create (collapsed section) — pixel + chosen event, optional BC share
+# ---------------------------------------------------------------------------
 
 @router.post("/pixels/provision")
 def provision(pixel_name: str = Form(...), advertiser_id: str = Form(...),
               event_type: str = Form(...), event_name: str = Form(""),
               do_share: str = Form(""), db: Session = Depends(get_db)):
-    """The full pipeline: create pixel → create event → transfer to BC →
-    link to every account in the BC. Each step's outcome is recorded and
-    shown — a TikTok complaint at any step is visible, never silent."""
     token = queries.any_access_token(db)
     acct = db.query(models.AdAccount).filter_by(advertiser_id=advertiser_id).first()
     if not token or not acct:
@@ -83,27 +217,28 @@ def provision(pixel_name: str = Form(...), advertiser_id: str = Form(...),
     steps: list[dict] = []
     pixel_id = ""
 
-    # 1 · create the pixel
     try:
         data = tiktok_api.pixel_create(token, advertiser_id, pixel_name.strip())
         pixel_id = str(data.get("pixel_id", "") or (data.get("pixel", {}) or {}).get("pixel_id", ""))
         pixel_code = str(data.get("pixel_code", "") or (data.get("pixel", {}) or {}).get("pixel_code", ""))
         steps.append({"step": "Create pixel", "ok": True,
                       "detail": f"pixel_id {pixel_id}" + (f" · code {pixel_code}" if pixel_code else "")})
+        _upsert(db, pixel_id, name=pixel_name.strip(), code=pixel_code,
+                owner_adv=advertiser_id)
+        db.commit()
     except tiktok_api.TikTokError as e:
         steps.append({"step": "Create pixel", "ok": False,
                       "detail": f"code {e.code}: {str(e.message)[:160]}"})
         queries.set_setting(db, "pixel_provision_report",
                             json.dumps({"name": pixel_name, "steps": steps}))
-        return RedirectResponse("/pixels?err=Pixel+creation+failed+—+see+the+report+below", status_code=303)
+        return RedirectResponse("/pixels?err=Pixel+creation+failed+—+see+the+report", status_code=303)
 
-    # 2 · create the selected event on it
     labels = dict(PIXEL_EVENTS)
     if event_type in labels:
-        event_payload = {"event_type": event_type,
-                         "event_name": event_name.strip() or labels[event_type]}
         try:
-            tiktok_api.pixel_event_create(token, advertiser_id, pixel_id, [event_payload])
+            tiktok_api.pixel_event_create(token, advertiser_id, pixel_id, [{
+                "event_type": event_type,
+                "event_name": event_name.strip() or labels[event_type]}])
             steps.append({"step": f"Create event ({labels[event_type]})", "ok": True,
                           "detail": f"event_type {event_type}"})
         except tiktok_api.TikTokError as e:
@@ -111,89 +246,26 @@ def provision(pixel_name: str = Form(...), advertiser_id: str = Form(...),
                           "detail": f"code {e.code}: {str(e.message)[:160]} — you can add the event "
                                     "in TikTok Events Manager instead"})
 
-    # 3+4 · share across the BC
-    bc_id = acct.owner_bc_id
-    if share and bc_id:
+    if share and acct.owner_bc_id:
         try:
-            tiktok_api.bc_pixel_transfer(token, bc_id, advertiser_id, pixel_id)
-            steps.append({"step": "Transfer to Business Center", "ok": True, "detail": f"BC {bc_id}"})
-            transferred = True
+            tiktok_api.bc_pixel_transfer(token, acct.owner_bc_id, advertiser_id, pixel_id)
+            steps.append({"step": "Transfer to Business Center", "ok": True,
+                          "detail": f"BC {acct.owner_bc_id}"})
+            rec = db.query(models.PixelRecord).filter_by(pixel_id=pixel_id).first()
+            if rec:
+                rec.owner_bc_id = acct.owner_bc_id
+                db.commit()
+            ok_count, failed = _link_pixel_to_bc_accounts(db, token, acct.owner_bc_id, pixel_id)
+            steps.append({"step": "Link to all BC accounts", "ok": not failed,
+                          "detail": f"linked {ok_count}"
+                          + (f" · failed: {', '.join(failed[:6])}" if failed else "")})
         except tiktok_api.TikTokError as e:
             steps.append({"step": "Transfer to Business Center", "ok": False,
                           "detail": f"code {e.code}: {str(e.message)[:160]}"})
-            transferred = False
-        if transferred:
-            if not db.query(models.SharedPixel).filter_by(bc_id=bc_id, pixel_id=pixel_id).first():
-                db.add(models.SharedPixel(bc_id=bc_id, pixel_id=pixel_id,
-                                          pixel_name=pixel_name.strip()))
-                db.commit()
-            ok_count, failed = _link_pixel_to_bc_accounts(db, token, bc_id, pixel_id)
-            steps.append({"step": "Link to all BC accounts",
-                          "ok": not failed, "detail": f"linked {ok_count}"
-                          + (f" · failed: {', '.join(failed[:6])}" if failed else "")})
-    elif share and not bc_id:
+    elif share:
         steps.append({"step": "Transfer to Business Center", "ok": False,
-                      "detail": "the seed account has no Business Center mapped — sync first"})
+                      "detail": "the account has no Business Center mapped — sync first"})
 
     queries.set_setting(db, "pixel_provision_report",
                         json.dumps({"name": pixel_name, "pixel_id": pixel_id, "steps": steps}))
-    all_ok = all(s["ok"] for s in steps)
-    return RedirectResponse(
-        "/pixels?ok=Pixel+created" + ("+and+shared" if share and all_ok else "+—+see+step+report"),
-        status_code=303)
-
-
-@router.post("/pixels/transfer")
-def transfer(pixel_id: str = Form(...), owner_advertiser_id: str = Form(...),
-             bc_id: str = Form(...), pixel_name: str = Form(""),
-             db: Session = Depends(get_db)):
-    """Move a pixel from its owner ad account into BC ownership."""
-    token = queries.any_access_token(db)
-    if not token:
-        return RedirectResponse("/pixels?err=Connect+TikTok+first", status_code=303)
-    try:
-        tiktok_api.bc_pixel_transfer(token, bc_id, owner_advertiser_id.strip(), pixel_id.strip())
-    except tiktok_api.TikTokError as e:
-        info = error_messages.explain(e.code, e.message)
-        return RedirectResponse(f"/pixels?err={info['friendly'][:120]}+({e.code})", status_code=303)
-    if not db.query(models.SharedPixel).filter_by(bc_id=bc_id, pixel_id=pixel_id.strip()).first():
-        db.add(models.SharedPixel(bc_id=bc_id, pixel_id=pixel_id.strip(),
-                                  pixel_name=pixel_name.strip()))
-        db.commit()
-    return RedirectResponse("/pixels?ok=Pixel+transferred+to+BC+ownership", status_code=303)
-
-
-@router.post("/pixels/register")
-def register(pixel_id: str = Form(...), bc_id: str = Form(...), pixel_name: str = Form(""),
-             db: Session = Depends(get_db)):
-    """Register a pixel that is ALREADY BC-owned (skip the transfer step)."""
-    if not db.query(models.SharedPixel).filter_by(bc_id=bc_id, pixel_id=pixel_id.strip()).first():
-        db.add(models.SharedPixel(bc_id=bc_id, pixel_id=pixel_id.strip(),
-                                  pixel_name=pixel_name.strip()))
-        db.commit()
-    return RedirectResponse("/pixels?ok=Pixel+registered", status_code=303)
-
-
-@router.post("/pixels/{shared_id}/link-all")
-def link_all(shared_id: int, db: Session = Depends(get_db)):
-    """Link a BC-owned pixel to EVERY enabled ad account under that BC."""
-    sp = db.get(models.SharedPixel, shared_id)
-    token = queries.any_access_token(db)
-    if not sp or not token:
-        return RedirectResponse("/pixels?err=missing", status_code=303)
-    ok_count, failed = _link_pixel_to_bc_accounts(db, token, sp.bc_id, sp.pixel_id)
-    if ok_count == 0 and not failed:
-        return RedirectResponse("/pixels?err=No+enabled+accounts+under+that+BC", status_code=303)
-    msg = f"Linked+to+{ok_count}+account(s)"
-    if failed:
-        msg += f"&err=Failed:+{'+'.join(failed[:8])}"
-    return RedirectResponse(f"/pixels?ok={msg}", status_code=303)
-
-
-@router.post("/pixels/{shared_id}/delete")
-def remove(shared_id: int, db: Session = Depends(get_db)):
-    sp = db.get(models.SharedPixel, shared_id)
-    if sp:
-        db.delete(sp)
-        db.commit()
-    return RedirectResponse("/pixels?ok=Removed+from+the+list+(links+on+TikTok+unchanged)", status_code=303)
+    return RedirectResponse("/pixels?ok=Pixel+created+—+see+the+step+report", status_code=303)
