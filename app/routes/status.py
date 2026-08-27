@@ -56,9 +56,29 @@ def status_page(request: Request, db: Session = Depends(get_db)):
     tool_campaign_ids = {log.campaign_id for log in
                          db.query(models.LaunchLog.campaign_id)
                          .filter(models.LaunchLog.ok == True,          # noqa: E712
-                                 models.LaunchLog.campaign_id != "")}
+                                 models.LaunchLog.campaign_id != "",
+                                 ~models.LaunchLog.campaign_id.startswith("deleted:"))}
     cached_ids = {r.campaign_id for r in records}
-    pending_tool = len(tool_campaign_ids - cached_ids)   # launched, not synced yet
+    pending_ids = tool_campaign_ids - cached_ids         # launched, not synced yet
+    pending_tool = len(pending_ids)
+    pending_details: list[dict] = []
+    if pending_ids:
+        import json as _json
+        try:
+            report = _json.loads(queries.get_setting(db, "campaign_sync_report") or "{}")
+        except (ValueError, TypeError):
+            report = {}
+        err_by_acct = {e.get("advertiser_id"): e for e in report.get("errors", [])}
+        acct_names = {a.advertiser_id: (a.advertiser_name or a.advertiser_id)
+                      for a in db.query(models.AdAccount).all()}
+        for log_row in (db.query(models.LaunchLog)
+                        .filter(models.LaunchLog.campaign_id.in_(list(pending_ids)))):
+            e = err_by_acct.get(log_row.advertiser_id)
+            pending_details.append({
+                "campaign_id": log_row.campaign_id,
+                "account": acct_names.get(log_row.advertiser_id, log_row.advertiser_id),
+                "sync_error": (f"code {e['code']}: {e['message']}" if e else ""),
+            })
     if origin == "tool":
         records = [r for r in records if r.campaign_id in tool_campaign_ids]
     accounts = {a.advertiser_id: a for a in db.query(models.AdAccount).all()}
@@ -153,10 +173,73 @@ def status_page(request: Request, db: Session = Depends(get_db)):
         "rows": rows, "totals": totals, "active_count": active,
         "synced_ago": queries.campaigns_synced_ago(db),
         "q": q, "state": state, "account": account, "sort": sort, "origin": origin,
-        "pending_tool": pending_tool,
+        "pending_tool": pending_tool, "pending_details": pending_details,
         "account_options": account_options,
         "title": "Campaigns",
     })
+
+
+@router.post("/status/verify-pending")
+def verify_pending(db: Session = Depends(get_db)):
+    """For every tool-launched campaign missing from the cache, query TikTok BY
+    CAMPAIGN ID (including deleted status) and report exactly what it says."""
+    import json as _json
+
+    from .. import tiktok_api
+    cached = {r.campaign_id for r in db.query(models.CampaignRecord.campaign_id)}
+    tool_logs = (db.query(models.LaunchLog)
+                 .filter(models.LaunchLog.ok == True,          # noqa: E712
+                         models.LaunchLog.campaign_id != "").all())
+    pending = [l for l in tool_logs if l.campaign_id not in cached]
+    if not pending:
+        return RedirectResponse("/status?ok=nothing+pending+to+verify", status_code=303)
+    results = []
+    for log in pending[:10]:
+        acct = (db.query(models.AdAccount)
+                .filter_by(advertiser_id=log.advertiser_id).first())
+        if not acct or not acct.access_token:
+            results.append(f"{log.campaign_id}: account not connected")
+            continue
+        try:
+            data = tiktok_api.list_campaigns(
+                acct.access_token, acct.advertiser_id,
+                filtering={"campaign_ids": [log.campaign_id]})
+            found = data.get("list", [])
+            if not found:
+                # not in the default listing — is it DELETED?
+                data2 = tiktok_api.list_campaigns(
+                    acct.access_token, acct.advertiser_id,
+                    filtering={"campaign_ids": [log.campaign_id],
+                               "secondary_status": "CAMPAIGN_STATUS_DELETE"})
+                if data2.get("list", []):
+                    results.append(f"{log.campaign_id}: DELETED on TikTok (removed in Ads Manager)")
+                    # stop counting it as pending — clear the stale link
+                    log.campaign_id = f"deleted:{log.campaign_id}"
+                    db.commit()
+                else:
+                    results.append(f"{log.campaign_id}: NOT FOUND on account {log.advertiser_id}")
+            else:
+                c = found[0]
+                # found but missing from cache → self-heal: insert it now
+                if not (db.query(models.CampaignRecord)
+                        .filter_by(campaign_id=log.campaign_id).first()):
+                    db.add(models.CampaignRecord(
+                        advertiser_id=log.advertiser_id,
+                        campaign_id=log.campaign_id,
+                        campaign_name=c.get("campaign_name", ""),
+                        objective_type=c.get("objective_type", ""),
+                        operation_status=c.get("operation_status", ""),
+                        secondary_status=c.get("secondary_status", ""),
+                        budget=float(c.get("budget", 0) or 0),
+                        budget_mode=c.get("budget_mode", "")))
+                    db.commit()
+                results.append(
+                    f"{log.campaign_id}: EXISTS ({c.get('operation_status')}, "
+                    f"{c.get('secondary_status', '?')}) — added to the list")
+        except tiktok_api.TikTokError as e:
+            results.append(f"{log.campaign_id}: lookup failed, code {e.code} {e.message[:60]}")
+    msg = " · ".join(results)[:400].replace(" ", "+")
+    return RedirectResponse(f"/status?ok={msg}", status_code=303)
 
 
 @router.post("/status/sync")

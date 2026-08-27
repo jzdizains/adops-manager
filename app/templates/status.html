@@ -18,8 +18,21 @@
 {% if request.query_params.get('err') %}
 <div class="flash err">TikTok rejected the change — {{ request.query_params.get('err') }}</div>
 {% endif %}
+{% if request.query_params.get('ok') %}
+<div class="flash ok">{{ request.query_params.get('ok') }}</div>
+{% endif %}
 {% if origin == 'tool' and pending_tool %}
-<div class="flash ok">{{ pending_tool }} tool-launched campaign(s) exist on TikTok but aren't in the synced cache yet — hit “Sync now” (or wait for the next sweep). If they still don't appear, that account's sync is failing — check the Monitor page.</div>
+<div class="flash ok">{{ pending_tool }} tool-launched campaign(s) exist on TikTok but aren't in the synced cache yet:
+  {% for pd in pending_details %}
+    <div style="margin-top:4px;">· campaign <span class="mono">{{ pd.campaign_id }}</span> on <b>{{ pd.account }}</b>
+      {% if pd.sync_error %}— <span style="color:var(--err);">that account's last sync FAILED ({{ pd.sync_error[:120] }})</span>
+      {% else %}— no sync error recorded; hit “Sync now” and it should appear{% endif %}</div>
+  {% endfor %}
+  <form method="post" action="/status/verify-pending" style="margin-top:8px;">
+    <button class="btn sm" type="submit">🔎 Verify on TikTok</button>
+    <span class="hint">Asks TikTok about each campaign BY ID (deleted included) and reports its true status.</span>
+  </form>
+</div>
 {% endif %}
 
 <div class="card" style="margin-bottom:14px;">

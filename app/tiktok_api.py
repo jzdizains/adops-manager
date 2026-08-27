@@ -415,10 +415,19 @@ def update_adgroup(access_token: str, advertiser_id: str, adgroup_id: str,
 
 def list_campaigns(access_token: str, advertiser_id: str, page: int = 1, page_size: int = 100,
                    filtering: dict | None = None) -> dict:
-    params: dict = {"advertiser_id": advertiser_id, "page": page, "page_size": page_size}
-    if filtering:
-        params["filtering"] = filtering
-    return api_get("/campaign/get/", access_token, params)
+    """ALL campaigns on an account — paginates so >100-campaign accounts never
+    lose their newest campaigns off the end of page 1."""
+    out: list = []
+    while True:
+        params: dict = {"advertiser_id": advertiser_id, "page": page, "page_size": page_size}
+        if filtering:
+            params["filtering"] = filtering
+        data = api_get("/campaign/get/", access_token, params)
+        batch = data.get("list", [])
+        out.extend(batch)
+        if len(batch) < page_size or page >= 30:   # 30 pages = 3000 campaigns
+            return {"list": out}
+        page += 1
 
 
 def list_ads(access_token: str, advertiser_id: str, page: int = 1,

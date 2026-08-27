@@ -104,7 +104,14 @@ def sync_campaigns(db: Session, accounts: list[models.AdAccount] | None = None) 
             synced += 1
         except tiktok_api.TikTokError as e:
             db.rollback()
-            errors.append({"advertiser_id": acct.advertiser_id, "code": str(e.code), "message": e.message})
+            errors.append({"advertiser_id": acct.advertiser_id, "code": str(e.code),
+                           "message": (e.message or "")[:200]})
+    # persist the report — sync failures must never be invisible
+    import json as _json
+    from datetime import datetime as _dt, timezone as _tz
+    queries.set_setting(db, "campaign_sync_report", _json.dumps({
+        "at": _dt.now(_tz.utc).isoformat(), "synced": synced, "errors": errors[:30]}))
+    db.commit()
     return {"synced": synced, "errors": errors}
 
 
