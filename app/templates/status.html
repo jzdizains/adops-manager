@@ -2,7 +2,7 @@
 {% block content %}
 {% macro sort_link(key, label) -%}
   <a class="th-sort {{ 'on' if sort == key else '' }}"
-     href="?q={{ q|urlencode }}&state={{ state }}&account={{ account }}&sort={{ key }}">{{ label }}{% if sort == key %} ▾{% endif %}</a>
+     href="?q={{ q|urlencode }}&state={{ state }}&account={{ account }}&origin={{ origin }}&sort={{ key }}">{{ label }}{% if sort == key %} ▾{% endif %}</a>
 {%- endmacro %}
 <div class="page-head">
   <div>
@@ -22,6 +22,10 @@
 <div class="card" style="margin-bottom:14px;">
   <form method="get" action="/status" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
     <input type="text" name="q" value="{{ q }}" placeholder="Filter by campaign or account…" style="width:230px;">
+    <select name="origin" style="width:auto;">
+      <option value="tool" {{ 'selected' if origin == 'tool' }}>Launched by this tool</option>
+      <option value="all" {{ 'selected' if origin == 'all' }}>All campaigns on TikTok</option>
+    </select>
     <select name="state" style="width:auto;">
       <option value="all" {{ 'selected' if state == 'all' }}>All statuses</option>
       <option value="active" {{ 'selected' if state == 'active' }}>Active only</option>
@@ -35,7 +39,7 @@
     </select>
     <input type="hidden" name="sort" value="{{ sort }}">
     <button class="btn" type="submit">Apply</button>
-    {% if q or state != 'all' or account %}<a class="btn sm" href="/status">✕ Clear</a>{% endif %}
+    {% if q or state != 'all' or account or origin != 'tool' %}<a class="btn sm" href="/status">✕ Clear</a>{% endif %}
   </form>
 </div>
 
@@ -97,7 +101,7 @@
         <td class="num">{% if r.conversions %}${{ "%.2f"|format(r.cpa) }}{% else %}—{% endif %}</td>
         <td class="num sticky-r" style="white-space:nowrap;">
           <form method="post" action="/campaigns/{{ r.advertiser_id }}/{{ r.campaign_id }}/status" style="display:inline;">
-            <input type="hidden" name="next" value="/status?q={{ q|urlencode }}&state={{ state }}&account={{ account }}&sort={{ sort }}">
+            <input type="hidden" name="next" value="/status?q={{ q|urlencode }}&state={{ state }}&account={{ account }}&origin={{ origin }}&sort={{ sort }}">
             {% if r.operation_status == "ENABLE" %}
               <input type="hidden" name="operation_status" value="DISABLE">
               <button class="btn sm" type="submit" title="Pause this campaign on TikTok">⏸</button>
@@ -136,7 +140,17 @@
     Revenue · PB clicks · CVR come from Glitchy postbacks (per source, today). “÷N” = that source runs on N campaigns, so its revenue and clicks are split between them by spend share; CVR stays source-level. Conv. / CPA are TikTok-pixel numbers.
   </div>
   {% else %}
-  <div class="empty">No campaigns cached yet — hit “Sync now” to pull them from every account.</div>
+  <div class="empty">{% if origin == 'tool' %}No tool-launched campaigns yet — everything this tool launches will appear here automatically. Switch the filter to “All campaigns on TikTok” to see manually-created ones.{% else %}No campaigns cached yet — hit “Sync now” to pull them from every account.{% endif %}</div>
   {% endif %}
 </div>
+<script>
+  // auto-refresh: the background worker syncs every sweep — reload to show it.
+  // Skipped while a filter field is focused or text is selected.
+  setInterval(function () {
+    var el = document.activeElement;
+    var typing = el && (el.tagName === "INPUT" || el.tagName === "SELECT" || el.tagName === "TEXTAREA");
+    var selecting = window.getSelection && String(window.getSelection());
+    if (!typing && !selecting) location.reload();
+  }, 60000);
+</script>
 {% endblock %}

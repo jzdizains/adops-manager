@@ -23,15 +23,25 @@ _lock = threading.Lock()
 
 
 def _accounts_with_active_campaigns(db):
+    from datetime import datetime, timedelta, timezone
+
     from . import models
-    active_ids = [r[0] for r in
+    active_ids = {r[0] for r in
                   (db.query(models.CampaignRecord.advertiser_id)
                    .filter(models.CampaignRecord.operation_status == "ENABLE")
-                   .distinct().all())]
+                   .distinct().all())}
+    # accounts launched to in the last 24h sync fast too, even before the
+    # first full sync picks their new campaigns up
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=24)
+    active_ids |= {r[0] for r in
+                   (db.query(models.LaunchLog.advertiser_id)
+                    .filter(models.LaunchLog.ok == True,          # noqa: E712
+                            models.LaunchLog.created_at >= cutoff)
+                    .distinct().all())}
     if not active_ids:
         return []
     return (db.query(models.AdAccount)
-            .filter(models.AdAccount.advertiser_id.in_(active_ids),
+            .filter(models.AdAccount.advertiser_id.in_(list(active_ids)),
                     models.AdAccount.enabled == True).all())  # noqa: E712
 
 

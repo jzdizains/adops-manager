@@ -23,12 +23,15 @@ def _f(m: dict, key: str) -> float:
 def sync_campaigns(db: Session, accounts: list[models.AdAccount] | None = None) -> dict:
     """Pull campaign lists + today's spend for every enabled account into
     CampaignRecord rows. Returns {synced, errors}."""
+    import time as _time
     accounts = accounts or queries.enabled_accounts(db)
     today = timeutil.local_date_str()
     synced, errors = 0, []
     for acct in accounts:
         if not acct.access_token:
             continue
+        if synced:
+            _time.sleep(0.15)   # spread calls — rate-limit safety at scale
         try:
             data = tiktok_api.list_campaigns(acct.access_token, acct.advertiser_id)
             campaigns = data.get("list", [])

@@ -46,11 +46,19 @@ def status_page(request: Request, db: Session = Depends(get_db)):
     q = request.query_params.get("q", "").strip().lower()
     state = request.query_params.get("state", "all")          # all | active | paused
     account = request.query_params.get("account", "")          # advertiser_id
+    origin = request.query_params.get("origin", "tool")        # tool | all
     sort = request.query_params.get("sort", "spend")
     if sort not in SORT_KEYS:
         sort = "spend"
 
     records = db.query(models.CampaignRecord).all()
+    # campaigns this tool launched (successful launches carry the campaign id)
+    tool_campaign_ids = {log.campaign_id for log in
+                         db.query(models.LaunchLog.campaign_id)
+                         .filter(models.LaunchLog.ok == True,          # noqa: E712
+                                 models.LaunchLog.campaign_id != "")}
+    if origin == "tool":
+        records = [r for r in records if r.campaign_id in tool_campaign_ids]
     accounts = {a.advertiser_id: a for a in db.query(models.AdAccount).all()}
     sources = pnl_data.campaign_source_map(db)
 
@@ -142,7 +150,7 @@ def status_page(request: Request, db: Session = Depends(get_db)):
     return render(request, "status.html", {
         "rows": rows, "totals": totals, "active_count": active,
         "synced_ago": queries.campaigns_synced_ago(db),
-        "q": q, "state": state, "account": account, "sort": sort,
+        "q": q, "state": state, "account": account, "sort": sort, "origin": origin,
         "account_options": account_options,
         "title": "Campaigns",
     })
