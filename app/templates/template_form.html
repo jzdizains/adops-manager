@@ -24,7 +24,7 @@
       <label class="field"><span class="field-label">Campaign name pattern</span>
         <input type="text" name="campaign_name_pattern" value="{{ t.campaign_name_pattern if t else '' }}"
                placeholder="{account} · {date} · offer">
-        <span class="hint">{{ '{account}' }} and {{ '{date}' }} are substituted at launch.</span></label>
+        <span class="hint">{{ '{account}' }}, {{ '{date}' }} and {{ '{time}' }} are substituted at launch. A time suffix is added automatically if {{ '{time}' }} isn't used — TikTok rejects duplicate campaign names.</span></label>
     </div>
     <div class="form-row-3">
       <label class="field"><span class="field-label">Budget mode</span>

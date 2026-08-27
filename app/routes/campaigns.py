@@ -346,9 +346,23 @@ def resolve_pixel(db: Session, acct: models.AdAccount, pixel_code: str) -> str:
 # Payload builders
 # ---------------------------------------------------------------------------
 
+def _campaign_name(fields: dict, acct: models.AdAccount) -> str:
+    """Pattern -> unique name. {account}/{date}/{time} substituted; a time
+    suffix is appended automatically when the pattern has no {time}, because
+    TikTok rejects duplicate campaign names within an account."""
+    now = datetime.now(timezone.utc)
+    name = (fields["campaign_name_pattern"]
+            .replace("{account}", acct.advertiser_name or acct.advertiser_id)
+            .replace("{date}", now.strftime("%m%d")))
+    if "{time}" in name:
+        name = name.replace("{time}", now.strftime("%H%M%S"))
+    else:
+        name = f"{name} · {now.strftime('%H%M%S')}"
+    return name[:512]
+
+
 def build_campaign_payload(fields: dict, acct: models.AdAccount) -> dict:
-    name = fields["campaign_name_pattern"].replace("{account}", acct.advertiser_name or acct.advertiser_id)
-    name = name.replace("{date}", datetime.now(timezone.utc).strftime("%m%d"))
+    name = _campaign_name(fields, acct)
     payload: dict = {
         "campaign_name": name[:512],
         "objective_type": fields["objective_type"],
@@ -488,8 +502,7 @@ def build_ad_payload(fields: dict, adgroup_id: str, spark_ref: dict | None,
 # ---------------------------------------------------------------------------
 
 def build_spc_campaign_payload(fields: dict, acct: models.AdAccount) -> dict:
-    name = fields["campaign_name_pattern"].replace("{account}", acct.advertiser_name or acct.advertiser_id)
-    name = name.replace("{date}", datetime.now(timezone.utc).strftime("%m%d"))
+    name = _campaign_name(fields, acct)
     payload: dict = {
         "campaign_name": name[:512],
         "objective_type": fields["objective_type"],
@@ -732,6 +745,13 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
         elif fields.get("ad_text_mode") == "pool":
             raise ConfigError("The Ad Texts pool works with the Creative library only — "
                               "spark ads always show the post's own caption.")
+        needs_end = (fields.get("adgroup_budget_mode") == "BUDGET_MODE_TOTAL"
+                     or (fields.get("campaign_budget_mode") == "BUDGET_MODE_TOTAL"))
+        if needs_end and not (fields.get("schedule_type") == "SCHEDULE_START_END"
+                              and fields.get("schedule_end_time")):
+            raise ConfigError("A TOTAL budget needs an end date — in the preset set "
+                              "Schedule to start/end with an end time, or switch the "
+                              "budget type to Daily.")
         strategy = fields.get("bid_strategy") or ""
         if strategy == "cost_cap" and not (fields.get("cost_cap_ladder") or []):
             raise ConfigError("Preset bid strategy is Cost cap but no cap value is set. "
@@ -840,9 +860,26 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
             n = max(int(fields.get("duplicates") or 1), 1)
             plan: list[float | None] = ladder if ladder else [None] * n
             for i, bid in enumerate(plan):
-                ag = tiktok_api.create_adgroup(
-                    acct.access_token, acct.advertiser_id,
-                    build_adgroup_payload(fields, acct, campaign_id, i, bid, pixel_id))
+                ag_payload = build_adgroup_payload(fields, acct, campaign_id, i, bid, pixel_id)
+                try:
+                    ag = tiktok_api.create_adgroup(
+                        acct.access_token, acct.advertiser_id, ag_payload)
+                except tiktok_api.TikTokError as e:
+                    # some accounts now REQUIRE an end time even for daily budgets —
+                    # retry once with an explicit 1-year window
+                    if "end_time" in (e.message or "") and "schedule_end_time" not in ag_payload:
+                        from datetime import timedelta
+                        start = ag_payload.get("schedule_start_time") or \
+                            datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+                        end = (datetime.strptime(start, "%Y-%m-%d %H:%M:%S")
+                               + timedelta(days=365)).strftime("%Y-%m-%d %H:%M:%S")
+                        ag_payload = {**ag_payload, "schedule_type": "SCHEDULE_START_END",
+                                      "schedule_start_time": start,
+                                      "schedule_end_time": end}
+                        ag = tiktok_api.create_adgroup(
+                            acct.access_token, acct.advertiser_id, ag_payload)
+                    else:
+                        raise
                 adgroup_id = str(ag.get("adgroup_id"))
                 if creative is not None:
                     ad_payload = build_library_ad_payload(
