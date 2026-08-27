@@ -60,23 +60,38 @@ async def upload_creatives(request: Request, db: Session = Depends(get_db)):
         if ext not in ALLOWED_VIDEO:
             skipped.append(f"{fname}: not a supported video type")
             continue
-        data = await f.read()
-        if not data:
-            skipped.append(f"{fname}: empty file")
+        # stream to a temp file in 1MB chunks — NEVER the whole video in memory
+        # (a single large read once blew the server's memory limit)
+        import os as _os
+        tmp_path = CREATIVES_DIR / f".upload_{fname}"
+        hasher = hashlib.md5()
+        size = 0
+        too_big = False
+        with open(tmp_path, "wb") as out:
+            while True:
+                chunk = await f.read(1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > MAX_VIDEO_BYTES:
+                    too_big = True
+                    break
+                hasher.update(chunk)
+                out.write(chunk)
+        if too_big or size == 0:
+            tmp_path.unlink(missing_ok=True)
+            skipped.append(f"{fname}: {'over 500MB' if too_big else 'empty file'}")
             continue
-        if len(data) > MAX_VIDEO_BYTES:
-            skipped.append(f"{fname}: over 500MB")
-            continue
-        md5 = hashlib.md5(data).hexdigest()
+        md5 = hasher.hexdigest()
         if db.query(models.Creative).filter_by(md5=md5).first():
+            tmp_path.unlink(missing_ok=True)
             skipped.append(f"{fname}: duplicate (same file already in the library)")
             continue
-        row = models.Creative(name=fname, file_name=fname, md5=md5,
-                              size_bytes=len(data))
+        row = models.Creative(name=fname, file_name=fname, md5=md5, size_bytes=size)
         db.add(row)
         db.flush()
         path = CREATIVES_DIR / f"{row.id}_{fname}"
-        path.write_bytes(data)
+        _os.replace(tmp_path, path)
         row.file_path = str(path)
         if source_prefix:
             row.source = f"{source_prefix}_{row.id}"

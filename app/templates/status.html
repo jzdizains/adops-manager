@@ -18,6 +18,9 @@
 {% if request.query_params.get('err') %}
 <div class="flash err">TikTok rejected the change — {{ request.query_params.get('err') }}</div>
 {% endif %}
+{% if origin == 'tool' and pending_tool %}
+<div class="flash ok">{{ pending_tool }} tool-launched campaign(s) exist on TikTok but aren't in the synced cache yet — hit “Sync now” (or wait for the next sweep). If they still don't appear, that account's sync is failing — check the Monitor page.</div>
+{% endif %}
 
 <div class="card" style="margin-bottom:14px;">
   <form method="get" action="/status" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">

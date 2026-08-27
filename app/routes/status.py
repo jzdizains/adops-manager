@@ -57,6 +57,8 @@ def status_page(request: Request, db: Session = Depends(get_db)):
                          db.query(models.LaunchLog.campaign_id)
                          .filter(models.LaunchLog.ok == True,          # noqa: E712
                                  models.LaunchLog.campaign_id != "")}
+    cached_ids = {r.campaign_id for r in records}
+    pending_tool = len(tool_campaign_ids - cached_ids)   # launched, not synced yet
     if origin == "tool":
         records = [r for r in records if r.campaign_id in tool_campaign_ids]
     accounts = {a.advertiser_id: a for a in db.query(models.AdAccount).all()}
@@ -151,6 +153,7 @@ def status_page(request: Request, db: Session = Depends(get_db)):
         "rows": rows, "totals": totals, "active_count": active,
         "synced_ago": queries.campaigns_synced_ago(db),
         "q": q, "state": state, "account": account, "sort": sort, "origin": origin,
+        "pending_tool": pending_tool,
         "account_options": account_options,
         "title": "Campaigns",
     })

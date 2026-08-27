@@ -712,8 +712,9 @@ def _launch_smart_plus(acct: models.AdAccount, fields: dict, spark_ref: dict | N
     if not spark_ref:
         raise ConfigError("Smart+ launches need a spark creative — pick a spark code "
                           "in the preset or at launch time.")
+    camp_payload = build_spc_campaign_payload(fields, acct)
     camp = tiktok_api.smart_plus_campaign_create(
-        acct.access_token, acct.advertiser_id, build_spc_campaign_payload(fields, acct))
+        acct.access_token, acct.advertiser_id, camp_payload)
     campaign_id = str(camp.get("campaign_id"))
     ladder = [float(x) for x in fields.get("cost_cap_ladder") or []]
     bid = ladder[0] if ladder else None      # smart+ = single ad group; first cap wins
@@ -724,7 +725,7 @@ def _launch_smart_plus(acct: models.AdAccount, fields: dict, spark_ref: dict | N
     tiktok_api.smart_plus_ad_create(
         acct.access_token, acct.advertiser_id,
         build_spc_ad_payload(fields, adgroup_id, spark_ref, spark))
-    return campaign_id
+    return campaign_id, camp_payload["campaign_name"]
 
 
 # ---------------------------------------------------------------------------
@@ -880,13 +881,16 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                     f"Could not obtain a numeric pixel id (got '{pixel_id}') — re-sync "
                     "the Pixels page and re-pick the pixel in the preset.")
 
+        created_name = ""
         if fields.get("smart_plus"):
-            log.campaign_id = _launch_smart_plus(acct, fields, spark_ref, spark, pixel_id)
+            log.campaign_id, created_name = _launch_smart_plus(acct, fields, spark_ref, spark, pixel_id)
         else:
+            camp_payload = build_campaign_payload(fields, acct)
             camp = tiktok_api.create_campaign(acct.access_token, acct.advertiser_id,
-                                              build_campaign_payload(fields, acct))
+                                              camp_payload)
             campaign_id = str(camp.get("campaign_id"))
             log.campaign_id = campaign_id
+            created_name = camp_payload["campaign_name"]
 
             # duplicated ad groups + cost-cap ladder
             ladder = [float(x) for x in fields.get("cost_cap_ladder") or []]
@@ -936,6 +940,21 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
             spark.use_count = (spark.use_count or 0) + 1
             spark.last_used_at = datetime.now(timezone.utc)
         log.ok = True
+        # instant visibility: seed the campaign cache so the Campaigns page
+        # shows the new campaign immediately (the next sweep fills in metrics)
+        if log.campaign_id and not (db.query(models.CampaignRecord)
+                                    .filter_by(advertiser_id=acct.advertiser_id,
+                                               campaign_id=log.campaign_id).first()):
+            mode = fields.get("campaign_budget_mode") or "ABO"
+            db.add(models.CampaignRecord(
+                advertiser_id=acct.advertiser_id, campaign_id=log.campaign_id,
+                campaign_name=created_name or fields.get("template_name", ""),
+                objective_type=fields.get("objective_type", ""),
+                operation_status="ENABLE",
+                budget=float(fields.get("campaign_budget") or 0) if mode != "ABO" else 0.0,
+                budget_mode=mode if mode != "ABO" else "",
+                is_smart_plus=bool(fields.get("smart_plus")),
+            ))
         live_log.push("launch", f"Launched '{fields['template_name']}' on {acct.advertiser_name or acct.advertiser_id}")
     except SparkResolveError as e:
         log.ok = False

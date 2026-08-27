@@ -288,13 +288,17 @@ def create_ad(access_token: str, advertiser_id: str, payload: dict) -> dict:
 def upload_video_file(access_token: str, advertiser_id: str, file_path: str,
                       file_name: str) -> dict:
     """Upload a local video file into an ad account's asset library.
+    Streams from disk — the video is never held in memory whole.
     Returns the first entry: {video_id, video_cover_url/poster_url, ...}."""
     import hashlib
-    from pathlib import Path
-    data = Path(file_path).read_bytes()
-    signature = hashlib.md5(data).hexdigest()
+    hasher = hashlib.md5()
+    with open(file_path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            hasher.update(chunk)
+    signature = hasher.hexdigest()
     try:
-        with httpx.Client(timeout=httpx.Timeout(180.0, connect=10.0)) as client:
+        with open(file_path, "rb") as fh, \
+                httpx.Client(timeout=httpx.Timeout(180.0, connect=10.0)) as client:
             resp = client.post(
                 f"{BASE}/file/video/ad/upload/",
                 headers={"Access-Token": access_token},
@@ -302,9 +306,9 @@ def upload_video_file(access_token: str, advertiser_id: str, file_path: str,
                       "video_signature": signature, "file_name": file_name,
                       "flaw_detect": "true", "auto_fix_enabled": "true",
                       "auto_bind_enabled": "true"},
-                files={"video_file": (file_name, data, "video/mp4")},
+                files={"video_file": (file_name, fh, "video/mp4")},
             )
-    except httpx.HTTPError as e:
+    except (httpx.HTTPError, OSError) as e:
         raise TikTokError("HTTP", f"Network error uploading video: {e!r}")
     parsed = _parse(resp)
     if isinstance(parsed, list):
