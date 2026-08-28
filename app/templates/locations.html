@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Locations</h1>
+    <div class="muted">TikTok's numeric location IDs, pulled live per account — paste them into a preset's “Geo — location IDs” field.</div></div>
+</div>
+
+{% if err %}<div class="flash err">{{ err }}</div>{% endif %}
+
+<div class="card" style="margin-bottom:14px;">
+  <form method="get" action="/locations" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
+    <label class="field" style="margin:0;"><span class="field-label">Ad account</span>
+      <select name="advertiser_id" style="width:auto;min-width:220px;">
+        <option value="">— pick an account —</option>
+        {% for a in accounts %}
+          <option value="{{ a.advertiser_id }}" {{ 'selected' if a.advertiser_id == advertiser_id }}>
+            {{ a.advertiser_name or a.advertiser_id }}</option>
+        {% endfor %}
+      </select></label>
+    <label class="field" style="margin:0;"><span class="field-label">Objective</span>
+      <select name="objective" style="width:auto;">
+        {% for o in objectives %}
+          <option value="{{ o }}" {{ 'selected' if o == objective }}>{{ o }}</option>
+        {% endfor %}
+      </select></label>
+    <button class="btn primary" type="submit">Load locations</button>
+    <span class="hint" style="flex-basis:100%;">Availability differs by objective &amp; account, so the list is fetched fresh from TikTok — what loads here is exactly what a launch will accept.</span>
+  </form>
+</div>
+
+{% if rows %}
+<div class="card">
+  <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap;">
+    <input type="text" id="locSearch" placeholder="Search by name or ID… (e.g. united, 6252001)"
+           style="width:280px;">
+    <select id="locLevel" style="width:auto;">
+      <option value="">All levels</option>
+    </select>
+    <span class="muted" id="locCount">{{ rows|length }} locations</span>
+    <button class="btn sm" type="button" id="copySelected" disabled>Copy checked IDs</button>
+  </div>
+  <div style="max-height:65vh;overflow:auto;">
+  <table class="data" id="locTable">
+    <thead><tr>
+      <th style="width:30px;"></th><th>Location</th><th>Level</th><th>Code</th>
+      <th class="num">ID</th><th class="num">Copy</th>
+    </tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr data-name="{{ (r.name ~ ' ' ~ r.id)|lower }}" data-level="{{ r.level }}">
+        <td><input type="checkbox" class="loc-pick" value="{{ r.id }}" style="width:auto;"></td>
+        <td>{{ r.name }}</td>
+        <td><span class="pill dim">{{ r.level }}</span></td>
+        <td class="mono muted">{{ r.region_code }}</td>
+        <td class="num mono">{{ r.id }}</td>
+        <td class="num"><button class="btn sm" type="button" data-copy="{{ r.id }}">📋</button></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% elif advertiser_id and not err %}
+<div class="card"><div class="empty">TikTok returned no locations for this account/objective.</div></div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+  var search = document.getElementById("locSearch"),
+      levelSel = document.getElementById("locLevel"),
+      table = document.getElementById("locTable"),
+      countEl = document.getElementById("locCount"),
+      copyBtn = document.getElementById("copySelected");
+  if (table) {
+    var trs = Array.prototype.slice.call(table.querySelectorAll("tbody tr"));
+    // build the level filter from the data
+    var levels = {};
+    trs.forEach(function (tr) { levels[tr.dataset.level] = true; });
+    Object.keys(levels).sort().forEach(function (l) {
+      var o = document.createElement("option"); o.value = l; o.textContent = l;
+      levelSel.appendChild(o);
+    });
+    function applyFilter() {
+      var q = search.value.trim().toLowerCase(), lv = levelSel.value, n = 0;
+      trs.forEach(function (tr) {
+        var show = (!q || tr.dataset.name.indexOf(q) !== -1)
+                && (!lv || tr.dataset.level === lv);
+        tr.style.display = show ? "" : "none";
+        if (show) n++;
+      });
+      countEl.textContent = n + " locations";
+    }
+    search.addEventListener("input", applyFilter);
+    levelSel.addEventListener("change", applyFilter);
+
+    function copyText(txt, btn) {
+      var done = function () {
+        var old = btn.textContent; btn.textContent = "✓";
+        setTimeout(function () { btn.textContent = old; }, 900);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(txt).then(done, done);
+      } else {
+        var ta = document.createElement("textarea");
+        ta.value = txt; document.body.appendChild(ta); ta.select();
+        document.execCommand("copy"); document.body.removeChild(ta); done();
+      }
+    }
+    table.addEventListener("click", function (e) {
+      var b = e.target.closest("[data-copy]");
+      if (b) copyText(b.dataset.copy, b);
+    });
+    function syncCopyBtn() {
+      var picked = table.querySelectorAll(".loc-pick:checked").length;
+      copyBtn.disabled = !picked;
+      copyBtn.textContent = picked ? "Copy checked IDs (" + picked + ")" : "Copy checked IDs";
+    }
+    table.addEventListener("change", function (e) {
+      if (e.target.classList.contains("loc-pick")) syncCopyBtn();
+    });
+    copyBtn.addEventListener("click", function () {
+      var ids = Array.prototype.map.call(
+        table.querySelectorAll(".loc-pick:checked"), function (c) { return c.value; });
+      copyText(ids.join(" "), copyBtn);
+    });
+  }
+</script>
+{% endblock %}

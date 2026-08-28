@@ -13,7 +13,7 @@
 <nav class="topnav">
   <div class="topnav-inner">
     {% set launch_active = active.startswith('/super-launcher') or active.startswith('/campaigns') or active.startswith('/queue') %}
-    {% set assets_active = active.startswith('/presets') or active.startswith('/spark-codes') or active.startswith('/creatives') or active.startswith('/ad-texts') or active.startswith('/pixels') or active.startswith('/accounts') or active.startswith('/instant-pages') or active.startswith('/lead-forms') %}
+    {% set assets_active = active.startswith('/presets') or active.startswith('/spark-codes') or active.startswith('/creatives') or active.startswith('/ad-texts') or active.startswith('/pixels') or active.startswith('/accounts') or active.startswith('/instant-pages') or active.startswith('/lead-forms') or active.startswith('/locations') %}
     <div class="nav-links">
       <a href="/" class="{{ 'active' if active == '/' else '' }}">Overview</a>
       <a href="/monitor" class="{{ 'active' if active.startswith('/monitor') else '' }}">Monitor</a>
@@ -45,6 +45,7 @@
           <a href="/accounts" class="{{ 'active' if active.startswith('/accounts') else '' }}">Ad Accounts</a>
           <a href="/instant-pages" class="{{ 'active' if active.startswith('/instant-pages') else '' }}">Instant Pages</a>
           <a href="/lead-forms" class="{{ 'active' if active.startswith('/lead-forms') else '' }}">Lead Forms</a>
+          <a href="/locations" class="{{ 'active' if active.startswith('/locations') else '' }}">Locations</a>
         </div>
       </div>
 
