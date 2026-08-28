@@ -1,14 +1,15 @@
 {% extends "base.html" %}
 {% block content %}
+{% set range_labels = {'today': 'today', 'yesterday': 'yesterday', '7d': 'last 7 days', '30d': 'last 30 days', 'mtd': 'this month', 'custom': (start ~ ' → ' ~ end)} %}
 {% macro sort_link(key, label) -%}
   <a class="th-sort {{ 'on' if sort == key else '' }}"
-     href="?q={{ q|urlencode }}&state={{ state }}&account={{ account }}&origin={{ origin }}&sort={{ key }}">{{ label }}{% if sort == key %} ▾{% endif %}</a>
+     href="?q={{ q|urlencode }}&state={{ state }}&account={{ account }}&origin={{ origin }}&range={{ range_key }}&start={{ start }}&end={{ end }}&sort={{ key }}">{{ label }}{% if sort == key %} ▾{% endif %}</a>
 {%- endmacro %}
 <div class="page-head">
   <div>
     <h1>Campaigns</h1>
     <div class="muted">{{ active_count }} active of {{ rows|length }} shown · ${{ "%.2f"|format(totals.spend) }} spent · ${{ "%.2f"|format(totals.revenue) }} revenue ·
-      <span class="{{ 'pos' if totals.profit >= 0 else 'neg' }}">${{ "%.2f"|format(totals.profit) }} profit</span> today · synced {{ synced_ago }}</div>
+      <span class="{{ 'pos' if totals.profit >= 0 else 'neg' }}">${{ "%.2f"|format(totals.profit) }} profit</span> · {{ range_labels[range_key] }} · synced {{ synced_ago }}</div>
   </div>
   <div class="actions">
     <form method="post" action="/status/sync"><button class="btn primary" type="submit">↻ Sync now</button></form>
@@ -38,6 +39,18 @@
 <div class="card" style="margin-bottom:14px;">
   <form method="get" action="/status" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
     <input type="text" name="q" value="{{ q }}" placeholder="Filter by campaign or account…" style="width:230px;">
+    <select name="range" id="rangeSel" style="width:auto;">
+      <option value="today" {{ 'selected' if range_key == 'today' }}>Today</option>
+      <option value="yesterday" {{ 'selected' if range_key == 'yesterday' }}>Yesterday</option>
+      <option value="7d" {{ 'selected' if range_key == '7d' }}>Last 7 days</option>
+      <option value="30d" {{ 'selected' if range_key == '30d' }}>Last 30 days</option>
+      <option value="mtd" {{ 'selected' if range_key == 'mtd' }}>This month</option>
+      <option value="custom" {{ 'selected' if range_key == 'custom' }}>Custom…</option>
+    </select>
+    <span id="customDates" style="display:{{ '' if range_key == 'custom' else 'none' }};gap:6px;">
+      <input type="date" name="start" value="{{ start }}" style="width:auto;">
+      <input type="date" name="end" value="{{ end }}" style="width:auto;">
+    </span>
     <select name="origin" style="width:auto;">
       <option value="tool" {{ 'selected' if origin == 'tool' }}>Launched by this tool</option>
       <option value="all" {{ 'selected' if origin == 'all' }}>All campaigns on TikTok</option>
@@ -55,7 +68,8 @@
     </select>
     <input type="hidden" name="sort" value="{{ sort }}">
     <button class="btn" type="submit">Apply</button>
-    {% if q or state != 'all' or account or origin != 'tool' %}<a class="btn sm" href="/status">✕ Clear</a>{% endif %}
+    {% if q or state != 'all' or account or origin != 'tool' or range_key != 'today' %}<a class="btn sm" href="/status">✕ Clear</a>{% endif %}
+    {% if range_errors %}<span class="hint" style="color:var(--warn);">{{ range_errors }} account(s) failed to load range metrics</span>{% endif %}
   </form>
 </div>
 
@@ -102,22 +116,22 @@
             {% if row.shared_n %}<span class="muted" title="This spark/source runs on {{ row.shared_n }} campaigns — revenue & clicks are split by spend share" style="font-size:11px;"> ÷{{ row.shared_n }}</span>{% endif %}
           {% else %}<span class="muted">—</span>{% endif %}
         </td>
-        <td class="num">${{ "%.2f"|format(r.spend_today) }}</td>
+        <td class="num">${{ "%.2f"|format(row.m.spend) }}</td>
         <td class="num">{% if row.source %}${{ "%.2f"|format(row.revenue) }}{% else %}—{% endif %}</td>
         <td class="num {{ 'pos' if row.profit >= 0 else 'neg' }}">{% if row.source %}{{ '−' if row.profit < 0 }}${{ "%.2f"|format(row.profit|abs) }}{% else %}—{% endif %}</td>
         <td class="num">{% if row.source %}{{ "%.0f"|format(row.pb_clicks) }}{% else %}—{% endif %}</td>
         <td class="num">{% if row.source and row.pb_clicks %}{{ "%.2f"|format(row.cvr) }}%{% else %}—{% endif %}</td>
         <td class="num">{% if r.budget %}${{ "%.0f"|format(r.budget) }}{% if r.budget_mode == 'BUDGET_MODE_DAY' %}/d{% endif %}{% else %}—{% endif %}</td>
-        <td class="num">{{ "{:,}".format(r.impressions) }}</td>
-        <td class="num">{{ "{:,}".format(r.clicks) }}</td>
-        <td class="num">{{ "%.2f"|format(r.ctr) }}%</td>
-        <td class="num">{% if r.clicks %}${{ "%.2f"|format(r.cpc) }}{% else %}—{% endif %}</td>
-        <td class="num">{% if r.impressions %}${{ "%.2f"|format(r.cpm) }}{% else %}—{% endif %}</td>
-        <td class="num">{{ r.conversions }}</td>
-        <td class="num">{% if r.conversions %}${{ "%.2f"|format(r.cpa) }}{% else %}—{% endif %}</td>
+        <td class="num">{{ "{:,}".format(row.m.impressions) }}</td>
+        <td class="num">{{ "{:,}".format(row.m.clicks) }}</td>
+        <td class="num">{{ "%.2f"|format(row.m.ctr) }}%</td>
+        <td class="num">{% if row.m.clicks %}${{ "%.2f"|format(row.m.cpc) }}{% else %}—{% endif %}</td>
+        <td class="num">{% if row.m.impressions %}${{ "%.2f"|format(row.m.cpm) }}{% else %}—{% endif %}</td>
+        <td class="num">{{ row.m.conversions }}</td>
+        <td class="num">{% if row.m.conversions %}${{ "%.2f"|format(row.m.cpa) }}{% else %}—{% endif %}</td>
         <td class="num sticky-r" style="white-space:nowrap;">
           <form method="post" action="/campaigns/{{ r.advertiser_id }}/{{ r.campaign_id }}/status" style="display:inline;">
-            <input type="hidden" name="next" value="/status?q={{ q|urlencode }}&state={{ state }}&account={{ account }}&origin={{ origin }}&sort={{ sort }}">
+            <input type="hidden" name="next" value="/status?q={{ q|urlencode }}&state={{ state }}&account={{ account }}&origin={{ origin }}&range={{ range_key }}&start={{ start }}&end={{ end }}&sort={{ sort }}">
             {% if r.operation_status == "ENABLE" %}
               <input type="hidden" name="operation_status" value="DISABLE">
               <button class="btn sm" type="submit" title="Pause this campaign on TikTok">⏸</button>
@@ -160,13 +174,20 @@
   {% endif %}
 </div>
 <script>
-  // auto-refresh: the background worker syncs every sweep — reload to show it.
-  // Skipped while a filter field is focused or text is selected.
+  // custom range: show the date inputs only when "Custom…" is picked
+  var rangeSel = document.getElementById("rangeSel"), customDates = document.getElementById("customDates");
+  if (rangeSel) rangeSel.addEventListener("change", function () {
+    customDates.style.display = rangeSel.value === "custom" ? "inline-flex" : "none";
+  });
+  // auto-refresh only the LIVE (today) view: the background worker syncs every
+  // sweep; historical ranges don't change and cost API calls to refetch.
+  {% if range_key == 'today' %}
   setInterval(function () {
     var el = document.activeElement;
     var typing = el && (el.tagName === "INPUT" || el.tagName === "SELECT" || el.tagName === "TEXTAREA");
     var selecting = window.getSelection && String(window.getSelection());
     if (!typing && !selecting) location.reload();
   }, 60000);
+  {% endif %}
 </script>
 {% endblock %}

@@ -23,14 +23,14 @@ router = APIRouter()
 
 # sort key -> how to read the value from a built row dict
 SORT_KEYS = {
-    "spend": lambda row: row["r"].spend_today,
-    "impr": lambda row: row["r"].impressions,
-    "clicks": lambda row: row["r"].clicks,
-    "ctr": lambda row: row["r"].ctr,
-    "cpc": lambda row: row["r"].cpc,
-    "cpm": lambda row: row["r"].cpm,
-    "conv": lambda row: row["r"].conversions,
-    "cpa": lambda row: row["r"].cpa,
+    "spend": lambda row: row["m"]["spend"],
+    "impr": lambda row: row["m"]["impressions"],
+    "clicks": lambda row: row["m"]["clicks"],
+    "ctr": lambda row: row["m"]["ctr"],
+    "cpc": lambda row: row["m"]["cpc"],
+    "cpm": lambda row: row["m"]["cpm"],
+    "conv": lambda row: row["m"]["conversions"],
+    "cpa": lambda row: row["m"]["cpa"],
     "budget": lambda row: row["r"].budget,
     "name": lambda row: (row["r"].campaign_name or "").lower(),
     "source": lambda row: row["source"],
@@ -47,6 +47,11 @@ def status_page(request: Request, db: Session = Depends(get_db)):
     state = request.query_params.get("state", "all")          # all | active | paused
     account = request.query_params.get("account", "")          # advertiser_id
     origin = request.query_params.get("origin", "tool")        # tool | all
+    range_key = request.query_params.get("range", "today")
+    start = request.query_params.get("start") or None
+    end = request.query_params.get("end") or None
+    if range_key not in ("today", "yesterday", "7d", "30d", "mtd", "custom"):
+        range_key = "today"
     sort = request.query_params.get("sort", "spend")
     if sort not in SORT_KEYS:
         sort = "spend"
@@ -84,19 +89,59 @@ def status_page(request: Request, db: Session = Depends(get_db)):
     accounts = {a.advertiser_id: a for a in db.query(models.AdAccount).all()}
     sources = pnl_data.campaign_source_map(db)
 
-    # --- Glitchy postback truth for today, per source --------------------------
-    start_utc, end_utc = timeutil.range_bounds("today")
+    # --- Glitchy postback truth for the selected range, per source -------------
+    start_utc, end_utc = timeutil.range_bounds(range_key, start, end)
     pb = pnl_data.revenue_by_source(db, start_utc, end_utc)
 
-    # how many campaigns share each source + that source's total spend today
+    # --- TikTok metrics for the range: today = the synced cache (fast, free);
+    #     any other range = one live report call per account in view ----------
+    from datetime import timedelta as _td
+
+    from .. import tiktok_api
+    range_errors = 0
+    metrics_by_cid: dict | None = None
+    if range_key != "today":
+        metrics_by_cid = {}
+        s_day = timeutil.local_date_str(start_utc)
+        e_day = timeutil.local_date_str(end_utc - _td(seconds=1))
+        for aid in {r.advertiser_id for r in records}:
+            a = accounts.get(aid)
+            if not a or not a.access_token:
+                continue
+            try:
+                for rr in tiktok_api.get_report(
+                        a.access_token, aid, dimensions=["campaign_id"],
+                        metrics=live_spend.REPORT_METRICS,
+                        start_date=s_day, end_date=e_day):
+                    cid = str(rr.get("dimensions", {}).get("campaign_id", ""))
+                    metrics_by_cid[cid] = rr.get("metrics", {}) or {}
+            except tiktok_api.TikTokError:
+                range_errors += 1
+
+    def _metrics(rec) -> dict:
+        if metrics_by_cid is None:      # today → cached values
+            return {"spend": float(rec.spend_today or 0), "impressions": rec.impressions or 0,
+                    "clicks": rec.clicks or 0, "conversions": rec.conversions or 0,
+                    "ctr": rec.ctr or 0.0, "cpc": rec.cpc or 0.0,
+                    "cpm": rec.cpm or 0.0, "cpa": rec.cpa or 0.0}
+        mm = metrics_by_cid.get(rec.campaign_id, {})
+        f = live_spend._f
+        return {"spend": f(mm, "spend"), "impressions": int(f(mm, "impressions")),
+                "clicks": int(f(mm, "clicks")), "conversions": int(f(mm, "conversion")),
+                "ctr": f(mm, "ctr"), "cpc": f(mm, "cpc"),
+                "cpm": f(mm, "cpm"), "cpa": f(mm, "cost_per_conversion")}
+
+    # how many campaigns share each source + that source's total spend in range
     # (computed over ALL records so filters never change the apportioning)
     src_count: dict[str, int] = {}
     src_spend: dict[str, float] = {}
+    metrics_cache: dict[str, dict] = {}
     for r in records:
+        metrics_cache[r.campaign_id] = _metrics(r)
         src = sources.get(r.campaign_id, "")
         if src:
             src_count[src] = src_count.get(src, 0) + 1
-            src_spend[src] = src_spend.get(src, 0.0) + float(r.spend_today or 0)
+            src_spend[src] = src_spend.get(src, 0.0) + metrics_cache[r.campaign_id]["spend"]
 
     rows = []
     for r in records:
@@ -111,12 +156,13 @@ def status_page(request: Request, db: Session = Depends(get_db)):
         if account and r.advertiser_id != account:
             continue
 
+        m = metrics_cache[r.campaign_id]
         src = sources.get(r.campaign_id, "")
         src_pb = pb.get(src, {}) if src else {}
         n = src_count.get(src, 1)
         if src and n > 1:
             total = src_spend.get(src, 0.0)
-            share = (float(r.spend_today or 0) / total) if total > 0 else (1.0 / n)
+            share = (m["spend"] / total) if total > 0 else (1.0 / n)
         else:
             share = 1.0
         revenue = float(src_pb.get("revenue", 0.0)) * share
@@ -125,14 +171,14 @@ def status_page(request: Request, db: Session = Depends(get_db)):
         src_clicks = int(src_pb.get("clicks", 0))
         src_conv = int(src_pb.get("conversions", 0))
         rows.append({
-            "r": r, "account_name": name, "source": src,
+            "r": r, "m": m, "account_name": name, "source": src,
             "shared_n": n if (src and n > 1) else 0,
             "revenue": revenue,
             "pb_clicks": pb_clicks,
             "pb_conversions": pb_conv,
             # CVR is a ratio → identical for every campaign on the source
             "cvr": (src_conv / src_clicks * 100) if src_clicks else 0.0,
-            "profit": revenue - float(r.spend_today or 0),
+            "profit": revenue - m["spend"],
         })
 
     reverse = sort not in ("name", "source")
@@ -141,10 +187,10 @@ def status_page(request: Request, db: Session = Depends(get_db)):
 
     # totals across the FILTERED rows; rate metrics recomputed from the sums so
     # they're properly weighted (never an average of averages)
-    spend = sum(row["r"].spend_today for row in rows)
-    impressions = sum(row["r"].impressions for row in rows)
-    clicks = sum(row["r"].clicks for row in rows)
-    conversions = sum(row["r"].conversions for row in rows)
+    spend = sum(row["m"]["spend"] for row in rows)
+    impressions = sum(row["m"]["impressions"] for row in rows)
+    clicks = sum(row["m"]["clicks"] for row in rows)
+    conversions = sum(row["m"]["conversions"] for row in rows)
     revenue = sum(row["revenue"] for row in rows)
     pb_clicks = sum(row["pb_clicks"] for row in rows)
     pb_conversions = sum(row["pb_conversions"] for row in rows)
@@ -173,6 +219,8 @@ def status_page(request: Request, db: Session = Depends(get_db)):
         "rows": rows, "totals": totals, "active_count": active,
         "synced_ago": queries.campaigns_synced_ago(db),
         "q": q, "state": state, "account": account, "sort": sort, "origin": origin,
+        "range_key": range_key, "start": start or "", "end": end or "",
+        "range_errors": range_errors,
         "pending_tool": pending_tool, "pending_details": pending_details,
         "account_options": account_options,
         "title": "Campaigns",

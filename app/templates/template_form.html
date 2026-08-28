@@ -200,7 +200,8 @@
           <option value="BUDGET_MODE_TOTAL" {{ 'selected' if blob.get('adgroup_budget_mode') == 'BUDGET_MODE_TOTAL' else '' }}>Lifetime (total)</option>
         </select></label>
       <label class="field"><span class="field-label">Duplicate ad groups</span>
-        <input type="number" min="1" max="20" name="duplicates" value="{{ blob.get('duplicates', 1) }}"></label>
+        <input type="number" min="1" max="20" name="duplicates" value="{{ blob.get('duplicates', 1) }}">
+        <span class="hint">Copies of each ad group (also multiplies every cost-cap bid).</span></label>
     </div>
     <div class="form-row-3">
       <label class="field"><span class="field-label">Schedule</span>
@@ -236,7 +237,7 @@
       <label class="field"><span class="field-label">Cost cap(s) ($, space-separated)</span>
         <input type="text" name="cost_cap_ladder"
                value="{{ blob.get('cost_cap_ladder', [])|join(' ') }}" placeholder="empty = lowest cost (no cap)">
-        <span class="hint">One value = flat cap; several = one ad group per bid (overrides duplicates).</span></label>
+        <span class="hint">One value = flat cap; several = one set per bid. “Duplicate ad groups” multiplies each bid (e.g. 2 caps × 5 duplicates = 10 ad groups).</span></label>
     </div>
     <div class="form-row-3">
       <label class="field"><span class="field-label">Delivery type</span>

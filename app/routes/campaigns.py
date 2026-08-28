@@ -892,10 +892,15 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
             log.campaign_id = campaign_id
             created_name = camp_payload["campaign_name"]
 
-            # duplicated ad groups + cost-cap ladder
+            # duplicated ad groups + cost-cap ladder.
+            # duplicates multiplies EVERY bid: one cap + duplicates=10 → 10 ad
+            # groups at that cap; caps [5,6] + duplicates=3 → 6 ad groups.
             ladder = [float(x) for x in fields.get("cost_cap_ladder") or []]
             n = max(int(fields.get("duplicates") or 1), 1)
-            plan: list[float | None] = ladder if ladder else [None] * n
+            if ladder:
+                plan: list[float | None] = [bid for bid in ladder for _ in range(n)]
+            else:
+                plan = [None] * n
             for i, bid in enumerate(plan):
                 ag_payload = build_adgroup_payload(fields, acct, campaign_id, i, bid, pixel_id)
                 try:
