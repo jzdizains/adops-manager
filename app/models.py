@@ -373,6 +373,7 @@ class LaunchQueueItem(Base):
     id = Column(Integer, primary_key=True)
     template_id = Column(Integer, nullable=False)
     spark_code_id = Column(Integer, nullable=True)     # optional spark override
+    use_library = Column(Boolean, default=False)       # override: pull library creatives
     advertiser_id = Column(String, default="")         # "" = auto-pick per preset policy
     batch_ref = Column(String, index=True, default="")
     status = Column(String, default="pending", index=True)  # pending|running|done|failed

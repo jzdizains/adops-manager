@@ -31,6 +31,7 @@ schema_additions: dict[str, dict[str, str]] = {
     "ad_accounts": {"balance": "REAL DEFAULT 0", "enabled": "BOOLEAN DEFAULT 1",
                     "error_count": "INTEGER DEFAULT 0", "cooldown_until": "DATETIME"},
     "spark_codes": {"use_count": "INTEGER DEFAULT 0", "source": "TEXT DEFAULT ''"},
+    "launch_queue": {"use_library": "BOOLEAN DEFAULT 0"},
     # Phase 2 (sources/P&L): new columns on live DBs
     "launch_logs": {
         "spark_code_id": "INTEGER",

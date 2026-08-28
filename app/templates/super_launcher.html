@@ -70,12 +70,22 @@
              style="background:var(--panel-hover);font-weight:700;"></label>
 
     <label class="field"><span class="field-label">Spark code (optional override)</span>
-      <select name="spark_code_id">
+      <select name="spark_code_id" id="slSpark">
         <option value="">— use preset default —</option>
         {% for s in sparks %}
           <option value="{{ s.id }}">{{ s.name or s.code[:18] }} ({{ s.media_type }})</option>
         {% endfor %}
       </select></label>
+
+    <label class="field"><span class="field-label">Creatives (optional override)</span>
+      <select name="creative_mode" id="slCreative">
+        <option value="">— use preset default —</option>
+        <option value="library" {{ 'disabled' if not creatives_available }}>
+          Library creatives — each account gets the next unused one ({{ creatives_available }} available)</option>
+      </select>
+      <span class="hint">Pick ONE override at most. Library mode pulls a different unused creative
+        from the Creatives page for every account (each creative launches once) — the preset needs
+        a landing page URL &amp; ad text. Runs out mid-batch = those launches fail cleanly.</span></label>
 
     <label style="display:flex;align-items:center;gap:8px;font-weight:600;font-size:13px;
                   color:var(--text-soft);margin-bottom:10px;cursor:pointer;">
@@ -111,6 +121,14 @@
   var preset = document.getElementById("slPreset"), dest = document.getElementById("slDest");
   preset.addEventListener("change", function () {
     dest.value = DEST_LABELS[preset.value] || "—";
+  });
+  // spark vs library override are mutually exclusive — picking one clears the other
+  var slSpark = document.getElementById("slSpark"), slCreative = document.getElementById("slCreative");
+  slSpark.addEventListener("change", function () {
+    if (slSpark.value) slCreative.value = "";
+  });
+  slCreative.addEventListener("change", function () {
+    if (slCreative.value) slSpark.value = "";
   });
   var autoBox = document.getElementById("slAuto"), autoRow = document.getElementById("slAutoRow");
   var modeField = document.getElementById("slMode");

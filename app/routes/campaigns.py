@@ -812,8 +812,19 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
         creative_identity: dict = {}
         if use_library:
             settings = get_settings(db)
-            creative = (db.query(models.Creative).filter_by(status="available")
-                        .order_by(models.Creative.id).first())
+            if fields.get("creative_id"):
+                # launcher picked a SPECIFIC creative from the library
+                creative = db.get(models.Creative, int(fields["creative_id"]))
+                if not creative:
+                    raise ConfigError("The selected creative no longer exists in the "
+                                      "library — pick another on the launch form.")
+                if creative.status != "available":
+                    raise ConfigError(f"Creative “{creative.name}” has already been used "
+                                      "(each creative launches once) — pick another, or "
+                                      "leave the launcher on automatic.")
+            else:
+                creative = (db.query(models.Creative).filter_by(status="available")
+                            .order_by(models.Creative.id).first())
             if not creative:
                 raise ConfigError("No available creatives left in the library — upload "
                                   "more on the Creatives page (each creative is used once).")
@@ -1022,8 +1033,12 @@ def launch_form(request: Request, db: Session = Depends(get_db)):
     accounts = (db.query(models.AdAccount).filter(models.AdAccount.enabled == True)  # noqa: E712
                 .order_by(models.AdAccount.advertiser_name).all())
     sparks = db.query(models.SparkCode).filter_by(status="active").order_by(models.SparkCode.name).all()
+    creatives = (db.query(models.Creative).filter_by(status="available")
+                 .order_by(models.Creative.name).all())
     return render(request, "campaign_launch.html", {
         "templates": templates, "accounts": accounts, "sparks": sparks,
+        "creatives": creatives,
+        "err": request.query_params.get("err", ""),
         "title": "Create Campaign",
     })
 
@@ -1033,14 +1048,26 @@ def launch_submit(request: Request,
                   template_id: int = Form(...),
                   advertiser_id: str = Form(...),
                   spark_code_id: str = Form(""),
+                  creative_id: str = Form(""),
                   db: Session = Depends(get_db)):
     template = db.get(models.Template, template_id)
     acct = db.query(models.AdAccount).filter_by(advertiser_id=advertiser_id).first()
     if not template or not acct:
         return RedirectResponse("/campaigns/launch?err=missing", status_code=303)
-    overrides = {}
+    if spark_code_id and creative_id:
+        return RedirectResponse(
+            "/campaigns/launch?err=Pick+a+spark+code+OR+a+library+creative+—+not+both.",
+            status_code=303)
+    overrides: dict = {}
     if spark_code_id:
         overrides["spark_code_id"] = int(spark_code_id)
+        # a spark pick at launch time wins over a library preset
+        overrides["creative_source"] = "spark"
+        overrides["ad_text_mode"] = "fixed"    # pool texts are library-only
+    elif creative_id:
+        # a library pick wins over a spark preset
+        overrides["creative_id"] = int(creative_id)
+        overrides["creative_source"] = "library"
     fields = launch_mod.synthesize(template, overrides)
     batch_ref = run_batch(db, [acct], fields)
     return RedirectResponse(f"/campaigns/result/{batch_ref}", status_code=303)

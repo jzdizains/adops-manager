@@ -6,6 +6,7 @@
 </div>
 
 <div class="card" style="max-width:560px;">
+  {% if err %}<div class="flash err">{{ err }}</div>{% endif %}
   <form method="post" action="/campaigns/launch">
     <label class="field"><span class="field-label">Preset</span>
       <select name="template_id" required>
@@ -20,13 +21,32 @@
         {% endfor %}
       </select></label>
     <label class="field"><span class="field-label">Spark code (optional override)</span>
-      <select name="spark_code_id">
+      <select name="spark_code_id" id="sparkSel">
         <option value="">— use preset default —</option>
         {% for s in sparks %}
           <option value="{{ s.id }}">{{ s.name or s.code[:18] }} ({{ s.media_type }})</option>
         {% endfor %}
       </select></label>
+    <label class="field"><span class="field-label">Library creative (optional override)</span>
+      <select name="creative_id" id="creativeSel">
+        <option value="">— use preset default —</option>
+        {% for c in creatives %}
+          <option value="{{ c.id }}">{{ c.name }}{% if c.source %} · {{ c.source }}{% endif %}</option>
+        {% endfor %}
+      </select>
+      <span class="hint">Pick ONE override at most: a spark code launches a spark ad; a library creative launches a video ad under the account’s TikTok identity (the preset needs a landing page URL &amp; ad text). Only unused creatives are listed — each launches once.</span></label>
     <button class="btn primary" type="submit">Launch campaign</button>
   </form>
 </div>
+<script>
+  // the two overrides are mutually exclusive — picking one clears the other
+  var sparkSel = document.getElementById("sparkSel"),
+      creativeSel = document.getElementById("creativeSel");
+  sparkSel.addEventListener("change", function () {
+    if (sparkSel.value) creativeSel.value = "";
+  });
+  creativeSel.addEventListener("change", function () {
+    if (creativeSel.value) sparkSel.value = "";
+  });
+</script>
 {% endblock %}

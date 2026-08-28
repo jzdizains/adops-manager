@@ -25,6 +25,8 @@ def page(request: Request, db: Session = Depends(get_db)):
     presets = db.query(models.Template).order_by(models.Template.name).all()
     sparks = (db.query(models.SparkCode).filter_by(status="active")
               .order_by(models.SparkCode.name).all())
+    creatives_available = (db.query(models.Creative)
+                           .filter_by(status="available").count())
     # preset id -> destination label, for the auto-lock UI
     dest_labels = {}
     for p in presets:
@@ -32,6 +34,7 @@ def page(request: Request, db: Session = Depends(get_db)):
         dest_labels[p.id] = launch_mod.destination_label(fields)
     return render(request, "super_launcher.html", {
         "accounts": accounts, "presets": presets, "sparks": sparks,
+        "creatives_available": creatives_available,
         "dest_labels_json": json.dumps(dest_labels),
         "title": "Super Launcher",
     })
@@ -77,6 +80,7 @@ async def launch(request: Request, db: Session = Depends(get_db)):
     form = await request.form()
     template_id = form.get("template_id")
     spark_code_id = form.get("spark_code_id", "")
+    creative_mode = form.get("creative_mode", "")     # "" = preset default | "library"
     mode = form.get("mode", "manual")
     if not template_id:
         return RedirectResponse("/super-launcher?err=pick", status_code=303)
@@ -84,13 +88,20 @@ async def launch(request: Request, db: Session = Depends(get_db)):
     if not template:
         return RedirectResponse("/super-launcher?err=preset", status_code=303)
 
-    overrides = {}
+    overrides: dict = {}
     if spark_code_id:
+        # a spark pick at launch time wins over a library preset
         overrides["spark_code_id"] = int(spark_code_id)
+        overrides["creative_source"] = "spark"
+        overrides["ad_text_mode"] = "fixed"           # pool texts are library-only
+    elif creative_mode == "library":
+        # each account pulls the NEXT unused creative from the Creative library
+        overrides["creative_source"] = "library"
     fields = launch_mod.synthesize(template, overrides)
 
     use_queue = form.get("use_queue") is not None
     spark_id = int(spark_code_id) if spark_code_id else None
+    use_library = (not spark_id) and creative_mode == "library"
 
     if mode == "auto":
         try:
@@ -101,7 +112,8 @@ async def launch(request: Request, db: Session = Depends(get_db)):
             return RedirectResponse("/super-launcher?err=pick", status_code=303)
         if use_queue:
             from .. import queue_worker
-            queue_worker.enqueue(db, template.id, spark_id, auto_count=count)
+            queue_worker.enqueue(db, template.id, spark_id, auto_count=count,
+                                 use_library=use_library)
             return RedirectResponse("/queue?ok=queued", status_code=303)
         accounts = eligible_accounts(db, fields.get("account_policy", "new_only"), count)
         if not accounts:
@@ -112,7 +124,8 @@ async def launch(request: Request, db: Session = Depends(get_db)):
             return RedirectResponse("/super-launcher?err=pick", status_code=303)
         if use_queue:
             from .. import queue_worker
-            queue_worker.enqueue(db, template.id, spark_id, advertiser_ids=advertiser_ids)
+            queue_worker.enqueue(db, template.id, spark_id, advertiser_ids=advertiser_ids,
+                                 use_library=use_library)
             return RedirectResponse("/queue?ok=queued", status_code=303)
         accounts = (db.query(models.AdAccount)
                     .filter(models.AdAccount.advertiser_id.in_(advertiser_ids)).all())

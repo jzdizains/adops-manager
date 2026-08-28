@@ -15,7 +15,8 @@ TRANSIENT_CODES = {"40100", "50000", "HTTP", "APP"}
 
 
 def enqueue(db: Session, template_id: int, spark_code_id: int | None,
-            advertiser_ids: list[str] | None = None, auto_count: int = 0) -> str:
+            advertiser_ids: list[str] | None = None, auto_count: int = 0,
+            use_library: bool = False) -> str:
     """Create queue items — explicit accounts, or `auto_count` auto-pick slots
     (account chosen at process time so freshly-freed accounts qualify)."""
     batch_ref = error_messages.new_ref()
@@ -23,11 +24,13 @@ def enqueue(db: Session, template_id: int, spark_code_id: int | None,
         for adv in advertiser_ids:
             db.add(models.LaunchQueueItem(template_id=template_id,
                                           spark_code_id=spark_code_id,
+                                          use_library=use_library,
                                           advertiser_id=adv, batch_ref=batch_ref))
     else:
         for _ in range(max(auto_count, 0)):
             db.add(models.LaunchQueueItem(template_id=template_id,
                                           spark_code_id=spark_code_id,
+                                          use_library=use_library,
                                           advertiser_id="", batch_ref=batch_ref))
     db.commit()
     return batch_ref
@@ -61,9 +64,13 @@ def process(db: Session, settings: dict | None = None) -> int:
             db.commit()
             continue
 
-        overrides = {}
+        overrides: dict = {}
         if item.spark_code_id:
             overrides["spark_code_id"] = item.spark_code_id
+            overrides["creative_source"] = "spark"
+            overrides["ad_text_mode"] = "fixed"     # pool texts are library-only
+        elif item.use_library:
+            overrides["creative_source"] = "library"
         fields = launch_mod.synthesize(template, overrides)
 
         # resolve target account
