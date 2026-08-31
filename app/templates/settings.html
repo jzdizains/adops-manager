@@ -179,4 +179,10 @@
       Events Manager → Test Events, where it shows within seconds.</span>
   </form>
 </div>
+
+{% if rss_mb %}
+<div class="hint" style="margin-top:10px;">Server memory in use right now: {{ rss_mb }} MB
+  (the hosting plan allows 512 MB — if this sits near the limit, the service restarts and
+  Render emails you).</div>
+{% endif %}
 {% endblock %}

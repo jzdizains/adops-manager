@@ -11,6 +11,8 @@ services:
       mountPath: /data
       sizeGB: 1
     envVars:
+      - key: MALLOC_ARENA_MAX   # cap glibc malloc arenas — the classic cause of
+        value: "2"              # slowly-climbing RSS in threaded Python services
       - key: DATA_DIR
         value: /data
       - key: BUSINESS_TZ

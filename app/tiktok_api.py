@@ -38,6 +38,29 @@ def _parse(resp: httpx.Response) -> Any:
     return body.get("data", {})
 
 
+_client_lock = __import__("threading").Lock()
+_shared_client: httpx.Client | None = None
+
+
+def _client() -> httpx.Client:
+    """ONE shared, pooled, thread-safe HTTP client for every TikTok call.
+
+    We used to build (and tear down) a fresh Client + SSL context per call —
+    thousands of times an hour with the background sync — which churned memory
+    and helped ratchet RSS up to the host's limit. Keep-alive also makes the
+    sync loops noticeably faster."""
+    global _shared_client
+    if _shared_client is None:
+        with _client_lock:
+            if _shared_client is None:
+                _shared_client = httpx.Client(
+                    timeout=TIMEOUT,
+                    limits=httpx.Limits(max_connections=10,
+                                        max_keepalive_connections=5,
+                                        keepalive_expiry=30.0))
+    return _shared_client
+
+
 def api_get(path: str, access_token: str, params: dict | None = None) -> Any:
     """GET — list params are JSON-encoded per TikTok convention."""
     q = {}
@@ -46,8 +69,7 @@ def api_get(path: str, access_token: str, params: dict | None = None) -> Any:
             continue
         q[k] = json.dumps(v) if isinstance(v, (list, dict)) else v
     try:
-        with httpx.Client(timeout=TIMEOUT) as client:
-            resp = client.get(f"{BASE}{path}", params=q, headers={"Access-Token": access_token})
+        resp = _client().get(f"{BASE}{path}", params=q, headers={"Access-Token": access_token})
     except httpx.HTTPError as e:
         # network/timeout/proxy problems become a retryable "HTTP" TikTokError
         # instead of crashing whole sync loops with a raw transport exception
@@ -77,11 +99,10 @@ def api_get_retry(path: str, access_token: str, params: dict | None = None,
 
 def api_post(path: str, access_token: str, payload: dict) -> Any:
     try:
-        with httpx.Client(timeout=TIMEOUT) as client:
-            resp = client.post(
-                f"{BASE}{path}", json=payload,
-                headers={"Access-Token": access_token, "Content-Type": "application/json"},
-            )
+        resp = _client().post(
+            f"{BASE}{path}", json=payload,
+            headers={"Access-Token": access_token, "Content-Type": "application/json"},
+        )
     except httpx.HTTPError as e:
         raise TikTokError("HTTP", f"Network error calling TikTok: {e!r}")
     return _parse(resp)
@@ -93,22 +114,20 @@ def api_post(path: str, access_token: str, payload: dict) -> Any:
 
 def exchange_auth_code(auth_code: str) -> dict:
     """POST /oauth2/access_token/ — exchange the callback auth_code for tokens."""
-    with httpx.Client(timeout=TIMEOUT) as client:
-        resp = client.post(f"{BASE}/oauth2/access_token/", json={
-            "app_id": config.TIKTOK_APP_ID,
-            "secret": config.TIKTOK_APP_SECRET,
-            "auth_code": auth_code,
-        })
+    resp = _client().post(f"{BASE}/oauth2/access_token/", json={
+        "app_id": config.TIKTOK_APP_ID,
+        "secret": config.TIKTOK_APP_SECRET,
+        "auth_code": auth_code,
+    })
     return _parse(resp)
 
 
 def refresh_access_token(refresh_token: str) -> dict:
-    with httpx.Client(timeout=TIMEOUT) as client:
-        resp = client.post(f"{BASE}/oauth2/refresh_token/", json={
-            "app_id": config.TIKTOK_APP_ID,
-            "secret": config.TIKTOK_APP_SECRET,
-            "refresh_token": refresh_token,
-        })
+    resp = _client().post(f"{BASE}/oauth2/refresh_token/", json={
+        "app_id": config.TIKTOK_APP_ID,
+        "secret": config.TIKTOK_APP_SECRET,
+        "refresh_token": refresh_token,
+    })
     return _parse(resp)
 
 
@@ -329,9 +348,8 @@ def upload_video_file(access_token: str, advertiser_id: str, file_path: str,
             hasher.update(chunk)
     signature = hasher.hexdigest()
     try:
-        with open(file_path, "rb") as fh, \
-                httpx.Client(timeout=httpx.Timeout(180.0, connect=10.0)) as client:
-            resp = client.post(
+        with open(file_path, "rb") as fh:
+            resp = _client().post(
                 f"{BASE}/file/video/ad/upload/",
                 headers={"Access-Token": access_token},
                 data={"advertiser_id": advertiser_id, "upload_type": "UPLOAD_BY_FILE",
@@ -339,6 +357,7 @@ def upload_video_file(access_token: str, advertiser_id: str, file_path: str,
                       "flaw_detect": "true", "auto_fix_enabled": "true",
                       "auto_bind_enabled": "true"},
                 files={"video_file": (file_name, fh, "video/mp4")},
+                timeout=httpx.Timeout(180.0, connect=10.0),
             )
     except (httpx.HTTPError, OSError) as e:
         raise TikTokError("HTTP", f"Network error uploading video: {e!r}")

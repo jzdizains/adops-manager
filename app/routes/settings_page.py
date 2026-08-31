@@ -25,11 +25,13 @@ def settings_page(request: Request, db: Session = Depends(get_db)):
         "&source={source}&revenue={payout}&txn={transaction_id}"
         "&event=purchase&ttclid={ttclid}"
     )
+    from .. import background
     return render(request, "settings.html", {
         "title": "Settings", "s": s,
         "postback_template": postback_template,
         "ok": request.query_params.get("ok", ""),
         "tz": config.BUSINESS_TZ,
+        "rss_mb": background.rss_mb(),
     })
 
 

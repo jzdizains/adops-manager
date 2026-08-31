@@ -45,7 +45,21 @@ def _accounts_with_active_campaigns(db):
                     models.AdAccount.enabled == True).all())  # noqa: E712
 
 
+def rss_mb() -> float:
+    """Current resident memory in MB (Linux; 0.0 elsewhere). No psutil needed."""
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    return round(int(line.split()[1]) / 1024, 1)
+    except OSError:
+        pass
+    return 0.0
+
+
 def _loop():
+    import gc
+
     from . import balances, issues, live_spend, queue_worker, rules
     from .database import SessionLocal
     from .settings_store import get_settings
@@ -81,11 +95,12 @@ def _loop():
             rules.evaluate_pause_rules(db, settings)
             rules.evaluate_profit_rules(db, settings)
             queue_worker.process(db, settings)
-            log.info("sweep %s done (slow=%s)", sweep_n, slow)
+            log.info("sweep %s done (slow=%s) rss=%.0fMB", sweep_n, slow, rss_mb())
         except Exception:  # one bad sweep must never kill the worker
             log.exception("background sweep failed")
         finally:
             db.close()
+        gc.collect()   # release sweep garbage promptly — RSS must not ratchet
         time.sleep(interval)
 
 
