@@ -13,13 +13,22 @@
         <option value="">— pick a preset —</option>
         {% for p in templates %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}
       </select></label>
-    <label class="field"><span class="field-label">Ad account</span>
-      <select name="advertiser_id" required>
-        <option value="">— pick an account —</option>
-        {% for a in accounts %}
-          <option value="{{ a.advertiser_id }}">{{ a.advertiser_name or a.advertiser_id }}</option>
-        {% endfor %}
-      </select></label>
+    <div class="field"><span class="field-label">Ad account(s)</span>
+      <div id="acctRows">
+        <div class="acct-row" style="display:flex;gap:6px;margin-bottom:6px;">
+          <select name="advertiser_ids" required style="flex:1;">
+            <option value="">— pick an account —</option>
+            {% for a in accounts %}
+              <option value="{{ a.advertiser_id }}">{{ a.advertiser_name or a.advertiser_id }}</option>
+            {% endfor %}
+          </select>
+          <button class="btn sm acct-del" type="button" title="Remove this account"
+                  style="display:none;">✕</button>
+        </div>
+      </div>
+      <button class="btn sm" type="button" id="acctAdd">＋ Add another account</button>
+      <span class="hint">Each selected account gets its own campaign from this preset, in one batch.</span>
+    </div>
     <label class="field"><span class="field-label">Spark code (optional override)</span>
       <select name="spark_code_id" id="sparkSel">
         <option value="">— use preset default —</option>
@@ -47,6 +56,28 @@
   });
   creativeSel.addEventListener("change", function () {
     if (creativeSel.value) sparkSel.value = "";
+  });
+
+  // ＋ adds another account row (clone of the first); ✕ removes its row
+  var rows = document.getElementById("acctRows");
+  function syncDelButtons() {
+    var all = rows.querySelectorAll(".acct-row");
+    for (var i = 0; i < all.length; i++) {
+      all[i].querySelector(".acct-del").style.display = all.length > 1 ? "" : "none";
+    }
+  }
+  document.getElementById("acctAdd").addEventListener("click", function () {
+    var first = rows.querySelector(".acct-row");
+    var clone = first.cloneNode(true);
+    clone.querySelector("select").value = "";
+    rows.appendChild(clone);
+    syncDelButtons();
+  });
+  rows.addEventListener("click", function (e) {
+    var b = e.target.closest(".acct-del");
+    if (!b) return;
+    b.closest(".acct-row").remove();
+    syncDelButtons();
   });
 </script>
 {% endblock %}

@@ -1044,20 +1044,37 @@ def launch_form(request: Request, db: Session = Depends(get_db)):
 
 
 @router.post("/campaigns/launch")
-def launch_submit(request: Request,
-                  template_id: int = Form(...),
-                  advertiser_id: str = Form(...),
-                  spark_code_id: str = Form(""),
-                  creative_id: str = Form(""),
-                  db: Session = Depends(get_db)):
-    template = db.get(models.Template, template_id)
-    acct = db.query(models.AdAccount).filter_by(advertiser_id=advertiser_id).first()
-    if not template or not acct:
+async def launch_submit(request: Request, db: Session = Depends(get_db)):
+    form = await request.form()
+    template_id = str(form.get("template_id") or "")
+    spark_code_id = str(form.get("spark_code_id") or "")
+    creative_id = str(form.get("creative_id") or "")
+    # one select per account row (the ＋ button adds rows) — dedupe, keep order
+    seen: set[str] = set()
+    advertiser_ids: list[str] = []
+    for v in form.getlist("advertiser_ids"):
+        v = str(v)
+        if v and v not in seen:
+            seen.add(v)
+            advertiser_ids.append(v)
+    template = db.get(models.Template, int(template_id)) if template_id.isdigit() else None
+    accts = []
+    if advertiser_ids:
+        by_id = {a.advertiser_id: a for a in
+                 db.query(models.AdAccount)
+                 .filter(models.AdAccount.advertiser_id.in_(advertiser_ids)).all()}
+        accts = [by_id[i] for i in advertiser_ids if i in by_id]
+    if not template or not accts:
         return RedirectResponse("/campaigns/launch?err=missing", status_code=303)
     if spark_code_id and creative_id:
         return RedirectResponse(
             "/campaigns/launch?err=Pick+a+spark+code+OR+a+library+creative+—+not+both.",
             status_code=303)
+    if creative_id and len(accts) > 1:
+        return RedirectResponse(
+            "/campaigns/launch?err=A+specific+creative+launches+ONCE+—+pick+a+single+"
+            "account+with+it,+or+use+the+Super+Launcher%27s+library+mode+to+give+every+"
+            "account+the+next+unused+creative.", status_code=303)
     overrides: dict = {}
     if spark_code_id:
         overrides["spark_code_id"] = int(spark_code_id)
@@ -1069,7 +1086,7 @@ def launch_submit(request: Request,
         overrides["creative_id"] = int(creative_id)
         overrides["creative_source"] = "library"
     fields = launch_mod.synthesize(template, overrides)
-    batch_ref = run_batch(db, [acct], fields)
+    batch_ref = run_batch(db, accts, fields)
     return RedirectResponse(f"/campaigns/result/{batch_ref}", status_code=303)
 
 

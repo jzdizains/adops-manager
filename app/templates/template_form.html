@@ -89,7 +89,9 @@
             <option value="{{ ev }}" {{ 'selected' if blob.get('optimization_event') == ev else '' }}>{{ label }} ({{ ev }})</option>
           {% endfor %}
         </select>
-        <span class="hint">⚠ Must already exist on the pixel.</span></label>
+        <span class="hint">⚠ Must already exist on the pixel. Registration/contact-type events
+          need the <b>Lead generation</b> objective — TikTok removed them from Website
+          Conversions (which keeps commerce events like purchase/add-to-cart).</span></label>
     </div>
     <div class="form-row">
       <label class="field" data-dest="instant_page"><span class="field-label">Instant page (by name)</span>

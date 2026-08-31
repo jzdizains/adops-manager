@@ -25,6 +25,11 @@ OBJECTIVE_MAP: dict[tuple[str, str], tuple[str, str, str]] = {
     ("WEB_CONVERSIONS", "website"):  ("CONVERT", "OCPM", "BID_TYPE_NO_BID"),
     ("LEAD_GENERATION", "lead_form"): ("CONVERT", "OCPM", "BID_TYPE_NO_BID"),
     ("LEAD_GENERATION", "instant_page"): ("CONVERT", "OCPM", "BID_TYPE_NO_BID"),
+    # TikTok moved lead-type pixel events (Complete Registration, Contact) OUT of
+    # Website Conversions — they now require the Lead Generation objective with a
+    # website destination (web-form flavor): same CONVERT/pixel wiring.
+    ("LEAD_GENERATION", "website"):  ("CONVERT", "OCPM", "BID_TYPE_NO_BID"),
+    ("LEAD_GENERATION", "pixel"):    ("CONVERT", "OCPM", "BID_TYPE_NO_BID"),
     ("REACH", "website"):            ("REACH",   "CPM",  "BID_TYPE_NO_BID"),
     ("VIDEO_VIEWS", "website"):      ("ENGAGED_VIEW", "CPV", "BID_TYPE_NO_BID"),
 }
