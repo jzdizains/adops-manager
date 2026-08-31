@@ -480,7 +480,16 @@ def build_adgroup_payload(fields: dict, acct: models.AdAccount, campaign_id: str
                            and fields.get("optimization_goal") == "CONVERT" and pixel_id):
         # ⚠ §5/§9.7: conversion ad groups carry pixel_id + optimization_event and
         # MUST NOT send promotion_website_type (omit = UNSET).
-        payload["promotion_type"] = "WEBSITE"
+        if fields.get("objective_type") == "LEAD_GENERATION":
+            # web-form lead gen: the ad group is a LEAD_GENERATION promotion
+            # aimed at an external website — plain WEBSITE promotion under this
+            # objective is what triggers TikTok's vague 40002 "error with the
+            # Lead Generation advertising objective" (launch has variant
+            # fallbacks in case an account expects a different combination)
+            payload["promotion_type"] = "LEAD_GENERATION"
+            payload["promotion_target_type"] = "EXTERNAL_WEBSITE"
+        else:
+            payload["promotion_type"] = "WEBSITE"
         payload["pixel_id"] = pixel_id
         payload["optimization_event"] = fields["optimization_event"]
     elif dest == "lead_form":
@@ -913,26 +922,51 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
             else:
                 plan = [None] * n
             for i, bid in enumerate(plan):
-                ag_payload = build_adgroup_payload(fields, acct, campaign_id, i, bid, pixel_id)
-                try:
-                    ag = tiktok_api.create_adgroup(
-                        acct.access_token, acct.advertiser_id, ag_payload)
-                except tiktok_api.TikTokError as e:
-                    # some accounts now REQUIRE an end time even for daily budgets —
-                    # retry once with an explicit 1-year window
-                    if "end_time" in (e.message or "") and "schedule_end_time" not in ag_payload:
-                        from datetime import timedelta
-                        start = ag_payload.get("schedule_start_time") or \
-                            datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-                        end = (datetime.strptime(start, "%Y-%m-%d %H:%M:%S")
-                               + timedelta(days=365)).strftime("%Y-%m-%d %H:%M:%S")
-                        ag_payload = {**ag_payload, "schedule_type": "SCHEDULE_START_END",
-                                      "schedule_start_time": start,
-                                      "schedule_end_time": end}
-                        ag = tiktok_api.create_adgroup(
-                            acct.access_token, acct.advertiser_id, ag_payload)
-                    else:
+                base_payload = build_adgroup_payload(fields, acct, campaign_id, i, bid, pixel_id)
+                # lead-gen web accounts differ in which promotion combination they
+                # accept — try the documented one first, then graceful variants
+                variants: list[dict] = [base_payload]
+                if base_payload.get("promotion_type") == "LEAD_GENERATION":
+                    no_target = {k: v for k, v in base_payload.items()
+                                 if k != "promotion_target_type"}
+                    variants.append(no_target)
+                    variants.append({**no_target, "promotion_type": "WEBSITE"})
+
+                ag = None
+                last_err: tiktok_api.TikTokError | None = None
+                for v_i, ag_payload in enumerate(variants):
+                    try:
+                        try:
+                            ag = tiktok_api.create_adgroup(
+                                acct.access_token, acct.advertiser_id, ag_payload)
+                        except tiktok_api.TikTokError as e:
+                            # some accounts now REQUIRE an end time even for daily
+                            # budgets — retry once with an explicit 1-year window
+                            if "end_time" in (e.message or "") and "schedule_end_time" not in ag_payload:
+                                from datetime import timedelta
+                                start = ag_payload.get("schedule_start_time") or \
+                                    datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+                                end = (datetime.strptime(start, "%Y-%m-%d %H:%M:%S")
+                                       + timedelta(days=365)).strftime("%Y-%m-%d %H:%M:%S")
+                                ag_payload = {**ag_payload, "schedule_type": "SCHEDULE_START_END",
+                                              "schedule_start_time": start,
+                                              "schedule_end_time": end}
+                                ag = tiktok_api.create_adgroup(
+                                    acct.access_token, acct.advertiser_id, ag_payload)
+                            else:
+                                raise
+                        break   # created — stop trying variants
+                    except tiktok_api.TikTokError as e:
+                        last_err = e
+                        msg = (e.message or "").lower()
+                        # only walk to the next variant on objective/promotion
+                        # complaints; anything else is a real error — surface it
+                        if (v_i < len(variants) - 1
+                                and ("objective" in msg or "promotion" in msg)):
+                            continue
                         raise
+                if ag is None:   # defensive — loop always breaks or raises
+                    raise last_err or tiktok_api.TikTokError("APP", "ad group not created")
                 adgroup_id = str(ag.get("adgroup_id"))
                 if creative is not None:
                     ad_payload = build_library_ad_payload(
