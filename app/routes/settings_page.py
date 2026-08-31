@@ -22,8 +22,8 @@ def settings_page(request: Request, db: Session = Depends(get_db)):
         base_url = "https://" + base_url[len("http://"):]
     postback_template = (
         f"{base_url}/postback?key={s['postback_key']}"
-        "&source={source}&revenue={revenue}&clicks={clicks}"
-        "&conversions={conversions}&cvr={cvr}"
+        "&source={source}&revenue={payout}&txn={transaction_id}"
+        "&event=purchase&ttclid={ttclid}"
     )
     return render(request, "settings.html", {
         "title": "Settings", "s": s,

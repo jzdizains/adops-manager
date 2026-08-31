@@ -44,6 +44,13 @@ DEFAULTS: dict = {
     "postback_key": "",            # generated on first read; auths /postback
     "postback_mode": "incremental",  # incremental = sum every postback;
                                      # snapshot = latest value per source per day
+    # --- TikTok Events API (S2S postback → pixel) ------------------------------
+    "events_api_enabled": False,   # forward postbacks with a ttclid to TikTok
+    "events_pixel_code": "",       # pixel ID to fire to; empty = auto-resolve
+                                   # from the source's launch (PixelCache)
+    "events_event_name": "CompleteRegistration",  # TikTok standard web event to fire
+    "events_currency": "USD",
+    "events_test_code": "",        # TikTok test_event_code (Events Manager test tab)
 }
 
 

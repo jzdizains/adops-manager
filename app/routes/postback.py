@@ -1,8 +1,15 @@
 """Public postback endpoint (Glitchy calls this) + the P&L page.
 
-Postback URL (from /settings):
-  /postback?key=<POSTBACK_KEY>&source={source}&revenue={revenue}
-           &clicks={clicks}&conversions={conversions}&cvr={cvr}
+Postback URL (from /settings) — per-event style:
+  /postback?key=<POSTBACK_KEY>&source={source}&revenue={payout}
+           &txn={transaction_id}&event=purchase&ttclid={ttclid}
+
+The old aggregate params (clicks/conversions/cvr) still work. Per-event
+behavior: `txn` dedupes retries (same transaction never counts twice), and
+when the TikTok Events API is enabled in Settings, every postback carrying a
+`ttclid` is forwarded server-side to the pixel (`/event/track/`) so TikTok's
+optimization learns from real purchases. Forwarding failures NEVER fail the
+postback — the status is recorded on the event row instead.
 
 Auth is the `key` query param — the endpoint is outside the login wall so
 Glitchy's servers can reach it. Wrong/missing key -> 403, nothing stored.
@@ -19,12 +26,69 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from .. import live_log, models, timeutil
+from .. import live_log, models, tiktok_api, timeutil
 from ..database import get_db
 from ..settings_store import get_settings
 from ..templating import render
 
 router = APIRouter()
+
+
+def _events_pixel_code(db: Session, source: str, settings: dict) -> tuple[str, str]:
+    """(access_token, pixel_code) to fire the Events API with, for a source.
+
+    Settings override wins for the pixel; otherwise the source's most recent
+    successful launch tells us the account, whose PixelCache entry (resolved
+    at launch time — §9.7) carries the pixel code TikTok knows."""
+    log = (db.query(models.LaunchLog)
+           .filter(models.LaunchLog.ok == True,                     # noqa: E712
+                   models.LaunchLog.source == source)
+           .order_by(models.LaunchLog.id.desc()).first())
+    token = ""
+    pixel_code = (settings.get("events_pixel_code") or "").strip()
+    if log:
+        acct = (db.query(models.AdAccount)
+                .filter_by(advertiser_id=log.advertiser_id).first())
+        if acct and acct.access_token:
+            token = acct.access_token
+        if not pixel_code:
+            cache = (db.query(models.PixelCache)
+                     .filter_by(advertiser_id=log.advertiser_id)
+                     .order_by(models.PixelCache.id.desc()).first())
+            if cache:
+                pixel_code = cache.pixel_code
+    if not token:   # source unknown/never launched — any connected account can fire
+        acct = (db.query(models.AdAccount)
+                .filter(models.AdAccount.access_token != "").first())
+        if acct:
+            token = acct.access_token
+    return token, pixel_code
+
+
+def _forward_to_tiktok(db: Session, event: models.PostbackEvent, s: dict) -> str:
+    """Fire the Events API for one stored postback. Returns a status string —
+    never raises (a pixel hiccup must not bounce Glitchy's postback)."""
+    if not s.get("events_api_enabled"):
+        return ""
+    if not event.ttclid:
+        return "skipped: no ttclid on the postback"
+    token, pixel_code = _events_pixel_code(db, event.source, s)
+    if not token:
+        return "error: no connected account token to fire with"
+    if not pixel_code:
+        return ("error: no pixel to fire to — set one in Settings → Events API, "
+                "or launch this source once so it can be auto-resolved")
+    try:
+        tiktok_api.track_event(
+            token, pixel_code,
+            event=(s.get("events_event_name") or "CompleteRegistration").strip(),
+            event_id=event.txn or f"pb{event.id}",
+            ttclid=event.ttclid, value=float(event.revenue or 0),
+            currency=(s.get("events_currency") or "USD").strip(),
+            test_event_code=(s.get("events_test_code") or "").strip())
+        return "sent"
+    except tiktok_api.TikTokError as e:
+        return f"error: code {e.code}: {(e.message or '')[:160]}"
 
 
 def _num(v, cast=float, default=0):
@@ -44,12 +108,24 @@ async def postback(request: Request, db: Session = Depends(get_db)):
     source = (q.get("source") or "").strip()
     if not source:
         return JSONResponse({"ok": False, "error": "missing source"}, status_code=400)
+    txn = (q.get("txn") or q.get("transaction_id") or "").strip()[:120]
+    if txn:
+        # retries/duplicates of the same transaction must never double revenue
+        dupe = (db.query(models.PostbackEvent)
+                .filter_by(source=source, txn=txn).first())
+        if dupe:
+            return {"ok": True, "duplicate": True}
+    # per-event postbacks (txn present) count as 1 conversion unless told otherwise
+    default_conv = 1 if txn else 0
     event = models.PostbackEvent(
         source=source,
-        revenue=_num(q.get("revenue")),
+        revenue=_num(q.get("revenue") or q.get("payout") or q.get("amount")),
         clicks=_num(q.get("clicks"), int),
-        conversions=_num(q.get("conversions"), int),
+        conversions=_num(q.get("conversions"), int, default_conv),
         cvr=_num(q.get("cvr")),
+        txn=txn,
+        ttclid=(q.get("ttclid") or q.get("click_id") or "").strip()[:500],
+        event=(q.get("event") or "").strip()[:60],
         raw_query=str(request.url.query)[:2000],
     )
     if s["postback_mode"] == "snapshot":
@@ -60,9 +136,17 @@ async def postback(request: Request, db: Session = Depends(get_db)):
                    models.PostbackEvent.created_at >= day_start).delete())
     db.add(event)
     db.commit()
+    # server-side pixel event (Events API) — best-effort, never bounces Glitchy
+    status = _forward_to_tiktok(db, event, s)
+    if status:
+        event.forward_status = status
+        db.commit()
     if event.revenue:
         live_log.push("conversion", f"Postback: {source} +${event.revenue:.2f}")
-    return {"ok": True}
+    out = {"ok": True}
+    if status:
+        out["events_api"] = status
+    return out
 
 
 # ---------------------------------------------------------------------------

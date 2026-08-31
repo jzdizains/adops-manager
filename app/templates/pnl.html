@@ -87,7 +87,7 @@
   {% if recent %}
   <table class="data">
     <thead><tr><th>When (UTC)</th><th>Source</th><th class="num">Revenue</th>
-      <th class="num">Conv</th><th class="num">Clicks</th></tr></thead>
+      <th class="num">Conv</th><th class="num">Clicks</th><th>Txn</th><th>→ Pixel</th></tr></thead>
     <tbody>
     {% for e in recent %}
       <tr>
@@ -96,6 +96,12 @@
         <td class="num">${{ "%.2f"|format(e.revenue) }}</td>
         <td class="num">{{ e.conversions }}</td>
         <td class="num">{{ e.clicks }}</td>
+        <td class="mono muted" style="font-size:11px;">{{ (e.txn or "")[:14] }}</td>
+        <td>{% if e.forward_status == 'sent' %}<span class="pill ok">sent</span>
+            {% elif e.forward_status and e.forward_status.startswith('error') %}
+              <span class="pill err" title="{{ e.forward_status }}">error</span>
+            {% elif e.forward_status %}<span class="pill dim" title="{{ e.forward_status }}">skipped</span>
+            {% else %}<span class="muted">—</span>{% endif %}</td>
       </tr>
     {% endfor %}
     </tbody>

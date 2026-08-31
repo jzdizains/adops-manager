@@ -32,6 +32,13 @@ schema_additions: dict[str, dict[str, str]] = {
                     "error_count": "INTEGER DEFAULT 0", "cooldown_until": "DATETIME"},
     "spark_codes": {"use_count": "INTEGER DEFAULT 0", "source": "TEXT DEFAULT ''"},
     "launch_queue": {"use_library": "BOOLEAN DEFAULT 0"},
+    # Events API loop: per-event postbacks land on live DBs untouched
+    "postback_events": {
+        "txn": "TEXT DEFAULT ''",
+        "ttclid": "TEXT DEFAULT ''",
+        "event": "TEXT DEFAULT ''",
+        "forward_status": "TEXT DEFAULT ''",
+    },
     # Phase 2 (sources/P&L): new columns on live DBs
     "launch_logs": {
         "spark_code_id": "INTEGER",

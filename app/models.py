@@ -313,6 +313,10 @@ class PostbackEvent(Base):
     clicks = Column(Integer, default=0)
     conversions = Column(Integer, default=0)
     cvr = Column(Float, default=0.0)
+    txn = Column(String, default="", index=True)       # transaction id (dedupe key)
+    ttclid = Column(String, default="")                # TikTok click id (Events API)
+    event = Column(String, default="")                 # e.g. purchase
+    forward_status = Column(String, default="")        # Events API: sent | skipped… | error…
     raw_query = Column(Text, default="")
     created_at = Column(DateTime, default=utcnow, index=True)
 

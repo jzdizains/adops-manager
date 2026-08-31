@@ -264,6 +264,38 @@ def list_regions(access_token: str, advertiser_id: str, placements: list[str] | 
     return data.get("region_info", data.get("list", []))
 
 
+def track_event(access_token: str, pixel_code: str, event: str,
+                event_id: str = "", ttclid: str = "", value: float = 0.0,
+                currency: str = "USD", event_time: int | None = None,
+                test_event_code: str = "", ip: str = "", user_agent: str = "",
+                page_url: str = "") -> dict:
+    """Events API `/event/track/` — server-side web pixel event (S2S postback
+    → pixel). Needs at least one user identifier (ttclid is ours) or TikTok
+    can't attribute it. event_id dedupes against browser-pixel events."""
+    import time as _time
+    user: dict = {}
+    if ttclid:
+        user["ttclid"] = ttclid
+    if ip:
+        user["ip"] = ip
+    if user_agent:
+        user["user_agent"] = user_agent
+    item: dict = {"event": event, "event_time": int(event_time or _time.time())}
+    if event_id:
+        item["event_id"] = str(event_id)[:256]
+    if user:
+        item["user"] = user
+    if value:
+        item["properties"] = {"value": float(value), "currency": currency or "USD"}
+    if page_url:
+        item["page"] = {"url": page_url}
+    payload: dict = {"event_source": "web", "event_source_id": pixel_code,
+                     "data": [item]}
+    if test_event_code:
+        payload["test_event_code"] = test_event_code
+    return api_post("/event/track/", access_token, payload)
+
+
 # ---------------------------------------------------------------------------
 # Campaign / ad group / ad
 # ---------------------------------------------------------------------------
