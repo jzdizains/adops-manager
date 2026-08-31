@@ -48,6 +48,9 @@ DEFAULTS: dict = {
     "events_api_enabled": False,   # forward postbacks with a ttclid to TikTok
     "events_pixel_code": "",       # pixel ID to fire to; empty = auto-resolve
                                    # from the source's launch (PixelCache)
+    "events_access_token": "",     # dedicated Events API token (Events Manager →
+                                   # pixel → Settings → Generate Access Token);
+                                   # empty = try the account's Marketing token
     "events_event_name": "CompleteRegistration",  # TikTok standard web event to fire
     "events_currency": "USD",
     "events_test_code": "",        # TikTok test_event_code (Events Manager test tab)

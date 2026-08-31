@@ -144,6 +144,12 @@
     <label class="field"><span class="field-label">Currency</span>
       <input type="text" name="events_currency" value="{{ s.events_currency }}"></label>
   </div>
+  <label class="field"><span class="field-label">Events API access token</span>
+    <input type="text" name="events_access_token" value="{{ s.events_access_token }}"
+           placeholder="from Events Manager → your pixel → Settings → Generate Access Token"
+           style="font-family:var(--font-mono);font-size:12px;">
+    <span class="hint">Fixes “No permission to operate event source id” (code 40001): the regular
+      Marketing token usually can't send events. Generate this token on the pixel itself and paste it here.</span></label>
   <label class="field"><span class="field-label">Test event code (optional)</span>
     <input type="text" name="events_test_code" value="{{ s.events_test_code }}"
            placeholder="from Events Manager → Test events">

@@ -73,6 +73,10 @@ def _forward_to_tiktok(db: Session, event: models.PostbackEvent, s: dict) -> str
     if not event.ttclid:
         return "skipped: no ttclid on the postback"
     token, pixel_code = _events_pixel_code(db, event.source, s)
+    # a dedicated Events API token (from Events Manager) always wins — the
+    # Marketing API token often lacks the events permission (code 40001)
+    if (s.get("events_access_token") or "").strip():
+        token = s["events_access_token"].strip()
     if not token:
         return "error: no connected account token to fire with"
     if not pixel_code:
