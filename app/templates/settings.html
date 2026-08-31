@@ -153,4 +153,24 @@
 
 <button class="btn primary" type="submit" style="font-size:15px;padding:10px 22px;">Save settings</button>
 </form>
+
+<div class="card" style="margin-top:14px;">
+  <div class="card-header"><span class="card-title">Send a test event to the pixel</span>
+    <span class="card-meta">fires one {{ s.events_event_name }} right now — nothing is stored, P&amp;L stays clean</span></div>
+  <form method="post" action="/settings/test-event">
+    <div class="form-row-3">
+      <label class="field"><span class="field-label">ttclid (required)</span>
+        <input type="text" name="ttclid" placeholder="E.C0abc… — copy from your landing URL after clicking your own ad">
+      </label>
+      <label class="field"><span class="field-label">Source (optional)</span>
+        <input type="text" name="source" placeholder="helps auto-pick the right pixel">
+      </label>
+      <label class="field"><span class="field-label">Value ($)</span>
+        <input type="text" name="value" value="1"></label>
+    </div>
+    <button class="btn" type="submit">⚡ Send test event</button>
+    <span class="hint" style="margin-left:10px;">Tip: set a Test event code above first so it lands in
+      Events Manager → Test Events, where it shows within seconds.</span>
+  </form>
+</div>
 {% endblock %}

@@ -47,3 +47,32 @@ async def save(request: Request, db: Session = Depends(get_db)):
             values[key] = form.get(key)
     save_settings(db, values)
     return RedirectResponse("/settings?ok=Saved.+Changes+apply+within+one+sweep.", status_code=303)
+
+
+@router.post("/settings/test-event")
+async def test_event(request: Request, db: Session = Depends(get_db)):
+    """Fire ONE CompleteRegistration (or whatever event is configured) at the
+    pixel — same code path a real postback uses, but nothing is stored, so the
+    P&L stays clean. Works even while forwarding is switched off."""
+    from urllib.parse import quote
+    form = await request.form()
+    ttclid = str(form.get("ttclid") or "").strip()
+    source = str(form.get("source") or "").strip()
+    value = str(form.get("value") or "1")
+    if not ttclid:
+        return RedirectResponse("/settings?ok=" + quote(
+            "Test NOT sent — paste a ttclid first (click your own ad and copy "
+            "it from the landing URL)."), status_code=303)
+    from .. import models
+    from . import postback as pb
+    s = dict(get_settings(db))
+    s["events_api_enabled"] = True          # a test always tries to send
+    ev = models.PostbackEvent(              # transient — never added to the DB
+        source=source, ttclid=ttclid[:500],
+        revenue=float(value or 1) if value.replace(".", "", 1).isdigit() else 1.0,
+        txn=f"test-{__import__('time').time():.0f}")
+    status = pb._forward_to_tiktok(db, ev, s)
+    label = ("Test event SENT — check Events Manager (Test Events tab if you set "
+             "a test code, otherwise the pixel's event overview)."
+             if status == "sent" else f"Test event: {status}")
+    return RedirectResponse("/settings?ok=" + quote(label), status_code=303)
