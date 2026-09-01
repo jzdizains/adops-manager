@@ -117,11 +117,23 @@ class Creative(Base):
     md5 = Column(String, default="", index=True)
     size_bytes = Column(Integer, default=0)
     source = Column(String, default="", index=True)        # P&L join key (like spark source)
-    status = Column(String, default="available")           # available | used
+    status = Column(String, default="available")           # available | used | processing | error
     used_advertiser_id = Column(String, default="")
     used_campaign_id = Column(String, default="")
     used_at = Column(DateTime, nullable=True)
     uploaded_at = Column(DateTime, default=utcnow)
+    # --- variation processing (TensorPix): each reads as a new video ----------
+    freshen = Column(Boolean, default=False)               # is this a processed variant?
+    freshen_intensity = Column(String, default="")         # (legacy ffmpeg) light|medium|strong
+    freshen_mirror = Column(Boolean, default=False)        # (legacy ffmpeg)
+    src_path = Column(String, default="")                  # source awaiting processing
+    source_md5 = Column(String, default="", index=True)    # md5 of the ORIGINAL upload
+    error = Column(Text, default="")                       # processing failure detail
+    tp_model_ids = Column(String, default="")              # selected TensorPix model ids (csv)
+    tp_video_id = Column(String, default="")               # TensorPix uploaded-source id
+    tp_job_id = Column(String, default="")                 # TensorPix job id for this variant
+    tp_cost = Column(Float, default=0.0)                   # job cost (USD) from TensorPix
+    tp_checked_at = Column(DateTime, nullable=True)        # poll throttle
 
 
 class CreativeUpload(Base):

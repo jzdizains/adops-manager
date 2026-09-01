@@ -39,21 +39,61 @@ def creatives_page(request: Request, db: Session = Depends(get_db)):
     accounts = {a.advertiser_id: (a.advertiser_name or a.advertiser_id)
                 for a in db.query(models.AdAccount).all()}
     available = sum(1 for r in rows if r.status == "available")
+    processing = sum(1 for r in rows if r.status == "processing")
+    from .. import tensorpix
+    tp_configured = tensorpix.configured()
+    tp_models, tp_error = [], ""
+    if tp_configured:
+        try:
+            for m in tensorpix.list_models():
+                tp_models.append({
+                    "id": m.get("id"), "name": m.get("name", ""),
+                    "task": tensorpix.TASKS.get(m.get("task"), ""),
+                })
+        except tensorpix.TensorPixError as e:
+            tp_error = e.message
     return render(request, "creatives.html", {
         "rows": rows, "accounts": accounts, "available": available,
+        "processing": processing, "tp_configured": tp_configured,
+        "tp_models": tp_models, "tp_error": tp_error,
         "ok": request.query_params.get("ok", ""),
         "err": request.query_params.get("err", ""),
         "title": "Creatives",
     })
 
 
+SRC_DIR = CREATIVES_DIR / "_src"
+
+
 @router.post("/creatives/upload")
 async def upload_creatives(request: Request, db: Session = Depends(get_db)):
+    import os as _os
+
+    from .. import tensorpix
+
     form = await request.form()
     files = [v for v in form.getlist("files") if isinstance(v, UploadFile)]
     source_prefix = str(form.get("source_prefix") or "").strip()
+    do_freshen = form.get("freshen") is not None      # "create variations" toggle
+    model_ids = [str(m) for m in form.getlist("model_ids") if str(m).strip().isdigit()]
+    try:
+        variants = min(max(int(form.get("variants") or 1), 1), 30)
+    except ValueError:
+        variants = 1
+    if not do_freshen:
+        variants = 1     # variations only make sense when enhancing
+
+    if do_freshen and not tensorpix.configured():
+        return RedirectResponse(
+            "/creatives?err=TensorPix+API+key+not+set+—+add+TENSORPIX_API_KEY+in+"
+            "the+server+environment+to+create+variations.", status_code=303)
+    if do_freshen and not model_ids:
+        return RedirectResponse(
+            "/creatives?err=Pick+at+least+one+enhancement+model+for+the+variations.",
+            status_code=303)
+
     CREATIVES_DIR.mkdir(parents=True, exist_ok=True)
-    saved, skipped = 0, []
+    saved, queued, skipped = 0, 0, []
     for f in files:
         fname = _safe_name(f.filename)
         ext = ("." + fname.rsplit(".", 1)[-1].lower()) if "." in fname else ""
@@ -62,7 +102,6 @@ async def upload_creatives(request: Request, db: Session = Depends(get_db)):
             continue
         # stream to a temp file in 1MB chunks — NEVER the whole video in memory
         # (a single large read once blew the server's memory limit)
-        import os as _os
         tmp_path = CREATIVES_DIR / f".upload_{fname}"
         hasher = hashlib.md5()
         size = 0
@@ -83,21 +122,75 @@ async def upload_creatives(request: Request, db: Session = Depends(get_db)):
             skipped.append(f"{fname}: {'over 500MB' if too_big else 'empty file'}")
             continue
         md5 = hasher.hexdigest()
-        if db.query(models.Creative).filter_by(md5=md5).first():
-            tmp_path.unlink(missing_ok=True)
-            skipped.append(f"{fname}: duplicate (same file already in the library)")
+
+        if not do_freshen:
+            # plain store — dedupe by exact bytes (the original behaviour)
+            if db.query(models.Creative).filter_by(md5=md5).first():
+                tmp_path.unlink(missing_ok=True)
+                skipped.append(f"{fname}: duplicate (same file already in the library)")
+                continue
+            row = models.Creative(name=fname, file_name=fname, md5=md5,
+                                  source_md5=md5, size_bytes=size)
+            db.add(row)
+            db.flush()
+            path = CREATIVES_DIR / f"{row.id}_{fname}"
+            _os.replace(tmp_path, path)
+            row.file_path = str(path)
+            if source_prefix:
+                row.source = f"{source_prefix}_{row.id}"
+            db.commit()
+            saved += 1
             continue
-        row = models.Creative(name=fname, file_name=fname, md5=md5, size_bytes=size)
-        db.add(row)
-        db.flush()
-        path = CREATIVES_DIR / f"{row.id}_{fname}"
-        _os.replace(tmp_path, path)
-        row.file_path = str(path)
-        if source_prefix:
-            row.source = f"{source_prefix}_{row.id}"
+
+        # VARIATIONS: keep ONE source copy, queue N variants for TensorPix
+        SRC_DIR.mkdir(parents=True, exist_ok=True)
+        src_path = SRC_DIR / f"{md5}{ext}"
+        if not src_path.exists():
+            _os.replace(tmp_path, src_path)
+        else:
+            tmp_path.unlink(missing_ok=True)   # same source already staged
+        base = fname.rsplit(".", 1)[0]
+        models_csv = ",".join(model_ids)
+        for n in range(variants):
+            vname = (f"{base}_v{n+1}{ext}" if variants > 1 else fname)
+            row = models.Creative(
+                name=vname, file_name=vname, size_bytes=size,
+                status="processing", freshen=True, tp_model_ids=models_csv,
+                src_path=str(src_path), source_md5=md5)
+            db.add(row)
+            db.flush()
+            if source_prefix:
+                row.source = f"{source_prefix}_{row.id}"
+            queued += 1
         db.commit()
-        saved += 1
-    q = f"ok={saved}+uploaded"
+
+    # kick a background driver that walks the TensorPix state machine to done
+    if queued:
+        import threading
+        import time as _time
+
+        from .. import tensorpix_worker
+        from ..database import SessionLocal
+
+        def _run():
+            d = SessionLocal()
+            try:
+                deadline = _time.time() + 1800   # 30-min safety cap
+                while _time.time() < deadline:
+                    if tensorpix_worker.pending_count(d) == 0:
+                        break
+                    tensorpix_worker.process_pending(d, limit=8)
+                    _time.sleep(5)
+            finally:
+                d.close()
+        threading.Thread(target=_run, name="tensorpix-kick", daemon=True).start()
+
+    parts = []
+    if saved:
+        parts.append(f"{saved} uploaded")
+    if queued:
+        parts.append(f"{queued} sent to TensorPix (appear as they finish)")
+    q = "ok=" + ("+".join(parts).replace(" ", "+") or "nothing+to+do")
     if skipped:
         q += "&err=" + "+·+".join(skipped)[:300].replace(" ", "+")
     return RedirectResponse(f"/creatives?{q}", status_code=303)

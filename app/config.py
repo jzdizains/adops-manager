@@ -18,6 +18,10 @@ TIKTOK_APP_ID = os.environ.get("TIKTOK_APP_ID", "")
 TIKTOK_APP_SECRET = os.environ.get("TIKTOK_APP_SECRET", "")
 OAUTH_REDIRECT_URI = os.environ.get("OAUTH_REDIRECT_URI", "http://localhost:8000/oauth/callback")
 
+# --- TensorPix (creative enhancement / variation) --------------------------
+TENSORPIX_API_KEY = os.environ.get("TENSORPIX_API_KEY", "")
+TENSORPIX_BASE = os.environ.get("TENSORPIX_BASE", "https://backend.tensorpix.ai")
+
 # --- App auth ---------------------------------------------------------------
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "changeme")
 SESSION_SECRET = os.environ.get("SESSION_SECRET", "dev-secret-change-me")

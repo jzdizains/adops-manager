@@ -110,7 +110,8 @@ def synthesize(template: models.Template, overrides: dict[str, Any] | None = Non
         # -- ad group level (from JSON blob) --
         "destination_type": destination,
         "adgroup_budget": float(s.get("adgroup_budget") or 20.0),
-        "duplicates": int(s.get("duplicates") or 1),
+        "duplicates": int(s.get("duplicates") or 1),           # ad groups per campaign
+        "ads_per_group": int(s.get("ads_per_group") or 1),      # ads per ad group
         "optimization_goal": s.get("optimization_goal") or opt_goal,
         "billing_event": s.get("billing_event") or billing_event,
         "bid_type": s.get("bid_type") or bid_type,

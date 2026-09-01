@@ -56,6 +56,19 @@ schema_additions: dict[str, dict[str, str]] = {
         "launched_at": "DATETIME",
         "is_smart_plus": "BOOLEAN DEFAULT 0",
     },
+    "creatives": {
+        "freshen": "BOOLEAN DEFAULT 0",
+        "freshen_intensity": "TEXT DEFAULT ''",
+        "freshen_mirror": "BOOLEAN DEFAULT 0",
+        "src_path": "TEXT DEFAULT ''",
+        "source_md5": "TEXT DEFAULT ''",
+        "error": "TEXT DEFAULT ''",
+        "tp_model_ids": "TEXT DEFAULT ''",
+        "tp_video_id": "TEXT DEFAULT ''",
+        "tp_job_id": "TEXT DEFAULT ''",
+        "tp_cost": "REAL DEFAULT 0",
+        "tp_checked_at": "DATETIME",
+    },
 }
 
 

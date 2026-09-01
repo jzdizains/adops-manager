@@ -821,13 +821,23 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
         creative_identity: dict = {}
         if use_library:
             settings = get_settings(db)
+            reuse = bool(fields.get("allow_creative_reuse"))
             if fields.get("creative_id"):
-                # launcher picked a SPECIFIC creative from the library
-                creative = db.get(models.Creative, int(fields["creative_id"]))
+                # launcher picked a SPECIFIC creative (single pick, or a Super
+                # Launcher group where one creative covers several accounts)
+                cid = int(fields["creative_id"])
+                creative = db.get(models.Creative, cid) if cid > 0 else None
                 if not creative:
-                    raise ConfigError("The selected creative no longer exists in the "
-                                      "library — pick another on the launch form.")
-                if creative.status != "available":
+                    raise ConfigError(
+                        "No creative available for this account — the Super Launcher "
+                        "ran out of creatives for the number of accounts requested. "
+                        "Add more (or more variations) on the Creatives page."
+                        if cid < 0 else
+                        "The selected creative no longer exists in the library.")
+                if creative.status not in ("available", "used"):
+                    raise ConfigError(f"Creative “{creative.name}” isn't ready "
+                                      f"(status: {creative.status}).")
+                if creative.status == "used" and not reuse:
                     raise ConfigError(f"Creative “{creative.name}” has already been used "
                                       "(each creative launches once) — pick another, or "
                                       "leave the launcher on automatic.")
@@ -840,8 +850,10 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
             # reserve immediately so a concurrent launch can't take the same one
             now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
             creative.status = "used"
-            creative.used_advertiser_id = acct.advertiser_id
-            creative.used_at = now_naive
+            if not creative.used_advertiser_id:
+                creative.used_advertiser_id = acct.advertiser_id
+            if not creative.used_at:
+                creative.used_at = now_naive
             # unique-ad-text pool: reserve the next text too
             if fields.get("ad_text_mode") == "pool":
                 pool_text = (db.query(models.AdText)
@@ -968,23 +980,39 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                 if ag is None:   # defensive — loop always breaks or raises
                     raise last_err or tiktok_api.TikTokError("APP", "ad group not created")
                 adgroup_id = str(ag.get("adgroup_id"))
-                if creative is not None:
-                    ad_payload = build_library_ad_payload(
-                        fields, adgroup_id, creative_identity,
-                        creative_video_id, creative_cover_id)
-                    tiktok_api.create_ad(acct.access_token, acct.advertiser_id, ad_payload)
-                    creative_committed = True
-                    if not creative.used_campaign_id:
-                        creative.used_campaign_id = campaign_id
-                    if pool_text is not None and not pool_text.used_campaign_id:
-                        pool_text.used_campaign_id = campaign_id
-                elif spark_ref or fields.get("landing_page_url") or fields.get("instant_page_id") \
-                        or fields.get("lead_form_id"):
-                    ad_payload = build_ad_payload(fields, adgroup_id, spark_ref, spark)
-                    if spark_ref:
-                        tiktok_api.create_spark_ad(acct.access_token, acct.advertiser_id, ad_payload)
-                    else:
+                n_ads = max(int(fields.get("ads_per_group") or 1), 1)
+                for ad_i in range(n_ads):
+                    def _uniq(p: dict) -> dict:
+                        # duplicate ads in one group need distinct names — the name
+                        # sits top-level (spark ads) or inside creatives[] (library)
+                        if n_ads <= 1:
+                            return p
+                        suffix = f" g{i + 1}-{ad_i + 1}"   # unique across the campaign
+                        p = {**p}
+                        if p.get("ad_name"):
+                            p["ad_name"] = f"{p['ad_name']}{suffix}"[:512]
+                        if isinstance(p.get("creatives"), list):
+                            p["creatives"] = [
+                                {**c, "ad_name": f"{c.get('ad_name', 'ad')}{suffix}"[:512]}
+                                for c in p["creatives"]]
+                        return p
+                    if creative is not None:
+                        ad_payload = _uniq(build_library_ad_payload(
+                            fields, adgroup_id, creative_identity,
+                            creative_video_id, creative_cover_id))
                         tiktok_api.create_ad(acct.access_token, acct.advertiser_id, ad_payload)
+                        creative_committed = True
+                        if not creative.used_campaign_id:
+                            creative.used_campaign_id = campaign_id
+                        if pool_text is not None and not pool_text.used_campaign_id:
+                            pool_text.used_campaign_id = campaign_id
+                    elif spark_ref or fields.get("landing_page_url") or fields.get("instant_page_id") \
+                            or fields.get("lead_form_id"):
+                        ad_payload = _uniq(build_ad_payload(fields, adgroup_id, spark_ref, spark))
+                        if spark_ref:
+                            tiktok_api.create_spark_ad(acct.access_token, acct.advertiser_id, ad_payload)
+                        else:
+                            tiktok_api.create_ad(acct.access_token, acct.advertiser_id, ad_payload)
 
         if spark:
             spark.use_count = (spark.use_count or 0) + 1
@@ -1034,9 +1062,12 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
         log.error_message = "Unexpected app error during launch."
         log.error_technical = repr(e)
     # reserved pool assets go back when NO ad was created (per-account upload &
-    # identity caches are kept, so a retry is instant and duplicate-free)
+    # identity caches are kept, so a retry is instant and duplicate-free).
+    # A creative shared across a group (allow_creative_reuse) is NOT freed on one
+    # account's failure — its other accounts may already have launched with it.
     if not log.ok and not creative_committed:
-        for reserved in (creative, pool_text):
+        reuse = bool(fields.get("allow_creative_reuse"))
+        for reserved in (None if reuse else creative, pool_text):
             if reserved is not None:
                 reserved.status = "available"
                 reserved.used_advertiser_id = ""
@@ -1052,6 +1083,40 @@ def run_batch(db: Session, accounts: list[models.AdAccount], fields: dict) -> st
     for acct in accounts:
         log = launch_to_account(db, acct, fields, batch_ref)
         if log.error_code not in ("ASSET", "CONFIG"):   # preset problems, not account health
+            rules_mod.record_launch_outcome(db, acct, log.ok)
+    db.commit()
+    return batch_ref
+
+
+def assign_creatives(accounts: list, creatives: list, per_creative: int) -> list:
+    """Map accounts → creative ids: each creative covers `per_creative` accounts
+    in order (1 creative per N accounts). Returns [(account, creative_id_or_None)];
+    accounts beyond the available creatives get None (they'll fail cleanly with a
+    'no creatives left' message so nothing launches without one)."""
+    per_creative = max(int(per_creative or 1), 1)
+    pairs = []
+    for i, acct in enumerate(accounts):
+        ci = i // per_creative
+        cid = creatives[ci].id if ci < len(creatives) else None
+        pairs.append((acct, cid))
+    return pairs
+
+
+def run_batch_assigned(db: Session, pairs: list, base_fields: dict) -> str:
+    """Launch each (account, creative_id) with that specific creative, reusing a
+    creative across its group of accounts (single-use is relaxed for this path)."""
+    from .. import rules as rules_mod
+    batch_ref = error_messages.new_ref()
+    for acct, cid in pairs:
+        fields = dict(base_fields)
+        fields["creative_source"] = "library"
+        if cid is not None:
+            fields["creative_id"] = cid
+            fields["allow_creative_reuse"] = True
+        else:
+            fields["creative_id"] = -1     # forces the "no creative" refusal
+        log = launch_to_account(db, acct, fields, batch_ref)
+        if log.error_code not in ("ASSET", "CONFIG"):
             rules_mod.record_launch_outcome(db, acct, log.ok)
     db.commit()
     return batch_ref

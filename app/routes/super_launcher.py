@@ -88,6 +88,12 @@ async def launch(request: Request, db: Session = Depends(get_db)):
     if not template:
         return RedirectResponse("/super-launcher?err=preset", status_code=303)
 
+    def _int(name, default=0):
+        try:
+            return int(form.get(name) or default)
+        except (TypeError, ValueError):
+            return default
+
     overrides: dict = {}
     if spark_code_id:
         # a spark pick at launch time wins over a library preset
@@ -97,20 +103,32 @@ async def launch(request: Request, db: Session = Depends(get_db)):
     elif creative_mode == "library":
         # each account pulls the NEXT unused creative from the Creative library
         overrides["creative_source"] = "library"
+    # duplication overrides (win over the preset's own settings)
+    dup = _int("duplicates")
+    if dup > 0:
+        overrides["duplicates"] = dup                 # ad groups per campaign
+    apg = _int("ads_per_group")
+    if apg > 0:
+        overrides["ads_per_group"] = apg              # ads per ad group
     fields = launch_mod.synthesize(template, overrides)
 
     use_queue = form.get("use_queue") is not None
     spark_id = int(spark_code_id) if spark_code_id else None
     use_library = (not spark_id) and creative_mode == "library"
+    # creative → account mapping (library only): 1 creative per N accounts
+    per_creative = max(_int("accounts_per_creative", 1), 1)
+    creatives_count = _int("creatives_count")         # 0 = as many as needed
+    assign_mode = use_library and (per_creative > 1 or creatives_count > 0)
+
+    # the creative→account assignment needs a fixed account list up front, so it
+    # always runs inline (not via the retry queue)
+    queue_ok = use_queue and not assign_mode
 
     if mode == "auto":
-        try:
-            count = max(int(form.get("auto_count") or 0), 0)
-        except ValueError:
-            count = 0
+        count = max(_int("auto_count"), 0)
         if count < 1:
             return RedirectResponse("/super-launcher?err=pick", status_code=303)
-        if use_queue:
+        if queue_ok:
             from .. import queue_worker
             queue_worker.enqueue(db, template.id, spark_id, auto_count=count,
                                  use_library=use_library)
@@ -122,13 +140,32 @@ async def launch(request: Request, db: Session = Depends(get_db)):
         advertiser_ids = form.getlist("advertiser_ids")
         if not advertiser_ids:
             return RedirectResponse("/super-launcher?err=pick", status_code=303)
-        if use_queue:
+        if queue_ok:
             from .. import queue_worker
             queue_worker.enqueue(db, template.id, spark_id, advertiser_ids=advertiser_ids,
                                  use_library=use_library)
             return RedirectResponse("/queue?ok=queued", status_code=303)
-        accounts = (db.query(models.AdAccount)
-                    .filter(models.AdAccount.advertiser_id.in_(advertiser_ids)).all())
+        # preserve the picked order, dedupe
+        seen: set = set()
+        ordered = [a for a in advertiser_ids if not (a in seen or seen.add(a))]
+        by_id = {a.advertiser_id: a for a in db.query(models.AdAccount)
+                 .filter(models.AdAccount.advertiser_id.in_(ordered)).all()}
+        accounts = [by_id[i] for i in ordered if i in by_id]
 
-    batch_ref = engine.run_batch(db, accounts, fields)
+    if assign_mode:
+        avail = (db.query(models.Creative).filter_by(status="available")
+                 .order_by(models.Creative.id).all())
+        import math
+        needed = creatives_count if creatives_count > 0 else math.ceil(len(accounts) / per_creative)
+        creatives = avail[:needed]
+        if not creatives:
+            return RedirectResponse(
+                "/super-launcher?err=No+available+creatives+in+the+library+—+upload+"
+                "or+create+variations+first.", status_code=303)
+        if creatives_count > 0:                 # cap accounts to what the creatives cover
+            accounts = accounts[:len(creatives) * per_creative]
+        pairs = engine.assign_creatives(accounts, creatives, per_creative)
+        batch_ref = engine.run_batch_assigned(db, pairs, fields)
+    else:
+        batch_ref = engine.run_batch(db, accounts, fields)
     return RedirectResponse(f"/campaigns/result/{batch_ref}", status_code=303)

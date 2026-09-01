@@ -81,11 +81,35 @@
       <select name="creative_mode" id="slCreative">
         <option value="">— use preset default —</option>
         <option value="library" {{ 'disabled' if not creatives_available }}>
-          Library creatives — each account gets the next unused one ({{ creatives_available }} available)</option>
+          Library creatives — pull unused ones ({{ creatives_available }} available)</option>
       </select>
-      <span class="hint">Pick ONE override at most. Library mode pulls a different unused creative
-        from the Creatives page for every account (each creative launches once) — the preset needs
-        a landing page URL &amp; ad text. Runs out mid-batch = those launches fail cleanly.</span></label>
+      <span class="hint">Pick ONE override at most. Library mode pulls creatives from the Creatives
+        page — the preset needs a landing page URL &amp; ad text.</span></label>
+
+    <div id="slLibOpts" style="display:none;border-left:2px solid var(--accent-soft);padding-left:12px;margin-bottom:10px;">
+      <div class="form-row-3">
+        <label class="field"><span class="field-label">How many creatives</span>
+          <input type="number" name="creatives_count" min="0" value="0" style="width:90px;">
+          <span class="hint">0 = as many as needed.</span></label>
+        <label class="field"><span class="field-label">Accounts per creative</span>
+          <input type="number" name="accounts_per_creative" min="1" value="1" style="width:90px;">
+          <span class="hint">1 creative → this many accounts.</span></label>
+        <div class="field"><span class="field-label">&nbsp;</span>
+          <span class="hint">E.g. 10 creatives × 5 accounts = 50 launches. Each creative can repeat
+            across its group; leave both at defaults for one unique creative per account.</span></div>
+      </div>
+    </div>
+
+    <div style="border-top:1px solid var(--border);margin:4px 0 10px;"></div>
+    <div class="form-row" style="margin-bottom:6px;">
+      <label class="field"><span class="field-label">Ad groups per campaign</span>
+        <input type="number" name="duplicates" min="0" value="0" style="width:90px;">
+        <span class="hint">0 = use the preset's setting. Overrides it otherwise (a cost-cap ladder
+          multiplies this).</span></label>
+      <label class="field"><span class="field-label">Ads per ad group</span>
+        <input type="number" name="ads_per_group" min="0" value="0" style="width:90px;">
+        <span class="hint">0 = one ad (default). Duplicates the ad within each ad group.</span></label>
+    </div>
 
     <label style="display:flex;align-items:center;gap:8px;font-weight:600;font-size:13px;
                   color:var(--text-soft);margin-bottom:10px;cursor:pointer;">
@@ -127,9 +151,14 @@
   slSpark.addEventListener("change", function () {
     if (slSpark.value) slCreative.value = "";
   });
+  var slLibOpts = document.getElementById("slLibOpts");
+  function syncLibOpts() { slLibOpts.style.display = slCreative.value === "library" ? "" : "none"; }
   slCreative.addEventListener("change", function () {
     if (slCreative.value) slSpark.value = "";
+    syncLibOpts();
   });
+  slSpark.addEventListener("change", syncLibOpts);
+  syncLibOpts();
   var autoBox = document.getElementById("slAuto"), autoRow = document.getElementById("slAutoRow");
   var modeField = document.getElementById("slMode");
   autoBox.addEventListener("change", function () {

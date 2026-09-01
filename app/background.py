@@ -60,7 +60,7 @@ def rss_mb() -> float:
 def _loop():
     import gc
 
-    from . import balances, issues, live_spend, queue_worker, rules
+    from . import balances, issues, live_spend, queue_worker, rules, tensorpix_worker
     from .database import SessionLocal
     from .settings_store import get_settings
 
@@ -95,6 +95,7 @@ def _loop():
             rules.evaluate_pause_rules(db, settings)
             rules.evaluate_profit_rules(db, settings)
             queue_worker.process(db, settings)
+            tensorpix_worker.process_pending(db, limit=6)   # advance variant jobs
             log.info("sweep %s done (slow=%s) rss=%.0fMB", sweep_n, slow, rss_mb())
         except Exception:  # one bad sweep must never kill the worker
             log.exception("background sweep failed")

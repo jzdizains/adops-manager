@@ -3,7 +3,7 @@
 <div class="page-head">
   <div>
     <h1>Creatives</h1>
-    <div class="muted">{{ available }} available · {{ rows|length - available }} used — each creative launches exactly once.</div>
+    <div class="muted">{{ available }} available · {{ rows|length - available - processing }} used{% if processing %} · {{ processing }} enhancing…{% endif %} — each creative launches exactly once.</div>
   </div>
 </div>
 
@@ -19,7 +19,35 @@
     <input type="text" name="source_prefix" placeholder="source prefix (optional, e.g. offerA)"
            style="width:230px;">
     <button class="btn primary" type="submit">⬆ Upload</button>
-    <span class="hint">With a prefix, each file gets source <code>prefix_id</code> automatically — or set sources per creative below.</span>
+    <span class="hint" style="flex-basis:100%;">With a prefix, each file gets source <code>prefix_id</code> automatically — or set sources per creative below.</span>
+
+    <div style="flex-basis:100%;border-top:1px solid var(--border);margin:6px 0 2px;"></div>
+    <label style="display:flex;align-items:center;gap:8px;font-weight:600;font-size:13px;
+                  color:var(--text-soft);cursor:pointer;">
+      <input type="checkbox" name="freshen" id="freshenChk" value="1" {{ 'checked' if tp_configured }} style="width:auto;">
+      ✨ Create variations via TensorPix — AI-enhance into N distinct high-quality copies, each a new video to TikTok
+    </label>
+    {% if not tp_configured %}
+    <span class="hint" style="flex-basis:100%;color:var(--err);">
+      ⚠ TensorPix isn't connected — add <code>TENSORPIX_API_KEY</code> in the server environment to enable variations. Uploads without it are stored as-is.</span>
+    {% elif tp_error %}
+    <span class="hint" style="flex-basis:100%;color:var(--err);">⚠ Couldn't reach TensorPix: {{ tp_error }}</span>
+    {% endif %}
+    <span id="freshenOpts" style="display:{{ 'flex' if tp_configured else 'none' }};gap:10px;flex-wrap:wrap;align-items:center;">
+      <label class="field" style="margin:0;"><span class="field-label">Enhancement model(s)</span>
+        <select name="model_ids" multiple size="4" style="width:auto;min-width:230px;">
+          {% for m in tp_models %}
+            <option value="{{ m.id }}">{{ m.name }}{% if m.task %} · {{ m.task }}{% endif %}</option>
+          {% endfor %}
+        </select>
+        <span class="hint">Ctrl/Cmd-click for several. Upscale/Decompressor keep it looking clean.</span></label>
+      <label class="field" style="margin:0;"><span class="field-label">Variations per file</span>
+        <input type="number" name="variants" value="1" min="1" max="30" style="width:80px;">
+        <span class="hint">1 upload → N distinct copies (one per account).</span></label>
+    </span>
+    <span class="hint" style="flex-basis:100%;">
+      <b>Quality:</b> TensorPix re-renders each copy with real AI enhancement — the output is a genuinely new video (new fingerprint, clean metadata) at equal-or-better quality, not a degraded one. Variations differ from each other via per-copy encode nudges. Each variation costs TensorPix credits and runs asynchronously; copies appear in the list as they finish.
+    </span>
   </form>
 </div>
 
@@ -42,8 +70,10 @@
                  style="width:150px;" {{ 'readonly' if r.status == 'used' and r.source }}>
         </td>
         <td>
-          {% if r.status == 'available' %}<span class="pill ok">Available</span>
-          {% else %}<span class="pill dim">Used</span>{% endif %}
+          {% if r.status == 'available' %}<span class="pill ok">Available{% if r.freshen %} ✨{% endif %}</span>
+          {% elif r.status == 'processing' %}<span class="pill dim">Enhancing…</span>
+          {% elif r.status == 'error' %}<span class="pill err" title="{{ r.error }}">Error</span>
+          {% else %}<span class="pill dim">Used{% if r.freshen %} ✨{% endif %}</span>{% endif %}
         </td>
         <td class="muted">
           {% if r.used_advertiser_id %}
@@ -54,7 +84,7 @@
         <td class="num">{{ "%.1f"|format(r.size_bytes / 1048576) }} MB</td>
         <td class="num" style="white-space:nowrap;">
           <button form="cf{{ r.id }}" class="btn sm" type="submit">Save</button>
-          {% if r.status == 'available' %}
+          {% if r.status in ('available', 'error') %}
           <form method="post" action="/creatives/{{ r.id }}/delete" style="display:inline;"
                 onsubmit="return confirm('Delete this creative?');">
             <button class="btn sm danger" type="submit">✕</button>
@@ -69,4 +99,16 @@
   <div class="empty">No creatives yet — upload videos above. Launches with “Creative library” presets pull the next available one automatically.</div>
   {% endif %}
 </div>
+{% endblock %}
+{% block scripts %}
+<script>
+  // hide freshen options when the toggle is off
+  var chk = document.getElementById("freshenChk"), opts = document.getElementById("freshenOpts");
+  function syncFreshen() { opts.style.display = chk.checked ? "flex" : "none"; }
+  if (chk) { chk.addEventListener("change", syncFreshen); syncFreshen(); }
+  // while anything is still freshening, refresh so finished copies appear
+  {% if processing %}
+  setTimeout(function () { location.reload(); }, 5000);
+  {% endif %}
+</script>
 {% endblock %}
