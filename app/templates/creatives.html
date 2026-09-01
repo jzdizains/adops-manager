@@ -79,7 +79,16 @@
       <tr>
         <td>
           <form id="cf{{ r.id }}" method="post" action="/creatives/{{ r.id }}/update"></form>
-          <input form="cf{{ r.id }}" type="text" name="name" value="{{ r.name }}" style="width:220px;">
+          <div style="display:flex;align-items:center;gap:6px;">
+            {% if r.status in ('available', 'used') and r.file_path %}
+            <button type="button" class="btn sm previewBtn" title="Preview video"
+                    data-src="/creatives/{{ r.id }}/file" data-name="{{ r.name }}"
+                    style="padding:4px 8px;">▶</button>
+            {% else %}
+            <span style="width:26px;display:inline-block;"></span>
+            {% endif %}
+            <input form="cf{{ r.id }}" type="text" name="name" value="{{ r.name }}" style="width:200px;">
+          </div>
         </td>
         <td>
           <input form="cf{{ r.id }}" type="text" name="source" value="{{ r.source }}" placeholder="source for P&L"
@@ -115,16 +124,54 @@
   <div class="empty">No creatives yet — upload videos above. Launches with “Creative library” presets pull the next available one automatically.</div>
   {% endif %}
 </div>
+
+<div id="vidModal" style="display:none;position:fixed;inset:0;z-index:1000;
+     background:rgba(0,0,0,.8);align-items:center;justify-content:center;">
+  <div style="background:var(--panel);border-radius:12px;padding:12px;max-width:min(94vw,420px);
+       box-shadow:0 12px 40px rgba(0,0,0,.5);">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px;">
+      <span id="vidTitle" style="font-weight:600;font-size:13px;color:var(--text-soft);
+            white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></span>
+      <button type="button" id="vidClose" class="btn sm" style="padding:2px 10px;">✕</button>
+    </div>
+    <video id="vidPlayer" controls playsinline preload="metadata"
+           style="width:100%;max-height:78vh;border-radius:8px;background:#000;display:block;"></video>
+  </div>
+</div>
 {% endblock %}
 {% block scripts %}
 <script>
-  // hide freshen options when the toggle is off
+  // hide variation options when the toggle is off
   var chk = document.getElementById("freshenChk"), opts = document.getElementById("freshenOpts");
-  function syncFreshen() { opts.style.display = chk.checked ? "flex" : "none"; }
+  function syncFreshen() { if (opts) opts.style.display = chk.checked ? "flex" : "none"; }
   if (chk) { chk.addEventListener("change", syncFreshen); syncFreshen(); }
-  // while anything is still freshening, refresh so finished copies appear
+  // while anything is still processing, refresh so finished copies appear
   {% if processing %}
   setTimeout(function () { location.reload(); }, 5000);
   {% endif %}
+
+  // video preview modal
+  var modal = document.getElementById("vidModal"),
+      player = document.getElementById("vidPlayer"),
+      vidTitle = document.getElementById("vidTitle");
+  function closeModal() {
+    modal.style.display = "none";
+    player.pause();
+    player.removeAttribute("src");
+    player.load();
+  }
+  document.querySelectorAll(".previewBtn").forEach(function (b) {
+    b.addEventListener("click", function () {
+      vidTitle.textContent = b.dataset.name || "Preview";
+      player.src = b.dataset.src;
+      modal.style.display = "flex";
+      player.play().catch(function () {});
+    });
+  });
+  document.getElementById("vidClose").addEventListener("click", closeModal);
+  modal.addEventListener("click", function (e) { if (e.target === modal) closeModal(); });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && modal.style.display === "flex") closeModal();
+  });
 </script>
 {% endblock %}

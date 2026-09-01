@@ -12,7 +12,7 @@ import re
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from starlette.datastructures import UploadFile
 from sqlalchemy.orm import Session
 
@@ -64,6 +64,30 @@ def creatives_page(request: Request, db: Session = Depends(get_db)):
 
 
 SRC_DIR = CREATIVES_DIR / "_src"
+
+_MIME = {".mp4": "video/mp4", ".mov": "video/quicktime", ".webm": "video/webm",
+         ".mpeg": "video/mpeg", ".avi": "video/x-msvideo", ".3gp": "video/3gpp"}
+
+
+@router.get("/creatives/{creative_id}/file")
+def creative_file(creative_id: int, db: Session = Depends(get_db)):
+    """Stream a creative's video for in-page preview. FileResponse handles HTTP
+    Range requests, so the player can seek/scrub. Only files inside the creatives
+    directory are ever served."""
+    from pathlib import Path
+    row = db.get(models.Creative, creative_id)
+    if not row or not row.file_path:
+        return RedirectResponse("/creatives?err=not+found", status_code=303)
+    p = Path(row.file_path).resolve()
+    try:
+        p.relative_to(CREATIVES_DIR.resolve())     # never serve outside the store
+    except ValueError:
+        return RedirectResponse("/creatives?err=blocked", status_code=303)
+    if not p.exists():
+        return RedirectResponse("/creatives?err=file+missing", status_code=303)
+    ext = p.suffix.lower()
+    return FileResponse(str(p), media_type=_MIME.get(ext, "video/mp4"),
+                        filename=row.file_name or p.name)
 
 
 @router.post("/creatives/upload")
