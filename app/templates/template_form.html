@@ -15,13 +15,13 @@
     <div class="form-row-3">
       <label class="field"><span class="field-label">Preset name</span>
         <input type="text" name="name" value="{{ t.name if t else '' }}" required></label>
-      <label class="field"><span class="field-label">Objective (Ads Manager goal)</span>
+      <label class="field"><span class="field-label">Optimization goal</span>
         <select name="objective_type" id="objType">
           {% for o, label in objective_options %}
             <option value="{{ o }}" {{ 'selected' if t and t.objective_type == o else '' }}>{{ label }}</option>
           {% endfor %}
         </select>
-        <span class="hint">Sets which optimization goals, destinations &amp; events are valid — matched to TikTok.</span></label>
+        <span class="hint">Same wording as TikTok Ads Manager’s “Optimization goal”. Sets which destinations &amp; events are valid.</span></label>
       <label class="field"><span class="field-label">Campaign name pattern</span>
         <input type="text" name="campaign_name_pattern" value="{{ t.campaign_name_pattern if t else '' }}"
                placeholder="{account} · {date} · offer">
@@ -223,13 +223,10 @@
   {# ======================== BIDDING & OPTIMIZATION ======================== #}
   <div class="card">
     <div class="card-header"><span class="card-title">Bidding & optimization</span></div>
+    {# API-level optimization goal is auto-derived from the Optimization goal above
+       (matches how Ads Manager sets it) — kept hidden so it stays in sync. #}
+    <input type="hidden" name="optimization_goal" value="">
     <div class="form-row-3">
-      <label class="field"><span class="field-label">Optimization goal</span>
-        <select name="optimization_goal">
-          {% for v, label in opt_goal_options %}
-            <option value="{{ v }}" {{ 'selected' if blob.get('optimization_goal', '') == v else '' }}>{{ label }}</option>
-          {% endfor %}
-        </select></label>
       <label class="field"><span class="field-label">Bid strategy</span>
         <select name="bid_strategy">
           {% for v, label in bid_strategy_options %}
@@ -352,8 +349,7 @@
       GOAL_LABELS = {{ goal_labels_json | safe }},
       DEST_LABELS = {{ dest_labels_json | safe }};
   var objSel = document.getElementById("objType"),
-      destSel = document.getElementById("destType"),
-      goalSel = document.querySelector('select[name="optimization_goal"]');
+      destSel = document.getElementById("destType");
 
   function rebuild(sel, values, labels) {
     var cur = sel.value;
@@ -368,10 +364,9 @@
   }
 
   function syncObjective() {
-    var rule = RULES[objSel.value] || {destinations: ["website"], goals: [""], event: "none"};
-    rebuild(destSel, rule.destinations, DEST_LABELS);
-    rebuild(goalSel, [""].concat(rule.goals), GOAL_LABELS);   // "" = Auto
-    syncDest();
+    var rule = RULES[objSel.value] || {destinations: ["website"], event: "none"};
+    rebuild(destSel, rule.destinations, DEST_LABELS);   // valid destinations only
+    syncDest();                                          // API optimization_goal auto-derives
   }
 
   function syncDest() {

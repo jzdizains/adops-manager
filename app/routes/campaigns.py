@@ -661,15 +661,50 @@ def resolve_account_identity(db: Session, acct: models.AdAccount) -> dict:
             "identity_type": first.get("identity_type", "TT_USER")}
 
 
+def _resolve_cover(acct: models.AdAccount, video_id: str, poster: str,
+                   creative_id: int) -> str:
+    """A cover image_id for a video ad — TikTok requires one ("You must upload an
+    image"). (1) suggestcover auto-frames (retried while the video encodes), then
+    (2) re-upload the poster URL as a fallback."""
+    import time as _time
+    for _ in range(4):
+        try:
+            for c in tiktok_api.suggest_video_cover(acct.access_token,
+                                                    acct.advertiser_id, video_id):
+                cid = str(c.get("id") or c.get("image_id") or "")
+                if cid:
+                    return cid
+        except tiktok_api.TikTokError:
+            pass
+        _time.sleep(2)          # video still processing — covers not ready yet
+    if poster:
+        try:
+            img = tiktok_api.upload_image_by_url(acct.access_token, acct.advertiser_id,
+                                                 poster, f"cover_c{creative_id}")
+            return str(img.get("image_id", ""))
+        except tiktok_api.TikTokError:
+            pass
+    return ""
+
+
 def _upload_creative_to_account(db: Session, acct: models.AdAccount,
                                 creative: models.Creative) -> tuple[str, str]:
-    """Upload the creative's video (and its auto cover) into THIS account's
-    asset library. Cached so retries never re-upload. Returns (video_id, cover_id)."""
+    """Upload the creative's video (and its auto cover) into THIS account's asset
+    library. The video is cached so retries never re-upload; a MISSING cover is
+    re-resolved on retry (the video has since finished processing).
+    Returns (video_id, cover_id)."""
     cached = (db.query(models.CreativeUpload)
               .filter_by(creative_id=creative.id,
                          advertiser_id=acct.advertiser_id).first())
-    if cached and cached.video_id:
+    if cached and cached.video_id and cached.cover_image_id:
         return cached.video_id, cached.cover_image_id
+    if cached and cached.video_id:      # video uploaded before, cover never resolved
+        cover = _resolve_cover(acct, cached.video_id, "", creative.id)
+        if cover:
+            cached.cover_image_id = cover
+            db.commit()
+        return cached.video_id, cover
+
     up = tiktok_api.upload_video_file(acct.access_token, acct.advertiser_id,
                                       creative.file_path,
                                       f"c{creative.id}_{creative.file_name}"[:100])
@@ -677,14 +712,7 @@ def _upload_creative_to_account(db: Session, acct: models.AdAccount,
     if not video_id:
         raise tiktok_api.TikTokError("APP", "video upload returned no video_id")
     poster = up.get("video_cover_url") or up.get("poster_url") or ""
-    cover_image_id = ""
-    if poster:
-        try:
-            img = tiktok_api.upload_image_by_url(acct.access_token, acct.advertiser_id,
-                                                 poster, f"cover_c{creative.id}")
-            cover_image_id = str(img.get("image_id", ""))
-        except tiktok_api.TikTokError:
-            pass  # cover is best-effort; TikTok can also pick one
+    cover_image_id = _resolve_cover(acct, video_id, poster, creative.id)
     db.add(models.CreativeUpload(creative_id=creative.id,
                                  advertiser_id=acct.advertiser_id,
                                  video_id=video_id, cover_image_id=cover_image_id))
@@ -873,6 +901,15 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
             # ads publish under the account's own TikTok identity (dark post)
             creative_identity = resolve_account_identity(db, acct)
             creative_video_id, creative_cover_id = _upload_creative_to_account(db, acct, creative)
+            if not creative_cover_id:
+                # TikTok rejects a video ad with no cover ("You must upload an
+                # image"). If we still couldn't get one, the video likely hadn't
+                # finished processing — a retry (the video is cached now) usually
+                # resolves it on the next attempt.
+                raise ConfigError(
+                    f"Couldn't get a cover image for “{creative.name}” yet — TikTok "
+                    "hadn't finished processing the video. Hit Retry in a moment "
+                    "(the upload is cached, so it's instant).")
             if (creative.source or "").strip():
                 log.source = creative.source.strip()
                 fields = dict(fields)

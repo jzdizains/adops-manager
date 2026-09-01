@@ -397,6 +397,18 @@ def upload_image_by_url(access_token: str, advertiser_id: str, image_url: str,
     return api_post("/file/image/ad/upload/", access_token, payload)
 
 
+def suggest_video_cover(access_token: str, advertiser_id: str, video_id: str,
+                        page_size: int = 10) -> list[dict]:
+    """`/file/video/suggestcover/` — TikTok's auto-generated cover frames for a
+    video. Each item carries an `id` usable as the ad's cover image_id. The video
+    must have finished processing, so callers retry while it's still encoding."""
+    data = api_get("/file/video/suggestcover/", access_token, {
+        "advertiser_id": advertiser_id, "video_id": video_id, "page_size": page_size})
+    if isinstance(data, dict):
+        return data.get("list") or data.get("suggest_cover") or data.get("covers") or []
+    return data or []
+
+
 # ---------------------------------------------------------------------------
 # Smart+ (SDK-verified endpoints — /smart_plus/*, each create needs a client
 # request_id for idempotency)

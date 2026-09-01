@@ -49,10 +49,12 @@ DESTINATIONS = ["website", "instant_page", "lead_form", "pixel"]
 
 # Objective labels that mirror TikTok Ads Manager's new "Goal" naming, so the
 # preset vocabulary matches what the operator sees in TikTok.
+# Exactly the wording TikTok Ads Manager shows in its "Optimization goal" list,
+# so the preset's goal selector reads the same as what the operator sees on TikTok.
 OBJECTIVE_OPTIONS = [
-    ("WEB_CONVERSIONS", "Website engagements — conversions on your site"),
-    ("LEAD_GENERATION", "Leads — instant form or website"),
-    ("TRAFFIC", "Traffic / Click"),
+    ("LEAD_GENERATION", "Leads"),
+    ("WEB_CONVERSIONS", "Website engagements"),
+    ("TRAFFIC", "Click"),
     ("REACH", "Reach"),
     ("VIDEO_VIEWS", "Video views"),
 ]
