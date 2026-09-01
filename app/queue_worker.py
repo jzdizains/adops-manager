@@ -104,7 +104,10 @@ def process(db: Session, settings: dict | None = None) -> int:
                 item.advertiser_id = acct.advertiser_id  # record who got it
         else:
             item.last_error = f"[{log.error_code}] {log.error_message}"[:500]
-            transient = str(log.error_code) in TRANSIENT_CODES
+            from . import tiktok_api as _api
+            blob = f"{log.error_message} {log.error_technical}".lower()
+            transient = (str(log.error_code) in TRANSIENT_CODES
+                         or any(m in blob for m in _api._TRANSIENT_MSGS))
             if transient and item.attempts < retry_max:
                 item.status = "pending"        # retried next sweep
             else:

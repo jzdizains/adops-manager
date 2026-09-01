@@ -108,21 +108,39 @@ def api_post(path: str, access_token: str, payload: dict) -> Any:
     return _parse(resp)
 
 
+# TikTok returns 40002 for BOTH permanent field errors and some transient
+# backend hiccups (e.g. "Internal error, couldn't copy video data. Try again."
+# right after a video upload). These phrases mark the transient kind — safe to
+# retry regardless of the code.
+_TRANSIENT_MSGS = ("internal error", "try again", "try later", "please retry",
+                   "couldn't copy", "could not copy", "system busy", "timeout",
+                   "timed out", "please try", "again later")
+
+
+def _is_transient(e: "TikTokError") -> bool:
+    if str(e.code) in ("40100", "50000", "HTTP"):
+        return True
+    msg = (e.message or "").lower()
+    return any(m in msg for m in _TRANSIENT_MSGS)
+
+
 def api_post_retry(path: str, access_token: str, payload: dict,
-                   attempts: int = 4, backoff: float = 1.0) -> Any:
-    """api_post with exponential backoff on transient codes (40100 rate limit /
-    50000 internal / HTTP). Absorbs momentary rate limits so a launch POST
-    doesn't fail the whole account over a burst."""
+                   attempts: int = 5, backoff: float = 1.5) -> Any:
+    """api_post with exponential backoff on transient failures — rate limits
+    (40100), internal errors (50000), network blips (HTTP), and 40002 responses
+    whose MESSAGE says the failure is transient ('Internal error… Try again',
+    which TikTok returns while a freshly-uploaded video is still replicating).
+    Absorbs these so a launch POST doesn't fail the whole account over a blip."""
     import time as _time
     last: TikTokError | None = None
     for i in range(attempts):
         try:
             return api_post(path, access_token, payload)
         except TikTokError as e:
-            if str(e.code) not in ("40100", "50000", "HTTP") or i == attempts - 1:
+            if not _is_transient(e) or i == attempts - 1:
                 raise
             last = e
-            _time.sleep(backoff * (2 ** i))   # 1s, 2s, 4s …
+            _time.sleep(backoff * (2 ** i))   # 1.5s, 3s, 6s, 12s …
     raise last  # pragma: no cover
 
 
