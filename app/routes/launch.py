@@ -47,6 +47,41 @@ PIXEL_EVENTS = [
 OBJECTIVES = ["TRAFFIC", "WEB_CONVERSIONS", "LEAD_GENERATION", "REACH", "VIDEO_VIEWS"]
 DESTINATIONS = ["website", "instant_page", "lead_form", "pixel"]
 
+# Objective labels that mirror TikTok Ads Manager's new "Goal" naming, so the
+# preset vocabulary matches what the operator sees in TikTok.
+OBJECTIVE_OPTIONS = [
+    ("WEB_CONVERSIONS", "Website engagements — conversions on your site"),
+    ("LEAD_GENERATION", "Leads — instant form or website"),
+    ("TRAFFIC", "Traffic / Click"),
+    ("REACH", "Reach"),
+    ("VIDEO_VIEWS", "Video views"),
+]
+GOAL_LABELS = {
+    "": "Auto (from objective)", "CONVERT": "Conversion",
+    "CLICK": "Click", "TRAFFIC_LANDING_PAGE_VIEW": "Landing page view",
+    "REACH": "Reach", "ENGAGED_VIEW": "Focused view (6s)",
+}
+DEST_LABELS = {
+    "website": "Website", "pixel": "Website + pixel",
+    "instant_page": "Instant page", "lead_form": "Instant form (lead)",
+}
+# Which destinations / optimization goals / event-need each objective allows —
+# mirrors what Ads Manager offers so the form can only produce valid combos.
+#   event: "required" (always needs pixel+event) | "conditional" (only on a
+#   website/pixel destination) | "none"
+OBJECTIVE_RULES = {
+    "WEB_CONVERSIONS": {"destinations": ["website", "pixel"],
+                        "goals": ["CONVERT"], "event": "required"},
+    "LEAD_GENERATION": {"destinations": ["lead_form", "website", "pixel"],
+                        "goals": ["CONVERT"], "event": "conditional"},
+    "TRAFFIC":         {"destinations": ["website", "instant_page"],
+                        "goals": ["CLICK", "TRAFFIC_LANDING_PAGE_VIEW"], "event": "none"},
+    "REACH":           {"destinations": ["website"],
+                        "goals": ["REACH"], "event": "none"},
+    "VIDEO_VIEWS":     {"destinations": ["website"],
+                        "goals": ["ENGAGED_VIEW"], "event": "none"},
+}
+
 # Full Ads-Manager option sets (used by the preset form + payload builders)
 CTA_OPTIONS = [
     "LEARN_MORE", "SHOP_NOW", "SIGN_UP", "SUBSCRIBE", "CONTACT_US", "APPLY_NOW",

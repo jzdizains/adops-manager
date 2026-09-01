@@ -107,8 +107,16 @@ def parse_form(form) -> dict:
 
 
 def _form_ctx(db: Session) -> dict:
+    import json as _json
+
+    from .launch import (DEST_LABELS, GOAL_LABELS, OBJECTIVE_OPTIONS,
+                         OBJECTIVE_RULES)
     return {
         "objectives": OBJECTIVES,
+        "objective_options": OBJECTIVE_OPTIONS,
+        "objective_rules_json": _json.dumps(OBJECTIVE_RULES),
+        "goal_labels_json": _json.dumps(GOAL_LABELS),
+        "dest_labels_json": _json.dumps(DEST_LABELS),
         "destinations": DESTINATIONS,
         "pixel_events": PIXEL_EVENTS,
         "cta_options": CTA_OPTIONS,

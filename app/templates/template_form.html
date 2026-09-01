@@ -15,12 +15,13 @@
     <div class="form-row-3">
       <label class="field"><span class="field-label">Preset name</span>
         <input type="text" name="name" value="{{ t.name if t else '' }}" required></label>
-      <label class="field"><span class="field-label">Objective</span>
-        <select name="objective_type">
-          {% for o in objectives %}
-            <option value="{{ o }}" {{ 'selected' if t and t.objective_type == o else '' }}>{{ o.replace('_',' ')|title }}</option>
+      <label class="field"><span class="field-label">Objective (Ads Manager goal)</span>
+        <select name="objective_type" id="objType">
+          {% for o, label in objective_options %}
+            <option value="{{ o }}" {{ 'selected' if t and t.objective_type == o else '' }}>{{ label }}</option>
           {% endfor %}
-        </select></label>
+        </select>
+        <span class="hint">Sets which optimization goals, destinations &amp; events are valid — matched to TikTok.</span></label>
       <label class="field"><span class="field-label">Campaign name pattern</span>
         <input type="text" name="campaign_name_pattern" value="{{ t.campaign_name_pattern if t else '' }}"
                placeholder="{account} · {date} · offer">
@@ -70,7 +71,7 @@
         <span class="hint">The spark's source is appended automatically at launch.</span></label>
     </div>
     <div class="form-row-3">
-      <label class="field" data-dest="pixel website"><span class="field-label">Pixel</span>
+      <label class="field" data-dest="pixel website" data-needs-event="1"><span class="field-label">Pixel</span>
         <select name="pixel_id">
           <option value="">— pick a pixel —</option>
           {% for px in pixels %}
@@ -79,19 +80,18 @@
           {% endfor %}
         </select>
         <span class="hint">From your <a href="/pixels">pixel inventory</a> — sync there if empty.</span></label>
-      <label class="field" data-dest="pixel website"><span class="field-label">…or pixel code (manual)</span>
+      <label class="field" data-dest="pixel website" data-needs-event="1"><span class="field-label">…or pixel code (manual)</span>
         <input type="text" name="pixel_code" value="{{ blob.get('pixel_code', '') }}" placeholder="e.g. C0FFEE123">
         <span class="hint">Used only when no pixel is picked; resolved + cached at launch.</span></label>
-      <label class="field" data-dest="pixel website"><span class="field-label">Optimization event</span>
+      <label class="field" data-dest="pixel website" data-needs-event="1"><span class="field-label">Optimization event</span>
         <select name="optimization_event">
           <option value="">— pick —</option>
           {% for ev, label in pixel_events %}
             <option value="{{ ev }}" {{ 'selected' if blob.get('optimization_event') == ev else '' }}>{{ label }} ({{ ev }})</option>
           {% endfor %}
         </select>
-        <span class="hint">⚠ Must already exist on the pixel. Registration/contact-type events
-          need the <b>Lead generation</b> objective — TikTok removed them from Website
-          Conversions (which keeps commerce events like purchase/add-to-cart).</span></label>
+        <span class="hint">⚠ Must already exist on the pixel (have received events). This is your
+          Ads Manager “Optimization event”.</span></label>
     </div>
     <div class="form-row">
       <label class="field" data-dest="instant_page"><span class="field-label">Instant page (by name)</span>
@@ -346,13 +346,48 @@
 {% block scripts %}
 <script src="/static/chip-picker.js?v={{ STATIC_V }}"></script>
 <script>
-  var destSel = document.getElementById("destType");
+  // objective (Ads-Manager goal) drives which destinations, optimization goals
+  // and events are valid — mirrors TikTok so the preset can't build an invalid combo
+  var RULES = {{ objective_rules_json | safe }},
+      GOAL_LABELS = {{ goal_labels_json | safe }},
+      DEST_LABELS = {{ dest_labels_json | safe }};
+  var objSel = document.getElementById("objType"),
+      destSel = document.getElementById("destType"),
+      goalSel = document.querySelector('select[name="optimization_goal"]');
+
+  function rebuild(sel, values, labels) {
+    var cur = sel.value;
+    sel.innerHTML = "";
+    values.forEach(function (v) {
+      var o = document.createElement("option");
+      o.value = v; o.textContent = labels[v] || v;
+      sel.appendChild(o);
+    });
+    // keep the current choice if it's still valid, else fall back to the first
+    sel.value = values.indexOf(cur) >= 0 ? cur : values[0];
+  }
+
+  function syncObjective() {
+    var rule = RULES[objSel.value] || {destinations: ["website"], goals: [""], event: "none"};
+    rebuild(destSel, rule.destinations, DEST_LABELS);
+    rebuild(goalSel, [""].concat(rule.goals), GOAL_LABELS);   // "" = Auto
+    syncDest();
+  }
+
   function syncDest() {
+    var objRule = RULES[objSel.value] || {event: "none"};
+    var dest = destSel.value;
     document.querySelectorAll("[data-dest]").forEach(function (el) {
-      el.style.display = el.dataset.dest.split(" ").indexOf(destSel.value) >= 0 ? "" : "none";
+      var destOk = el.dataset.dest.split(" ").indexOf(dest) >= 0;
+      // pixel/event fields also require the objective to actually use an event
+      if (el.dataset.needsEvent && objRule.event === "none") destOk = false;
+      el.style.display = destOk ? "" : "none";
     });
   }
-  destSel.addEventListener("change", syncDest); syncDest();
+
+  objSel.addEventListener("change", syncObjective);
+  destSel.addEventListener("change", syncDest);
+  syncObjective();
 
   var csSel = document.getElementById("creativeSource"),
       sparkField = document.getElementById("sparkField"),

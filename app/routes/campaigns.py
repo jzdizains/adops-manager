@@ -749,6 +749,8 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
     creative: models.Creative | None = None      # library creative (reserved below)
     pool_text: models.AdText | None = None
     creative_committed = False                    # True once an ad actually exists
+    new_campaign_id = ""                          # campaign THIS launch created (for cleanup)
+    ad_created = False                            # True once ANY ad exists
     try:
         # -- config validation FIRST (free, local — before any API calls) ------
         use_library = fields.get("creative_source") == "library"
@@ -922,6 +924,7 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                                               camp_payload)
             campaign_id = str(camp.get("campaign_id"))
             log.campaign_id = campaign_id
+            new_campaign_id = campaign_id     # remember for orphan cleanup on failure
             created_name = camp_payload["campaign_name"]
 
             # duplicated ad groups + cost-cap ladder.
@@ -1002,6 +1005,7 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                             creative_video_id, creative_cover_id))
                         tiktok_api.create_ad(acct.access_token, acct.advertiser_id, ad_payload)
                         creative_committed = True
+                        ad_created = True
                         if not creative.used_campaign_id:
                             creative.used_campaign_id = campaign_id
                         if pool_text is not None and not pool_text.used_campaign_id:
@@ -1013,6 +1017,7 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                             tiktok_api.create_spark_ad(acct.access_token, acct.advertiser_id, ad_payload)
                         else:
                             tiktok_api.create_ad(acct.access_token, acct.advertiser_id, ad_payload)
+                        ad_created = True
 
         if spark:
             spark.use_count = (spark.use_count or 0) + 1
@@ -1072,6 +1077,15 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                 reserved.status = "available"
                 reserved.used_advertiser_id = ""
                 reserved.used_at = None
+    # orphan cleanup: if THIS launch made a campaign but no ad ever got created
+    # (e.g. the ad group was rejected), delete the empty campaign so failed
+    # launches never leave junk shells behind on the account.
+    if not log.ok and new_campaign_id and not ad_created and not fields.get("smart_plus"):
+        try:
+            tiktok_api.delete_campaigns(acct.access_token, acct.advertiser_id, [new_campaign_id])
+            log.campaign_id = ""      # it no longer exists — don't show it as tool-launched
+        except tiktok_api.TikTokError:
+            pass                      # best-effort; a leftover shell is harmless
     db.add(log)
     db.commit()
     return log
