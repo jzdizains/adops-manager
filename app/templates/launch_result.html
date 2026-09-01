@@ -6,10 +6,18 @@
       <span style="color:var(--ok);font-weight:700;">{{ ok_count }} ok</span> ·
       <span style="color:var(--err);font-weight:700;">{{ fail_count }} failed</span></div></div>
   <div class="actions">
+    {% if fail_count and can_retry %}
+    <form method="post" action="/campaigns/result/{{ batch_ref }}/retry" style="display:inline;"
+          onsubmit="return confirm('Re-launch the {{ fail_count }} failed account(s) with the same settings?');">
+      <button class="btn" type="submit" style="border-color:var(--err);color:var(--err);">↻ Retry failed ({{ fail_count }})</button>
+    </form>
+    {% endif %}
     <a class="btn" href="/super-launcher">← Super Launcher</a>
     <a class="btn primary" href="/status">View Status</a>
   </div>
 </div>
+{% if request.query_params.get('err') == 'nofail' %}<div class="flash ok">Nothing to retry — every account in that batch succeeded.</div>{% endif %}
+{% if request.query_params.get('err') == 'norecipe' %}<div class="flash err">Can’t retry this batch — its launch settings weren’t recorded (older launch).</div>{% endif %}
 
 {% for l in logs %}
 <div class="card">

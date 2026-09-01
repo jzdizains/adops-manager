@@ -39,6 +39,7 @@ DEFAULTS: dict = {
     # --- launch queue ----------------------------------------------------------
     "queue_per_sweep": 3,          # launches processed per background sweep
     "launch_retry_max": 3,         # attempts for transient TikTok errors
+    "launch_pace_sec": 1.0,        # pause between accounts in a direct batch (rate-limit safety)
     # --- sources / postback ---------------------------------------------------
     "url_param": "source",         # query param appended to the landing URL
     "postback_key": "",            # generated on first read; auths /postback

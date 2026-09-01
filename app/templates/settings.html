@@ -68,6 +68,9 @@
       <input type="number" min="1" name="queue_per_sweep" value="{{ s.queue_per_sweep }}"></label>
     <label class="field"><span class="field-label">Max attempts for transient errors</span>
       <input type="number" min="1" name="launch_retry_max" value="{{ s.launch_retry_max }}"></label>
+    <label class="field"><span class="field-label">Pause between accounts (sec)</span>
+      <input type="number" min="0" step="0.5" name="launch_pace_sec" value="{{ s.launch_pace_sec }}">
+      <span class="hint">Spreads out direct-launch batches to avoid TikTok’s rate limit (code 40100). Raise it if you still hit limits at scale.</span></label>
   </div>
 </div>
 

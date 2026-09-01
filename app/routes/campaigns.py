@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
-from .. import error_messages, live_log, models, tiktok_api
+from .. import error_messages, live_log, models, queries, tiktok_api
 from ..database import get_db
 from ..settings_store import get_settings
 from ..templating import render
@@ -1091,10 +1091,36 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
     return log
 
 
+def _launch_pace(db: Session) -> float:
+    from ..settings_store import get_settings
+    try:
+        return max(float(get_settings(db).get("launch_pace_sec") or 0), 0.0)
+    except (TypeError, ValueError):
+        return 1.0
+
+
+def _remember_batch(db: Session, batch_ref: str, fields: dict) -> None:
+    """Persist a batch's launch recipe so failed accounts can be retried with the
+    exact same configuration (objective, spark/library, duplication, etc.)."""
+    import json as _json
+    try:
+        queries.set_setting(db, f"batch_fields:{batch_ref}",
+                            _json.dumps({k: v for k, v in fields.items()
+                                         if k not in ("creative_id", "allow_creative_reuse")}))
+    except (TypeError, ValueError):
+        pass
+
+
 def run_batch(db: Session, accounts: list[models.AdAccount], fields: dict) -> str:
+    import time as _time
+
     from .. import rules as rules_mod
     batch_ref = error_messages.new_ref()
-    for acct in accounts:
+    _remember_batch(db, batch_ref, fields)
+    pace = _launch_pace(db)
+    for i, acct in enumerate(accounts):
+        if i and pace:
+            _time.sleep(pace)          # spread create-calls — rate-limit safety at scale
         log = launch_to_account(db, acct, fields, batch_ref)
         if log.error_code not in ("ASSET", "CONFIG"):   # preset problems, not account health
             rules_mod.record_launch_outcome(db, acct, log.ok)
@@ -1119,9 +1145,15 @@ def assign_creatives(accounts: list, creatives: list, per_creative: int) -> list
 def run_batch_assigned(db: Session, pairs: list, base_fields: dict) -> str:
     """Launch each (account, creative_id) with that specific creative, reusing a
     creative across its group of accounts (single-use is relaxed for this path)."""
+    import time as _time
+
     from .. import rules as rules_mod
     batch_ref = error_messages.new_ref()
-    for acct, cid in pairs:
+    _remember_batch(db, batch_ref, {**base_fields, "creative_source": "library"})
+    pace = _launch_pace(db)
+    for i, (acct, cid) in enumerate(pairs):
+        if i and pace:
+            _time.sleep(pace)
         fields = dict(base_fields)
         fields["creative_source"] = "library"
         if cid is not None:
@@ -1208,10 +1240,41 @@ def launch_result(request: Request, batch_ref: str, db: Session = Depends(get_db
     logs = (db.query(models.LaunchLog).filter_by(batch_ref=batch_ref)
             .order_by(models.LaunchLog.id).all())
     ok = sum(1 for l in logs if l.ok)
+    import json as _json
+    has_recipe = bool(queries.get_setting(db, f"batch_fields:{batch_ref}", ""))
     return render(request, "launch_result.html", {
         "logs": logs, "batch_ref": batch_ref, "ok_count": ok,
-        "fail_count": len(logs) - ok, "title": f"Launch result · {batch_ref}",
+        "fail_count": len(logs) - ok, "can_retry": has_recipe,
+        "title": f"Launch result · {batch_ref}",
     })
+
+
+@router.post("/campaigns/result/{batch_ref}/retry")
+def retry_failed(request: Request, batch_ref: str, db: Session = Depends(get_db)):
+    """Re-launch just the accounts that failed in this batch, reusing the exact
+    same recipe. Runs as a fresh batch (with pacing + backoff) so rate-limited
+    stragglers get another clean shot."""
+    import json as _json
+    raw = queries.get_setting(db, f"batch_fields:{batch_ref}", "")
+    if not raw:
+        return RedirectResponse(f"/campaigns/result/{batch_ref}?err=norecipe", status_code=303)
+    try:
+        fields = _json.loads(raw)
+    except (ValueError, TypeError):
+        return RedirectResponse(f"/campaigns/result/{batch_ref}?err=norecipe", status_code=303)
+    failed_ids = [l.advertiser_id for l in
+                  db.query(models.LaunchLog).filter_by(batch_ref=batch_ref)
+                  .filter(models.LaunchLog.ok == False)]                 # noqa: E712
+    failed_ids = list(dict.fromkeys(failed_ids))                          # dedupe, keep order
+    if not failed_ids:
+        return RedirectResponse(f"/campaigns/result/{batch_ref}?err=nofail", status_code=303)
+    by_id = {a.advertiser_id: a for a in db.query(models.AdAccount)
+             .filter(models.AdAccount.advertiser_id.in_(failed_ids)).all()}
+    accounts = [by_id[i] for i in failed_ids if i in by_id]
+    if not accounts:
+        return RedirectResponse(f"/campaigns/result/{batch_ref}?err=nofail", status_code=303)
+    new_ref = run_batch(db, accounts, fields)
+    return RedirectResponse(f"/campaigns/result/{new_ref}", status_code=303)
 
 
 @router.get("/campaigns/{advertiser_id}/{campaign_id}/edit")

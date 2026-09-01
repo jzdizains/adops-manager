@@ -108,6 +108,24 @@ def api_post(path: str, access_token: str, payload: dict) -> Any:
     return _parse(resp)
 
 
+def api_post_retry(path: str, access_token: str, payload: dict,
+                   attempts: int = 4, backoff: float = 1.0) -> Any:
+    """api_post with exponential backoff on transient codes (40100 rate limit /
+    50000 internal / HTTP). Absorbs momentary rate limits so a launch POST
+    doesn't fail the whole account over a burst."""
+    import time as _time
+    last: TikTokError | None = None
+    for i in range(attempts):
+        try:
+            return api_post(path, access_token, payload)
+        except TikTokError as e:
+            if str(e.code) not in ("40100", "50000", "HTTP") or i == attempts - 1:
+                raise
+            last = e
+            _time.sleep(backoff * (2 ** i))   # 1s, 2s, 4s …
+    raise last  # pragma: no cover
+
+
 # ---------------------------------------------------------------------------
 # OAuth2
 # ---------------------------------------------------------------------------
@@ -319,16 +337,18 @@ def track_event(access_token: str, pixel_code: str, event: str,
 # Campaign / ad group / ad
 # ---------------------------------------------------------------------------
 
+# the create endpoints retry transient rate limits (40100) with backoff so a
+# burst during a batch launch doesn't fail the account outright
 def create_campaign(access_token: str, advertiser_id: str, payload: dict) -> dict:
-    return api_post("/campaign/create/", access_token, {"advertiser_id": advertiser_id, **payload})
+    return api_post_retry("/campaign/create/", access_token, {"advertiser_id": advertiser_id, **payload})
 
 
 def create_adgroup(access_token: str, advertiser_id: str, payload: dict) -> dict:
-    return api_post("/adgroup/create/", access_token, {"advertiser_id": advertiser_id, **payload})
+    return api_post_retry("/adgroup/create/", access_token, {"advertiser_id": advertiser_id, **payload})
 
 
 def create_ad(access_token: str, advertiser_id: str, payload: dict) -> dict:
-    return api_post("/ad/create/", access_token, {"advertiser_id": advertiser_id, **payload})
+    return api_post_retry("/ad/create/", access_token, {"advertiser_id": advertiser_id, **payload})
 
 
 # ---------------------------------------------------------------------------
@@ -638,7 +658,7 @@ def create_spark_ad(access_token: str, advertiser_id: str, payload: dict) -> dic
     The generic /ad/create/ endpoint mishandles spark photo CAROUSELS — route
     spark creatives through here with identity + tiktok_item_id creatives.
     """
-    return api_post("/ad/create/", access_token, {"advertiser_id": advertiser_id, **payload})
+    return api_post_retry("/ad/create/", access_token, {"advertiser_id": advertiser_id, **payload})
 
 
 # ---------------------------------------------------------------------------
