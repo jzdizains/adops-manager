@@ -124,8 +124,9 @@ class Creative(Base):
     uploaded_at = Column(DateTime, default=utcnow)
     # --- variation processing (TensorPix): each reads as a new video ----------
     freshen = Column(Boolean, default=False)               # is this a processed variant?
-    freshen_intensity = Column(String, default="")         # (legacy ffmpeg) light|medium|strong
-    freshen_mirror = Column(Boolean, default=False)        # (legacy ffmpeg)
+    freshen_intensity = Column(String, default="")         # uniquify strength: light|medium|strong
+    freshen_mirror = Column(Boolean, default=False)        # (unused)
+    uniquify = Column(Boolean, default=False)              # apply slowdown+colour+audio pass
     src_path = Column(String, default="")                  # source awaiting processing
     source_md5 = Column(String, default="", index=True)    # md5 of the ORIGINAL upload
     error = Column(Text, default="")                       # processing failure detail

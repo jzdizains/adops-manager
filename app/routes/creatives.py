@@ -40,7 +40,7 @@ def creatives_page(request: Request, db: Session = Depends(get_db)):
                 for a in db.query(models.AdAccount).all()}
     available = sum(1 for r in rows if r.status == "available")
     processing = sum(1 for r in rows if r.status == "processing")
-    from .. import tensorpix
+    from .. import tensorpix, video_freshen
     tp_configured = tensorpix.configured()
     tp_models, tp_error = [], ""
     if tp_configured:
@@ -56,6 +56,7 @@ def creatives_page(request: Request, db: Session = Depends(get_db)):
         "rows": rows, "accounts": accounts, "available": available,
         "processing": processing, "tp_configured": tp_configured,
         "tp_models": tp_models, "tp_error": tp_error,
+        "uniquify_ok": video_freshen.available(),
         "ok": request.query_params.get("ok", ""),
         "err": request.query_params.get("err", ""),
         "title": "Creatives",
@@ -76,21 +77,25 @@ async def upload_creatives(request: Request, db: Session = Depends(get_db)):
     source_prefix = str(form.get("source_prefix") or "").strip()
     do_freshen = form.get("freshen") is not None      # "create variations" toggle
     model_ids = [str(m) for m in form.getlist("model_ids") if str(m).strip().isdigit()]
+    do_uniquify = form.get("uniquify") is not None
+    intensity = str(form.get("intensity") or "medium")
+    if intensity not in ("light", "medium", "strong"):
+        intensity = "medium"
     try:
         variants = min(max(int(form.get("variants") or 1), 1), 30)
     except ValueError:
         variants = 1
     if not do_freshen:
-        variants = 1     # variations only make sense when enhancing
+        variants = 1     # variations only make sense when processing
 
-    if do_freshen and not tensorpix.configured():
+    if do_freshen and not model_ids and not do_uniquify:
         return RedirectResponse(
-            "/creatives?err=TensorPix+API+key+not+set+—+add+TENSORPIX_API_KEY+in+"
-            "the+server+environment+to+create+variations.", status_code=303)
-    if do_freshen and not model_ids:
-        return RedirectResponse(
-            "/creatives?err=Pick+at+least+one+enhancement+model+for+the+variations.",
+            "/creatives?err=Pick+an+enhancement+model,+turn+on+Uniquify,+or+both.",
             status_code=303)
+    if do_freshen and model_ids and not tensorpix.configured():
+        return RedirectResponse(
+            "/creatives?err=TensorPix+API+key+not+set+—+add+TENSORPIX_API_KEY,+or+"
+            "use+Uniquify+alone.", status_code=303)
 
     CREATIVES_DIR.mkdir(parents=True, exist_ok=True)
     saved, queued, skipped = 0, 0, []
@@ -156,6 +161,7 @@ async def upload_creatives(request: Request, db: Session = Depends(get_db)):
             row = models.Creative(
                 name=vname, file_name=vname, size_bytes=size,
                 status="processing", freshen=True, tp_model_ids=models_csv,
+                uniquify=do_uniquify, freshen_intensity=intensity,
                 src_path=str(src_path), source_md5=md5)
             db.add(row)
             db.flush()

@@ -24,29 +24,45 @@
     <div style="flex-basis:100%;border-top:1px solid var(--border);margin:6px 0 2px;"></div>
     <label style="display:flex;align-items:center;gap:8px;font-weight:600;font-size:13px;
                   color:var(--text-soft);cursor:pointer;">
-      <input type="checkbox" name="freshen" id="freshenChk" value="1" {{ 'checked' if tp_configured }} style="width:auto;">
-      ✨ Create variations via TensorPix — AI-enhance into N distinct high-quality copies, each a new video to TikTok
+      <input type="checkbox" name="freshen" id="freshenChk" value="1" checked style="width:auto;">
+      ✨ Create variations — turn each upload into N distinct copies, each a new video to TikTok
     </label>
-    {% if not tp_configured %}
-    <span class="hint" style="flex-basis:100%;color:var(--err);">
-      ⚠ TensorPix isn't connected — add <code>TENSORPIX_API_KEY</code> in the server environment to enable variations. Uploads without it are stored as-is.</span>
-    {% elif tp_error %}
-    <span class="hint" style="flex-basis:100%;color:var(--err);">⚠ Couldn't reach TensorPix: {{ tp_error }}</span>
-    {% endif %}
-    <span id="freshenOpts" style="display:{{ 'flex' if tp_configured else 'none' }};gap:10px;flex-wrap:wrap;align-items:center;">
-      <label class="field" style="margin:0;"><span class="field-label">Enhancement model(s)</span>
-        <select name="model_ids" multiple size="4" style="width:auto;min-width:230px;">
+
+    <span id="freshenOpts" style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start;">
+      <label class="field" style="margin:0;"><span class="field-label">Variations per file</span>
+        <input type="number" name="variants" value="1" min="1" max="30" style="width:80px;">
+        <span class="hint">1 upload → N distinct copies.</span></label>
+
+      <div style="border-left:2px solid var(--accent-soft);padding-left:12px;">
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-soft);cursor:pointer;">
+          <input type="checkbox" name="uniquify" value="1" checked style="width:auto;"> <b>Uniquify</b> — slowdown + slight colour + audio shift
+        </label>
+        <label class="field" style="margin:4px 0 0;"><span class="field-label">Strength</span>
+          <select name="intensity" style="width:auto;">
+            <option value="light">Light</option>
+            <option value="medium" selected>Medium</option>
+            <option value="strong">Strong</option>
+          </select></label>
+        <span class="hint" style="max-width:260px;display:block;">Shifts the video AND audio fingerprint so TikTok reads each copy as unique. Near-lossless — no crop or mirror, your on-screen text stays put.</span>
+      </div>
+
+      <div style="border-left:2px solid var(--accent-soft);padding-left:12px;">
+        <span class="field-label">AI enhance (TensorPix — optional)</span>
+        {% if tp_configured %}
+        <select name="model_ids" multiple size="4" style="width:auto;min-width:220px;">
           {% for m in tp_models %}
             <option value="{{ m.id }}">{{ m.name }}{% if m.task %} · {{ m.task }}{% endif %}</option>
           {% endfor %}
         </select>
-        <span class="hint">Ctrl/Cmd-click for several. Upscale/Decompressor keep it looking clean.</span></label>
-      <label class="field" style="margin:0;"><span class="field-label">Variations per file</span>
-        <input type="number" name="variants" value="1" min="1" max="30" style="width:80px;">
-        <span class="hint">1 upload → N distinct copies (one per account).</span></label>
+        <span class="hint" style="max-width:260px;display:block;">Optional quality pass on top of Uniquify (Decompressor is a clean default). Costs TensorPix credits.</span>
+        {% else %}
+        <span class="hint" style="max-width:240px;display:block;color:var(--text-dim);">Not connected — add <code>TENSORPIX_API_KEY</code> to enable. Uniquify works without it.</span>
+        {% endif %}
+        {% if tp_error %}<span class="hint" style="color:var(--err);">⚠ {{ tp_error }}</span>{% endif %}
+      </div>
     </span>
     <span class="hint" style="flex-basis:100%;">
-      <b>Quality:</b> TensorPix re-renders each copy with real AI enhancement — the output is a genuinely new video (new fingerprint, clean metadata) at equal-or-better quality, not a degraded one. Variations differ from each other via per-copy encode nudges. Each variation costs TensorPix credits and runs asynchronously; copies appear in the list as they finish.
+      Variations run asynchronously and appear as they finish. <b>Uniquify</b> is what makes each copy read as unique to TikTok (video + audio fingerprint); <b>AI enhance</b> is an optional quality bump. Use either or both — at least one is required.
     </span>
   </form>
 </div>

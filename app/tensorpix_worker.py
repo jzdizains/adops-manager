@@ -14,7 +14,10 @@ import os
 import random
 from datetime import datetime, timezone
 
+import threading
+
 POLL_THROTTLE_SEC = 6      # don't re-poll the same row faster than this
+_pass_lock = threading.Lock()   # only one processing pass at a time (kick + sweep)
 
 
 def _md5_file(path: str) -> str:
@@ -61,7 +64,18 @@ def _due(row) -> bool:
 
 def process_pending(db, limit: int = 6) -> int:
     """Advance up to `limit` processing rows by one hop each. Returns how many
-    were touched. Never raises — failures land on row.error."""
+    were touched. Never raises — failures land on row.error. Serialized so the
+    post-upload kick thread and the background sweep never process the same row
+    (which would collide two ffmpeg runs on one file)."""
+    if not _pass_lock.acquire(blocking=False):
+        return 0                      # another pass is running — let it finish
+    try:
+        return _process_pending(db, limit)
+    finally:
+        _pass_lock.release()
+
+
+def _process_pending(db, limit: int) -> int:
     from . import config, models, tensorpix
 
     rows = (db.query(models.Creative)
@@ -71,12 +85,17 @@ def process_pending(db, limit: int = 6) -> int:
     if not rows:
         return 0
     if not tensorpix.configured():
-        for r in rows:
+        # only rows that actually need TensorPix fail; uniquify-only rows proceed
+        needs_tp = [r for r in rows if _model_ids(r)]
+        for r in needs_tp:
             r.status = "error"
             r.error = ("TensorPix API key not set — add TENSORPIX_API_KEY in the "
                        "server environment, then re-upload.")
-        db.commit()
-        return len(rows)
+        if needs_tp:
+            db.commit()
+        rows = [r for r in rows if not _model_ids(r)]
+        if not rows:
+            return len(needs_tp)
 
     out_dir = config.DATA_DIR / "creatives"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -96,10 +115,35 @@ def process_pending(db, limit: int = 6) -> int:
     return touched
 
 
+def _store(db, models, row, out_path) -> None:
+    """Record a finished variant file and mark it available."""
+    row.file_path = str(out_path)
+    row.md5 = _md5_file(str(out_path))
+    row.size_bytes = os.path.getsize(str(out_path))
+    row.status = "available"
+    row.error = ""
+    _gc_source(db, models, row.source_md5)
+
+
 def _advance(db, row, out_dir, tensorpix, models) -> None:
+    from . import video_freshen
+    out = out_dir / f"{row.id}_{row.file_name}"
+
+    # ---- uniquify-only path (no TensorPix model chosen) --------------------
     if not _model_ids(row):
-        row.status = "error"
-        row.error = "No TensorPix enhancement model was selected for this upload."
+        if not row.uniquify:
+            row.status = "error"
+            row.error = "Nothing to do: pick a TensorPix model, uniquify, or both."
+            return
+        if not video_freshen.available():
+            row.status = "error"
+            row.error = "Video processing unavailable (imageio-ffmpeg missing)."
+            return
+        if not row.src_path or not os.path.exists(row.src_path):
+            raise RuntimeError("source file went missing before processing")
+        video_freshen.uniquify(row.src_path, str(out),
+                               intensity=row.freshen_intensity or "medium", seed=row.id)
+        _store(db, models, row, out)
         return
 
     # STEP 1 — ensure the source is uploaded (share one upload per source_md5)
@@ -138,14 +182,22 @@ def _advance(db, row, out_dir, tensorpix, models) -> None:
         url = tensorpix.job_output_url(job)
         if not url:                      # done but URL not attached yet — retry
             return
-        out = out_dir / f"{row.id}_{row.file_name}"
-        tensorpix.download(url, str(out))
-        row.file_path = str(out)
-        row.md5 = _md5_file(str(out))
-        row.size_bytes = os.path.getsize(str(out))
-        row.status = "available"
-        row.error = ""
-        _gc_source(db, models, row.source_md5)
+        if row.uniquify and video_freshen.available():
+            # download the enhanced render, then apply slowdown+colour+audio
+            dl = out_dir / f"{row.id}_tp_{row.file_name}"
+            tensorpix.download(url, str(dl))
+            try:
+                video_freshen.uniquify(str(dl), str(out),
+                                       intensity=row.freshen_intensity or "medium",
+                                       seed=row.id)
+            finally:
+                try:
+                    os.unlink(dl)
+                except OSError:
+                    pass
+        else:
+            tensorpix.download(url, str(out))
+        _store(db, models, row, out)
     elif status in (tensorpix.FAILED, tensorpix.CANCELLED):
         row.status = "error"
         row.error = (job.get("error") or job.get("status_display")

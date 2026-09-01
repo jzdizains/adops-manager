@@ -63,16 +63,20 @@ def available() -> bool:
         return False
 
 
-# intensity → how far the random nudges may swing. NOTE: no added noise and no
-# aggressive compression — quality is held near-source (see freshen() encoder
-# settings). These transforms shift the fingerprint without visible degradation.
+# The three chosen levers — SLOWDOWN, slight COLOUR, slight AUDIO — each ranges
+# by intensity. Slowdown shifts the video timing AND (via matched atempo) the
+# audio fingerprint at once; colour and volume add extra separation. No crop,
+# mirror or noise: nothing that distorts the frame or flips on-screen text.
+#   slow  = how much slower, as a fraction (0.05 = 5% slower)
+#   bright/contr/sat/gamma/hue = colour-grade swing
+#   vol   = loudness swing;  pitch = tiny pitch swing (semitone fraction)
 _PROFILES = {
-    "light":  dict(crop=0.008, bright=0.006, contr=0.006, sat=0.015, gamma=0.010,
-                   hue=0.5, tempo=0.006, vol=0.03, trim=(0.00, 0.05)),
-    "medium": dict(crop=0.015, bright=0.012, contr=0.012, sat=0.025, gamma=0.018,
-                   hue=1.0, tempo=0.012, vol=0.05, trim=(0.02, 0.10)),
-    "strong": dict(crop=0.028, bright=0.022, contr=0.022, sat=0.04, gamma=0.028,
-                   hue=1.8, tempo=0.020, vol=0.08, trim=(0.03, 0.15)),
+    "light":  dict(slow=(0.02, 0.04), bright=0.008, contr=0.008, sat=0.02,
+                   gamma=0.012, hue=0.6, vol=0.03, pitch=0.0),
+    "medium": dict(slow=(0.03, 0.06), bright=0.014, contr=0.014, sat=0.03,
+                   gamma=0.018, hue=1.0, vol=0.05, pitch=0.0),
+    "strong": dict(slow=(0.05, 0.09), bright=0.022, contr=0.022, sat=0.045,
+                   gamma=0.028, hue=1.6, vol=0.08, pitch=0.0),
 }
 
 
@@ -81,33 +85,28 @@ def _rng(seed: int | None) -> random.Random:
 
 
 def build_filters(intensity: str, mirror: bool, rng: random.Random) -> tuple[str, str]:
-    """Return (video_filter, audio_filter) strings for the given profile."""
+    """Return (video_filter, audio_filter). `mirror` is accepted for API
+    compatibility but intentionally ignored — mirroring flips baked-in text."""
     p = _PROFILES.get(intensity, _PROFILES["medium"])
 
     def swing(mag: float) -> float:
         return round(rng.uniform(-mag, mag), 4)
 
-    # micro crop then scale back to the SAME dimensions — shifts geometry/phash.
-    # after crop iw=orig*cf, so scale=iw/cf:ih/cf returns ~original size.
-    cf = round(1.0 - rng.uniform(p["crop"] * 0.5, p["crop"]), 4)
-    ox, oy = round(rng.random(), 3), round(rng.random(), 3)
+    # SLOWDOWN: slow the video by `slow` (setpts multiplies PTS); the audio is
+    # slowed by the SAME factor (atempo=1/factor) so it stays perfectly in sync.
+    slow = round(rng.uniform(*p["slow"]), 4)          # e.g. 0.045 = 4.5% slower
+    factor = round(1 + slow, 4)                        # video PTS multiplier
+    atempo = round(1 / factor, 6)                      # audio slowdown, keeps sync
+
     vf = [
-        # micro crop then scale back with lanczos (high-quality resample → no
-        # visible softening); shifts geometry so perceptual hashes don't match
-        f"crop=iw*{cf}:ih*{cf}:(iw-iw*{cf})*{ox}:(ih-ih*{cf})*{oy}",
-        f"scale=iw/{cf}:ih/{cf}:flags=lanczos",
-        # colour nudges — all sub-perceptual, NO added noise (keeps quality)
+        f"setpts={factor}*PTS",
+        # slight colour grade — invisible per-frame but moves the fingerprint
         f"eq=brightness={swing(p['bright'])}:contrast={round(1+swing(p['contr']),4)}:"
         f"saturation={round(1+swing(p['sat']),4)}:gamma={round(1+swing(p['gamma']),4)}",
         f"hue=h={swing(p['hue'])}",
     ]
-    if mirror:
-        vf.append("hflip")
-
-    tempo = round(1 + swing(p["tempo"]), 4)
-    tempo = min(max(tempo, 0.95), 1.05)   # atempo sane range
-    af = f"atempo={tempo},volume={round(1+swing(p['vol']),4)}"
-    return ",".join(vf), af
+    af_parts = [f"atempo={atempo}", f"volume={round(1+swing(p['vol']),4)}"]
+    return ",".join(vf), ",".join(af_parts)
 
 
 def _dimensions(src_path: str) -> tuple[int, int] | None:
@@ -128,22 +127,21 @@ def _dimensions(src_path: str) -> tuple[int, int] | None:
         return None
 
 
-def freshen(src_path: str, dst_path: str, intensity: str = "medium",
-            mirror: bool = False, seed: int | None = None,
-            timeout: int = 300) -> None:
-    """Re-encode src → dst with metadata stripped and randomized micro-transforms.
-    Raises RuntimeError (with ffmpeg's stderr tail) on failure."""
+def uniquify(src_path: str, dst_path: str, intensity: str = "medium",
+             mirror: bool = False, seed: int | None = None,
+             timeout: int = 300) -> None:
+    """Re-encode src → dst with metadata stripped and the three fingerprint
+    levers applied — slight SLOWDOWN, slight COLOUR grade, matched AUDIO slowdown
+    — at near-lossless quality (CRF 18). Raises RuntimeError on failure."""
     rng = _rng(seed)
     vf, af = build_filters(intensity, mirror, rng)
     dims = _dimensions(src_path)
     if dims:   # pin the EXACT original dimensions so the aspect ratio never drifts
         vf += f",scale={dims[0]}:{dims[1]}:flags=lanczos,setsar=1"
-    lead = _PROFILES.get(intensity, _PROFILES["medium"])["trim"]
-    ss = round(rng.uniform(*lead), 3)   # drop a few lead frames
     tmp = dst_path + ".part"
     cmd = [
         ffmpeg_exe(), "-y", "-hide_banner", "-loglevel", "error",
-        "-ss", str(ss), "-i", src_path,
+        "-i", src_path,
         "-map_metadata", "-1",                       # strip ALL metadata
         "-map", "0:v:0", "-map", "0:a:0?",           # video + audio if present
         "-vf", vf, "-af", af,
@@ -171,6 +169,10 @@ def freshen(src_path: str, dst_path: str, intensity: str = "medium",
         tail = (proc.stderr or b"").decode("utf-8", "replace")[-500:]
         raise RuntimeError(f"ffmpeg failed (code {proc.returncode}): {tail}")
     os.replace(tmp, dst_path)
+
+
+# backwards-compatible alias
+freshen = uniquify
 
 
 def _rand_time(rng: random.Random) -> str:
