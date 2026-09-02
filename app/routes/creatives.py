@@ -81,6 +81,21 @@ def creatives_page(request: Request, db: Session = Depends(get_db)):
     nb_models = [{"id": mid, "label": lbl, "prices": prices}
                  for mid, (lbl, prices) in nanobanana.MODELS.items()]
 
+    # image dimensions + the carousel size each will be delivered in (PIL reads
+    # just the header here — no pixel decode)
+    from .. import image_fit
+    dims = {}
+    for r in images:
+        if r.file_path:
+            try:
+                from PIL import Image as _Img
+                with _Img.open(r.file_path) as im:
+                    w, h = im.size
+                fmt, (tw, th) = image_fit.pick_format(w, h)
+                dims[r.id] = {"w": w, "h": h, "tw": tw, "th": th, "fmt": fmt, "exact": (w, h) == (tw, th)}
+            except Exception:
+                pass
+
     carousels = [r for r in rows if r.kind == "carousel"]
     import json as _json
     slide_map = {}
@@ -92,7 +107,7 @@ def creatives_page(request: Request, db: Session = Depends(get_db)):
     browse = _browse_account(db)
 
     return render(request, "creatives.html", {
-        "carousels": carousels, "slide_map": slide_map,
+        "carousels": carousels, "slide_map": slide_map, "dims": dims,
         "image_pool": [r for r in images if r.status == "available"],
         "browse_account": browse,
         "rows": videos, "images": images, "accounts": accounts, "available": available,

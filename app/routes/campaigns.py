@@ -818,8 +818,16 @@ def _upload_image_to_account(db: Session, acct: models.AdAccount,
               .filter_by(creative_id=image.id, advertiser_id=acct.advertiser_id).first())
     if cached and cached.image_id:
         return cached.image_id, cached.image_url or ""
-    up = tiktok_api.upload_image_file(acct.access_token, acct.advertiser_id,
-                                      image.file_path, f"c{image.id}_{image.file_name}"[:100])
+    # deliver in a TikTok-approved carousel size (720x1280 / 640x640 / 1200x628) —
+    # the raw upload/AI output size is what triggers "Image size is not supported"
+    from .. import image_fit
+    from .creatives import CREATIVES_DIR
+    send_path, _fmt = image_fit.carousel_ready(
+        image.file_path, CREATIVES_DIR / "_delivery", f"{image.id}_{(image.md5 or 'x')[:10]}")
+    fname = f"c{image.id}_{image.file_name}"
+    if send_path != image.file_path:
+        fname = fname.rsplit(".", 1)[0] + ".jpg"
+    up = tiktok_api.upload_image_file(acct.access_token, acct.advertiser_id, send_path, fname[:100])
     image_id = str(up.get("image_id", "") or "")
     if not image_id:
         raise tiktok_api.TikTokError("APP", "image upload returned no image_id")
