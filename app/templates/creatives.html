@@ -604,7 +604,7 @@
   if (!rows.length) return;
   var cur = -1, v = document.getElementById("ppVideo");
   function money(s) { var n = Number(s); return (n < 0 ? "−" : "") + "$" + Math.abs(n).toFixed(2); }
-  function load(i) {
+  function load(i, autoplay) {
     if (i < 0 || i >= rows.length) return;
     cur = i; var r = rows[i], d = r.dataset;
     rows.forEach(function (x) { x.classList.remove("sel"); }); r.classList.add("sel");
@@ -618,7 +618,7 @@
       }).join("");
     } else {
       slides.style.display = "none"; v.style.display = "";
-      if (v.getAttribute("src") !== d.src) { v.src = d.src; v.play().catch(function () {}); }
+      if (v.getAttribute("src") !== d.src) { v.src = d.src; if (autoplay) v.play().catch(function () {}); }
     }
     document.getElementById("ppName").textContent = d.name;
     var camp = document.getElementById("ppCampaign"); camp.textContent = d.campaign; camp.href = d.edit;
@@ -635,12 +635,14 @@
     r.scrollIntoView({ block: "nearest" });
   }
   rows.forEach(function (r, i) {
-    r.addEventListener("click", function (e) { if (e.target.closest("a")) return; load(i); });
+    r.addEventListener("click", function (e) { if (e.target.closest("a")) return; load(i, true); });
   });
-  document.getElementById("ppPrev").addEventListener("click", function (e) { e.preventDefault(); load(cur - 1); });
-  document.getElementById("ppNext").addEventListener("click", function (e) { e.preventDefault(); load(cur + 1); });
-  v.addEventListener("ended", function () { if (cur + 1 < rows.length) load(cur + 1); });   // autoplay next: review the whole set hands-free
-  load(0);
+  document.getElementById("ppPrev").addEventListener("click", function (e) { e.preventDefault(); load(cur - 1, true); });
+  document.getElementById("ppNext").addEventListener("click", function (e) { e.preventDefault(); load(cur + 1, true); });
+  // hands-free review: advance to the next creative when one ends — but only while you're looking
+  v.addEventListener("ended", function () { if (!document.hidden && cur + 1 < rows.length) load(cur + 1, true); });
+  document.addEventListener("visibilitychange", function () { if (document.hidden) v.pause(); });   // video decoding is the costliest thing a tab does
+  load(0, false);   // show the top creative, don't start decoding video until asked
 })();
 </script>
 {% endblock %}

@@ -216,7 +216,7 @@ table.data.dense td { padding: 8px 8px; }
 table.data.dense td.num { white-space: nowrap; }
 table.data th.sticky-r, table.data td.sticky-r {
   position: sticky; right: 0; background: var(--panel);
-  box-shadow: -6px 0 8px -6px rgba(20, 26, 40, 0.18);
+  border-left: 1px solid var(--border);       /* a shadow here repaints every row on scroll */
 }
 table.data tr:hover td.sticky-r { background: var(--panel-hover); }
 a.th-sort { color: var(--text-dim); text-decoration: none; }
@@ -526,3 +526,7 @@ table.data.show-detail th.col-detail, table.data.show-detail td.col-detail { dis
 .cz-picked { margin-top: 8px; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--accent-soft); color: var(--accent-ink); font-size: 12.5px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .cz-mini { display: flex; gap: 3px; align-items: center; }
 .cz-mini img { width: 28px; height: 28px; object-fit: cover; border-radius: 4px; border: 1px solid var(--border); }
+
+/* Health: one card per Business Center can hold hundreds of rows — let the
+   browser skip layout & paint for the ones that are off-screen. */
+.bc-section { content-visibility: auto; contain-intrinsic-size: auto 480px; }
