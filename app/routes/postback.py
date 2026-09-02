@@ -115,13 +115,18 @@ def unpack_source(raw: str) -> tuple[str, str]:
     return name.strip(), packed.strip()
 
 
-def _clean_ttclid(v: str) -> str:
-    """An UNREPLACED macro ('{ttclid}', '__CLICKID__') must never be stored as
-    a click id — TikTok would just reject the event."""
+def _is_macro(v: str) -> bool:
+    """True for an UNREPLACED macro the network sent literally: '{ttclid}',
+    '{transaction_id}', '__CLICKID__'."""
     v = (v or "").strip()
-    if not v or "{" in v or "}" in v or (v.startswith("__") and v.endswith("__")):
-        return ""
-    return v[:500]
+    return bool(v) and ("{" in v or "}" in v or (v.startswith("__") and v.endswith("__")))
+
+
+def _clean_ttclid(v: str) -> str:
+    """An unreplaced macro must never be stored as a click id — TikTok would
+    just reject the event."""
+    v = (v or "").strip()
+    return "" if (not v or _is_macro(v)) else v[:500]
 
 
 def _num(v, cast=float, default=0):
@@ -146,14 +151,19 @@ async def postback(request: Request, db: Session = Depends(get_db)):
         # make the failure visible instead of silently discarding it.
         source = UNATTRIBUTED
     txn = (q.get("txn") or q.get("transaction_id") or "").strip()[:120]
+    per_event = bool(txn) or bool((q.get("event") or "").strip())
+    if _is_macro(txn):
+        # the network has no such macro and sent it literally — deduping on it
+        # would swallow every conversion after the first one for this source
+        txn = ""
     if txn:
         # retries/duplicates of the same transaction must never double revenue
         dupe = (db.query(models.PostbackEvent)
                 .filter_by(source=source, txn=txn).first())
         if dupe:
             return {"ok": True, "duplicate": True}
-    # per-event postbacks (txn present) count as 1 conversion unless told otherwise
-    default_conv = 1 if txn else 0
+    # per-event postbacks (txn or event present) count as 1 conversion unless told otherwise
+    default_conv = 1 if per_event else 0
     event = models.PostbackEvent(
         source=source,
         revenue=_num(q.get("revenue") or q.get("payout") or q.get("amount")),
