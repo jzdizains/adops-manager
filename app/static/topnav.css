@@ -6,9 +6,7 @@
 
 /* ---- top nav: sticky bar --------------------------------------------------- */
 .topnav {
-  background: color-mix(in srgb, var(--panel) 82%, transparent);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+  background: var(--panel);      /* solid: a blurred sticky bar re-renders on every scroll */
   border-bottom: 1px solid var(--border);
   position: sticky; top: 0; z-index: 50;
 }

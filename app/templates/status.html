@@ -384,6 +384,7 @@
     var el = document.activeElement;
     var typing = el && (el.tagName === "INPUT" || el.tagName === "SELECT" || el.tagName === "TEXTAREA");
     var selecting = window.getSelection && String(window.getSelection());
+    if (document.hidden) return;                       // never churn a background tab
     if (!typing && !selecting && !document.querySelector("[data-fsel].open") && modal.style.display !== "flex") location.reload();
   }, 60000);
   {% endif %}

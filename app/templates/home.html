@@ -144,6 +144,7 @@
         row.appendChild(i); row.appendChild(m); row.appendChild(t);
         feed.prepend(row);
       });
+      while (feed.children.length > 100) feed.removeChild(feed.lastChild);   // keep the DOM bounded
     }
     if (lastConversions !== null && d.conversions > lastConversions && document.getElementById("pfSound").checked) {
       document.getElementById("pfDing").play().catch(function () {});
@@ -158,7 +159,10 @@
       .then(function (d) { apply(d); document.getElementById("pfStatus").textContent = "live · " + new Date().toLocaleTimeString(); })
       .catch(function (err) { if (err.name !== "AbortError") document.getElementById("pfStatus").textContent = "reconnecting…"; });
   }
-  poll(); setInterval(poll, 15000);
+  // poll only while the tab is visible; catch up the moment it comes back
+  function tick() { if (!document.hidden) poll(); }
+  poll(); setInterval(tick, 15000);
+  document.addEventListener("visibilitychange", function () { if (!document.hidden) poll(); });
 
   // ---- 14-day trend chart --------------------------------------------------
   var DATA = {{ chart_json | safe }};

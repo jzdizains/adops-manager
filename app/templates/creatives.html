@@ -148,7 +148,7 @@
         <div class="cz-pool">
           {% for r in image_pool %}
           <button type="button" class="cz-img" data-id="{{ r.id }}" title="{{ r.name }}">
-            <img src="/creatives/{{ r.id }}/file" alt="{{ r.name }}" loading="lazy"><span class="cz-badge"></span>
+            <img src="/creatives/{{ r.id }}/thumb" alt="{{ r.name }}" loading="lazy" decoding="async"><span class="cz-badge"></span>
           </button>
           {% endfor %}
         </div>
@@ -197,7 +197,7 @@
       {% set camp = camp_by_id.get(cz.used_campaign_id) if cz.used_campaign_id else none %}
       <tr id="cz{{ cz.id }}">
         <td style="font-weight:600;">{{ cz.name }}<div class="muted" style="font-size:10.5px;">{{ slide_map.get(cz.id, [])|length }} slides{% if cz.source %} · <span class="mono">{{ cz.source }}</span>{% endif %}</div></td>
-        <td><div class="cz-mini">{% for iid in slide_map.get(cz.id, [])[:8] %}<img src="/creatives/{{ iid }}/file" alt="" loading="lazy">{% endfor %}{% if slide_map.get(cz.id, [])|length > 8 %}<span class="muted">+{{ slide_map.get(cz.id, [])|length - 8 }}</span>{% endif %}</div></td>
+        <td><div class="cz-mini">{% for iid in slide_map.get(cz.id, [])[:8] %}<img src="/creatives/{{ iid }}/thumb" alt="" loading="lazy" decoding="async">{% endfor %}{% if slide_map.get(cz.id, [])|length > 8 %}<span class="muted">+{{ slide_map.get(cz.id, [])|length - 8 }}</span>{% endif %}</div></td>
         <td style="font-size:12px;">🎵 {{ cz.music_name or cz.music_id }}{% if cz.music_author %}<div class="muted" style="font-size:10.5px;">{{ cz.music_author }}</div>{% endif %}</td>
         <td>{% if cz.status == 'available' %}<span class="pill ok">Available</span>{% else %}<span class="pill dim">Launched</span>{% endif %}</td>
         <td class="muted" style="font-size:12px;">
@@ -374,7 +374,7 @@
       <div class="img-thumb">
         {% if r.status == 'processing' %}<div class="img-ph">✨ generating…</div>
         {% elif r.status == 'error' %}<div class="img-ph" style="color:var(--err);" title="{{ r.error }}">✕ failed</div>
-        {% elif r.file_path %}<a href="/creatives/{{ r.id }}/file" target="_blank" rel="noopener"><img src="/creatives/{{ r.id }}/file" alt="{{ r.name }}" loading="lazy"></a>
+        {% elif r.file_path %}<a href="/creatives/{{ r.id }}/file" target="_blank" rel="noopener" title="Open full size"><img src="/creatives/{{ r.id }}/thumb" alt="{{ r.name }}" loading="lazy" decoding="async"></a>
         {% else %}<div class="img-ph">—</div>{% endif %}
       </div>
       <div class="img-meta">
@@ -387,7 +387,7 @@
         <div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap;">
           <button form="if{{ r.id }}" class="btn sm" type="submit">Save</button>
           {% if r.status == 'available' and nb_configured %}
-          <button type="button" class="btn sm aiEditBtn" data-id="{{ r.id }}" data-name="{{ r.name }}" data-src="/creatives/{{ r.id }}/file">✨ Edit with AI</button>
+          <button type="button" class="btn sm aiEditBtn" data-id="{{ r.id }}" data-name="{{ r.name }}" data-src="/creatives/{{ r.id }}/thumb">✨ Edit with AI</button>
           {% endif %}
           {% if r.status in ('available', 'error') %}
           <form method="post" action="/creatives/{{ r.id }}/delete" style="display:inline;" onsubmit="return confirm('Delete this image?');"><button class="btn sm danger" type="submit">✕</button></form>
@@ -465,7 +465,19 @@
   function syncFreshen() { if (opts) opts.style.display = chk.checked ? "flex" : "none"; }
   if (chk) { chk.addEventListener("change", syncFreshen); syncFreshen(); }
   {% if processing and view == 'library' %}
-  setTimeout(function () { location.reload(); }, 5000);
+  // While jobs run, poll a tiny JSON endpoint (only when the tab is visible) and
+  // reload ONLY when something finished — never a blind reload every 5 seconds.
+  (function () {
+    var last = {{ processing }};
+    function tick() {
+      if (document.hidden) return;
+      fetch("/creatives/processing").then(function (r) { return r.json(); }).then(function (d) {
+        if (d.processing !== last) location.reload();
+      }).catch(function () {});
+    }
+    setInterval(tick, 8000);
+    document.addEventListener("visibilitychange", function () { if (!document.hidden) tick(); });
+  })();
   {% endif %}
 
   // ---- AI forms: resolution options + live cost estimate --------------------
@@ -525,7 +537,7 @@
       pool.forEach(function (b) { var i = picked.indexOf(Number(b.dataset.id)); b.classList.toggle("on", i >= 0); b.querySelector(".cz-badge").textContent = i >= 0 ? (i + 1) : ""; });
       document.getElementById("czCount").textContent = "(" + picked.length + " selected)";
       strip.innerHTML = picked.length ? picked.map(function (id, i) {
-        return '<div class="cz-slide" data-i="' + i + '"><img src="/creatives/' + id + '/file" alt=""><span class="cz-n">' + (i + 1) + (i === 0 ? " · cover" : "") + '</span>' +
+        return '<div class="cz-slide" data-i="' + i + '"><img src="/creatives/' + id + '/thumb" alt="" loading="lazy" decoding="async"><span class="cz-n">' + (i + 1) + (i === 0 ? " · cover" : "") + '</span>' +
           '<span class="cz-ctl"><button type="button" data-mv="-1" title="Move left">←</button><button type="button" data-mv="1" title="Move right">→</button><button type="button" data-rm="1" title="Remove">✕</button></span></div>';
       }).join("") : '<span class="muted" style="font-size:12px;">Nothing selected yet.</span>';
       document.getElementById("czIds").value = picked.join(",");
@@ -602,7 +614,7 @@
     if (d.kind === "carousel") {
       v.pause(); v.style.display = "none"; slides.style.display = "";
       slides.innerHTML = (d.slides || "").split(",").filter(Boolean).map(function (id, i) {
-        return '<div class="cz-slide"><img src="/creatives/' + id + '/file" alt=""><span class="cz-n">' + (i + 1) + '</span></div>';
+        return '<div class="cz-slide"><img src="/creatives/' + id + '/thumb" alt="" loading="lazy" decoding="async"><span class="cz-n">' + (i + 1) + '</span></div>';
       }).join("");
     } else {
       slides.style.display = "none"; v.style.display = "";

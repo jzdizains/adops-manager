@@ -212,7 +212,8 @@
       fetch("/alerts/ack-all", { method: "POST" }).then(refresh);
     });
     refresh();
-    setInterval(refresh, 60000);
+    setInterval(function () { if (!document.hidden) refresh(); }, 60000);
+    document.addEventListener("visibilitychange", function () { if (!document.hidden) refresh(); });
   })();
 </script>
 {% block scripts %}{% endblock %}

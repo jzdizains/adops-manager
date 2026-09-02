@@ -138,6 +138,48 @@ def creative_file(creative_id: int, db: Session = Depends(get_db)):
                         filename=row.file_name or p.name)
 
 
+THUMB_DIR = CREATIVES_DIR / "_thumbs"
+THUMB_PX = 320
+
+
+@router.get("/creatives/{creative_id}/thumb")
+def creative_thumb(creative_id: int, db: Session = Depends(get_db)):
+    """Small JPEG thumbnail for image creatives (generated once, cached on disk).
+    Every grid/strip uses this instead of the original — a 2K PNG decoded at
+    native size per tile is what made the browser tab balloon in memory."""
+    from pathlib import Path
+    row = db.get(models.Creative, creative_id)
+    if not row or row.kind != "image" or not row.file_path:
+        return RedirectResponse("/creatives?err=not+found", status_code=303)
+    src = Path(row.file_path).resolve()
+    try:
+        src.relative_to(CREATIVES_DIR.resolve())
+    except ValueError:
+        return RedirectResponse("/creatives?err=blocked", status_code=303)
+    if not src.exists():
+        return RedirectResponse("/creatives?err=file+missing", status_code=303)
+    THUMB_DIR.mkdir(parents=True, exist_ok=True)
+    out = THUMB_DIR / f"{row.id}_{(row.md5 or 'x')[:12]}.jpg"
+    if not out.exists():
+        try:
+            from PIL import Image
+            with Image.open(src) as im:
+                im = im.convert("RGB")
+                im.thumbnail((THUMB_PX, THUMB_PX))
+                im.save(out, "JPEG", quality=82, optimize=True)
+        except Exception:                      # unreadable image → serve the original
+            return FileResponse(str(src), media_type=_MIME.get(src.suffix.lower(), "image/png"))
+    return FileResponse(str(out), media_type="image/jpeg",
+                        headers={"Cache-Control": "private, max-age=86400"})
+
+
+@router.get("/creatives/processing")
+def processing_status(db: Session = Depends(get_db)):
+    """Tiny JSON the Creatives page polls instead of reloading itself every 5s."""
+    n = db.query(models.Creative).filter_by(status="processing").count()
+    return {"processing": n}
+
+
 # ============================================================================
 # IMAGES: upload + AI editing / generation (Gemini "Nano Banana")
 # ============================================================================
