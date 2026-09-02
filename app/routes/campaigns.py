@@ -754,6 +754,63 @@ def _upload_creative_to_account(db: Session, acct: models.AdAccount,
     return video_id, cover_image_id
 
 
+CAROUSEL_OBJECTIVES = ("APP_PROMOTION", "WEB_CONVERSIONS", "TRAFFIC", "LEAD_GENERATION", "REACH")
+
+
+def carousel_slides(db: Session, carousel: models.Creative) -> list[models.Creative]:
+    """The carousel's image creatives, in slide order (first = cover)."""
+    import json as _json
+    try:
+        ids = [int(x) for x in _json.loads(carousel.carousel_images or "[]")]
+    except (ValueError, TypeError):
+        ids = []
+    rows = {c.id: c for c in db.query(models.Creative).filter(models.Creative.id.in_(ids)).all()} if ids else {}
+    return [rows[i] for i in ids if i in rows]
+
+
+def _upload_image_to_account(db: Session, acct: models.AdAccount,
+                             image: models.Creative) -> tuple[str, str]:
+    """Upload an image creative into THIS account's asset library (cached so a
+    retry or a second carousel never re-uploads). Returns (image_id, image_url)."""
+    cached = (db.query(models.CreativeUpload)
+              .filter_by(creative_id=image.id, advertiser_id=acct.advertiser_id).first())
+    if cached and cached.image_id:
+        return cached.image_id, cached.image_url or ""
+    up = tiktok_api.upload_image_file(acct.access_token, acct.advertiser_id,
+                                      image.file_path, f"c{image.id}_{image.file_name}"[:100])
+    image_id = str(up.get("image_id", "") or "")
+    if not image_id:
+        raise tiktok_api.TikTokError("APP", "image upload returned no image_id")
+    image_url = str(up.get("image_url") or up.get("url") or "")
+    if cached:
+        cached.image_id, cached.image_url = image_id, image_url
+    else:
+        db.add(models.CreativeUpload(creative_id=image.id, advertiser_id=acct.advertiser_id,
+                                     image_id=image_id, image_url=image_url))
+    db.commit()
+    return image_id, image_url
+
+
+def build_carousel_ad_payload(fields: dict, adgroup_id: str, identity: dict,
+                              image_ids: list[str], music_id: str) -> dict:
+    """Standard Carousel Ad (doc "Create Carousel Ads"): ad_format CAROUSEL_ADS,
+    ordered image_ids (first = cover), ONE music_id, one caption + CTA, identity."""
+    creative: dict = {
+        "ad_name": f"{fields['template_name']} carousel"[:512],
+        "ad_format": "CAROUSEL_ADS",
+        "ad_text": fields["ad_text"] or " ",
+        "call_to_action": fields["call_to_action"],
+        "image_ids": list(image_ids),
+        "music_id": music_id,
+        "identity_id": identity["identity_id"],
+        "identity_type": identity["identity_type"],
+        "landing_page_url": fields["landing_page_url"],
+    }
+    if identity.get("identity_authorized_bc_id"):
+        creative["identity_authorized_bc_id"] = identity["identity_authorized_bc_id"]
+    return {"adgroup_id": adgroup_id, "creatives": [creative]}
+
+
 def build_library_ad_payload(fields: dict, adgroup_id: str, identity: dict,
                              video_id: str, cover_image_id: str) -> dict:
     creative: dict = {
@@ -835,6 +892,8 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
         advertiser_name=acct.advertiser_name,
         template_id=fields.get("template_id"), template_name=fields.get("template_name", ""))
     creative: models.Creative | None = None      # library creative (reserved below)
+    carousel: models.Creative | None = None      # carousel creative (reserved below)
+    carousel_image_ids: list[str] = []            # per-account uploaded slide ids
     pool_text: models.AdText | None = None
     creative_committed = False                    # True once an ad actually exists
     new_campaign_id = ""                          # campaign THIS launch created (for cleanup)
@@ -845,6 +904,22 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
     try:
         # -- config validation FIRST (free, local — before any API calls) ------
         use_library = fields.get("creative_source") == "library"
+        use_carousel = fields.get("creative_source") == "carousel"
+        if use_carousel:
+            # TikTok "Create Carousel Ads" rules for Standard Carousel Ads
+            if fields["objective_type"] not in CAROUSEL_OBJECTIVES:
+                raise ConfigError("Carousel Ads need one of these objectives: Leads, Website "
+                                  "engagements (conversions), Click (traffic), Reach or App "
+                                  f"promotion — this preset uses {fields['objective_type']}.")
+            if fields.get("smart_plus"):
+                raise ConfigError("Carousel Ads can't run on Smart+ campaigns — turn Smart+ off.")
+            if fields.get("smart_creative"):
+                raise ConfigError("Carousel Ads can't use Smart Creative (TikTok requires ACO off) — "
+                                  "turn Smart Creative off.")
+            if fields["destination_type"] not in ("website", "pixel") or not fields.get("landing_page_url"):
+                raise ConfigError("Carousel presets need a Website destination with a landing page URL.")
+            if not (fields.get("ad_text") or "").strip() and fields.get("ad_text_mode") != "pool":
+                raise ConfigError("Carousel Ads need a caption — add ad text to the preset.")
         if fields.get("smart_creative") and not use_library:
             raise ConfigError("Smart Creative pulls several videos from the Creative "
                               "library — set the creative source to “Library” to use it.")
@@ -930,10 +1005,46 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                     fields["landing_page_url"], settings["url_param"], log.source)
                 log.landing_url = fields["landing_page_url"]
 
-        # creative library: reserve the next unused creative, then upload it and
-        # the ad identity into THIS account — all before creating anything
+        # carousel: reserve the next unused carousel (or the one picked), upload
+        # every slide into THIS account, resolve the identity — before creating anything
         creative_video_id = creative_cover_id = ""
         creative_identity: dict = {}
+        if use_carousel:
+            reuse = bool(fields.get("allow_creative_reuse"))
+            if fields.get("creative_id"):
+                cid = int(fields["creative_id"])
+                carousel = db.get(models.Creative, cid) if cid > 0 else None
+                if not carousel or carousel.kind != "carousel":
+                    raise ConfigError("The picked creative isn't a carousel.")
+                if carousel.status != "available" and not (reuse and carousel.status == "used"):
+                    raise ConfigError(f"Carousel “{carousel.name}” has already launched.")
+            else:
+                carousel = (db.query(models.Creative).filter_by(status="available", kind="carousel")
+                            .order_by(models.Creative.id).first())
+                if not carousel:
+                    raise ConfigError("No available carousels — build one on the Creatives page (Carousels tab).")
+            slides = carousel_slides(db, carousel)
+            if len(slides) < 2:
+                raise ConfigError(f"Carousel “{carousel.name}” has fewer than 2 slides.")
+            if not (carousel.music_id or "").strip():
+                raise ConfigError(f"Carousel “{carousel.name}” has no soundtrack — TikTok requires one.")
+            if carousel.status == "available":
+                carousel.status = "used"
+                carousel.used_advertiser_id = acct.advertiser_id
+                carousel.used_at = datetime.now(timezone.utc)
+                db.flush()
+            if fields.get("ad_text_mode") == "pool":
+                pool_text = (db.query(models.AdText).filter_by(status="available")
+                             .order_by(models.AdText.id).first())
+                if not pool_text:
+                    raise ConfigError("The ad-text pool is empty — add texts or switch to a fixed text.")
+                pool_text.status = "used"
+                pool_text.used_advertiser_id = acct.advertiser_id
+                pool_text.used_at = datetime.now(timezone.utc)
+                db.flush()
+                fields = dict(fields); fields["ad_text"] = pool_text.text
+            carousel_image_ids = [_upload_image_to_account(db, acct, img)[0] for img in slides]
+            creative_identity = resolve_account_identity(db, acct)
         if use_library:
             settings = get_settings(db)
             reuse = bool(fields.get("allow_creative_reuse"))
@@ -1195,7 +1306,18 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                                 {**c, "ad_name": f"{c.get('ad_name', 'ad')}{suffix}"[:512]}
                                 for c in p["creatives"]]
                         return p
-                    if creative is not None:
+                    if carousel is not None:
+                        ad_payload = _uniq(build_carousel_ad_payload(
+                            fields, adgroup_id, creative_identity,
+                            carousel_image_ids, carousel.music_id))
+                        tiktok_api.create_ad(acct.access_token, acct.advertiser_id, ad_payload)
+                        creative_committed = True
+                        ad_created = True
+                        if not carousel.used_campaign_id:
+                            carousel.used_campaign_id = campaign_id
+                        if pool_text is not None and not pool_text.used_campaign_id:
+                            pool_text.used_campaign_id = campaign_id
+                    elif creative is not None:
                         ad_payload = _uniq(build_library_ad_payload(
                             fields, adgroup_id, creative_identity,
                             creative_video_id, creative_cover_id))
@@ -1271,6 +1393,7 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
         to_free = [pool_text]
         if not reuse:
             to_free.append(creative)
+            to_free.append(carousel)
         to_free.extend(sc_creatives)      # Smart Creative: free every reserved video…
         to_free.extend(sc_texts)          # …and text
         for reserved in to_free:
@@ -1381,9 +1504,11 @@ def launch_form(request: Request, db: Session = Depends(get_db)):
     sparks = db.query(models.SparkCode).filter_by(status="active").order_by(models.SparkCode.name).all()
     creatives = (db.query(models.Creative).filter_by(status="available", kind="video")
                  .order_by(models.Creative.name).all())
+    carousels = (db.query(models.Creative).filter_by(status="available", kind="carousel")
+                 .order_by(models.Creative.name).all())
     return render(request, "campaign_launch.html", {
         "templates": templates, "accounts": accounts, "sparks": sparks,
-        "creatives": creatives,
+        "creatives": creatives, "carousels": carousels,
         "err": request.query_params.get("err", ""),
         "title": "Create Campaign",
     })
@@ -1428,9 +1553,10 @@ async def launch_submit(request: Request, db: Session = Depends(get_db)):
         overrides["creative_source"] = "spark"
         overrides["ad_text_mode"] = "fixed"    # pool texts are library-only
     elif creative_id:
-        # a library pick wins over a spark preset
+        # a library pick wins over a spark preset (video or carousel, by kind)
         overrides["creative_id"] = int(creative_id)
-        overrides["creative_source"] = "library"
+        picked = db.get(models.Creative, int(creative_id))
+        overrides["creative_source"] = "carousel" if (picked and picked.kind == "carousel") else "library"
     fields = launch_mod.synthesize(template, overrides)
     batch_ref = run_batch(db, accts, fields)
     return RedirectResponse(f"/campaigns/result/{batch_ref}", status_code=303)

@@ -405,6 +405,76 @@ def upload_video_file(access_token: str, advertiser_id: str, file_path: str,
     return parsed
 
 
+def upload_image_file(access_token: str, advertiser_id: str, file_path: str,
+                      file_name: str) -> dict:
+    """Upload a local image into an ad account's asset library
+    (POST /file/image/ad/upload/, upload_type=UPLOAD_BY_FILE, image_signature=md5).
+    Returns {image_id, image_url, ...}."""
+    import hashlib
+    with open(file_path, "rb") as fh:
+        data = fh.read()
+    signature = hashlib.md5(data).hexdigest()
+    ext = file_name.rsplit(".", 1)[-1].lower() if "." in file_name else "png"
+    mime = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "webp": "image/webp"}.get(ext, "image/png")
+    try:
+        resp = _client().post(
+            f"{BASE}/file/image/ad/upload/",
+            headers={"Access-Token": access_token},
+            data={"advertiser_id": advertiser_id, "upload_type": "UPLOAD_BY_FILE",
+                  "image_signature": signature, "file_name": file_name},
+            files={"image_file": (file_name, data, mime)},
+            timeout=httpx.Timeout(120.0, connect=10.0),
+        )
+    except (httpx.HTTPError, OSError) as e:
+        raise TikTokError("HTTP", f"Network error uploading image: {e!r}")
+    parsed = _parse(resp)
+    if isinstance(parsed, list):
+        return parsed[0] if parsed else {}
+    return parsed
+
+
+# ---------------------------------------------------------------------------
+# Music (doc: "Get the music list" v1.3 — GET /file/music/get/).
+# For Carousel Ads, music_scene=CAROUSEL_ADS and search_type is REQUIRED:
+#   SEARCH_BY_KEYWORD   filtering.keyword          paged, page_size 1-200
+#   SEARCH_BY_RECOMMEND filtering.image_urls[2-35] TikTok picks music for the slides (no paging)
+#   SEARCH_BY_SOURCE    filtering.sources=["USER"] the account's uploaded music
+#   SEARCH_BY_LIKED / SEARCH_BY_HISTORY / SEARCH_BY_MUSIC_ID (filtering.music_ids)
+# Response: data.musics[] {music_id, name, author, duration, url (12h), cover_url,
+#           style, signature, sources, copyright, liked}, data.page_info
+# ---------------------------------------------------------------------------
+MUSIC_SEARCH_TYPES = ("SEARCH_BY_KEYWORD", "SEARCH_BY_RECOMMEND", "SEARCH_BY_SOURCE",
+                      "SEARCH_BY_LIKED", "SEARCH_BY_HISTORY", "SEARCH_BY_MUSIC_ID")
+
+
+def get_music(access_token: str, advertiser_id: str, search_type: str,
+              keyword: str = "", image_urls: list[str] | None = None,
+              music_ids: list[str] | None = None, sources: list[str] | None = None,
+              page: int = 1, page_size: int = 100,
+              music_scene: str = "CAROUSEL_ADS") -> dict:
+    if search_type not in MUSIC_SEARCH_TYPES:
+        raise TikTokError("APP", f"unknown music search_type {search_type}")
+    params: dict = {"advertiser_id": advertiser_id, "music_scene": music_scene,
+                    "search_type": search_type}
+    filtering: dict = {}
+    if search_type == "SEARCH_BY_KEYWORD":
+        filtering["keyword"] = keyword
+        params["page"], params["page_size"] = page, max(1, min(page_size, 200))
+    elif search_type == "SEARCH_BY_RECOMMEND":
+        filtering["image_urls"] = list(image_urls or [])
+    elif search_type == "SEARCH_BY_SOURCE":
+        filtering["sources"] = list(sources or ["USER"])
+        params["page"], params["page_size"] = page, max(1, min(page_size, 200))
+    elif search_type == "SEARCH_BY_MUSIC_ID":
+        filtering["music_ids"] = list(music_ids or [])
+    elif search_type == "SEARCH_BY_HISTORY":
+        params["page"], params["page_size"] = page, max(1, min(page_size, 200))
+    if filtering:
+        params["filtering"] = filtering
+    data = api_get("/file/music/get/", access_token, params)
+    return data if isinstance(data, dict) else {"musics": []}
+
+
 def upload_image_by_url(access_token: str, advertiser_id: str, image_url: str,
                         file_name: str = "") -> dict:
     """Upload an image (e.g. a video's poster/cover) by URL. Returns {image_id,...}."""

@@ -303,6 +303,7 @@
         <select name="creative_source" id="creativeSource">
           <option value="spark" {{ 'selected' if blob.get('creative_source', 'spark') == 'spark' }}>Spark code (organic post)</option>
           <option value="library" {{ 'selected' if blob.get('creative_source') == 'library' }}>Creative library — next unused video</option>
+          <option value="carousel" {{ 'selected' if blob.get('creative_source') == 'carousel' }}>Creative library — next unused carousel (images + music)</option>
         </select>
         <span class="hint" id="libraryHint" style="display:none;">Each launch consumes ONE unused creative from the <a href="/creatives">library</a> (unless Smart Creative is on).</span>
         <label id="smartCreativeToggle" style="display:none;align-items:center;gap:6px;font-size:12px;color:var(--text-soft);cursor:pointer;margin-top:8px;">
@@ -408,12 +409,14 @@
       smartCreativeOpts = document.getElementById("smartCreativeOpts"),
       smartCreativeChk = document.getElementById("smartCreative");
   function syncCreative() {
-    var lib = csSel.value === "library";
-    sparkField.style.display = lib ? "none" : "";
-    libraryHint.style.display = lib ? "" : "none";
-    poolModes.style.display = lib ? "" : "none";
-    // Smart Creative toggle only applies to the library source
+    var lib = csSel.value === "library", car = csSel.value === "carousel";
+    sparkField.style.display = (lib || car) ? "none" : "";
+    libraryHint.style.display = (lib || car) ? "" : "none";
+    poolModes.style.display = (lib || car) ? "" : "none";
+    // Smart Creative toggle only applies to the (video) library source — TikTok
+    // requires ACO off for Carousel Ads
     document.getElementById("smartCreativeToggle").style.display = lib ? "flex" : "none";
+    if (car) smartCreativeChk.checked = false;
     smartCreativeOpts.style.display = (lib && smartCreativeChk.checked) ? "" : "none";
   }
   csSel.addEventListener("change", syncCreative);

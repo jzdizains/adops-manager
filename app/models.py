@@ -123,6 +123,11 @@ class Creative(Base):
     used_campaign_id = Column(String, default="")
     used_at = Column(DateTime, nullable=True)
     uploaded_at = Column(DateTime, default=utcnow)
+    # --- carousel (kind="carousel"): ordered slides + the mandatory soundtrack --
+    carousel_images = Column(Text, default="")             # JSON list of image Creative ids, in order (first = cover)
+    music_id = Column(String, default="")                  # TikTok music_id (Commercial Music Library / uploaded)
+    music_name = Column(String, default="")
+    music_author = Column(String, default="")
     # --- AI image editing (Gemini / "Nano Banana") ----------------------------
     ai_prompt = Column(Text, default="")                   # prompt that produced this image
     ai_model = Column(String, default="")                  # gemini model id used
@@ -152,6 +157,8 @@ class CreativeUpload(Base):
     advertiser_id = Column(String, index=True)
     video_id = Column(String, default="")
     cover_image_id = Column(String, default="")
+    image_id = Column(String, default="")                  # image creatives: the uploaded image id
+    image_url = Column(Text, default="")                   # …and TikTok-hosted URL (music recommendations)
     created_at = Column(DateTime, default=utcnow)
 
 

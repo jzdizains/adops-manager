@@ -23,6 +23,16 @@ from sqlalchemy.orm import Session
 from . import models, pnl_data, timeutil
 
 
+def _slides(c) -> list[int]:
+    if c.kind != "carousel":
+        return []
+    import json as _json
+    try:
+        return [int(x) for x in _json.loads(c.carousel_images or "[]")]
+    except (ValueError, TypeError):
+        return []
+
+
 def rows(db: Session, start_utc: datetime, end_utc: datetime,
          today: bool = False) -> list[dict]:
     creatives = (db.query(models.Creative)
@@ -90,6 +100,7 @@ def rows(db: Session, start_utc: datetime, end_utc: datetime,
             "ctr": float(camp.ctr or 0) if camp else 0.0,
             "cpa": float(camp.cpa or 0) if camp else 0.0,
             "family": c.source_md5 or c.md5 or "",
+            "slides": _slides(c),
         })
     return out
 

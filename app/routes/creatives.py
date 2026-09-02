@@ -55,7 +55,7 @@ def creatives_page(request: Request, db: Session = Depends(get_db)):
     # ---- Performance view: which creative is making money -------------------
     from .. import creative_perf, timeutil
     view = request.query_params.get("view", "library")
-    if view not in ("library", "performance"):
+    if view not in ("library", "performance", "carousels"):
         view = "library"
     range_key = request.query_params.get("range", "7d")
     if range_key not in ("today", "yesterday", "7d", "30d", "mtd"):
@@ -81,7 +81,20 @@ def creatives_page(request: Request, db: Session = Depends(get_db)):
     nb_models = [{"id": mid, "label": lbl, "prices": prices}
                  for mid, (lbl, prices) in nanobanana.MODELS.items()]
 
+    carousels = [r for r in rows if r.kind == "carousel"]
+    import json as _json
+    slide_map = {}
+    for cz in carousels:
+        try:
+            slide_map[cz.id] = [int(x) for x in _json.loads(cz.carousel_images or "[]")]
+        except (ValueError, TypeError):
+            slide_map[cz.id] = []
+    browse = _browse_account(db)
+
     return render(request, "creatives.html", {
+        "carousels": carousels, "slide_map": slide_map,
+        "image_pool": [r for r in images if r.status == "available"],
+        "browse_account": browse,
         "rows": videos, "images": images, "accounts": accounts, "available": available,
         "nb_configured": nanobanana.configured(), "nb_models": nb_models,
         "nb_default": nanobanana.DEFAULT_MODEL, "nb_aspects": nanobanana.ASPECTS,
@@ -458,6 +471,16 @@ def delete_creative(creative_id: int, db: Session = Depends(get_db)):
     if row.status == "used":
         return RedirectResponse(
             "/creatives?err=already+launched+—+kept+for+P%26L+history", status_code=303)
+    if row.kind == "image":
+        import json as _json
+        for cz in db.query(models.Creative).filter_by(kind="carousel").all():
+            try:
+                if row.id in [int(x) for x in _json.loads(cz.carousel_images or "[]")]:
+                    return RedirectResponse(
+                        f"/creatives?err=“{row.name}”+is+a+slide+in+carousel+“{cz.name}”+—+delete+that+carousel+first",
+                        status_code=303)
+            except (ValueError, TypeError):
+                pass
     try:
         if row.file_path:
             from pathlib import Path
@@ -468,3 +491,103 @@ def delete_creative(creative_id: int, db: Session = Depends(get_db)):
     db.delete(row)
     db.commit()
     return RedirectResponse("/creatives?ok=deleted", status_code=303)
+
+
+# ============================================================================
+# CAROUSELS: ordered image slides + a TikTok soundtrack (doc: Create Carousel Ads)
+# ============================================================================
+def _browse_account(db: Session):
+    """The ad account used to browse TikTok's music library (any connected one)."""
+    return (db.query(models.AdAccount)
+            .filter(models.AdAccount.enabled == True,                 # noqa: E712
+                    models.AdAccount.access_token != "",
+                    models.AdAccount.status != "ACCESS_LOST")
+            .order_by(models.AdAccount.advertiser_name).first())
+
+
+@router.post("/creatives/carousel/save")
+async def carousel_save(request: Request, db: Session = Depends(get_db)):
+    import json as _json
+    form = await request.form()
+    name = str(form.get("name") or "").strip()[:120] or "Carousel"
+    raw_ids = [x for x in str(form.get("image_ids") or "").replace(",", " ").split() if x.isdigit()]
+    ids = [int(x) for x in raw_ids]
+    if len(ids) < 2 or len(ids) > 35:
+        return RedirectResponse("/creatives?view=carousels&err=A+carousel+needs+2+to+35+slides", status_code=303)
+    imgs = {c.id: c for c in db.query(models.Creative).filter(models.Creative.id.in_(ids)).all()}
+    bad = [i for i in ids if i not in imgs or imgs[i].kind != "image" or not imgs[i].file_path]
+    if bad:
+        return RedirectResponse("/creatives?view=carousels&err=Pick+slides+from+the+image+shelf+only", status_code=303)
+    music_id = str(form.get("music_id") or "").strip()
+    if not music_id:
+        return RedirectResponse("/creatives?view=carousels&err=Pick+a+soundtrack+—+TikTok+requires+music+on+every+carousel", status_code=303)
+    row = models.Creative(
+        name=name, file_name=name, kind="carousel", status="available",
+        carousel_images=_json.dumps(ids), music_id=music_id,
+        music_name=str(form.get("music_name") or "").strip()[:200],
+        music_author=str(form.get("music_author") or "").strip()[:200],
+        source=str(form.get("source") or "").strip()[:120],
+        md5=f"carousel:{','.join(map(str, ids))}:{music_id}",
+        source_md5=imgs[ids[0]].source_md5 or imgs[ids[0]].md5,
+        size_bytes=sum(int(imgs[i].size_bytes or 0) for i in ids))
+    db.add(row)
+    db.commit()
+    return RedirectResponse(f"/creatives?view=carousels&ok=Carousel+“{name}”+saved+({len(ids)}+slides)#cz{row.id}",
+                            status_code=303)
+
+
+@router.get("/creatives/music/search")
+def music_search(request: Request, db: Session = Depends(get_db)):
+    """JSON for the soundtrack picker. mode = keyword | recommend | uploads | liked | history.
+    'recommend' uploads the chosen slides into the browsing account first (TikTok
+    recommends music for the actual images)."""
+    from fastapi.responses import JSONResponse
+
+    from .. import tiktok_api
+    from .campaigns import _upload_image_to_account
+    mode = request.query_params.get("mode", "keyword")
+    q = request.query_params.get("q", "").strip()
+    acct = _browse_account(db)
+    if not acct:
+        return JSONResponse({"ok": False, "error": "No connected ad account to browse TikTok's music library with."})
+    try:
+        if mode == "keyword":
+            if not q:
+                return {"ok": True, "musics": []}
+            data = tiktok_api.get_music(acct.access_token, acct.advertiser_id, "SEARCH_BY_KEYWORD",
+                                        keyword=q, page_size=60)
+        elif mode == "recommend":
+            ids = [int(x) for x in request.query_params.get("images", "").replace(",", " ").split() if x.isdigit()]
+            imgs = {c.id: c for c in db.query(models.Creative).filter(models.Creative.id.in_(ids)).all()} if ids else {}
+            slides = [imgs[i] for i in ids if i in imgs and imgs[i].kind == "image" and imgs[i].file_path]
+            if len(slides) < 2:
+                return JSONResponse({"ok": False, "error": "Pick at least 2 slides first — TikTok recommends music for the actual images."})
+            urls = [_upload_image_to_account(db, acct, img)[1] for img in slides]
+            if not all(urls):
+                return JSONResponse({"ok": False, "error": "TikTok didn't return image URLs for the slides — try keyword search instead."})
+            data = tiktok_api.get_music(acct.access_token, acct.advertiser_id, "SEARCH_BY_RECOMMEND",
+                                        image_urls=urls[:35])
+        elif mode == "uploads":
+            data = tiktok_api.get_music(acct.access_token, acct.advertiser_id, "SEARCH_BY_SOURCE",
+                                        sources=["USER"], page_size=200)
+        elif mode == "liked":
+            data = tiktok_api.get_music(acct.access_token, acct.advertiser_id, "SEARCH_BY_LIKED")
+        elif mode == "history":
+            data = tiktok_api.get_music(acct.access_token, acct.advertiser_id, "SEARCH_BY_HISTORY", page_size=100)
+        else:
+            return JSONResponse({"ok": False, "error": "unknown mode"})
+    except tiktok_api.TikTokError as e:
+        return JSONResponse({"ok": False, "error": f"TikTok: code {e.code} {e.message[:200]}"})
+    musics = []
+    for m in (data.get("musics") or []):
+        if not m.get("music_id"):
+            continue
+        musics.append({
+            "music_id": str(m["music_id"]), "name": m.get("name") or m.get("file_name") or "",
+            "author": m.get("author") or "", "duration": m.get("duration"),
+            "url": m.get("url") or "", "cover_url": m.get("cover_url") or "",
+            "style": m.get("style") or "", "sources": m.get("sources") or [],
+            "liked": bool(m.get("liked")), "copyright": m.get("copyright") or "",
+        })
+    return {"ok": True, "musics": musics, "account": acct.advertiser_name or acct.advertiser_id,
+            "total": (data.get("page_info") or {}).get("total_number", len(musics))}

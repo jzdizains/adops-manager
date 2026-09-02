@@ -81,7 +81,9 @@
       <select name="creative_mode" id="slCreative">
         <option value="">— use preset default —</option>
         <option value="library" {{ 'disabled' if not creatives_available }}>
-          Library creatives — pull unused ones ({{ creatives_available }} available)</option>
+          Library videos — pull unused ones ({{ creatives_available }} available)</option>
+        <option value="carousel" {{ 'disabled' if not carousels_available }}>
+          Library carousels — pull unused ones ({{ carousels_available }} available)</option>
       </select>
       <span class="hint">Pick ONE override at most. Library mode pulls creatives from the Creatives
         page — the preset needs a landing page URL &amp; ad text.</span></label>
@@ -152,7 +154,7 @@
     if (slSpark.value) slCreative.value = "";
   });
   var slLibOpts = document.getElementById("slLibOpts");
-  function syncLibOpts() { slLibOpts.style.display = slCreative.value === "library" ? "" : "none"; }
+  function syncLibOpts() { slLibOpts.style.display = (slCreative.value === "library" || slCreative.value === "carousel") ? "" : "none"; }
   slCreative.addEventListener("change", function () {
     if (slCreative.value) slSpark.value = "";
     syncLibOpts();

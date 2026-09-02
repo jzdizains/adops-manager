@@ -8,6 +8,7 @@
   </div>
   <div class="actions">
     <a class="btn {{ 'primary' if view == 'library' }}" href="/creatives">Library</a>
+    <a class="btn {{ 'primary' if view == 'carousels' }}" href="/creatives?view=carousels">🖼 Carousels{% if carousels %} <span class="mono">{{ carousels|length }}</span>{% endif %}</a>
     <a class="btn {{ 'primary' if view == 'performance' }}" href="/creatives?view=performance">📈 Performance</a>
   </div>
 </div>
@@ -43,7 +44,7 @@
       <tbody>
       {% for r in perf %}
         {% set c = r.c %}
-        <tr class="perf-row" data-id="{{ c.id }}" data-src="/creatives/{{ c.id }}/file" data-name="{{ c.name }}"
+        <tr class="perf-row" data-id="{{ c.id }}" data-src="/creatives/{{ c.id }}/file" data-name="{{ c.name }}" data-kind="{{ c.kind or 'video' }}" data-slides="{{ r.slides|join(',') if r.slides else '' }}"
             data-spend="{{ '%.2f'|format(r.spend) }}" data-rev="{{ '%.2f'|format(r.revenue) }}" data-profit="{{ '%.2f'|format(r.profit) }}"
             data-roas="{{ '%.2f'|format(r.roas) }}" data-conv="{{ r.conversions }}" data-ctr="{{ '%.2f'|format(r.ctr) }}" data-impr="{{ r.impressions }}"
             data-campaign="{{ r.campaign_name }}" data-account="{{ r.account_name }}" data-source="{{ c.source }}"
@@ -51,7 +52,7 @@
           <td class="mono muted">{{ loop.index }}</td>
           <td>
             <div style="display:flex;align-items:center;gap:8px;min-width:0;">
-              <button type="button" class="btn sm playBtn" title="Play in the side player" style="padding:3px 8px;">▶</button>
+              <button type="button" class="btn sm playBtn" title="Show in the side panel" style="padding:3px 8px;">{{ '🖼' if c.kind == 'carousel' else '▶' }}</button>
               <div style="min-width:0;">
                 <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px;">{{ c.name }}{% if c.freshen %} <span title="variant">✨</span>{% endif %}</div>
                 <div class="muted" style="font-size:10.5px;">{% if c.source %}<span class="mono">{{ c.source }}</span>{% else %}no source{% endif %}</div>
@@ -84,6 +85,7 @@
     <div id="ppEmpty" class="empty" style="padding:40px 10px;">Pick a creative to play it here and see its numbers side by side.</div>
     <div id="ppBody" style="display:none;">
       <video id="ppVideo" controls playsinline preload="metadata" style="width:100%;max-height:52vh;border-radius:8px;background:#000;display:block;"></video>
+      <div id="ppSlides" class="cz-strip" style="display:none;"></div>
       <div style="margin-top:10px;">
         <div id="ppName" style="font-weight:650;font-size:13.5px;"></div>
         <div class="muted" style="font-size:11.5px;margin-top:2px;"><span class="dot" id="ppDot"></span> <a id="ppCampaign" href="#" style="color:inherit;"></a> · <span id="ppAccount"></span></div>
@@ -130,6 +132,89 @@
 {% else %}
 <div class="card"><div class="empty">No launched creatives in this range yet. Once library creatives launch, they show up here ranked by what they earn.</div></div>
 {% endif %}
+
+{% elif view == 'carousels' %}
+{# ============================== CAROUSELS ============================== #}
+<div class="card" id="czBuilder">
+  <div class="card-header"><span class="card-title">Build a carousel</span>
+    <span class="card-meta">2–35 slides from your image shelf, in order (first = cover) · one TikTok soundtrack (required)</span></div>
+  {% if not image_pool %}
+  <div class="empty" style="padding:22px 0;">No available images yet — upload or generate some on the <a href="/creatives#images">Library</a> first.</div>
+  {% else %}
+  <form method="post" action="/creatives/carousel/save" id="czForm">
+    <div class="form-row" style="grid-template-columns:1.2fr 1fr;gap:16px;">
+      <div>
+        <div class="field-label" style="margin-bottom:6px;">1 · Pick slides <span class="muted" id="czCount">(0 selected)</span></div>
+        <div class="cz-pool">
+          {% for r in image_pool %}
+          <button type="button" class="cz-img" data-id="{{ r.id }}" title="{{ r.name }}">
+            <img src="/creatives/{{ r.id }}/file" alt="{{ r.name }}" loading="lazy"><span class="cz-badge"></span>
+          </button>
+          {% endfor %}
+        </div>
+        <div class="field-label" style="margin:12px 0 6px;">Slide order <span class="muted">(click a slide to move it: ← → ✕)</span></div>
+        <div class="cz-strip" id="czStrip"><span class="muted" style="font-size:12px;">Nothing selected yet.</span></div>
+      </div>
+      <div>
+        <div class="field-label" style="margin-bottom:6px;">2 · Soundtrack <span class="muted">from TikTok{% if browse_account %} · via {{ browse_account.advertiser_name or browse_account.advertiser_id }}{% endif %}</span></div>
+        {% if not browse_account %}
+        <div class="hint" style="color:var(--err);">No connected ad account — connect TikTok to browse the music library.</div>
+        {% else %}
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">
+          <input type="text" id="czQ" placeholder="Search the Commercial Music Library…" style="flex:1;min-width:180px;">
+          <button type="button" class="btn" id="czSearch">Search</button>
+          <button type="button" class="btn" id="czRecommend" title="TikTok recommends music for the slides you picked">✨ For my slides</button>
+          <button type="button" class="btn sm" data-mode="uploads">My uploads</button>
+          <button type="button" class="btn sm" data-mode="liked">Liked</button>
+          <button type="button" class="btn sm" data-mode="history">Recent</button>
+        </div>
+        <div id="czMusicStatus" class="muted" style="font-size:12px;margin-bottom:6px;"></div>
+        <div class="cz-music" id="czMusic"></div>
+        <div id="czPicked" class="cz-picked" style="display:none;"></div>
+        <audio id="czAudio" preload="none"></audio>
+        {% endif %}
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px;border-top:1px solid var(--border-soft);padding-top:12px;">
+      <input type="text" name="name" placeholder="Carousel name" required style="width:240px;">
+      <input type="text" name="source" placeholder="source (static mode only)" style="width:190px;">
+      <input type="hidden" name="image_ids" id="czIds"><input type="hidden" name="music_id" id="czMusicId">
+      <input type="hidden" name="music_name" id="czMusicName"><input type="hidden" name="music_author" id="czMusicAuthor">
+      <button class="btn primary" type="submit" id="czSave" disabled>Save carousel</button>
+      <span class="hint">Caption + CTA come from the preset at launch (TikTok allows one for the whole carousel). Each carousel launches once, like videos.</span>
+    </div>
+  </form>
+  {% endif %}
+</div>
+
+<div class="card" style="padding:0;overflow:hidden;">
+  <div style="padding:12px 14px;border-bottom:1px solid var(--border-soft);font-weight:650;font-size:13px;">Your carousels <span class="muted" style="font-weight:400;">· {{ carousels|selectattr('status','equalto','available')|list|length }} available</span></div>
+  {% if carousels %}
+  <table class="data">
+    <thead><tr><th>Carousel</th><th>Slides</th><th>Soundtrack</th><th>Status</th><th>Launched in</th><th class="num">Actions</th></tr></thead>
+    <tbody>
+    {% for cz in carousels %}
+      {% set camp = camp_by_id.get(cz.used_campaign_id) if cz.used_campaign_id else none %}
+      <tr id="cz{{ cz.id }}">
+        <td style="font-weight:600;">{{ cz.name }}<div class="muted" style="font-size:10.5px;">{{ slide_map.get(cz.id, [])|length }} slides{% if cz.source %} · <span class="mono">{{ cz.source }}</span>{% endif %}</div></td>
+        <td><div class="cz-mini">{% for iid in slide_map.get(cz.id, [])[:8] %}<img src="/creatives/{{ iid }}/file" alt="" loading="lazy">{% endfor %}{% if slide_map.get(cz.id, [])|length > 8 %}<span class="muted">+{{ slide_map.get(cz.id, [])|length - 8 }}</span>{% endif %}</div></td>
+        <td style="font-size:12px;">🎵 {{ cz.music_name or cz.music_id }}{% if cz.music_author %}<div class="muted" style="font-size:10.5px;">{{ cz.music_author }}</div>{% endif %}</td>
+        <td>{% if cz.status == 'available' %}<span class="pill ok">Available</span>{% else %}<span class="pill dim">Launched</span>{% endif %}</td>
+        <td class="muted" style="font-size:12px;">
+          {% if cz.used_campaign_id %}
+            <a href="/campaigns/{{ cz.used_advertiser_id }}/{{ cz.used_campaign_id }}/edit" style="color:inherit;font-weight:600;">{{ (camp.campaign_name if camp else cz.used_campaign_id)[:30] }}</a>
+            <div style="font-size:11px;">{{ accounts.get(cz.used_advertiser_id, cz.used_advertiser_id)[:26] }}</div>
+          {% else %}—{% endif %}
+        </td>
+        <td class="num">{% if cz.status == 'available' %}<form method="post" action="/creatives/{{ cz.id }}/delete" style="display:inline;" onsubmit="return confirm('Delete this carousel? (the images stay)');"><button class="btn sm danger" type="submit">✕</button></form>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">No carousels yet — build one above.</div>
+  {% endif %}
+</div>
 
 {% else %}
 {# ============================== LIBRARY ============================== #}
@@ -430,6 +515,78 @@
   modal.addEventListener("click", function (e) { if (e.target === modal) closeModal(); });
   document.addEventListener("keydown", function (e) { if (e.key === "Escape" && modal.style.display === "flex") closeModal(); });
 
+  // ---- carousel builder ----
+  var czForm = document.getElementById("czForm");
+  if (czForm) {
+    var picked = [], music = null;
+    var pool = document.querySelectorAll(".cz-img"), strip = document.getElementById("czStrip");
+    function nameOf(id) { var b = document.querySelector('.cz-img[data-id="' + id + '"]'); return b ? b.title : id; }
+    function render() {
+      pool.forEach(function (b) { var i = picked.indexOf(Number(b.dataset.id)); b.classList.toggle("on", i >= 0); b.querySelector(".cz-badge").textContent = i >= 0 ? (i + 1) : ""; });
+      document.getElementById("czCount").textContent = "(" + picked.length + " selected)";
+      strip.innerHTML = picked.length ? picked.map(function (id, i) {
+        return '<div class="cz-slide" data-i="' + i + '"><img src="/creatives/' + id + '/file" alt=""><span class="cz-n">' + (i + 1) + (i === 0 ? " · cover" : "") + '</span>' +
+          '<span class="cz-ctl"><button type="button" data-mv="-1" title="Move left">←</button><button type="button" data-mv="1" title="Move right">→</button><button type="button" data-rm="1" title="Remove">✕</button></span></div>';
+      }).join("") : '<span class="muted" style="font-size:12px;">Nothing selected yet.</span>';
+      document.getElementById("czIds").value = picked.join(",");
+      document.getElementById("czSave").disabled = !(picked.length >= 2 && picked.length <= 35 && music);
+    }
+    pool.forEach(function (b) { b.addEventListener("click", function () {
+      var id = Number(b.dataset.id), i = picked.indexOf(id);
+      if (i >= 0) picked.splice(i, 1); else if (picked.length < 35) picked.push(id);
+      render();
+    }); });
+    strip.addEventListener("click", function (e) {
+      var btn = e.target.closest("button"); if (!btn) return;
+      var i = Number(btn.closest(".cz-slide").dataset.i);
+      if (btn.dataset.rm) picked.splice(i, 1);
+      else { var j = i + Number(btn.dataset.mv); if (j < 0 || j >= picked.length) return; var t = picked[i]; picked[i] = picked[j]; picked[j] = t; }
+      render();
+    });
+    // ---- soundtrack picker ----
+    var list = document.getElementById("czMusic"), status = document.getElementById("czMusicStatus"), audio = document.getElementById("czAudio");
+    function fmtDur(d) { d = Number(d || 0); return d ? Math.floor(d / 60) + ":" + ("0" + Math.round(d % 60)).slice(-2) : ""; }
+    function esc(t) { var d = document.createElement("div"); d.textContent = t == null ? "" : String(t); return d.innerHTML; }
+    function showPicked() {
+      var el = document.getElementById("czPicked");
+      if (!music) { el.style.display = "none"; return; }
+      el.style.display = ""; el.innerHTML = '🎵 <b>' + esc(music.name) + '</b>' + (music.author ? ' · ' + esc(music.author) : '') + (music.duration ? ' · ' + fmtDur(music.duration) : '') + ' <button type="button" class="btn sm" id="czUnpick">change</button>';
+      document.getElementById("czMusicId").value = music.music_id; document.getElementById("czMusicName").value = music.name || ""; document.getElementById("czMusicAuthor").value = music.author || "";
+      document.getElementById("czUnpick").addEventListener("click", function () { music = null; showPicked(); render(); });
+    }
+    function search(mode) {
+      var url = "/creatives/music/search?mode=" + mode;
+      if (mode === "keyword") url += "&q=" + encodeURIComponent(document.getElementById("czQ").value.trim());
+      if (mode === "recommend") { if (picked.length < 2) { status.textContent = "Pick at least 2 slides first."; return; } url += "&images=" + picked.join(","); }
+      status.textContent = mode === "recommend" ? "Uploading slides to TikTok and asking for recommendations…" : "Searching…"; list.innerHTML = "";
+      fetch(url).then(function (r) { return r.json(); }).then(function (d) {
+        if (!d.ok) { status.textContent = d.error || "Search failed"; return; }
+        status.textContent = d.musics.length ? d.musics.length + " track(s)" + (d.total && d.total > d.musics.length ? " of " + d.total : "") : "No music found — try another word.";
+        list.innerHTML = d.musics.map(function (m, i) {
+          return '<div class="cz-track" data-i="' + i + '">' + (m.cover_url ? '<img src="' + esc(m.cover_url) + '" alt="">' : '<span class="cz-cover">♪</span>') +
+            '<div style="min-width:0;flex:1;"><div class="cz-tname">' + esc(m.name) + '</div><div class="muted" style="font-size:10.5px;">' + esc(m.author || m.style || "") + (m.duration ? ' · ' + fmtDur(m.duration) : '') + (m.sources && m.sources.indexOf("USER") >= 0 ? ' · uploaded' : '') + '</div></div>' +
+            (m.url ? '<button type="button" class="btn sm" data-play="1" title="Preview">▶</button>' : '') + '<button type="button" class="btn sm primary" data-pick="1">Use</button></div>';
+        }).join("");
+        list.querySelectorAll(".cz-track").forEach(function (row) {
+          var m = d.musics[Number(row.dataset.i)];
+          var pb = row.querySelector("[data-play]");
+          if (pb) pb.addEventListener("click", function () {
+            if (audio.src === m.url && !audio.paused) { audio.pause(); pb.textContent = "▶"; return; }
+            list.querySelectorAll("[data-play]").forEach(function (x) { x.textContent = "▶"; });
+            audio.src = m.url; audio.play().then(function () { pb.textContent = "⏸"; }).catch(function () { status.textContent = "Preview couldn't play (TikTok preview links expire after 12h — search again)."; });
+          });
+          row.querySelector("[data-pick]").addEventListener("click", function () { music = m; audio.pause(); showPicked(); render(); });
+        });
+      }).catch(function () { status.textContent = "Search failed — check the connection."; });
+    }
+    audio.addEventListener("ended", function () { list.querySelectorAll("[data-play]").forEach(function (x) { x.textContent = "▶"; }); });
+    document.getElementById("czSearch").addEventListener("click", function () { search("keyword"); });
+    document.getElementById("czQ").addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); search("keyword"); } });
+    document.getElementById("czRecommend").addEventListener("click", function () { search("recommend"); });
+    document.querySelectorAll("[data-mode]").forEach(function (b) { b.addEventListener("click", function () { search(b.dataset.mode); }); });
+    render();
+  }
+
   // ---- performance: side player driven by the leaderboard ----
   var rows = Array.prototype.slice.call(document.querySelectorAll(".perf-row"));
   if (!rows.length) return;
@@ -441,7 +598,16 @@
     rows.forEach(function (x) { x.classList.remove("sel"); }); r.classList.add("sel");
     document.getElementById("ppEmpty").style.display = "none";
     document.getElementById("ppBody").style.display = "";
-    if (v.getAttribute("src") !== d.src) { v.src = d.src; v.play().catch(function () {}); }
+    var slides = document.getElementById("ppSlides");
+    if (d.kind === "carousel") {
+      v.pause(); v.style.display = "none"; slides.style.display = "";
+      slides.innerHTML = (d.slides || "").split(",").filter(Boolean).map(function (id, i) {
+        return '<div class="cz-slide"><img src="/creatives/' + id + '/file" alt=""><span class="cz-n">' + (i + 1) + '</span></div>';
+      }).join("");
+    } else {
+      slides.style.display = "none"; v.style.display = "";
+      if (v.getAttribute("src") !== d.src) { v.src = d.src; v.play().catch(function () {}); }
+    }
     document.getElementById("ppName").textContent = d.name;
     var camp = document.getElementById("ppCampaign"); camp.textContent = d.campaign; camp.href = d.edit;
     document.getElementById("ppAccount").textContent = d.account;

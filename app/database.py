@@ -74,6 +74,14 @@ schema_additions: dict[str, dict[str, str]] = {
         "ai_prompt": "TEXT DEFAULT ''",
         "ai_model": "TEXT DEFAULT ''",
         "ai_cost": "REAL DEFAULT 0",
+        "carousel_images": "TEXT DEFAULT ''",
+        "music_id": "TEXT DEFAULT ''",
+        "music_name": "TEXT DEFAULT ''",
+        "music_author": "TEXT DEFAULT ''",
+    },
+    "creative_uploads": {
+        "image_id": "TEXT DEFAULT ''",
+        "image_url": "TEXT DEFAULT ''",
     },
 }
 

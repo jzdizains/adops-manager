@@ -499,3 +499,30 @@ table.data.show-detail th.col-detail, table.data.show-detail td.col-detail { dis
 .img-ph { color: var(--text-dim); font-size: 12px; font-weight: 600; }
 .img-meta { padding: 8px; }
 .img-meta input[type="text"] { width: 100%; }
+
+/* ==========================================================================
+   Carousel builder (Creatives → Carousels)
+   ========================================================================== */
+.cz-pool { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 6px; max-height: 300px; overflow: auto; padding: 2px; }
+.cz-img { position: relative; aspect-ratio: 1 / 1; border: 2px solid var(--border); border-radius: 8px; padding: 0; overflow: hidden; background: var(--panel-hover); cursor: pointer; }
+.cz-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.cz-img:hover { border-color: var(--border-strong); }
+.cz-img.on { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.cz-badge { position: absolute; top: 4px; left: 4px; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 999px; background: var(--accent); color: #fff; font-family: var(--font-mono); font-size: 11px; font-weight: 700; display: grid; place-items: center; }
+.cz-badge:empty { display: none; }
+.cz-strip { display: flex; gap: 8px; overflow-x: auto; padding: 8px; min-height: 72px; background: var(--surface-2); border: 1px dashed var(--border); border-radius: var(--radius-sm); }
+.cz-slide { position: relative; flex: none; width: 96px; }
+.cz-slide img { width: 96px; height: 96px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); display: block; }
+.cz-slide .cz-n { position: absolute; top: 4px; left: 4px; font-family: var(--font-mono); font-size: 10px; font-weight: 700; background: rgba(0,0,0,.65); color: #fff; padding: 1px 6px; border-radius: 999px; }
+.cz-slide .cz-ctl { display: flex; gap: 2px; justify-content: center; margin-top: 4px; }
+.cz-slide .cz-ctl button { border: 1px solid var(--border); background: var(--panel); border-radius: 5px; font-size: 11px; padding: 1px 6px; cursor: pointer; color: var(--text-soft); }
+.cz-slide .cz-ctl button:hover { border-color: var(--accent); color: var(--text); }
+.cz-music { max-height: 320px; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.cz-music:empty { display: none; }
+.cz-track { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-bottom: 1px solid var(--border-soft); font-size: 12.5px; }
+.cz-track:last-child { border-bottom: none; }
+.cz-track img, .cz-track .cz-cover { width: 34px; height: 34px; border-radius: 6px; object-fit: cover; flex: none; background: var(--accent-soft); color: var(--accent-ink); display: grid; place-items: center; font-size: 14px; }
+.cz-track .cz-tname { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cz-picked { margin-top: 8px; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--accent-soft); color: var(--accent-ink); font-size: 12.5px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cz-mini { display: flex; gap: 3px; align-items: center; }
+.cz-mini img { width: 28px; height: 28px; object-fit: cover; border-radius: 4px; border: 1px solid var(--border); }

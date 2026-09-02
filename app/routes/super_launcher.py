@@ -27,6 +27,8 @@ def page(request: Request, db: Session = Depends(get_db)):
               .order_by(models.SparkCode.name).all())
     creatives_available = (db.query(models.Creative)
                            .filter_by(status="available", kind="video").count())
+    carousels_available = (db.query(models.Creative)
+                           .filter_by(status="available", kind="carousel").count())
     # preset id -> destination label, for the auto-lock UI
     dest_labels = {}
     for p in presets:
@@ -34,7 +36,7 @@ def page(request: Request, db: Session = Depends(get_db)):
         dest_labels[p.id] = launch_mod.destination_label(fields)
     return render(request, "super_launcher.html", {
         "accounts": accounts, "presets": presets, "sparks": sparks,
-        "creatives_available": creatives_available,
+        "creatives_available": creatives_available, "carousels_available": carousels_available,
         "dest_labels_json": json.dumps(dest_labels),
         "title": "Super Launcher",
     })
@@ -100,9 +102,9 @@ async def launch(request: Request, db: Session = Depends(get_db)):
         overrides["spark_code_id"] = int(spark_code_id)
         overrides["creative_source"] = "spark"
         overrides["ad_text_mode"] = "fixed"           # pool texts are library-only
-    elif creative_mode == "library":
-        # each account pulls the NEXT unused creative from the Creative library
-        overrides["creative_source"] = "library"
+    elif creative_mode in ("library", "carousel"):
+        # each account pulls the NEXT unused video / carousel from the Creative library
+        overrides["creative_source"] = creative_mode
     # duplication overrides (win over the preset's own settings)
     dup = _int("duplicates")
     if dup > 0:
@@ -114,7 +116,7 @@ async def launch(request: Request, db: Session = Depends(get_db)):
 
     use_queue = form.get("use_queue") is not None
     spark_id = int(spark_code_id) if spark_code_id else None
-    use_library = (not spark_id) and creative_mode == "library"
+    use_library = (not spark_id) and creative_mode in ("library", "carousel")
     # creative → account mapping (library only): 1 creative per N accounts
     per_creative = max(_int("accounts_per_creative", 1), 1)
     creatives_count = _int("creatives_count")         # 0 = as many as needed
@@ -153,7 +155,8 @@ async def launch(request: Request, db: Session = Depends(get_db)):
         accounts = [by_id[i] for i in ordered if i in by_id]
 
     if assign_mode:
-        avail = (db.query(models.Creative).filter_by(status="available", kind="video")
+        avail = (db.query(models.Creative)
+                 .filter_by(status="available", kind=("carousel" if creative_mode == "carousel" else "video"))
                  .order_by(models.Creative.id).all())
         import math
         needed = creatives_count if creatives_count > 0 else math.ceil(len(accounts) / per_creative)
