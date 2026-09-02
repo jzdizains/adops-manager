@@ -1,112 +1,139 @@
 {% extends "base.html" %}
 {% block content %}
+{% set range_labels = {'today': 'Today', 'yesterday': 'Yesterday', '7d': 'Last 7 days', '30d': 'Last 30 days', 'mtd': 'This month', 'custom': 'Custom range'} %}
 <div class="page-head">
   <div><h1>P&L</h1>
-    <div class="muted">Revenue (Glitchy postbacks) vs spend (TikTok), joined by source.</div></div>
+    <div class="muted">{{ range_labels.get(range_key, 'Custom range') }} · revenue from Glitchy postbacks vs TikTok spend, joined by source · {{ sources|length }} source(s)</div></div>
   <div class="actions" data-daterange></div>
 </div>
 
-<div class="grid cols-4">
-  <div class="card mb0"><div class="stat">
-    <div class="stat-icon ok">$</div>
-    <div><div class="stat-label">Revenue</div>
-      <div class="stat-value">${{ "%.2f"|format(totals.revenue) }}</div></div>
-  </div></div>
-  <div class="card mb0"><div class="stat">
-    <div class="stat-icon">−</div>
-    <div><div class="stat-label">Spend</div>
-      <div class="stat-value">${{ "%.2f"|format(totals.spend) }}</div></div>
-  </div></div>
-  <div class="card mb0"><div class="stat">
-    <div class="stat-icon {{ 'ok' if totals.profit >= 0 else 'err' }}">±</div>
-    <div><div class="stat-label">Profit</div>
-      <div class="stat-value" style="color:var(--{{ 'ok' if totals.profit >= 0 else 'err' }});">
-        ${{ "%.2f"|format(totals.profit) }}</div></div>
-  </div></div>
-  <div class="card mb0"><div class="stat">
-    <div class="stat-icon warn">×</div>
-    <div><div class="stat-label">ROAS</div>
-      <div class="stat-value">{{ "%.2f"|format(totals.roas) }}</div></div>
-  </div></div>
+{% set roas = totals.roas %}
+{% set tot_clicks = sources|sum(attribute='clicks') %}
+{% set tot_conv = sources|sum(attribute='conversions') %}
+<div class="kpis kpis-5">
+  <div class="kpi"><div class="lab">Revenue</div>
+    <div class="val"><span class="good">{{ totals.revenue|money }}</span></div>
+    <div class="sub">{{ tot_conv }} conversion(s) · {{ tot_clicks }} PB clicks</div></div>
+  <div class="kpi accent"><div class="lab">Spend</div>
+    <div class="val">{{ totals.spend|money }}</div>
+    <div class="sub">TikTok, campaigns with a source</div></div>
+  <div class="kpi"><div class="lab">Profit</div>
+    <div class="val"><span class="{{ 'good' if totals.profit >= 0 else 'bad' }}">{{ totals.profit|money }}</span></div>
+    <div class="sub">revenue − spend</div></div>
+  <div class="kpi"><div class="lab">ROAS</div>
+    <div class="val"><span class="{{ 'good' if roas >= 1 else ('bad' if roas > 0 else '') }}">{{ "%.2f"|format(roas) }}×</span></div>
+    <div class="sub">{% if roas %}{{ "%.0f"|format((roas - 1) * 100) }}% {{ 'margin' if roas >= 1 else 'loss' }} on spend{% else %}no spend yet{% endif %}</div></div>
+  <div class="kpi"><div class="lab">Winners</div>
+    {% set winners = sources|selectattr('profit', 'gt', 0)|list %}
+    <div class="val">{{ winners|length }}<span class="muted" style="font-size:13px;font-weight:500;"> / {{ sources|length }}</span></div>
+    <div class="sub">sources in profit</div></div>
 </div>
 
-<div style="height:16px;"></div>
-
-<div class="card">
-  <div class="card-header"><span class="card-title">By source</span></div>
+<div class="card" style="padding:0;overflow:hidden;">
+  <div class="card-header" style="padding:12px 14px;margin:0;border-bottom:1px solid var(--border-soft);">
+    <span class="card-title">By source</span>
+    <span class="card-meta">sorted by profit · click a source to see its campaigns</span></div>
   {% if sources %}
-  <table class="data">
-    <thead><tr><th>Source</th><th>Spark code</th><th class="num">Clicks</th>
-      <th class="num">Conv</th><th class="num">Revenue</th><th class="num">Spend</th>
-      <th class="num">Profit</th></tr></thead>
+  <div class="table-scroll">
+  <table class="data dense">
+    <thead><tr><th>Source</th>{% if has_spark %}<th>Spark code</th>{% endif %}
+      <th class="num col-money grp-start">Spend</th><th class="num col-money">Revenue</th>
+      <th class="num col-money">Profit</th><th class="num col-money grp-end">ROAS</th>
+      <th class="num">PB clicks</th><th class="num">Conv</th><th class="num">CVR</th><th class="num">Rev / conv</th></tr></thead>
     <tbody>
     {% for r in sources %}
+      {% set cr = (r.revenue / r.spend) if r.spend else 0 %}
       <tr>
-        <td class="mono"><a href="/status?source={{ r.source|urlencode }}&range={{ range_key }}&origin=all" style="color:inherit;" title="Campaigns on this source">{{ r.source }}</a></td>
-        <td class="muted">{{ r.spark }}</td>
+        <td><a href="/status?source={{ r.source|urlencode }}&range={{ range_key }}&start={{ start }}&end={{ end }}&origin=all" class="mono" style="color:inherit;font-weight:600;" title="Campaigns on this source">{{ r.source }}</a></td>
+        {% if has_spark %}<td class="muted">{{ r.spark }}</td>{% endif %}
+        <td class="num col-money grp-start">{{ r.spend|money }}</td>
+        <td class="num col-money" style="color:var(--ok);font-weight:600;">{{ r.revenue|money }}</td>
+        <td class="num col-money {{ 'pos' if r.profit >= 0 else 'neg' }}" style="font-weight:700;">{{ r.profit|money }}</td>
+        <td class="num col-money grp-end">{% if r.spend %}<span class="roas"><span class="x {{ 'g' if cr >= 1 else 'r' }}">{{ "%.2f"|format(cr) }}×</span></span>{% else %}<span class="roas"><span class="x n">—</span></span>{% endif %}</td>
         <td class="num">{{ r.clicks or "—" }}</td>
         <td class="num">{{ r.conversions or "—" }}</td>
-        <td class="num">${{ "%.2f"|format(r.revenue) }}</td>
-        <td class="num">${{ "%.2f"|format(r.spend) }}</td>
-        <td class="num" style="color:var(--{{ 'ok' if r.profit >= 0 else 'err' }});font-weight:700;">
-          ${{ "%.2f"|format(r.profit) }}</td>
+        <td class="num">{% if r.clicks %}{{ "%.1f"|format(r.conversions / r.clicks * 100) }}%{% else %}—{% endif %}</td>
+        <td class="num">{% if r.conversions %}{{ (r.revenue / r.conversions)|money }}{% else %}—{% endif %}</td>
       </tr>
     {% endfor %}
     </tbody>
+    <tfoot><tr style="font-weight:650;">
+      <td colspan="{{ 2 if has_spark else 1 }}">Totals ({{ sources|length }} sources)</td>
+      <td class="num col-money grp-start">{{ totals.spend|money }}</td>
+      <td class="num col-money">{{ totals.revenue|money }}</td>
+      <td class="num col-money {{ 'pos' if totals.profit >= 0 else 'neg' }}">{{ totals.profit|money }}</td>
+      <td class="num col-money grp-end"><span class="roas"><span class="x {{ 'g' if roas >= 1 else ('r' if roas > 0 else 'n') }}">{% if roas %}{{ "%.2f"|format(roas) }}×{% else %}—{% endif %}</span></span></td>
+      <td class="num">{{ tot_clicks }}</td><td class="num">{{ tot_conv }}</td>
+      <td class="num">{% if tot_clicks %}{{ "%.1f"|format(tot_conv / tot_clicks * 100) }}%{% else %}—{% endif %}</td>
+      <td class="num">{% if tot_conv %}{{ (totals.revenue / tot_conv)|money }}{% else %}—{% endif %}</td>
+    </tr></tfoot>
   </table>
+  </div>
   {% else %}
-  <div class="empty">No data in this range yet. Launches record spend per source;
-    revenue arrives once the postback URL (see Settings) is placed on Glitchy.</div>
+  <div class="empty">
+    <div class="empty-title">Nothing in this range yet</div>
+    Every launch records spend under its campaign name; revenue appears as soon as Glitchy calls the
+    postback URL from <a href="/settings">Settings</a>. Try a wider range above.
+  </div>
   {% endif %}
 </div>
 
+{% if has_spark and spark_rows %}
 <div class="card">
-  <div class="card-header"><span class="card-title">By spark code</span></div>
-  {% if spark_rows %}
-  <table class="data">
-    <thead><tr><th>Spark code</th><th class="num">Sources</th><th class="num">Revenue</th>
-      <th class="num">Spend</th><th class="num">Profit</th></tr></thead>
+  <div class="card-header"><span class="card-title">By spark code</span>
+    <span class="card-meta">static-source mode — one spark can carry several sources</span></div>
+  <table class="data dense">
+    <thead><tr><th>Spark code</th><th class="num">Sources</th><th class="num">Spend</th><th class="num">Revenue</th>
+      <th class="num">Profit</th></tr></thead>
     <tbody>
     {% for r in spark_rows %}
       <tr>
         <td>{{ r.spark }}</td>
         <td class="num">{{ r.sources }}</td>
-        <td class="num">${{ "%.2f"|format(r.revenue) }}</td>
-        <td class="num">${{ "%.2f"|format(r.spend) }}</td>
-        <td class="num" style="color:var(--{{ 'ok' if r.profit >= 0 else 'err' }});font-weight:700;">
-          ${{ "%.2f"|format(r.profit) }}</td>
+        <td class="num">{{ r.spend|money }}</td>
+        <td class="num">{{ r.revenue|money }}</td>
+        <td class="num {{ 'pos' if r.profit >= 0 else 'neg' }}" style="font-weight:700;">{{ r.profit|money }}</td>
       </tr>
     {% endfor %}
     </tbody>
   </table>
-  {% else %}<div class="empty">Nothing yet.</div>{% endif %}
 </div>
+{% endif %}
 
-<div class="card">
-  <div class="card-header"><span class="card-title">Recent postbacks</span></div>
+<div class="card" style="padding:0;overflow:hidden;">
+  <div class="card-header" style="padding:12px 14px;margin:0;border-bottom:1px solid var(--border-soft);">
+    <span class="card-title">Recent postbacks</span>
+    <span class="card-meta">latest {{ recent|length }} · times in {{ TZ_NAME }} · “→ pixel” = forwarded to TikTok's Events API</span></div>
   {% if recent %}
-  <table class="data">
-    <thead><tr><th>When (UTC)</th><th>Source</th><th class="num">Revenue</th>
-      <th class="num">Conv</th><th class="num">Clicks</th><th>Txn</th><th>→ Pixel</th></tr></thead>
+  <div class="table-scroll">
+  <table class="data dense">
+    <thead><tr><th>When</th><th>Source</th><th class="num">Revenue</th>
+      <th class="num">Conv</th><th class="num">Clicks</th><th>Txn</th><th>Click id</th><th>→ Pixel</th></tr></thead>
     <tbody>
     {% for e in recent %}
       <tr>
-        <td class="muted">{{ e.created_at.strftime("%m-%d %H:%M:%S") }}</td>
-        <td class="mono">{{ e.source }}</td>
-        <td class="num">${{ "%.2f"|format(e.revenue) }}</td>
+        <td style="white-space:nowrap;"><span title="{{ e.created_at|local('%Y-%m-%d %H:%M:%S') }}">{{ e.created_at|ago }}</span>
+          <div class="muted" style="font-size:10.5px;">{{ e.created_at|local }}</div></td>
+        <td class="mono">{% if e.source == '(unattributed)' %}<span class="pill err" title="The click that reached Glitchy carried no ?source= — see Settings → pass-through script">unattributed</span>{% else %}{{ e.source }}{% endif %}</td>
+        <td class="num" style="color:var(--ok);font-weight:600;">{{ e.revenue|money }}</td>
         <td class="num">{{ e.conversions }}</td>
         <td class="num">{{ e.clicks }}</td>
-        <td class="mono muted" style="font-size:11px;">{{ (e.txn or "")[:14] }}</td>
+        <td class="mono muted" style="font-size:11px;">{{ (e.txn or "—")[:14] }}</td>
+        <td class="mono muted" style="font-size:11px;" title="{{ e.ttclid }}">{% if e.ttclid %}{{ e.ttclid[:10] }}…{% else %}—{% endif %}</td>
         <td>{% if e.forward_status == 'sent' %}<span class="pill ok">sent</span>
             {% elif e.forward_status and e.forward_status.startswith('error') %}
               <span class="pill err" title="{{ e.forward_status }}">error</span>
             {% elif e.forward_status %}<span class="pill dim" title="{{ e.forward_status }}">skipped</span>
-            {% else %}<span class="muted">—</span>{% endif %}</td>
+            {% else %}<span class="muted" title="Events API forwarding is off (Settings)">—</span>{% endif %}</td>
       </tr>
     {% endfor %}
     </tbody>
   </table>
-  {% else %}<div class="empty">No postbacks received yet.</div>{% endif %}
+  </div>
+  {% else %}
+  <div class="empty"><div class="empty-title">No postbacks received yet</div>
+    Paste the postback URL from <a href="/settings">Settings</a> into Glitchy — the first conversion shows up here within seconds.</div>
+  {% endif %}
 </div>
 {% endblock %}
 {% block scripts %}<script src="/static/daterange.js?v={{ STATIC_V }}"></script>{% endblock %}

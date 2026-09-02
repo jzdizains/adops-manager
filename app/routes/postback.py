@@ -288,4 +288,6 @@ def pnl(request: Request, db: Session = Depends(get_db)):
         "title": "P&L", "range_key": range_key, "start": start or "", "end": end or "",
         "sources": sources, "spark_rows": spark_rows, "totals": totals,
         "recent": recent,
+        # spark-code roll-up only means something in static-source mode
+        "has_spark": any(r["spark"] != "—" for r in sources),
     })

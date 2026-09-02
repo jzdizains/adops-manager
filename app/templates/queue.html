@@ -2,10 +2,12 @@
 {% block content %}
 <div class="page-head">
   <div><h1>Launch Queue</h1>
-    <div class="muted">{{ pending }} pending — the background worker processes a few each sweep
-      and retries transient TikTok errors automatically.</div></div>
+    <div class="muted">{% if pending %}{{ pending }} waiting{% else %}Nothing waiting{% endif %}{% if failed_n %} · <span style="color:var(--err);">{{ failed_n }} failed</span>{% endif %} — the background worker launches a few each sweep and retries transient TikTok errors on its own.</div></div>
   <div class="actions">
-    <a class="btn" href="/automation">← Automation</a>
+    {% if failed_n %}
+    <form method="post" action="/queue/retry-failed">
+      <button class="btn" type="submit">↻ Retry all failed ({{ failed_n }})</button></form>
+    {% endif %}
     {% if pending %}
     <form method="post" action="/queue/process-now">
       <button class="btn primary" type="submit">⚡ Process a batch now</button></form>
@@ -14,26 +16,28 @@
 </div>
 
 
-<div class="card">
+<div class="card" style="padding:0;overflow:hidden;">
   {% if items %}
-  <table class="data">
-    <thead><tr><th>Queued (UTC)</th><th>Preset</th><th>Spark</th><th>Account</th>
+  <div class="table-scroll">
+  <table class="data dense">
+    <thead><tr><th>Queued</th><th>Preset</th><th>Spark</th><th>Account</th>
       <th>Status</th><th class="num">Attempts</th><th>Last error</th><th class="num"></th></tr></thead>
     <tbody>
     {% for i in items %}
       <tr>
-        <td class="muted">{{ i.created_at.strftime("%m-%d %H:%M") }}</td>
+        <td style="white-space:nowrap;"><span title="{{ i.created_at|local('%Y-%m-%d %H:%M:%S') }}">{{ i.created_at|ago }}</span>
+          <div class="muted" style="font-size:10.5px;">{{ i.created_at|local }}</div></td>
         <td>{{ templates.get(i.template_id, "?") }}</td>
         <td class="muted">{{ sparks.get(i.spark_code_id, "preset default") }}</td>
         <td class="muted">{{ names.get(i.advertiser_id) or i.advertiser_id or "auto-pick" }}</td>
         <td>
           {% if i.status == 'done' %}<span class="pill ok">done</span>
-          {% elif i.status == 'pending' %}<span class="pill dim">pending</span>
+          {% elif i.status == 'pending' %}<span class="pill dim">waiting</span>
           {% elif i.status == 'running' %}<span class="pill warn">running</span>
           {% else %}<span class="pill err">failed</span>{% endif %}
         </td>
         <td class="num">{{ i.attempts }}</td>
-        <td style="max-width:230px;"><span class="muted" style="font-size:12px;">{{ i.last_error[:80] or "—" }}</span></td>
+        <td style="max-width:300px;"><span class="muted clip" style="font-size:12px;" title="{{ i.last_error }}">{{ i.last_error or "—" }}</span></td>
         <td class="num" style="white-space:nowrap;">
           {% if i.status == 'failed' %}
           <form method="post" action="/queue/{{ i.id }}/retry" style="display:inline;">
@@ -51,8 +55,10 @@
     {% endfor %}
     </tbody>
   </table>
+  </div>
   {% else %}
-  <div class="empty">Queue is empty — tick “Launch via background queue” on the Super Launcher.</div>
+  <div class="empty"><div class="empty-title">The queue is empty</div>
+    Tick “Launch via background queue” on the <a href="/super-launcher">Super Launcher</a> and launches land here, run a few per sweep, and retry rate limits on their own.</div>
   {% endif %}
 </div>
 {% endblock %}

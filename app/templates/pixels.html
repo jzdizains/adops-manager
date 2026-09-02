@@ -2,7 +2,7 @@
 {% block content %}
 <div class="page-head">
   <div><h1>Pixels</h1>
-    <div class="muted">Your pixels across all accounts{% if synced_at %} · synced {{ synced_at }} UTC{% endif %}</div></div>
+    <div class="muted">Your pixels across all accounts{% if synced_at %} · synced {{ synced_at|ago }}{% endif %}</div></div>
   <div class="actions">
     <form method="post" action="/pixels/sync">
       <button class="btn primary" type="submit">↻ Sync pixels</button></form>

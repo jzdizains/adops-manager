@@ -130,7 +130,7 @@
 </div>
 {% endif %}
 {% else %}
-<div class="card"><div class="empty">No launched creatives in this range yet. Once library creatives launch, they show up here ranked by what they earn.</div></div>
+<div class="card"><div class="empty"><div class="empty-title">No launched creatives in this range</div>Once library videos or carousels launch, they show up here ranked by what they earn, with a player beside the numbers.</div></div>
 {% endif %}
 
 {% elif view == 'carousels' %}
@@ -215,7 +215,7 @@
     </tbody>
   </table>
   {% else %}
-  <div class="empty">No carousels yet — build one above.</div>
+  <div class="empty"><div class="empty-title">No carousels yet</div>Pick 2–35 slides above, choose a soundtrack, and save — the launchers pick the next unused one automatically.</div>
   {% endif %}
 </div>
 
@@ -339,7 +339,7 @@
   </table>
   </div>
   {% else %}
-  <div class="empty">No creatives yet — upload videos above. Launches with “Creative library” presets pull the next available one automatically.</div>
+  <div class="empty"><div class="empty-title">No videos yet</div>Upload videos above. Presets set to “Creative library” pull the next unused one automatically — each video launches exactly once.</div>
   {% endif %}
 </div>
 

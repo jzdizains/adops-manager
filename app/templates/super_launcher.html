@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="page-head">
-  <div><h1>🚀 Super Launcher</h1>
+  <div><h1>Super Launcher</h1>
     <div class="muted">Pick accounts + a preset → one click launches everywhere.</div></div>
 </div>
 
@@ -16,27 +16,51 @@
 <form method="post" action="/super-launcher/launch" id="slForm">
 <input type="hidden" name="mode" id="slMode" value="manual">
 <div class="grid cols-2">
-  <div class="card mb0">
+  <div class="card mb0" style="display:flex;flex-direction:column;">
     <div class="card-header">
-      <span class="card-title">Accounts</span>
-      <span class="card-meta">
-        <button class="btn sm" type="button" id="slAll">All</button>
+      <span class="card-title">Accounts <span class="muted" style="font-weight:500;">· {{ accounts|length }}</span></span>
+      <span class="card-meta" style="display:flex;gap:6px;align-items:center;">
+        <button class="btn sm" type="button" id="slFresh" title="Select every account that has never launched">Fresh only</button>
+        <button class="btn sm" type="button" id="slAll">All shown</button>
         <button class="btn sm" type="button" id="slNone">None</button>
-        <span id="slCount" class="muted">0 selected</span>
       </span>
     </div>
     {% if accounts %}
-    <div style="max-height:420px;overflow:auto;">
-      {% for a in accounts %}
-      <label style="display:flex;align-items:center;gap:9px;padding:7px 4px;border-bottom:1px solid var(--border-soft);cursor:pointer;">
-        <input type="checkbox" name="advertiser_ids" value="{{ a.advertiser_id }}" class="sl-acct" style="width:auto;">
-        <span>{{ a.advertiser_name or a.advertiser_id }}</span>
-        <span class="mono muted" style="margin-left:auto;font-size:11px;">{{ a.advertiser_id }}</span>
-      </label>
-      {% endfor %}
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap;">
+      <input type="text" id="slSearch" placeholder="Search account, ID or Business Center…" style="flex:1;min-width:200px;padding:7px 10px;font-size:12.5px;">
+      <div class="seg" id="slFilter">
+        <button type="button" data-f="" class="on">All</button>
+        <button type="button" data-f="fresh">Fresh <span class="n">{{ counts.fresh }}</span></button>
+        <button type="button" data-f="used">Used <span class="n">{{ counts.used }}</span></button>
+        <button type="button" data-f="active">Live <span class="n">{{ counts.active }}</span></button>
+        {% if counts.cooldown or counts.blocked %}<button type="button" data-f="cooldown">Cooling <span class="n">{{ counts.cooldown + counts.blocked }}</span></button>{% endif %}
+      </div>
     </div>
+    <div class="sl-list" id="slList">
+      {% for bc_name, members in groups.items() %}
+      <div class="sl-group" data-group>
+        <div class="sl-group-head">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+            <input type="checkbox" class="sl-group-all" style="width:auto;" title="Select every shown account in this Business Center">
+            <span>{{ bc_name }}</span></label>
+          <span class="muted" style="font-size:11px;"><span class="sl-group-n">{{ members|length }}</span> account(s)</span>
+        </div>
+        {% for a in members %}
+        {% set st = info[a.advertiser_id].state %}
+        <label class="sl-row" data-state="{{ st }}" data-search="{{ (a.advertiser_name or '')|lower }} {{ a.advertiser_id }} {{ bc_name|lower }}">
+          <input type="checkbox" name="advertiser_ids" value="{{ a.advertiser_id }}" class="sl-acct" style="width:auto;" {{ 'disabled' if st == 'blocked' }}>
+          <span class="sl-name">{{ a.advertiser_name or a.advertiser_id }}</span>
+          <span class="pill {{ {'fresh':'ok','used':'dim','active':'warn','cooldown':'err','blocked':'err'}[st] }}" title="{{ {'fresh':'Never launched — best for a first campaign','used':'Has campaigns, none active','active':'Has an active campaign right now','cooldown':'Cooling down after launch failures','blocked':'TikTok status is not ENABLE — cannot launch'}[st] }}">{{ {'fresh':'fresh','used':'used','active':'live','cooldown':'cooling','blocked':'blocked'}[st] }}</span>
+          <span class="mono muted" style="font-size:11px;">{{ a.advertiser_id }}</span>
+        </label>
+        {% endfor %}
+      </div>
+      {% endfor %}
+      <div class="empty" id="slEmpty" hidden>No accounts match.</div>
+    </div>
+    <div class="sl-foot"><span id="slCount">0 selected</span><span class="muted" id="slShown"></span></div>
     {% else %}
-    <div class="empty">No accounts — <a href="/oauth/connect">connect TikTok</a> first.</div>
+    <div class="empty"><div class="empty-title">No ad accounts yet</div><a class="btn primary" href="/oauth/connect">Connect TikTok</a></div>
     {% endif %}
   </div>
 
@@ -61,13 +85,23 @@
       <select name="template_id" id="slPreset" required>
         <option value="">— pick a preset —</option>
         {% for p in presets %}
-          <option value="{{ p.id }}">{{ p.name }}</option>
+          <option value="{{ p.id }}" {{ 'selected' if request.query_params.get('preset') == p.id|string }}>{{ p.name }}</option>
         {% endfor %}
       </select></label>
 
-    <label class="field"><span class="field-label">Destination (auto-locked by preset)</span>
-      <input type="text" id="slDest" value="—" disabled
-             style="background:var(--panel-hover);font-weight:700;"></label>
+    <div class="preset-preview" id="slPreview" hidden>
+      <div class="pp-grid">
+        <div><span class="lab">Goal</span><b data-pp="objective"></b></div>
+        <div><span class="lab">Destination</span><b data-pp="destination"></b></div>
+        <div><span class="lab">Creative</span><b data-pp="creative"></b></div>
+        <div><span class="lab">Budget</span><b data-pp="budget"></b></div>
+        <div><span class="lab">Call to action</span><b data-pp="cta"></b></div>
+        <div><span class="lab">Ad groups</span><b data-pp="duplicates"></b></div>
+      </div>
+      <div class="muted" style="font-size:11.5px;margin-top:6px;" data-pp="landing"></div>
+      <a class="muted" style="font-size:11.5px;" id="slEditPreset" href="#">Edit this preset →</a>
+    </div>
+    <input type="hidden" id="slDest" value="—">
 
     <label class="field"><span class="field-label">Spark code (optional override)</span>
       <select name="spark_code_id" id="slSpark">
@@ -118,11 +152,12 @@
       <input type="checkbox" name="use_queue" style="width:auto;">
       Launch via background queue (retries transient errors; watch progress on the Queue page)
     </label>
+    <div class="sl-summary" id="slSummary">Pick a preset and at least one account.</div>
     <button class="btn primary" type="submit" id="slLaunch"
             style="width:100%;justify-content:center;font-size:15px;padding:12px;">
-      🚀 Launch to selected accounts</button>
+      🚀 Launch</button>
     <div class="hint" style="text-align:center;margin-top:8px;">
-      Builds campaign → ad group(s) → ad per account. Failures never stop the batch.</div>
+      Builds campaign → ad group(s) → ad per account. One account failing never stops the others.</div>
   </div>
 </div>
 </form>
@@ -131,42 +166,122 @@
 {% block scripts %}
 <script>
   var DEST_LABELS = {{ dest_labels_json | safe }};
+  var PRESETS = {{ preset_info_json | safe }};
+  var CREATIVE_LABELS = { spark: "Spark code (creator post)", library: "Library video — next unused", carousel: "Library carousel — next unused" };
   var boxes = Array.prototype.slice.call(document.querySelectorAll(".sl-acct"));
-  var count = document.getElementById("slCount");
+  var rows = Array.prototype.slice.call(document.querySelectorAll(".sl-row"));
+  var count = document.getElementById("slCount"), shown = document.getElementById("slShown");
+  var search = document.getElementById("slSearch"), filterBtns = Array.prototype.slice.call(document.querySelectorAll("#slFilter button"));
+  var preset = document.getElementById("slPreset"), dest = document.getElementById("slDest");
+  var autoBox = document.getElementById("slAuto"), autoRow = document.getElementById("slAutoRow");
+  var summary = document.getElementById("slSummary"), launchBtn = document.getElementById("slLaunch");
+  var filterState = "";
+
+  function visible(r) { return !r.hidden; }
+  function applyFilter() {
+    var q = (search ? search.value : "").trim().toLowerCase(), n = 0;
+    rows.forEach(function (r) {
+      var st = r.getAttribute("data-state");
+      var okState = !filterState || st === filterState || (filterState === "cooldown" && st === "blocked");
+      var okText = !q || r.getAttribute("data-search").indexOf(q) >= 0;
+      r.hidden = !(okState && okText);
+      if (!r.hidden) n++;
+    });
+    document.querySelectorAll("[data-group]").forEach(function (g) {
+      var vis = Array.prototype.filter.call(g.querySelectorAll(".sl-row"), visible).length;
+      g.hidden = vis === 0;
+      g.querySelector(".sl-group-n").textContent = vis;
+    });
+    var empty = document.getElementById("slEmpty"); if (empty) empty.hidden = n > 0;
+    if (shown) shown.textContent = n === rows.length ? "" : "· " + n + " of " + rows.length + " shown";
+    syncCount();
+  }
   function syncCount() {
     var n = boxes.filter(function (b) { return b.checked; }).length;
     count.textContent = n + " selected";
+    document.querySelectorAll("[data-group]").forEach(function (g) {
+      var vis = Array.prototype.filter.call(g.querySelectorAll(".sl-row"), visible);
+      var on = vis.filter(function (r) { return r.querySelector("input").checked; }).length;
+      var all = g.querySelector(".sl-group-all");
+      all.checked = vis.length > 0 && on === vis.length; all.indeterminate = on > 0 && on < vis.length;
+    });
+    syncSummary();
+  }
+  function selectRows(pred) {
+    rows.forEach(function (r) { var b = r.querySelector("input"); if (!b.disabled) b.checked = pred(r); });
+    syncCount();
   }
   boxes.forEach(function (b) { b.addEventListener("change", syncCount); });
-  document.getElementById("slAll").addEventListener("click", function () {
-    boxes.forEach(function (b) { b.checked = true; }); syncCount();
+  document.querySelectorAll(".sl-group-all").forEach(function (all) {
+    all.addEventListener("change", function () {
+      var g = all.closest("[data-group]");
+      g.querySelectorAll(".sl-row").forEach(function (r) { var b = r.querySelector("input"); if (!r.hidden && !b.disabled) b.checked = all.checked; });
+      syncCount();
+    });
   });
-  document.getElementById("slNone").addEventListener("click", function () {
-    boxes.forEach(function (b) { b.checked = false; }); syncCount();
+  var elAll = document.getElementById("slAll"), elNone = document.getElementById("slNone"), elFresh = document.getElementById("slFresh");
+  if (elAll) elAll.addEventListener("click", function () { selectRows(function (r) { return !r.hidden || r.querySelector("input").checked; }); });
+  if (elNone) elNone.addEventListener("click", function () { selectRows(function () { return false; }); });
+  if (elFresh) elFresh.addEventListener("click", function () { selectRows(function (r) { return r.getAttribute("data-state") === "fresh"; }); });
+  if (search) search.addEventListener("input", applyFilter);
+  filterBtns.forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      filterBtns.forEach(function (o) { o.classList.remove("on"); }); btn.classList.add("on");
+      filterState = btn.getAttribute("data-f"); applyFilter();
+    });
   });
-  var preset = document.getElementById("slPreset"), dest = document.getElementById("slDest");
-  preset.addEventListener("change", function () {
+
+  // ---- preset preview + live summary --------------------------------------
+  var preview = document.getElementById("slPreview");
+  function syncPreset() {
+    var p = PRESETS[preset.value];
     dest.value = DEST_LABELS[preset.value] || "—";
-  });
+    if (!p) { preview.hidden = true; syncSummary(); return; }
+    preview.hidden = false;
+    var set = function (k, v) { var el = preview.querySelector('[data-pp="' + k + '"]'); if (el) el.textContent = v; };
+    set("objective", p.objective); set("destination", p.destination);
+    set("creative", CREATIVE_LABELS[p.creative] || p.creative);
+    set("budget", p.budget_mode === "CBO" && p.campaign_budget ? "$" + p.campaign_budget + "/day (CBO)" : (p.budget ? "$" + p.budget + "/day per ad group" : "—"));
+    set("cta", p.cta === "AUTO" ? "Auto (TikTok picks)" : (p.cta || "—").replace(/_/g, " ").toLowerCase());
+    set("duplicates", p.duplicates + (p.smart_plus ? " · Smart+" : ""));
+    set("landing", p.landing ? "Lands on " + p.landing : "No landing URL on this preset");
+    document.getElementById("slEditPreset").href = "/presets/" + preset.value + "/edit";
+    syncSummary();
+  }
+  function syncSummary() {
+    var name = preset.value ? preset.options[preset.selectedIndex].text : "";
+    var n = autoBox.checked ? (parseInt(document.getElementById("slAutoCount").value, 10) || 0)
+                            : boxes.filter(function (b) { return b.checked; }).length;
+    var p = PRESETS[preset.value] || {};
+    var dup = parseInt(document.querySelector('[name="duplicates"]').value, 10) || p.duplicates || 1;
+    if (!name || !n) {
+      summary.textContent = !name ? "Pick a preset" + (!n ? " and at least one account." : ".") : "Pick at least one account (or use auto-pick).";
+      summary.classList.remove("ready"); launchBtn.textContent = "🚀 Launch"; return;
+    }
+    summary.innerHTML = "<b>" + name + "</b> → <b>" + n + "</b> " + (autoBox.checked ? "auto-picked " : "") + "account(s) → <b>" + n + "</b> campaign(s)" +
+      (dup > 1 ? " with " + dup + " ad groups each" : "") + (p.budget ? " · $" + p.budget + "/day per ad group" : "");
+    summary.classList.add("ready");
+    launchBtn.textContent = "🚀 Launch to " + n + " account" + (n === 1 ? "" : "s");
+  }
+  preset.addEventListener("change", syncPreset);
+  document.querySelector('[name="duplicates"]').addEventListener("input", syncSummary);
+  var autoCount = document.getElementById("slAutoCount"); if (autoCount) autoCount.addEventListener("input", syncSummary);
+
   // spark vs library override are mutually exclusive — picking one clears the other
   var slSpark = document.getElementById("slSpark"), slCreative = document.getElementById("slCreative");
-  slSpark.addEventListener("change", function () {
-    if (slSpark.value) slCreative.value = "";
-  });
+  slSpark.addEventListener("change", function () { if (slSpark.value) slCreative.value = ""; });
   var slLibOpts = document.getElementById("slLibOpts");
   function syncLibOpts() { slLibOpts.style.display = (slCreative.value === "library" || slCreative.value === "carousel") ? "" : "none"; }
-  slCreative.addEventListener("change", function () {
-    if (slCreative.value) slSpark.value = "";
-    syncLibOpts();
-  });
+  slCreative.addEventListener("change", function () { if (slCreative.value) slSpark.value = ""; syncLibOpts(); });
   slSpark.addEventListener("change", syncLibOpts);
   syncLibOpts();
-  var autoBox = document.getElementById("slAuto"), autoRow = document.getElementById("slAutoRow");
   var modeField = document.getElementById("slMode");
   autoBox.addEventListener("change", function () {
     autoRow.style.display = autoBox.checked ? "" : "none";
     modeField.value = autoBox.checked ? "auto" : "manual";
-    boxes.forEach(function (b) { b.disabled = autoBox.checked; });
+    boxes.forEach(function (b) { if (b.closest(".sl-row").getAttribute("data-state") !== "blocked") b.disabled = autoBox.checked; });
+    document.getElementById("slList").style.opacity = autoBox.checked ? "0.45" : "";
+    syncSummary();
   });
   document.getElementById("slForm").addEventListener("submit", function (e) {
     if (!preset.value) { e.preventDefault(); alert("Pick a preset."); return; }
@@ -180,12 +295,9 @@
       label = n + " selected account(s)";
       if (!n) { e.preventDefault(); alert("Pick at least one account (or use auto-pick)."); return; }
     }
-    if (!confirm("Launch “" + preset.options[preset.selectedIndex].text + "” to " + label + "?")) {
-      e.preventDefault(); return;
-    }
-    var btn = document.getElementById("slLaunch");
-    btn.disabled = true; btn.textContent = "Launching… this can take a minute";
+    if (!confirm("Launch “" + preset.options[preset.selectedIndex].text + "” to " + label + "?")) { e.preventDefault(); return; }
+    launchBtn.disabled = true; launchBtn.textContent = "Launching… this can take a minute";
   });
-  syncCount();
+  applyFilter(); syncPreset();
 </script>
 {% endblock %}

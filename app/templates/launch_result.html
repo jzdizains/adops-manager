@@ -47,5 +47,5 @@
 </div>
 {% endfor %}
 
-{% if not logs %}<div class="card"><div class="empty">Nothing here — that ref has no launches.</div></div>{% endif %}
+{% if not logs %}<div class="card"><div class="empty"><div class="empty-title">Nothing here</div>That reference has no launches — it may have been cleared, or the link is old.<br><a class="btn" href="/status">Go to Campaigns</a></div></div>{% endif %}
 {% endblock %}

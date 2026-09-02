@@ -78,8 +78,37 @@ def accounts_page(request: Request, db: Session = Depends(get_db)):
     lost = [a for a in all_accounts if a.status == "ACCESS_LOST"]
     accounts = all_accounts if show_lost else [a for a in all_accounts
                                                if a.status != "ACCESS_LOST"]
+    # per-account facts: BC, campaigns (active/total), spend today, last launch, state
+    from sqlalchemy import case, func
+    from .. import rules as rules_mod
+    bcs = {b.bc_id: b.name for b in db.query(models.BusinessCenter).all()}
+    camp = {}
+    for aid, total, active, spend in (db.query(models.CampaignRecord.advertiser_id,
+                                               func.count(models.CampaignRecord.id),
+                                               func.sum(case((models.CampaignRecord.operation_status == "ENABLE", 1), else_=0)),
+                                               func.sum(models.CampaignRecord.spend_today))
+                                      .group_by(models.CampaignRecord.advertiser_id)):
+        camp[aid] = (int(total or 0), int(active or 0), float(spend or 0))
+    last_launch = {aid: dt for aid, dt in (db.query(models.LaunchLog.advertiser_id, func.max(models.LaunchLog.created_at))
+                                           .filter(models.LaunchLog.ok == True).group_by(models.LaunchLog.advertiser_id))}  # noqa: E712
+    facts = {}
+    for a in accounts:
+        total, active, spend = camp.get(a.advertiser_id, (0, 0, 0.0))
+        if a.status and "ENABLE" not in a.status.upper():
+            state = "blocked"
+        elif rules_mod.in_cooldown(a):
+            state = "cooldown"
+        elif active:
+            state = "active"
+        elif total or a.advertiser_id in last_launch:
+            state = "used"
+        else:
+            state = "fresh"
+        facts[a.advertiser_id] = {"bc": bcs.get(a.owner_bc_id or "", ""), "total": total, "active": active,
+                                  "spend": spend, "last": last_launch.get(a.advertiser_id), "state": state}
+    counts = {k: sum(1 for f in facts.values() if f["state"] == k) for k in ("fresh", "used", "active", "cooldown", "blocked")}
     return render(request, "accounts.html", {
-        "accounts": accounts, "title": "Ad Accounts",
+        "accounts": accounts, "title": "Ad Accounts", "facts": facts, "counts": counts,
         "lost_count": len(lost), "show_lost": show_lost,
         "ok": request.query_params.get("ok", ""), "err": request.query_params.get("err", ""),
         "synced_at": queries.get_setting(db, "accounts_synced_at", ""),

@@ -1581,9 +1581,12 @@ def launch_form(request: Request, db: Session = Depends(get_db)):
                  .order_by(models.Creative.name).all())
     carousels = (db.query(models.Creative).filter_by(status="available", kind="carousel")
                  .order_by(models.Creative.name).all())
+    from .super_launcher import preset_facts
+    bcs = {b.bc_id: b.name for b in db.query(models.BusinessCenter).all()}
     return render(request, "campaign_launch.html", {
         "templates": templates, "accounts": accounts, "sparks": sparks,
-        "creatives": creatives, "carousels": carousels,
+        "creatives": creatives, "carousels": carousels, "bcs": bcs,
+        "preset_info_json": json.dumps(preset_facts(templates)),
         "err": request.query_params.get("err", ""),
         "title": "Create Campaign",
     })

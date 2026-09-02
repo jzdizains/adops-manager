@@ -1,48 +1,61 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="page-head">
-  <div><h1>Presets</h1><div class="muted">Reusable campaign templates for the launchers.</div></div>
+  <div><h1>Presets</h1><div class="muted">A preset is everything a campaign needs — goal, budget, targeting, creative source. Launch it to any number of accounts without retyping.</div></div>
   <div class="actions"><a class="btn primary" href="/presets/new">＋ New preset</a></div>
 </div>
 
-<div class="card">
+<div class="card" style="padding:0;overflow:hidden;">
   {% if rows %}
-  <table class="data">
+  <div class="table-scroll">
+  <table class="data dense">
     <thead><tr>
-      <th>Name</th><th>Objective</th><th>Budget</th><th>Destination</th>
-      <th class="num">Dupes</th><th class="num">Actions</th>
+      <th>Preset</th><th>Goal</th><th>Destination</th><th>Creative</th><th>Budget</th><th>CTA</th>
+      <th class="num">Ad groups</th><th class="num">Launches</th><th>Last used</th><th class="num">Actions</th>
     </tr></thead>
     <tbody>
     {% for row in rows %}
-      {% set t = row.t %}{% set blob = row.blob %}
+      {% set t = row.t %}{% set blob = row.blob %}{% set u = usage.get(t.name) %}
+      {% set cs = blob.get('creative_source', 'spark') %}
       <tr>
-        <td><a href="/presets/{{ t.id }}/edit">{{ t.name }}</a></td>
-        <td class="muted">{{ t.objective_type.replace('_',' ')|title }}</td>
+        <td><a href="/presets/{{ t.id }}/edit" style="font-weight:600;color:inherit;">{{ t.name }}</a>
+          {% if blob.get('smart_plus') %} <span class="pill dim" title="Smart+ campaign">S+</span>{% endif %}
+          {% if blob.get('landing_page_url') %}<div class="muted clip" style="font-size:10.5px;max-width:260px;" title="{{ blob.get('landing_page_url') }}">{{ blob.get('landing_page_url') }}</div>{% endif %}</td>
+        <td class="muted">{{ objective_labels.get(t.objective_type, t.objective_type.replace('_',' ')|title) }}</td>
+        <td class="muted">{{ blob.get('destination_type', 'website').replace('_',' ')|title }}
+          {% if blob.get('destination_type') == 'pixel' and blob.get('optimization_event') %}
+            · {{ blob.get('optimization_event') }}{% endif %}</td>
+        <td>{% if cs == 'carousel' %}🖼 Carousel{% elif cs == 'library' %}🎬 Library video{% else %}✦ Spark code{% endif %}
+          {% if blob.get('smart_creative') %}<div class="muted" style="font-size:10.5px;">Smart Creative</div>{% endif %}</td>
         <td>
           {% if t.campaign_budget_mode == 'ABO' %}
-            <span class="pill dim">ABO</span> <span class="muted num">${{ "%.0f"|format(blob.get('adgroup_budget', 0)) }}/adgroup</span>
+            <span class="pill dim">ABO</span> <span class="muted num">${{ "%.0f"|format(blob.get('adgroup_budget', 0)) }}/ad group</span>
           {% else %}
             <span class="pill warn">CBO</span> <span class="muted num">${{ "%.0f"|format(t.campaign_budget or 0) }}{{ '/day' if t.campaign_budget_mode == 'BUDGET_MODE_DAY' else ' total' }}</span>
           {% endif %}
         </td>
-        <td class="muted">{{ blob.get('destination_type', 'website').replace('_',' ')|title }}
-          {% if blob.get('destination_type') == 'pixel' and blob.get('optimization_event') %}
-            · {{ blob.get('optimization_event') }}{% endif %}</td>
+        <td class="muted">{% if blob.get('call_to_action') == 'AUTO' %}Auto{% else %}{{ (blob.get('call_to_action') or '—').replace('_',' ')|lower|capitalize }}{% endif %}</td>
         <td class="num">{{ blob.get('cost_cap_ladder')|length if blob.get('cost_cap_ladder') else blob.get('duplicates', 1) }}</td>
+        <td class="num">{% if u %}<a href="/status?q={{ t.name|urlencode }}&origin=all" style="color:inherit;" title="{{ u.ok }} succeeded of {{ u.n }}">{{ u.ok }}{% if u.n > u.ok %}<span class="muted"> / {{ u.n }}</span>{% endif %}</a>{% else %}—{% endif %}</td>
+        <td class="muted" title="{{ u.last|local('%Y-%m-%d %H:%M') if u and u.last else '' }}">{{ u.last|ago if u and u.last else 'never' }}</td>
         <td class="num" style="white-space:nowrap;">
+          <a class="btn sm" href="/super-launcher?preset={{ t.id }}" title="Open the Super Launcher with this preset picked">🚀 Launch</a>
           <a class="btn sm" href="/presets/{{ t.id }}/edit">✎ Edit</a>
           <form method="post" action="/presets/{{ t.id }}/duplicate" style="display:inline;">
-            <button class="btn sm" type="submit">⧉ Copy</button></form>
+            <button class="btn sm" type="submit" title="Make a copy to tweak">⧉ Copy</button></form>
           <form method="post" action="/presets/{{ t.id }}/delete" style="display:inline;"
-                onsubmit="return confirm('Delete preset “{{ t.name }}”?');">
-            <button class="btn sm danger" type="submit">✕</button></form>
+                onsubmit="return confirm('Delete preset “{{ t.name }}”? Launched campaigns are not affected.');">
+            <button class="btn sm danger" type="submit" title="Delete">✕</button></form>
         </td>
       </tr>
     {% endfor %}
     </tbody>
   </table>
+  </div>
   {% else %}
-  <div class="empty">No presets yet — <a href="/presets/new">create your first</a>.</div>
+  <div class="empty"><div class="empty-title">No presets yet</div>
+    Build one once — goal, budget, targeting, creative source — then launch it to any number of accounts.
+    <br><a class="btn primary" href="/presets/new">＋ Create your first preset</a></div>
   {% endif %}
 </div>
 {% endblock %}

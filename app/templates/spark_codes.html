@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="page-head">
-  <div><h1>✦ Spark Codes</h1>
+  <div><h1>Spark Codes</h1>
     <div class="muted">Creator post auth codes — grouped by creator, ready for launches.</div></div>
   <div class="actions">
     <form method="get" action="/spark-codes" style="display:flex;gap:6px;">
@@ -114,6 +114,6 @@
 {% endif %}
 
 {% if not groups and not ungrouped %}
-<div class="card"><div class="empty">No spark codes yet — add one above or auto-grab from connected creators.</div></div>
+<div class="card"><div class="empty"><div class="empty-title">No spark codes yet</div>Add one by hand above, or “Auto-grab from creators” to pull every authorised post at once. Presets set to “Spark code” launch these.</div></div>
 {% endif %}
 {% endblock %}

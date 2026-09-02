@@ -34,12 +34,59 @@ def page(request: Request, db: Session = Depends(get_db)):
     for p in presets:
         fields = launch_mod.synthesize(p)
         dest_labels[p.id] = launch_mod.destination_label(fields)
+    # per-account facts for the picker: BC, fresh/used/active, cooldown, balance
+    from .. import rules as rules_mod
+    bcs = {b.bc_id: b for b in db.query(models.BusinessCenter).all()}
+    with_campaigns = {r[0] for r in db.query(models.CampaignRecord.advertiser_id).distinct()}
+    with_active = {r[0] for r in (db.query(models.CampaignRecord.advertiser_id)
+                                  .filter(models.CampaignRecord.operation_status == "ENABLE").distinct())}
+    ever_launched = {r[0] for r in (db.query(models.LaunchLog.advertiser_id)
+                                    .filter(models.LaunchLog.ok == True).distinct())}  # noqa: E712
+    info = {}
+    groups: dict[str, list] = {}
+    for a in accounts:
+        aid = a.advertiser_id
+        bad = bool(a.status and "ENABLE" not in a.status.upper())
+        cool = rules_mod.in_cooldown(a)
+        if bad:
+            state = "blocked"
+        elif cool:
+            state = "cooldown"
+        elif aid in with_active:
+            state = "active"
+        elif aid in with_campaigns or aid in ever_launched:
+            state = "used"
+        else:
+            state = "fresh"
+        info[aid] = {"state": state, "balance": getattr(a, "balance", None), "bc": a.owner_bc_id or ""}
+        bc = bcs.get(a.owner_bc_id or "")
+        groups.setdefault(bc.name if bc else "No Business Center", []).append(a)
+    counts = {k: sum(1 for v in info.values() if v["state"] == k) for k in ("fresh", "used", "active", "cooldown", "blocked")}
+    preset_info = preset_facts(presets)
     return render(request, "super_launcher.html", {
         "accounts": accounts, "presets": presets, "sparks": sparks,
+        "groups": groups, "info": info, "counts": counts, "preset_info_json": json.dumps(preset_info),
         "creatives_available": creatives_available, "carousels_available": carousels_available,
         "dest_labels_json": json.dumps(dest_labels),
         "title": "Super Launcher",
     })
+
+
+def preset_facts(presets) -> dict:
+    """Plain-English facts per preset for the launchers' preview panel."""
+    out = {}
+    for p in presets:
+        f = launch_mod.synthesize(p)
+        out[p.id] = {
+            "objective": dict(launch_mod.OBJECTIVE_OPTIONS).get(p.objective_type, p.objective_type),
+            "destination": launch_mod.destination_label(f), "budget": f.get("adgroup_budget") or "",
+            "budget_mode": p.campaign_budget_mode or "ABO", "campaign_budget": p.campaign_budget or 0,
+            "landing": f.get("landing_page_url") or "", "creative": f.get("creative_source") or "spark",
+            "cta": f.get("call_to_action") or "", "duplicates": int(f.get("duplicates") or 1),
+            "policy": f.get("account_policy") or "",
+            "smart_plus": bool(f.get("smart_plus")), "ad_text": (f.get("ad_text") or "")[:80],
+        }
+    return out
 
 
 def eligible_accounts(db: Session, policy: str, limit: int) -> list[models.AdAccount]:

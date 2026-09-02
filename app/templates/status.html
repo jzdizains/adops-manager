@@ -141,7 +141,7 @@
 <div class="card" style="padding:0;overflow:hidden;">
   <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;border-bottom:1px solid var(--border-soft);">
     <div style="font-size:12.5px;font-weight:650;">{{ rows|length }} campaigns
-      <span class="muted" style="font-weight:400;">· money-first view</span></div>
+      <span class="muted" style="font-weight:400;">· spend, revenue &amp; profit lead; TikTok metrics follow</span></div>
     <button type="button" class="detail-toggle" id="detailToggle">Show details <span class="chev">▾</span></button>
   </div>
   {% if rows %}
@@ -178,7 +178,7 @@
             <span class="dot {{ 'on' if r.operation_status == 'ENABLE' else 'off' }}"
                   title="{% if r.operation_status == 'ENABLE' %}Active{% elif r.operation_status == 'DISABLE' %}Paused{% else %}{{ r.operation_status or '—' }}{% endif %}"></span>
             <div style="min-width:0;">
-              <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:210px;"><a href="/campaigns/{{ r.advertiser_id }}/{{ r.campaign_id }}/edit" style="color:inherit;" title="Open campaign">{{ r.campaign_name[:46] }}</a>{% if r.is_smart_plus %} <span class="pill dim" title="Smart+ campaign — TikTok automates targeting & placements">S+</span>{% endif %}</div>
+              <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:300px;"><a href="/campaigns/{{ r.advertiser_id }}/{{ r.campaign_id }}/edit" style="color:inherit;" title="Open campaign">{{ r.campaign_name[:46] }}</a>{% if r.is_smart_plus %} <span class="pill dim" title="Smart+ campaign — TikTok automates targeting & placements">S+</span>{% endif %}</div>
               {% if r.secondary_status and r.operation_status != 'DISABLE' %}
                 <div class="muted" style="font-size:10.5px;">{{ r.secondary_status.replace('CAMPAIGN_STATUS_','').replace('_',' ')|lower }}</div>
               {% elif r.operation_status == 'DISABLE' %}
@@ -210,7 +210,7 @@
           {% if bc_by_aid.get(r.advertiser_id) %}<div class="muted" style="font-size:10.5px;">{{ bc_by_aid.get(r.advertiser_id)[:22] }}</div>{% endif %}
         </td>
         <td style="white-space:nowrap;">
-          {% if row.source %}<a href="/status?source={{ row.source|urlencode }}&range={{ range_key }}&origin={{ origin }}" class="mono" style="font-size:11px;color:inherit;" title="Only this source">{{ row.source[:20] }}</a> <a href="/pnl?range={{ range_key }}" class="muted" style="font-size:10px;" title="P&L by source">P&L</a>
+          {% if row.source %}<a href="/status?source={{ row.source|urlencode }}&range={{ range_key }}&origin={{ origin }}" class="mono" style="font-size:11px;color:inherit;" title="Only this source">{{ row.source[:34] }}</a> <a href="/pnl?range={{ range_key }}" class="muted" style="font-size:10px;" title="P&L by source">P&L</a>
             {% if row.shared_n %}<span class="muted" title="This spark/source runs on {{ row.shared_n }} campaigns — revenue & clicks are split by spend share" style="font-size:11px;"> ÷{{ row.shared_n }}</span>{% endif %}
           {% else %}<span class="muted">—</span>{% endif %}
         </td>
@@ -274,7 +274,7 @@
     Revenue · PB clicks · CVR · ROAS come from Glitchy postbacks (per source). “÷N” = that source runs on N campaigns, so its revenue and clicks are split between them by spend share; CVR stays source-level. Conv. / CPA are TikTok-pixel numbers. KPI deltas compare the same campaigns to the previous period.
   </div>
   {% else %}
-  <div class="empty">{% if origin == 'tool' %}No tool-launched campaigns yet — everything this tool launches will appear here automatically. Switch the Source filter to “All on TikTok” to see manually-created ones.{% else %}No campaigns cached yet — hit “Sync now” to pull them from every account.{% endif %}</div>
+  <div class="empty">{% if origin == 'tool' %}<div class="empty-title">No campaigns launched by this tool yet</div>Everything you launch appears here automatically. Switch “Show” to “All on TikTok” to see campaigns created elsewhere.<br><a class="btn primary" href="/super-launcher">🚀 Launch your first</a>{% else %}<div class="empty-title">No campaigns cached yet</div>Hit “Sync now” to pull them from every account.{% endif %}</div>
   {% endif %}
 </div>
 

@@ -1,14 +1,19 @@
 {% extends "base.html" %}
+{% block page_width %}narrow{% endblock %}
 {% block content %}
 <div class="page-head">
-  <div><h1>⚙ Settings</h1>
+  <div><h1>Settings</h1>
     <div class="muted">All automation knobs live here — changes apply within one sweep, no redeploy.</div></div>
 </div>
 
 
+<nav class="section-nav" aria-label="Sections">
+  <a href="#rules">Auto-pause</a><a href="#profit">Profit rules</a><a href="#lifecycle">Accounts &amp; queue</a>
+  <a href="#topups">Top-ups</a><a href="#sweeps">Sweeps</a><a href="#sources">Sources &amp; postback</a><a href="#events">Events API</a><a href="#test">Test event</a>
+</nav>
 <form method="post" action="/settings/save">
 
-<div class="card">
+<div class="card" id="rules">
   <div class="card-header"><span class="card-title">Auto-pause rules</span>
     <span class="card-meta">a rule with 0 is disabled; campaigns are paused once and logged</span></div>
   <label style="display:flex;align-items:center;gap:8px;margin-bottom:14px;font-weight:700;">
@@ -30,7 +35,7 @@
   </div>
 </div>
 
-<div class="card">
+<div class="card" id="profit">
   <div class="card-header"><span class="card-title">Profit-based rules</span>
     <span class="card-meta">P&L truth from Glitchy postbacks — the smarter kill switch</span></div>
   <label style="display:flex;align-items:center;gap:8px;margin-bottom:14px;font-weight:700;">
@@ -51,7 +56,7 @@
   </div>
 </div>
 
-<div class="card">
+<div class="card" id="lifecycle">
   <div class="card-header"><span class="card-title">Account lifecycle & launch queue</span></div>
   <div class="form-row-3">
     <label class="field"><span class="field-label">Cooldown after N launch failures</span>
@@ -73,7 +78,7 @@
   </div>
 </div>
 
-<div class="card">
+<div class="card" id="topups">
   <div class="card-header"><span class="card-title">Auto top-ups</span>
     <span class="card-meta">moves money from each BC wallet to its own accounts via the TikTok API</span></div>
   <label style="display:flex;align-items:center;gap:8px;margin-bottom:14px;font-weight:700;">
@@ -91,7 +96,7 @@
   </div>
 </div>
 
-<div class="card">
+<div class="card" id="sweeps">
   <div class="card-header"><span class="card-title">Sweeps</span>
     <span class="card-meta">how often the background worker checks</span></div>
   <div class="form-row">
@@ -104,7 +109,7 @@
   </div>
 </div>
 
-<div class="card">
+<div class="card" id="sources">
   <div class="card-header"><span class="card-title">Sources & postback</span>
     <span class="card-meta">how each click tells Glitchy which campaign it came from</span></div>
   <div class="form-row">
@@ -155,7 +160,7 @@
   </details>
 </div>
 
-<div class="card">
+<div class="card" id="events">
   <div class="card-header"><span class="card-title">TikTok Events API — server-side pixel events</span>
     <span class="card-meta">forward each postback to the pixel so TikTok optimizes on REAL purchases</span></div>
   <label style="display:flex;align-items:center;gap:8px;font-weight:600;font-size:13px;
@@ -187,10 +192,13 @@
       test events don't feed optimization. Delivery status per postback shows on the P&amp;L page.</span></label>
 </div>
 
-<button class="btn primary" type="submit" style="font-size:15px;padding:10px 22px;">Save settings</button>
+<div class="save-bar">
+  <button class="btn primary" type="submit" style="font-size:14px;padding:10px 22px;">Save settings</button>
+  <span class="hint" style="margin:0;">Changes apply within one sweep — no redeploy.</span>
+</div>
 </form>
 
-<div class="card" style="margin-top:14px;">
+<div class="card" id="test" style="margin-top:14px;">
   <div class="card-header"><span class="card-title">Send a test event to the pixel</span>
     <span class="card-meta">fires one {{ s.events_event_name }} right now — nothing is stored, P&amp;L stays clean</span></div>
   <form method="post" action="/settings/test-event">

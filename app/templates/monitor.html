@@ -225,18 +225,19 @@
           <td>
             {% if c.operation_status == 'ENABLE' %}<span class="pill ok">▶</span>
             {% else %}<span class="pill warn">⏸</span>{% endif %}
-            {{ c.campaign_name[:30] }}
+            <a href="/campaigns/{{ a.advertiser_id }}/{{ c.campaign_id }}/edit" style="color:inherit;" title="Open campaign">{{ c.campaign_name[:34] }}</a>
           </td>
           <td class="num">{{ metric(c.spend_today, money=True) }}</td>
           <td class="num">{{ metric(c.cpm, money=True) }}</td>
           <td class="num">{{ metric(c.cpc, money=True) }}</td>
           <td class="num">{{ metric(c.cpa, money=True) }}</td>
           <td class="num">{{ metric(c.ctr, pct=True) }}</td>
-          <td class="muted" style="white-space:nowrap;">{{ c.launched_at.strftime("%m-%d %H:%M") if c.launched_at else "—" }}</td>
+          <td class="muted" style="white-space:nowrap;" title="{{ c.launched_at|local('%Y-%m-%d %H:%M') if c.launched_at else '' }}">{{ c.launched_at|ago if c.launched_at else "—" }}</td>
           {% if loop.first %}
-          <td rowspan="{{ r.campaigns|length }}" style="max-width:190px;">
+          <td rowspan="{{ r.campaigns|length }}" style="max-width:260px;">
             {% if r.err %}
-              <span style="color:var(--err);font-size:12px;" title="{{ r.err.error_technical }}">{{ r.err.error_message[:70] }}</span>
+              <span class="clip" style="color:var(--err);font-size:12px;" title="{{ r.err.error_message }} — {{ r.err.error_technical }}">{{ r.err.error_message }}</span>
+              {% if r.err.batch_ref %}<a href="/campaigns/result/{{ r.err.batch_ref }}" style="font-size:11px;">see result →</a>{% endif %}
             {% else %}<span class="muted">—</span>{% endif %}</td>
           {% endif %}
         </tr>
@@ -254,7 +255,7 @@
           <td class="num {%- if a.balance is not none and a.balance < 50 %}" style="color:var(--err);font-weight:700;{% endif %}">
             ${{ "%.2f"|format(a.balance or 0) }}</td>
           <td colspan="7" class="muted">no campaigns</td>
-          <td>{% if r.err %}<span style="color:var(--err);font-size:12px;" title="{{ r.err.error_technical }}">{{ r.err.error_message[:70] }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+          <td style="max-width:260px;">{% if r.err %}<span class="clip" style="color:var(--err);font-size:12px;" title="{{ r.err.error_message }} — {{ r.err.error_technical }}">{{ r.err.error_message }}</span>{% if r.err.batch_ref %}<a href="/campaigns/result/{{ r.err.batch_ref }}" style="font-size:11px;">see result →</a>{% endif %}{% else %}<span class="muted">—</span>{% endif %}</td>
         </tr>
       {% endif %}
     {% endfor %}
@@ -274,7 +275,7 @@
 {% endif %}
 
 {% if not groups and not orphans %}
-<div class="card"><div class="empty">Nothing to monitor yet — connect TikTok and sync.</div></div>
+<div class="card"><div class="empty"><div class="empty-title">Nothing to monitor yet</div>Connect TikTok and sync — every Business Center, account and campaign shows up here.<br><a class="btn primary" href="/oauth/connect">Connect TikTok</a></div></div>
 {% endif %}
 {% endif %}{# end accounts view #}
 {% endblock %}

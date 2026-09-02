@@ -1,33 +1,35 @@
 {% extends "base.html" %}
+{% block page_width %}narrow{% endblock %}
 {% block content %}
 <div class="page-head">
-  <div><h1>＋ Create Campaign</h1>
-    <div class="muted">Launch a preset to a single account (use the Super Launcher for many).</div></div>
+  <div><h1>Create Campaign</h1>
+    <div class="muted">Launch one preset to one or a few accounts. For dozens at once use the <a href="/super-launcher">Super Launcher</a>.</div></div>
 </div>
 
-<div class="card" style="max-width:560px;">
-  <form method="post" action="/campaigns/launch">
+<form method="post" action="/campaigns/launch" id="clForm">
+<div class="grid cols-2" style="align-items:start;">
+  <div class="card mb0">
+    <div class="card-header"><span class="card-title">1 · What to launch</span></div>
     <label class="field"><span class="field-label">Preset</span>
-      <select name="template_id" required>
+      <select name="template_id" id="clPreset" required>
         <option value="">— pick a preset —</option>
         {% for p in templates %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}
-      </select></label>
-    <div class="field"><span class="field-label">Ad account(s)</span>
-      <div id="acctRows">
-        <div class="acct-row" style="display:flex;gap:6px;margin-bottom:6px;">
-          <select name="advertiser_ids" required style="flex:1;">
-            <option value="">— pick an account —</option>
-            {% for a in accounts %}
-              <option value="{{ a.advertiser_id }}">{{ a.advertiser_name or a.advertiser_id }}</option>
-            {% endfor %}
-          </select>
-          <button class="btn sm acct-del" type="button" title="Remove this account"
-                  style="display:none;">✕</button>
-        </div>
+      </select>
+      {% if not templates %}<span class="hint">No presets yet — <a href="/presets/new">create one</a> first.</span>{% endif %}</label>
+
+    <div class="preset-preview" id="clPreview" hidden>
+      <div class="pp-grid">
+        <div><span class="lab">Goal</span><b data-pp="objective"></b></div>
+        <div><span class="lab">Destination</span><b data-pp="destination"></b></div>
+        <div><span class="lab">Creative</span><b data-pp="creative"></b></div>
+        <div><span class="lab">Budget</span><b data-pp="budget"></b></div>
+        <div><span class="lab">Call to action</span><b data-pp="cta"></b></div>
+        <div><span class="lab">Ad groups</span><b data-pp="duplicates"></b></div>
       </div>
-      <button class="btn sm" type="button" id="acctAdd">＋ Add another account</button>
-      <span class="hint">Each selected account gets its own campaign from this preset, in one batch.</span>
+      <div class="muted" style="font-size:11.5px;margin-top:6px;" data-pp="landing"></div>
+      <a class="muted" style="font-size:11.5px;" id="clEditPreset" href="#">Edit this preset →</a>
     </div>
+
     <label class="field"><span class="field-label">Spark code (optional override)</span>
       <select name="spark_code_id" id="sparkSel">
         <option value="">— use preset default —</option>
@@ -45,41 +47,97 @@
           <option value="{{ c.id }}">🖼 {{ c.name }} (carousel · {{ c.music_name or 'music' }})</option>
         {% endfor %}
       </select>
-      <span class="hint">Pick ONE override at most: a spark code launches a spark ad; a library creative launches a video ad under the account’s TikTok identity (the preset needs a landing page URL &amp; ad text). Only unused creatives are listed — each launches once.</span></label>
-    <button class="btn primary" type="submit">Launch campaign</button>
-  </form>
+      <span class="hint">Pick at most one override. A spark code launches a creator post; a library creative launches a video or carousel ad under the account's own identity. Only unused creatives are listed — each launches once.</span></label>
+  </div>
+
+  <div class="card mb0">
+    <div class="card-header"><span class="card-title">2 · Where</span>
+      <span class="card-meta">{{ accounts|length }} account(s) available</span></div>
+    <div class="field"><span class="field-label">Ad account(s)</span>
+      <div id="acctRows">
+        <div class="acct-row" style="display:flex;gap:6px;margin-bottom:6px;">
+          <select name="advertiser_ids" required style="flex:1;">
+            <option value="">— pick an account —</option>
+            {% for a in accounts %}
+              <option value="{{ a.advertiser_id }}">{{ a.advertiser_name or a.advertiser_id }}{% if bcs.get(a.owner_bc_id) %} · {{ bcs.get(a.owner_bc_id) }}{% endif %}</option>
+            {% endfor %}
+          </select>
+          <button class="btn sm acct-del" type="button" title="Remove this account" style="display:none;">✕</button>
+        </div>
+      </div>
+      <button class="btn sm" type="button" id="acctAdd">＋ Add another account</button>
+      <div class="hint">Each account gets its own campaign from this preset, launched together as one batch.</div>
+    </div>
+    <div class="sl-summary" id="clSummary" style="margin-top:14px;">Pick a preset and an account.</div>
+    <button class="btn primary" type="submit" id="clLaunch" style="width:100%;justify-content:center;font-size:14px;padding:11px;">🚀 Launch</button>
+    <div class="hint" style="text-align:center;margin-top:8px;">You'll see a result page with every account's outcome and a retry button.</div>
+  </div>
 </div>
+</form>
+{% endblock %}
+{% block scripts %}
 <script>
+  var PRESETS = {{ preset_info_json | safe }};
+  var CREATIVE_LABELS = { spark: "Spark code (creator post)", library: "Library video — next unused", carousel: "Library carousel — next unused" };
+  var sparkSel = document.getElementById("sparkSel"), creativeSel = document.getElementById("creativeSel");
+  var preset = document.getElementById("clPreset"), preview = document.getElementById("clPreview");
+  var summary = document.getElementById("clSummary"), launchBtn = document.getElementById("clLaunch");
+  var rows = document.getElementById("acctRows");
   // the two overrides are mutually exclusive — picking one clears the other
-  var sparkSel = document.getElementById("sparkSel"),
-      creativeSel = document.getElementById("creativeSel");
-  sparkSel.addEventListener("change", function () {
-    if (sparkSel.value) creativeSel.value = "";
-  });
-  creativeSel.addEventListener("change", function () {
-    if (creativeSel.value) sparkSel.value = "";
-  });
+  sparkSel.addEventListener("change", function () { if (sparkSel.value) creativeSel.value = ""; syncSummary(); });
+  creativeSel.addEventListener("change", function () { if (creativeSel.value) sparkSel.value = ""; syncSummary(); });
+
+  function syncPreset() {
+    var p = PRESETS[preset.value];
+    if (!p) { preview.hidden = true; syncSummary(); return; }
+    preview.hidden = false;
+    var set = function (k, v) { var el = preview.querySelector('[data-pp="' + k + '"]'); if (el) el.textContent = v; };
+    set("objective", p.objective); set("destination", p.destination);
+    set("creative", CREATIVE_LABELS[p.creative] || p.creative);
+    set("budget", p.budget_mode === "CBO" && p.campaign_budget ? "$" + p.campaign_budget + "/day (CBO)" : (p.budget ? "$" + p.budget + "/day per ad group" : "—"));
+    set("cta", p.cta === "AUTO" ? "Auto (TikTok picks)" : (p.cta || "—").replace(/_/g, " ").toLowerCase());
+    set("duplicates", p.duplicates + (p.smart_plus ? " · Smart+" : ""));
+    set("landing", p.landing ? "Lands on " + p.landing : "No landing URL on this preset");
+    document.getElementById("clEditPreset").href = "/presets/" + preset.value + "/edit";
+    syncSummary();
+  }
+  function pickedAccounts() {
+    var seen = {}, n = 0;
+    rows.querySelectorAll("select").forEach(function (s) { if (s.value && !seen[s.value]) { seen[s.value] = 1; n++; } });
+    return n;
+  }
+  function syncSummary() {
+    var name = preset.value ? preset.options[preset.selectedIndex].text : "", n = pickedAccounts();
+    if (!name || !n) {
+      summary.textContent = !name ? "Pick a preset" + (!n ? " and an account." : ".") : "Pick an account.";
+      summary.classList.remove("ready"); launchBtn.textContent = "🚀 Launch"; return;
+    }
+    var over = sparkSel.value ? " · spark override" : (creativeSel.value ? " · creative override" : "");
+    summary.innerHTML = "<b>" + name + "</b> → <b>" + n + "</b> account" + (n === 1 ? "" : "s") + " → <b>" + n + "</b> campaign" + (n === 1 ? "" : "s") + over;
+    summary.classList.add("ready");
+    launchBtn.textContent = "🚀 Launch " + n + " campaign" + (n === 1 ? "" : "s");
+  }
+  preset.addEventListener("change", syncPreset);
+  rows.addEventListener("change", syncSummary);
 
   // ＋ adds another account row (clone of the first); ✕ removes its row
-  var rows = document.getElementById("acctRows");
   function syncDelButtons() {
     var all = rows.querySelectorAll(".acct-row");
-    for (var i = 0; i < all.length; i++) {
-      all[i].querySelector(".acct-del").style.display = all.length > 1 ? "" : "none";
-    }
+    for (var i = 0; i < all.length; i++) all[i].querySelector(".acct-del").style.display = all.length > 1 ? "" : "none";
   }
   document.getElementById("acctAdd").addEventListener("click", function () {
-    var first = rows.querySelector(".acct-row");
-    var clone = first.cloneNode(true);
+    var first = rows.querySelector(".acct-row"), clone = first.cloneNode(true);
     clone.querySelector("select").value = "";
-    rows.appendChild(clone);
-    syncDelButtons();
+    rows.appendChild(clone); syncDelButtons(); syncSummary();
   });
   rows.addEventListener("click", function (e) {
     var b = e.target.closest(".acct-del");
     if (!b) return;
-    b.closest(".acct-row").remove();
-    syncDelButtons();
+    b.closest(".acct-row").remove(); syncDelButtons(); syncSummary();
   });
+  document.getElementById("clForm").addEventListener("submit", function () {
+    launchBtn.disabled = true; launchBtn.textContent = "Launching… this can take a minute";
+  });
+  syncPreset();
 </script>
 {% endblock %}

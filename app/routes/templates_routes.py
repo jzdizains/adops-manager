@@ -166,7 +166,18 @@ def list_presets(request: Request, db: Session = Depends(get_db)):
         except json.JSONDecodeError:
             blob = {}
         rows.append({"t": p, "blob": blob})
-    return render(request, "templates_list.html", {"rows": rows, "title": "Presets"})
+    # how much each preset has been used (launch logs carry the preset name)
+    from sqlalchemy import case, func
+    usage = {}
+    for name, n, ok, last in (db.query(models.LaunchLog.template_name, func.count(models.LaunchLog.id),
+                                       # sum of a Boolean column comes back as a bool — count via CASE instead
+                                       func.sum(case((models.LaunchLog.ok == True, 1), else_=0)),  # noqa: E712
+                                       func.max(models.LaunchLog.created_at))
+                              .group_by(models.LaunchLog.template_name)):
+        usage[name] = {"n": int(n or 0), "ok": int(ok or 0), "last": last}
+    from .launch import OBJECTIVE_OPTIONS
+    return render(request, "templates_list.html", {"rows": rows, "title": "Presets", "usage": usage,
+                                                   "objective_labels": dict(OBJECTIVE_OPTIONS)})
 
 
 @router.get("/presets/new")

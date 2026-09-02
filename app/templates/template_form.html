@@ -1,15 +1,20 @@
 {% extends "base.html" %}
+{% block page_width %}narrow{% endblock %}
 {% block content %}
 <div class="page-head">
   <h1>{{ "Edit preset" if t else "New preset" }}</h1>
   <div class="actions"><a class="btn" href="/presets">← Back to presets</a></div>
 </div>
 
+<nav class="section-nav" aria-label="Sections">
+  <a href="#campaign">Campaign</a><a href="#location">Destination</a><a href="#placements">Placements</a><a href="#targeting">Targeting</a>
+  <a href="#budget">Budget</a><a href="#bidding">Bidding</a><a href="#advanced">Advanced</a><a href="#ad">Ad &amp; creative</a>
+</nav>
 <form method="post" action="/presets/save">
   {% if t %}<input type="hidden" name="preset_id" value="{{ t.id }}">{% endif %}
 
   {# ============================ CAMPAIGN ================================= #}
-  <div class="card">
+  <div class="card" id="campaign">
     <div class="card-header"><span class="card-title">Campaign</span>
       <span class="card-meta">objective · budget · special categories</span></div>
     <div class="form-row-3">
@@ -55,7 +60,7 @@
   </div>
 
   {# ==================== OPTIMIZATION LOCATION & PIXEL ===================== #}
-  <div class="card">
+  <div class="card" id="location">
     <div class="card-header"><span class="card-title">Optimization location</span>
       <span class="card-meta">where conversions happen — pixel + event per preset</span></div>
     <div class="form-row">
@@ -117,7 +122,7 @@
   </div>
 
   {# ============================= PLACEMENTS =============================== #}
-  <div class="card">
+  <div class="card" id="placements">
     <div class="card-header"><span class="card-title">Placements</span></div>
     <div class="form-row">
       <label class="field"><span class="field-label">TikTok Search</span>
@@ -135,7 +140,7 @@
   </div>
 
   {# ============================== TARGETING =============================== #}
-  <div class="card">
+  <div class="card" id="targeting">
     <div class="card-header"><span class="card-title">Targeting</span>
       <span class="card-meta">empty fields = TikTok defaults (broadest)</span></div>
     <div class="form-row-3">
@@ -191,7 +196,7 @@
   </div>
 
   {# ========================== BUDGET & SCHEDULE =========================== #}
-  <div class="card">
+  <div class="card" id="budget">
     <div class="card-header"><span class="card-title">Budget & schedule</span></div>
     <div class="form-row-3">
       <label class="field"><span class="field-label">Ad group budget ($, ABO)</span>
@@ -221,7 +226,7 @@
   </div>
 
   {# ======================== BIDDING & OPTIMIZATION ======================== #}
-  <div class="card">
+  <div class="card" id="bidding">
     <div class="card-header"><span class="card-title">Bidding & optimization</span></div>
     {# API-level optimization goal is auto-derived from the Optimization goal above
        (matches how Ads Manager sets it) — kept hidden so it stays in sync. #}
@@ -268,7 +273,7 @@
   </div>
 
   {# ========================== ADVANCED SETTINGS =========================== #}
-  <div class="card">
+  <div class="card" id="advanced">
     <div class="card-header"><span class="card-title">Advanced settings</span>
       <span class="card-meta">comments · downloads · sharing</span></div>
     <div class="form-row-3">
@@ -295,7 +300,7 @@
   </div>
 
   {# ================================== AD ================================== #}
-  <div class="card">
+  <div class="card" id="ad">
     <div class="card-header"><span class="card-title">Ad</span>
       <span class="card-meta">spark creative · text · CTA</span></div>
     <div class="form-row-3">
@@ -360,9 +365,10 @@
     </div>
   </div>
 
-  <div style="display:flex;gap:8px;">
-    <button class="btn primary" type="submit">Save preset</button>
+  <div class="save-bar">
+    <button class="btn primary" type="submit" style="font-size:14px;padding:10px 22px;">Save preset</button>
     <a class="btn" href="/presets">Cancel</a>
+    <span class="hint" style="margin:0;">Presets are reusable — launches never change them.</span>
   </div>
 </form>
 {% endblock %}

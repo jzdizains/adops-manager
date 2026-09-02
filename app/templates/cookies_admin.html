@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% block page_width %}narrow{% endblock %}
 {% block content %}
 <div class="page-head">
   <div><h1>TikTok Cookies</h1>
@@ -9,7 +10,7 @@
 <div class="grid cols-2">
   <div class="card mb0">
     <div class="card-header"><span class="card-title">Health</span>
-      {% if saved_at %}<span class="card-meta">saved {{ saved_at[:16].replace('T',' ') }} UTC</span>{% endif %}</div>
+      {% if saved_at %}<span class="card-meta">saved {{ saved_at|ago }}</span>{% endif %}</div>
     <div class="stat">
       {% if health.verdict == 'live' %}
         <div class="stat-icon ok">✓</div>

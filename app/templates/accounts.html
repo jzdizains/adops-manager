@@ -3,7 +3,7 @@
 <div class="page-head">
   <div>
     <h1>Ad Accounts</h1>
-    <div class="muted">{{ accounts|length }} accounts under your Business Center{% if synced_at %} · last synced {{ synced_at[:16].replace('T',' ') }} UTC{% endif %}
+    <div class="muted">{{ accounts|length }} accounts across your Business Centers{% if synced_at %} · synced {{ synced_at|ago }}{% endif %}
       {% if lost_count and not show_lost %}
         · <a href="/accounts?show_lost=1">{{ lost_count }} lost-access hidden — show</a>
       {% elif show_lost and lost_count %}
@@ -17,7 +17,6 @@
     <a class="btn primary" href="/oauth/connect">Connect TikTok</a>
   </div>
 </div>
-
 
 {% if not accounts %}
 <div class="card">
@@ -39,26 +38,52 @@
 </div>
 {% endif %}
 
-<div class="card">
-  {% if accounts %}
-  <table class="data">
+{% if accounts %}
+<div class="kpis kpis-5">
+  <div class="kpi"><div class="lab">Fresh</div><div class="val"><span class="good">{{ counts.fresh }}</span></div><div class="sub">never launched — ready for a first campaign</div></div>
+  <div class="kpi"><div class="lab">Live</div><div class="val">{{ counts.active }}</div><div class="sub">with an active campaign</div></div>
+  <div class="kpi"><div class="lab">Used</div><div class="val">{{ counts.used }}</div><div class="sub">launched before, nothing active</div></div>
+  <div class="kpi"><div class="lab">Cooling down</div><div class="val">{% if counts.cooldown %}<span class="bad">{{ counts.cooldown }}</span>{% else %}0{% endif %}</div><div class="sub">after repeated launch failures</div></div>
+  <div class="kpi"><div class="lab">Blocked</div><div class="val">{% if counts.blocked %}<span class="bad">{{ counts.blocked }}</span>{% else %}0{% endif %}</div><div class="sub">TikTok status not ENABLE</div></div>
+</div>
+
+<div class="card" style="padding:0;overflow:hidden;">
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:12px 14px;border-bottom:1px solid var(--border-soft);">
+    <input type="text" id="acSearch" placeholder="Search account, ID or Business Center…" style="flex:1;min-width:220px;max-width:380px;padding:7px 10px;font-size:12.5px;">
+    <div class="seg" id="acFilter">
+      <button type="button" data-f="" class="on">All</button>
+      <button type="button" data-f="fresh">Fresh</button>
+      <button type="button" data-f="active">Live</button>
+      <button type="button" data-f="used">Used</button>
+      <button type="button" data-f="cooldown">Cooling / blocked</button>
+      <button type="button" data-f="off">Switched off</button>
+    </div>
+    <span class="muted" id="acShown" style="font-size:12px;margin-left:auto;"></span>
+  </div>
+  <div class="table-scroll">
+  <table class="data dense" id="acTable">
     <thead><tr>
-      <th>Account</th><th>Advertiser ID</th><th>Status</th><th>Currency</th>
-      <th>Token expires</th><th class="num">Enabled</th>
+      <th>Account</th><th>Business Center</th><th>State</th><th>TikTok status</th>
+      <th class="num">Campaigns</th><th class="num">Spend today</th><th>Last launch</th><th>Token expires</th><th class="num">Use in launches</th>
     </tr></thead>
     <tbody>
     {% for a in accounts %}
-      <tr>
-        <td><a href="https://ads.tiktok.com/i18n/dashboard?aadvid={{ a.advertiser_id }}"
-               target="_blank" rel="noopener" style="color:inherit;"
-               title="Open in TikTok Ads Manager">{{ a.advertiser_name or a.advertiser_id }} ↗</a></td>
-        <td class="mono">{{ a.advertiser_id }}</td>
-        <td>{% if a.status %}<span class="pill {{ 'ok' if 'ENABLE' in a.status or a.status == 'STATUS_ENABLE' else 'warn' }}">{{ a.status.replace('STATUS_','') }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
-        <td>{{ a.currency }}</td>
-        <td class="muted">{{ a.token_expires_at.strftime("%Y-%m-%d %H:%M") if a.token_expires_at else "—" }}</td>
+      {% set f = facts[a.advertiser_id] %}
+      <tr data-state="{{ f.state }}" data-enabled="{{ '1' if a.enabled else '0' }}" data-search="{{ (a.advertiser_name or '')|lower }} {{ a.advertiser_id }} {{ f.bc|lower }}">
+        <td>
+          <div style="font-weight:600;"><a href="https://ads.tiktok.com/i18n/dashboard?aadvid={{ a.advertiser_id }}" target="_blank" rel="noopener" style="color:inherit;" title="Open in TikTok Ads Manager">{{ a.advertiser_name or a.advertiser_id }} ↗</a></div>
+          <div class="mono muted" style="font-size:10.5px;">{{ a.advertiser_id }} · {{ a.currency or 'USD' }}</div>
+        </td>
+        <td class="muted">{{ f.bc or '—' }}</td>
+        <td><span class="pill {{ {'fresh':'ok','used':'dim','active':'warn','cooldown':'err','blocked':'err'}[f.state] }}">{{ {'fresh':'fresh','used':'used','active':'live','cooldown':'cooling','blocked':'blocked'}[f.state] }}</span></td>
+        <td>{% if a.status %}<span class="pill {{ 'ok' if 'ENABLE' in a.status else 'warn' }}">{{ a.status.replace('STATUS_','').replace('_',' ')|lower }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td class="num">{% if f.total %}<a href="/status?account={{ a.advertiser_id }}&origin=all" style="color:inherit;" title="See this account's campaigns">{{ f.active }} live / {{ f.total }}</a>{% else %}—{% endif %}</td>
+        <td class="num">{% if f.spend %}{{ f.spend|money }}{% else %}—{% endif %}</td>
+        <td class="muted" title="{{ f.last|local('%Y-%m-%d %H:%M') if f.last else '' }}">{{ f.last|ago if f.last else 'never' }}</td>
+        <td class="muted">{{ a.token_expires_at|local('%Y-%m-%d') if a.token_expires_at else "—" }}</td>
         <td class="num">
           <form method="post" action="/accounts/{{ a.advertiser_id }}/toggle">
-            <button class="btn sm {{ '' if a.enabled else 'danger' }}" type="submit">
+            <button class="btn sm {{ '' if a.enabled else 'danger' }}" type="submit" title="{{ 'Included in launchers and sync — click to switch off' if a.enabled else 'Skipped by launchers — click to switch on' }}">
               {{ "on" if a.enabled else "off" }}</button>
           </form>
         </td>
@@ -66,10 +91,35 @@
     {% endfor %}
     </tbody>
   </table>
-  {% else %}
-  <div class="empty">
-    No accounts yet. <a href="/oauth/connect">Connect TikTok</a> to pull every advertiser under your Business Center.
   </div>
-  {% endif %}
+  <div class="empty" id="acEmpty" hidden>No accounts match.</div>
 </div>
+{% else %}
+<div class="card"><div class="empty"><div class="empty-title">No accounts yet</div>
+  Connect TikTok to pull every advertiser under your Business Centers.<br><a class="btn primary" href="/oauth/connect">Connect TikTok</a></div></div>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  var rows = Array.prototype.slice.call(document.querySelectorAll("#acTable tbody tr"));
+  if (!rows.length) return;
+  var search = document.getElementById("acSearch"), shown = document.getElementById("acShown"), empty = document.getElementById("acEmpty");
+  var btns = Array.prototype.slice.call(document.querySelectorAll("#acFilter button")), f = "";
+  function apply() {
+    var q = search.value.trim().toLowerCase(), n = 0;
+    rows.forEach(function (r) {
+      var st = r.getAttribute("data-state");
+      var okF = !f || (f === "off" ? r.getAttribute("data-enabled") === "0" : (st === f || (f === "cooldown" && st === "blocked")));
+      var okQ = !q || r.getAttribute("data-search").indexOf(q) >= 0;
+      r.hidden = !(okF && okQ); if (!r.hidden) n++;
+    });
+    shown.textContent = n === rows.length ? rows.length + " accounts" : n + " of " + rows.length + " accounts";
+    empty.hidden = n > 0;
+  }
+  search.addEventListener("input", apply);
+  btns.forEach(function (b) { b.addEventListener("click", function () { btns.forEach(function (o) { o.classList.remove("on"); }); b.classList.add("on"); f = b.getAttribute("data-f"); apply(); }); });
+  apply();
+})();
+</script>
 {% endblock %}

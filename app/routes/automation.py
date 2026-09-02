@@ -29,8 +29,15 @@ def automation_page(request: Request, db: Session = Depends(get_db)):
     still_paused_count = sum(
         1 for a in actions
         if a.action == "pause" and a.ok and a.campaign_id in paused_ids)
+    from ..settings_store import get_settings
+    from .. import timeutil
+    s = get_settings(db)
+    day_start = timeutil.local_midnight_utc(0).replace(tzinfo=None)
+    today_pauses = sum(1 for a in actions if a.action == "pause" and a.created_at and a.created_at >= day_start)
+    today_topups = sum(float(t.amount or 0) for t in topups if t.ok and t.created_at and t.created_at >= day_start)
     return render(request, "automation.html", {
-        "title": "Automation", "actions": actions, "topups": topups,
+        "title": "Automation", "actions": actions, "topups": topups, "s": s,
+        "today_pauses": today_pauses, "today_topups": today_topups,
         "paused_ids": paused_ids, "names": names,
         "still_paused_count": still_paused_count,
         "ok": request.query_params.get("ok", ""), "err": request.query_params.get("err", ""),
@@ -104,9 +111,10 @@ def queue_page(request: Request, db: Session = Depends(get_db)):
     sparks = {s.id: (s.name or s.code[:14]) for s in db.query(models.SparkCode).all()}
     names = {a.advertiser_id: a.advertiser_name for a in db.query(models.AdAccount).all()}
     pending = sum(1 for i in items if i.status == "pending")
+    failed_n = sum(1 for i in items if i.status == "failed")
     return render(request, "queue.html", {
         "title": "Launch Queue", "items": items, "templates": templates,
-        "sparks": sparks, "names": names, "pending": pending,
+        "sparks": sparks, "names": names, "pending": pending, "failed_n": failed_n,
         "ok": request.query_params.get("ok", ""),
     })
 
@@ -119,6 +127,18 @@ def retry_item(item_id: int, db: Session = Depends(get_db)):
         item.attempts = 0
         db.commit()
     return RedirectResponse("/queue?ok=requeued", status_code=303)
+
+
+@router.post("/queue/retry-failed")
+def retry_failed(db: Session = Depends(get_db)):
+    """Re-queue every failed item at once (each gets a fresh attempt counter)."""
+    n = 0
+    for item in db.query(models.LaunchQueueItem).filter_by(status="failed"):
+        item.status = "pending"
+        item.attempts = 0
+        n += 1
+    db.commit()
+    return RedirectResponse(f"/queue?ok={n}+launch(es)+re-queued", status_code=303)
 
 
 @router.post("/queue/{item_id}/cancel")

@@ -1,9 +1,10 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="page-head">
-  <div><h1>⚑ Automation</h1>
-    <div class="muted">Everything the rule engine did — with undo.</div></div>
+  <div><h1>Automation</h1>
+    <div class="muted">What the rule engine is watching, and everything it did — every pause can be undone here.</div></div>
   <div class="actions">
+    <a class="btn" href="/settings#rules">⚙ Edit rules</a>
     <a class="btn" href="/queue">Launch queue →</a>
     {% if still_paused_count %}
     <form method="post" action="/automation/resume-all"
@@ -14,20 +15,49 @@
   </div>
 </div>
 
+{# ---- what is switched on right now ---------------------------------------- #}
+{% macro state(on) -%}{% if on %}<span class="pill ok">ON</span>{% else %}<span class="pill dim">off</span>{% endif %}{%- endmacro %}
+<div class="kpis kpis-5">
+  <div class="kpi"><div class="lab">Metric rules</div>
+    <div class="val" style="font-family:var(--font-sans);font-size:15px;">{{ state(s.rules_enabled) }}</div>
+    <div class="sub">{% if s.rules_enabled %}
+      {%- set parts = [] -%}
+      {%- if s.rule_cpm_max %}{% set _ = parts.append('CPM > $' ~ s.rule_cpm_max) %}{% endif -%}
+      {%- if s.rule_cpc_max %}{% set _ = parts.append('CPC > $' ~ s.rule_cpc_max) %}{% endif -%}
+      {%- if s.rule_cpa_max %}{% set _ = parts.append('CPA > $' ~ s.rule_cpa_max) %}{% endif -%}
+      {{ parts|join(' · ') if parts else 'no thresholds set' }} · after ${{ s.rule_min_spend }} spend
+      {% else %}pause on CPM / CPC / CPA — off{% endif %}</div></div>
+  <div class="kpi"><div class="lab">Profit rules</div>
+    <div class="val" style="font-family:var(--font-sans);font-size:15px;">{{ state(s.profit_rules_enabled) }}</div>
+    <div class="sub">{% if s.profit_rules_enabled %}pause a source losing > ${{ s.profit_loss_limit }} today (after ${{ s.profit_min_spend }} spend){% else %}pause sources losing money — off{% endif %}</div></div>
+  <div class="kpi"><div class="lab">Auto top-ups</div>
+    <div class="val" style="font-family:var(--font-sans);font-size:15px;">{{ state(s.topup_enabled) }}</div>
+    <div class="sub">{% if s.topup_enabled %}+${{ s.topup_amount }} when balance < ${{ s.topup_below }} · cap ${{ s.topup_daily_cap }}/day{% else %}wallet → account transfers — off{% endif %}</div></div>
+  <div class="kpi accent"><div class="lab">Paused today</div>
+    <div class="val">{{ today_pauses }}</div>
+    <div class="sub">{{ still_paused_count }} still paused by rules</div></div>
+  <div class="kpi"><div class="lab">Topped up today</div>
+    <div class="val">{{ today_topups|money(0) }}</div>
+    <div class="sub">sweep every {{ s.sweep_interval_sec }}s</div></div>
+</div>
 
-<div class="card">
-  <div class="card-header"><span class="card-title">Rule actions</span>
-    <span class="card-meta">latest 200</span></div>
+<div class="card" style="padding:0;overflow:hidden;">
+  <div class="card-header" style="padding:12px 14px;margin:0;border-bottom:1px solid var(--border-soft);">
+    <span class="card-title">Rule actions</span>
+    <span class="card-meta">latest {{ actions|length }} · times in {{ TZ_NAME }}</span></div>
   {% if actions %}
-  <table class="data">
-    <thead><tr><th>When (UTC)</th><th>Campaign</th><th>Account</th><th>Rule</th>
+  <div class="table-scroll">
+  <table class="data dense">
+    <thead><tr><th>When</th><th>Campaign</th><th>Account</th><th>Rule</th>
       <th class="num">Value</th><th>Result</th><th class="num"></th></tr></thead>
     <tbody>
     {% for a in actions %}
       <tr>
-        <td class="muted" style="white-space:nowrap;">{{ a.created_at.strftime("%m-%d %H:%M") }}</td>
-        <td>{{ a.campaign_name[:34] or a.campaign_id }}</td>
-        <td class="muted">{{ (names.get(a.advertiser_id) or a.advertiser_id)[:22] }}</td>
+        <td style="white-space:nowrap;"><span title="{{ a.created_at|local('%Y-%m-%d %H:%M:%S') }}">{{ a.created_at|ago }}</span>
+          <div class="muted" style="font-size:10.5px;">{{ a.created_at|local }}</div></td>
+        <td><a href="/campaigns/{{ a.advertiser_id }}/{{ a.campaign_id }}/edit" style="color:inherit;font-weight:600;">{{ a.campaign_name[:40] or a.campaign_id }}</a>
+          {% if a.campaign_id in paused_ids %}<div style="font-size:10.5px;color:var(--warn);">still paused</div>{% endif %}</td>
+        <td class="muted">{{ (names.get(a.advertiser_id) or a.advertiser_id)[:26] }}</td>
         <td><span class="pill {{ 'warn' if a.action == 'pause' else 'dim' }}">{{ a.action }}</span>
           <span class="mono" style="font-size:11px;">{{ a.rule }}</span></td>
         <td class="num">{{ "%.2f"|format(a.metric_value) if a.metric_value else "—" }}</td>
@@ -38,7 +68,7 @@
           <form method="post" action="/automation/resume" style="display:inline;">
             <input type="hidden" name="advertiser_id" value="{{ a.advertiser_id }}">
             <input type="hidden" name="campaign_id" value="{{ a.campaign_id }}">
-            <button class="btn sm" type="submit">▶ Resume</button>
+            <button class="btn sm" type="submit" title="Undo — resume this campaign on TikTok">▶ Resume</button>
           </form>
           {% endif %}
         </td>
@@ -46,28 +76,33 @@
     {% endfor %}
     </tbody>
   </table>
-  {% else %}<div class="empty">No rule actions yet — the engine logs every pause here.</div>{% endif %}
+  </div>
+  {% else %}<div class="empty"><div class="empty-title">No rule actions yet</div>
+    {% if s.rules_enabled or s.profit_rules_enabled %}The engine checks every sweep; a pause will be logged here with an undo button.{% else %}Rules are switched off — turn them on in <a href="/settings#rules">Settings → Auto-pause rules</a> and every pause will be logged here with an undo button.{% endif %}</div>{% endif %}
 </div>
 
-<div class="card">
-  <div class="card-header"><span class="card-title">Auto top-ups</span></div>
+<div class="card" style="padding:0;overflow:hidden;">
+  <div class="card-header" style="padding:12px 14px;margin:0;border-bottom:1px solid var(--border-soft);">
+    <span class="card-title">Auto top-ups</span><span class="card-meta">wallet → ad account transfers made by the tool</span></div>
   {% if topups %}
-  <table class="data">
-    <thead><tr><th>When (UTC)</th><th>Account</th><th>BC</th>
+  <table class="data dense">
+    <thead><tr><th>When</th><th>Account</th><th>BC</th>
       <th class="num">Amount</th><th>Result</th></tr></thead>
     <tbody>
     {% for t in topups %}
       <tr>
-        <td class="muted">{{ t.created_at.strftime("%m-%d %H:%M") }}</td>
+        <td style="white-space:nowrap;"><span title="{{ t.created_at|local('%Y-%m-%d %H:%M:%S') }}">{{ t.created_at|ago }}</span>
+          <div class="muted" style="font-size:10.5px;">{{ t.created_at|local }}</div></td>
         <td>{{ (names.get(t.advertiser_id) or t.advertiser_id)[:26] }}</td>
         <td class="mono muted">{{ t.bc_id }}</td>
-        <td class="num">${{ "%.2f"|format(t.amount) }}</td>
+        <td class="num">{{ t.amount|money }}</td>
         <td>{% if t.ok %}<span class="pill ok">sent</span>{% else %}
             <span class="pill err" title="{{ t.detail }}">failed</span>{% endif %}</td>
       </tr>
     {% endfor %}
     </tbody>
   </table>
-  {% else %}<div class="empty">No auto top-ups yet.</div>{% endif %}
+  {% else %}<div class="empty"><div class="empty-title">No auto top-ups yet</div>
+    {% if s.topup_enabled %}Transfers happen on the slow sweep when an account drops below ${{ s.topup_below }}.{% else %}Switch them on in <a href="/settings#topups">Settings → Auto top-ups</a>.{% endif %}</div>{% endif %}
 </div>
 {% endblock %}
