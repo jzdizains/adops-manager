@@ -356,23 +356,6 @@ textarea { font-family: var(--font-mono); font-size: 12px; min-height: 120px; }
 .attn-row .attn-dot { font-size: 10px; flex: none; }
 .attn-row a.btn { margin-left: auto; flex: none; }
 
-/* ==========================================================================
-   Nav brand mark
-   ========================================================================== */
-.brand {
-  display: flex; align-items: center; gap: 8px; margin-right: 12px;
-  font-weight: 700; letter-spacing: -0.02em; font-size: 14px;
-  color: var(--text); text-decoration: none; flex: none;
-}
-.brand:hover { text-decoration: none; }
-.brand .glyph {
-  width: 24px; height: 24px; border-radius: 7px;
-  background: linear-gradient(135deg, var(--accent), #7d7df0);
-  display: grid; place-items: center; color: #fff;
-  font-family: var(--font-mono); font-weight: 700; font-size: 13px;
-  box-shadow: 0 2px 8px rgba(91, 91, 214, 0.35);
-}
-@media (max-width: 720px) { .brand .brand-name { display: none; } }
 
 /* ==========================================================================
    KPI deltas + sparkline (Campaigns console)

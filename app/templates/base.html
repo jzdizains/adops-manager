@@ -21,7 +21,6 @@
 <body>
 <nav class="topnav">
   <div class="topnav-inner">
-    <a href="/" class="brand" title="AdOps Manager"><span class="glyph">A</span><span class="brand-name">AdOps</span></a>
     {% set launch_active = active.startswith('/super-launcher') or active.startswith('/campaigns') or active.startswith('/queue') %}
     {% set assets_active = active.startswith('/presets') or active.startswith('/spark-codes') or active.startswith('/creatives') or active.startswith('/ad-texts') or active.startswith('/pixels') or active.startswith('/accounts') or active.startswith('/instant-pages') or active.startswith('/lead-forms') or active.startswith('/locations') %}
     <div class="nav-links">
@@ -74,7 +73,7 @@
         </div>
       </div>
       <div class="avatar-menu">
-        <button class="avatar" type="button" id="avatarBtn">Op</button>
+        <button class="avatar" type="button" id="avatarBtn" title="Account"><img src="/static/g-logo.png?v={{ STATIC_V }}" alt="Account menu"></button>
         <div class="avatar-dropdown" id="avatarDropdown">
           <a href="/settings">⚙ Settings</a>
           <a href="/cookies">TikTok Cookies</a>
