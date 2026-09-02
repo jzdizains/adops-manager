@@ -475,13 +475,44 @@ def get_music(access_token: str, advertiser_id: str, search_type: str,
     return data if isinstance(data, dict) else {"musics": []}
 
 
-def create_cta_portfolio(access_token: str, advertiser_id: str, ctas: list[str]) -> str:
-    """Dynamic CTA: a portfolio of candidate CTAs TikTok optimises between
-    (POST /creative/portfolio/create/, creative_portfolio_type=CTA,
-    portfolio_content[].call_to_action). Returns creative_portfolio_id."""
+def recommend_ctas(access_token: str, advertiser_id: str, objective_type: str,
+                   promotion_type: str, landing_page_url: str = "", ad_texts: list[str] | None = None,
+                   optimization_goal: str = "", region_codes: list[str] | None = None,
+                   language: str = "en") -> list[dict]:
+    """Dynamic CTA candidates (doc "Get recommended CTAs", v1.3):
+    GET /creative/cta/recommend/?new_version=true&objective_type=…&promotion_type=…
+    → data.recommend_assets[] of {asset_ids: [..], asset_content: "Learn more"}."""
+    params: dict = {"advertiser_id": advertiser_id, "new_version": "true",
+                    "objective_type": objective_type, "promotion_type": promotion_type,
+                    "language": language, "placements": ["PLACEMENT_TIKTOK"]}
+    if landing_page_url:
+        params["landing_page_url"] = landing_page_url
+    if ad_texts:
+        params["ad_texts"] = [t[:100] for t in ad_texts if t.strip()][:1]
+    if optimization_goal:
+        params["optimization_goal"] = optimization_goal
+    if region_codes:
+        params["region_codes"] = list(region_codes)
+    data = api_get("/creative/cta/recommend/", access_token, params)
+    out = []
+    for a in ((data or {}).get("recommend_assets") or []):
+        ids = [str(x) for x in (a.get("asset_ids") or []) if x]
+        if ids and a.get("asset_content"):
+            out.append({"asset_ids": ids, "asset_content": str(a["asset_content"])})
+    return out
+
+
+def create_cta_portfolio(access_token: str, advertiser_id: str, assets: list[dict]) -> str:
+    """Dynamic CTA portfolio (doc "CTA recommendations → Dynamic CTAs", step 2):
+    POST /creative/portfolio/create/ with creative_portfolio_type=CTA and one
+    portfolio_content entry per recommended asset ({asset_content, asset_ids}).
+    Returns creative_portfolio_id; ads then set call_to_action_id to it."""
+    if not assets:
+        raise TikTokError("APP", "no recommended CTAs to build a portfolio from")
     data = api_post("/creative/portfolio/create/", access_token, {
         "advertiser_id": advertiser_id, "creative_portfolio_type": "CTA",
-        "portfolio_content": [{"call_to_action": c} for c in ctas]})
+        "portfolio_content": [{"asset_content": a["asset_content"], "asset_ids": list(a["asset_ids"])}
+                              for a in assets]})
     pid = str((data or {}).get("creative_portfolio_id") or "")
     if not pid:
         raise TikTokError("APP", "CTA portfolio create returned no creative_portfolio_id")

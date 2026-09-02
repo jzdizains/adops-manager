@@ -43,17 +43,23 @@ def _cta(fields: dict) -> dict:
     return {"call_to_action": fields["call_to_action"]}
 
 
-def resolve_cta_portfolio(db: Session, acct: models.AdAccount) -> str:
-    """One Dynamic-CTA portfolio per account (cached in settings by candidate set)."""
-    import hashlib as _hl
-
-    from .launch import CTA_AUTO_SET
-    key = f"cta_portfolio:{acct.advertiser_id}:{_hl.md5(','.join(CTA_AUTO_SET).encode()).hexdigest()[:8]}"
+def resolve_cta_portfolio(db: Session, acct: models.AdAccount, fields: dict) -> str:
+    """Dynamic CTA ("Auto"): TikTok's recommended CTA set for this account +
+    objective + promotion type, turned into a CTA portfolio once and cached.
+    Returns "" (caller falls back to a fixed button) if TikTok refuses."""
+    objective = fields.get("objective_type") or "WEB_CONVERSIONS"
+    promotion = "LEAD_GENERATION" if (objective == "LEAD_GENERATION" or fields.get("destination_type") == "lead_form") else "WEBSITE"
+    key = f"cta_portfolio:{acct.advertiser_id}:{objective}:{promotion}"
     cached = queries.get_setting(db, key, "")
     if cached:
         return cached
     try:
-        pid = tiktok_api.create_cta_portfolio(acct.access_token, acct.advertiser_id, CTA_AUTO_SET)
+        assets = tiktok_api.recommend_ctas(
+            acct.access_token, acct.advertiser_id, objective, promotion,
+            landing_page_url=fields.get("landing_page_url") or "",
+            ad_texts=[fields["ad_text"]] if fields.get("ad_text") else None,
+            optimization_goal=fields.get("optimization_goal") or "")
+        pid = tiktok_api.create_cta_portfolio(acct.access_token, acct.advertiser_id, assets)
     except tiktok_api.TikTokError as e:
         # Never let the CTA setup sink a launch: fall back to a fixed button and
         # say so ONCE in the Inbox (deduped while the notice is unread).
@@ -67,7 +73,6 @@ def resolve_cta_portfolio(db: Session, acct: models.AdAccount) -> str:
         return ""
     queries.set_setting(db, key, pid)
     return pid
-
 
 def url_safe_name(name: str) -> str:
     """Only [A-Za-z0-9_-]: TikTok doesn't guarantee URL-encoding of substituted
@@ -1046,7 +1051,7 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
         # a failure here surfaces cleanly before any campaign exists
         if fields.get("call_to_action") == "AUTO" and not fields.get("smart_plus"):
             fields = dict(fields)
-            pid = resolve_cta_portfolio(db, acct)
+            pid = resolve_cta_portfolio(db, acct, fields)
             if pid:
                 fields["_cta_portfolio_id"] = pid
             else:
