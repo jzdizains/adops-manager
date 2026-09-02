@@ -6,7 +6,6 @@
 </div>
 
 <div class="card" style="max-width:560px;">
-  {% if err %}<div class="flash err">{{ err }}</div>{% endif %}
   <form method="post" action="/campaigns/launch">
     <label class="field"><span class="field-label">Preset</span>
       <select name="template_id" required>

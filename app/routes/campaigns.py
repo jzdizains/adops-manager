@@ -739,6 +739,32 @@ def build_library_ad_payload(fields: dict, adgroup_id: str, identity: dict,
     return {"adgroup_id": adgroup_id, "creatives": [creative]}
 
 
+def build_smart_creative_ad_payload(fields: dict, adgroup_id: str, identity: dict,
+                                    materials: list) -> dict:
+    """Smart Creative ad: hand TikTok several video+text materials and let it
+    auto-combine and fatigue-refresh them (creative_material_mode=SMART_CREATIVE).
+    `materials` is a list of (video_id, cover_image_id, ad_text)."""
+    creatives = []
+    for i, (video_id, cover_image_id, text) in enumerate(materials):
+        c: dict = {
+            "ad_name": f"{fields['template_name']} smart {i + 1}"[:512],
+            "ad_format": "SINGLE_VIDEO",
+            "ad_text": text or " ",
+            "call_to_action": fields["call_to_action"],
+            "identity_id": identity["identity_id"],
+            "identity_type": identity["identity_type"],
+            "video_id": video_id,
+            "landing_page_url": fields["landing_page_url"],
+        }
+        if identity.get("identity_authorized_bc_id"):
+            c["identity_authorized_bc_id"] = identity["identity_authorized_bc_id"]
+        if cover_image_id:
+            c["image_ids"] = [cover_image_id]
+        creatives.append(c)
+    return {"adgroup_id": adgroup_id, "creative_material_mode": "SMART_CREATIVE",
+            "creatives": creatives}
+
+
 def _launch_smart_plus(acct: models.AdAccount, fields: dict, spark_ref: dict | None,
                        spark: models.SparkCode | None, pixel_id: str) -> str:
     """Smart+ creation chain. Returns the new campaign_id (raises TikTokError)."""
@@ -779,9 +805,18 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
     creative_committed = False                    # True once an ad actually exists
     new_campaign_id = ""                          # campaign THIS launch created (for cleanup)
     ad_created = False                            # True once ANY ad exists
+    sc_creatives: list = []                       # Smart Creative: all reserved videos
+    sc_texts: list = []                           # Smart Creative: all reserved pool texts
+    sc_materials: list = []                       # Smart Creative: (video_id, cover, text)
     try:
         # -- config validation FIRST (free, local — before any API calls) ------
         use_library = fields.get("creative_source") == "library"
+        if fields.get("smart_creative") and not use_library:
+            raise ConfigError("Smart Creative pulls several videos from the Creative "
+                              "library — set the creative source to “Library” to use it.")
+        if fields.get("smart_creative") and fields.get("smart_plus"):
+            raise ConfigError("Smart Creative and Smart+ can't be combined — Smart+ has "
+                              "its own creative automation. Turn one off.")
         if fields.get("smart_plus"):
             if use_library:
                 raise ConfigError("Library creatives aren't supported on Smart+ presets yet "
@@ -872,7 +907,7 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                                       "(each creative launches once) — pick another, or "
                                       "leave the launcher on automatic.")
             else:
-                creative = (db.query(models.Creative).filter_by(status="available")
+                creative = (db.query(models.Creative).filter_by(status="available", kind="video")
                             .order_by(models.Creative.id).first())
             if not creative:
                 raise ConfigError("No available creatives left in the library — upload "
@@ -915,6 +950,57 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                 fields = dict(fields)
                 fields["landing_page_url"] = apply_source_to_url(
                     fields["landing_page_url"], settings["url_param"], log.source)
+
+            # SMART CREATIVE: gather several more videos + texts and let TikTok
+            # auto-combine/refresh them. Material #1 is the creative reserved above.
+            if fields.get("smart_creative"):
+                n_vids = max(int(fields.get("smart_creative_videos") or 5), 1)
+                n_txt = max(int(fields.get("smart_creative_texts") or 5), 1)
+                sc_creatives = [creative]
+                while len(sc_creatives) < n_vids:
+                    nxt = (db.query(models.Creative).filter_by(status="available", kind="video")
+                           .order_by(models.Creative.id).first())
+                    if not nxt:
+                        break                       # use however many we have
+                    nxt.status = "used"
+                    nxt.used_advertiser_id = acct.advertiser_id
+                    nxt.used_at = now_naive
+                    sc_creatives.append(nxt)
+                    db.flush()          # so the next query doesn't re-pick it
+                # texts: the pool text (if any) + more from the pool, else the fixed text
+                texts: list[str] = []
+                if pool_text is not None:
+                    sc_texts = [pool_text]
+                    texts.append(pool_text.text)
+                while len(texts) < n_txt:
+                    trow = (db.query(models.AdText).filter_by(status="available")
+                            .order_by(models.AdText.id).first())
+                    if not trow:
+                        break
+                    trow.status = "used"
+                    trow.used_advertiser_id = acct.advertiser_id
+                    trow.used_at = now_naive
+                    sc_texts.append(trow)
+                    texts.append(trow.text)
+                    db.flush()          # so the next query doesn't re-pick it
+                if not texts:
+                    texts = [fields.get("ad_text") or " "]
+                db.commit()
+                if len(sc_creatives) < 2:
+                    raise ConfigError(
+                        "Smart Creative needs at least 2 videos — add more to the "
+                        "Creative library (or lower “videos per ad”).")
+                # upload every video (material #1 is already uploaded) → materials
+                for i, c in enumerate(sc_creatives):
+                    if i == 0:
+                        vid, cov = creative_video_id, creative_cover_id
+                    else:
+                        vid, cov = _upload_creative_to_account(db, acct, c)
+                        if not cov:
+                            raise ConfigError(
+                                f"Couldn't get a cover for “{c.name}” yet — TikTok hadn't "
+                                "finished processing it. Hit Retry in a moment.")
+                    sc_materials.append((vid, cov, texts[i % len(texts)]))
         # per-account page/form resolution (matched by name — fail before creating)
         dest = fields["destination_type"]
         if dest == "instant_page":
@@ -1020,6 +1106,23 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                 if ag is None:   # defensive — loop always breaks or raises
                     raise last_err or tiktok_api.TikTokError("APP", "ad group not created")
                 adgroup_id = str(ag.get("adgroup_id"))
+
+                # SMART CREATIVE: one auto-combining ad per ad group from all the
+                # reserved materials (ignores ads-per-group — TikTok rotates internally)
+                if fields.get("smart_creative") and sc_materials:
+                    ad_payload = build_smart_creative_ad_payload(
+                        fields, adgroup_id, creative_identity, sc_materials)
+                    tiktok_api.create_ad(acct.access_token, acct.advertiser_id, ad_payload)
+                    creative_committed = True
+                    ad_created = True
+                    for c in sc_creatives:
+                        if not c.used_campaign_id:
+                            c.used_campaign_id = campaign_id
+                    for trow in sc_texts:
+                        if not trow.used_campaign_id:
+                            trow.used_campaign_id = campaign_id
+                    continue     # next ad group
+
                 n_ads = max(int(fields.get("ads_per_group") or 1), 1)
                 for ad_i in range(n_ads):
                     def _uniq(p: dict) -> dict:
@@ -1109,7 +1212,12 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
     # account's failure — its other accounts may already have launched with it.
     if not log.ok and not creative_committed:
         reuse = bool(fields.get("allow_creative_reuse"))
-        for reserved in (None if reuse else creative, pool_text):
+        to_free = [pool_text]
+        if not reuse:
+            to_free.append(creative)
+        to_free.extend(sc_creatives)      # Smart Creative: free every reserved video…
+        to_free.extend(sc_texts)          # …and text
+        for reserved in to_free:
             if reserved is not None:
                 reserved.status = "available"
                 reserved.used_advertiser_id = ""
@@ -1215,7 +1323,7 @@ def launch_form(request: Request, db: Session = Depends(get_db)):
     accounts = (db.query(models.AdAccount).filter(models.AdAccount.enabled == True)  # noqa: E712
                 .order_by(models.AdAccount.advertiser_name).all())
     sparks = db.query(models.SparkCode).filter_by(status="active").order_by(models.SparkCode.name).all()
-    creatives = (db.query(models.Creative).filter_by(status="available")
+    creatives = (db.query(models.Creative).filter_by(status="available", kind="video")
                  .order_by(models.Creative.name).all())
     return render(request, "campaign_launch.html", {
         "templates": templates, "accounts": accounts, "sparks": sparks,
@@ -1294,22 +1402,22 @@ def retry_failed(request: Request, batch_ref: str, db: Session = Depends(get_db)
     import json as _json
     raw = queries.get_setting(db, f"batch_fields:{batch_ref}", "")
     if not raw:
-        return RedirectResponse(f"/campaigns/result/{batch_ref}?err=norecipe", status_code=303)
+        return RedirectResponse(f"/campaigns/result/{batch_ref}?note=norecipe", status_code=303)
     try:
         fields = _json.loads(raw)
     except (ValueError, TypeError):
-        return RedirectResponse(f"/campaigns/result/{batch_ref}?err=norecipe", status_code=303)
+        return RedirectResponse(f"/campaigns/result/{batch_ref}?note=norecipe", status_code=303)
     failed_ids = [l.advertiser_id for l in
                   db.query(models.LaunchLog).filter_by(batch_ref=batch_ref)
                   .filter(models.LaunchLog.ok == False)]                 # noqa: E712
     failed_ids = list(dict.fromkeys(failed_ids))                          # dedupe, keep order
     if not failed_ids:
-        return RedirectResponse(f"/campaigns/result/{batch_ref}?err=nofail", status_code=303)
+        return RedirectResponse(f"/campaigns/result/{batch_ref}?note=nofail", status_code=303)
     by_id = {a.advertiser_id: a for a in db.query(models.AdAccount)
              .filter(models.AdAccount.advertiser_id.in_(failed_ids)).all()}
     accounts = [by_id[i] for i in failed_ids if i in by_id]
     if not accounts:
-        return RedirectResponse(f"/campaigns/result/{batch_ref}?err=nofail", status_code=303)
+        return RedirectResponse(f"/campaigns/result/{batch_ref}?note=nofail", status_code=303)
     new_ref = run_batch(db, accounts, fields)
     return RedirectResponse(f"/campaigns/result/{new_ref}", status_code=303)
 

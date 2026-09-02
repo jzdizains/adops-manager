@@ -16,8 +16,8 @@
     <a class="btn primary" href="/status">View Status</a>
   </div>
 </div>
-{% if request.query_params.get('err') == 'nofail' %}<div class="flash ok">Nothing to retry — every account in that batch succeeded.</div>{% endif %}
-{% if request.query_params.get('err') == 'norecipe' %}<div class="flash err">Can’t retry this batch — its launch settings weren’t recorded (older launch).</div>{% endif %}
+{% if request.query_params.get('note') == 'nofail' %}<div class="flash ok">Nothing to retry — every account in that batch succeeded.</div>{% endif %}
+{% if request.query_params.get('note') == 'norecipe' %}<div class="flash err">Can’t retry this batch — its launch settings weren’t recorded (older launch).</div>{% endif %}
 
 {% for l in logs %}
 <div class="card">

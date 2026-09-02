@@ -4,6 +4,15 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ title }}</title>
+  <!-- no-flash theme: apply the saved choice before first paint -->
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem("adops-theme");
+        if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+      } catch (e) {}
+    })();
+  </script>
   <link rel="stylesheet" href="/static/style.css?v={{ STATIC_V }}">
   {% block head %}{% endblock %}
   <!-- topnav.css loads LAST — its :root overrides win (light production theme) -->
@@ -12,14 +21,14 @@
 <body>
 <nav class="topnav">
   <div class="topnav-inner">
+    <a href="/" class="brand" title="AdOps Manager"><span class="glyph">A</span><span class="brand-name">AdOps</span></a>
     {% set launch_active = active.startswith('/super-launcher') or active.startswith('/campaigns') or active.startswith('/queue') %}
     {% set assets_active = active.startswith('/presets') or active.startswith('/spark-codes') or active.startswith('/creatives') or active.startswith('/ad-texts') or active.startswith('/pixels') or active.startswith('/accounts') or active.startswith('/instant-pages') or active.startswith('/lead-forms') or active.startswith('/locations') %}
     <div class="nav-links">
-      <a href="/" class="{{ 'active' if active == '/' else '' }}">Overview</a>
-      <a href="/monitor" class="{{ 'active' if active.startswith('/monitor') else '' }}">Monitor</a>
-      <a href="/issues" class="{{ 'active' if active.startswith('/issues') else '' }}">Issues</a>
-      <a href="/pnl" class="{{ 'active' if active.startswith('/pnl') else '' }}">P&L</a>
+      <a href="/" class="{{ 'active' if active == '/' else '' }}">Home</a>
       <a href="/status" class="{{ 'active' if active.startswith('/status') else '' }}">Campaigns</a>
+      <a href="/monitor" class="{{ 'active' if active.startswith('/monitor') or active.startswith('/issues') else '' }}">Health</a>
+      <a href="/pnl" class="{{ 'active' if active.startswith('/pnl') else '' }}">P&L</a>
       <a href="/automation" class="{{ 'active' if active.startswith('/automation') else '' }}">Automation</a>
 
       <div class="nav-group">
@@ -49,16 +58,19 @@
         </div>
       </div>
 
-      <a href="/performance" class="{{ 'active' if active.startswith('/performance') else '' }}">Live</a>
     </div>
     <div class="nav-right">
+      <button class="theme-btn" type="button" id="themeBtn" title="Theme: system">🖥</button>
       <div class="avatar-menu">
         <button class="nav-bell" type="button" title="Alerts" id="bellBtn" style="position:relative;">🔔<span id="bellCount"
           style="display:none;position:absolute;top:-2px;right:-4px;background:var(--err);color:#fff;font-size:10px;font-weight:800;border-radius:999px;padding:1px 5px;line-height:1.4;"></span></button>
-        <div class="avatar-dropdown" id="bellDropdown" style="min-width:320px;max-height:380px;overflow:auto;">
-          <div id="bellList"><div style="padding:10px;color:var(--text-dim);font-size:13px;">No alerts.</div></div>
+        <div class="avatar-dropdown" id="bellDropdown" style="min-width:360px;max-height:420px;overflow:auto;">
+          <div id="bellList"><div style="padding:10px;color:var(--text-dim);font-size:13px;">Nothing needs attention.</div></div>
           <div class="sep"></div>
-          <a href="#" id="bellAckAll" style="color:var(--text-dim);">Mark all as read</a>
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <a href="/inbox" style="font-weight:650;">Open Inbox →</a>
+            <a href="#" id="bellAckAll" style="color:var(--text-dim);font-size:12px;">Dismiss notices</a>
+          </div>
         </div>
       </div>
       <div class="avatar-menu">
@@ -77,8 +89,37 @@
 <div class="container">
   {% block content %}{% endblock %}
 </div>
+<div id="toasts" class="toasts" aria-live="polite"></div>
 <script>
   (function () {
+    // ---- global toasts: any page redirect with ?ok= / ?err= shows here ------
+    // (replaces the scattered per-page flash banners; the params are then
+    // stripped from the URL so a refresh doesn't re-announce them)
+    (function () {
+      var host = document.getElementById("toasts");
+      if (!host) return;
+      var params = new URLSearchParams(location.search), shown = false;
+      function toast(kind, text) {
+        var t = document.createElement("div");
+        t.className = "toast " + kind;
+        var icon = kind === "err" ? "✕" : "✓";
+        t.innerHTML = '<span class="toast-ic">' + icon + '</span><span class="toast-msg"></span><button class="toast-x" title="Dismiss">✕</button>';
+        t.querySelector(".toast-msg").textContent = text;
+        t.querySelector(".toast-x").addEventListener("click", function () { t.remove(); });
+        host.appendChild(t);
+        setTimeout(function () { t.classList.add("out"); setTimeout(function () { t.remove(); }, 250); }, kind === "err" ? 12000 : 6000);
+      }
+      ["ok", "err"].forEach(function (k) {
+        var v = params.get(k);
+        if (v && v.trim()) { toast(k, v.replace(/\+/g, " ")); shown = true; params.delete(k); }
+      });
+      if (shown && history.replaceState) {
+        var qs = params.toString();
+        history.replaceState(null, "", location.pathname + (qs ? "?" + qs : "") + location.hash);
+      }
+      window.adopsToast = toast;
+    })();
+
     var btn = document.getElementById("avatarBtn"), dd = document.getElementById("avatarDropdown");
     if (btn && dd) {
       btn.addEventListener("click", function (e) { e.stopPropagation(); dd.classList.toggle("open"); });
@@ -98,6 +139,29 @@
       groups.forEach(function (g) { g.classList.remove("open"); });
     });
 
+    // ---- theme toggle: system → light → dark → system ----------------------
+    var themeBtn = document.getElementById("themeBtn");
+    if (themeBtn) {
+      var ICONS = { system: "🖥", light: "☀", dark: "🌙" };
+      var LABEL = { system: "Theme: follow system", light: "Theme: light", dark: "Theme: dark" };
+      function readTheme() {
+        try { var t = localStorage.getItem("adops-theme"); return (t === "light" || t === "dark") ? t : "system"; }
+        catch (e) { return "system"; }
+      }
+      function applyTheme(t) {
+        if (t === "system") document.documentElement.removeAttribute("data-theme");
+        else document.documentElement.setAttribute("data-theme", t);
+        themeBtn.textContent = ICONS[t]; themeBtn.title = LABEL[t];
+      }
+      applyTheme(readTheme());
+      themeBtn.addEventListener("click", function () {
+        var order = ["system", "light", "dark"];
+        var next = order[(order.indexOf(readTheme()) + 1) % 3];
+        try { localStorage.setItem("adops-theme", next); } catch (e) {}
+        applyTheme(next);
+      });
+    }
+
     // ---- alerts bell -------------------------------------------------------
     var bell = document.getElementById("bellBtn"), bdd = document.getElementById("bellDropdown");
     var bcount = document.getElementById("bellCount"), blist = document.getElementById("bellList");
@@ -116,21 +180,27 @@
           var link = "";
           if (a.href) {
             var ext = a.external ? ' target="_blank" rel="noopener"' : '';
-            var label = a.external ? "Open BC ↗" : "View →";
+            var label = a.external ? "Open ↗" : "View →";
             link = '<a href="' + esc(a.href) + '"' + ext +
-              ' style="flex:none;font-size:11.5px;font-weight:700;color:var(--accent);' +
-              'text-decoration:none;white-space:nowrap;padding:2px 6px;border-radius:6px;' +
+              ' style="flex:none;font-size:11.5px;font-weight:650;color:var(--accent-ink);' +
+              'text-decoration:none;white-space:nowrap;padding:2px 7px;border-radius:6px;' +
               'background:var(--accent-soft);">' + label + '</a>';
           }
+          var dismiss = a.ack ? '<button data-ack="' + esc(a.id) + '" style="border:none;background:none;cursor:pointer;color:var(--text-dim);font-size:12px;" title="Dismiss">✕</button>' : '';
+          var where = a.where ? ' <span style="color:var(--text-dim);">· ' + esc(a.where) + '</span>' : '';
           return '<div style="padding:8px 10px;border-bottom:1px solid var(--border-soft);font-size:12.5px;display:flex;gap:8px;align-items:flex-start;">' +
-            '<span style="color:' + color + ';">●</span>' +
-            '<span style="flex:1;">' + esc(a.message) + '</span>' + link +
-            '<button data-ack="' + a.id + '" style="border:none;background:none;cursor:pointer;color:var(--text-dim);font-size:12px;" title="Dismiss">✕</button></div>';
+            '<span style="color:' + color + ';margin-top:1px;">●</span>' +
+            '<span style="flex:1;min-width:0;"><span style="font-weight:650;">' + esc(a.title) + '</span>' + where +
+            '<div style="color:var(--text-soft);font-size:12px;margin-top:1px;">' + esc(a.message) + '</div></span>' + link + dismiss + '</div>';
         }).join("");
+        if (d.count > d.alerts.length) {
+          blist.innerHTML += '<div style="padding:8px 10px;color:var(--text-dim);font-size:12px;">+ ' + (d.count - d.alerts.length) + ' more in the Inbox</div>';
+        }
         blist.querySelectorAll("[data-ack]").forEach(function (b) {
           b.addEventListener("click", function (e) {
             e.stopPropagation();
-            fetch("/alerts/" + b.dataset.ack + "/ack", { method: "POST" }).then(refresh);
+            var fd = new FormData(); fd.append("id", b.dataset.ack); fd.append("next", "/inbox");
+            fetch("/inbox/dismiss", { method: "POST", body: fd, redirect: "manual" }).then(refresh, refresh);
           });
         });
       }).catch(function () {});

@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Home</h1>
+    <div class="muted" style="font-size:12.5px;">Today, live · <span id="pfStatus">connecting…</span> · campaigns synced <span id="pfSynced">{{ synced_ago }}</span></div></div>
+  <div class="actions">
+    <label class="btn" style="cursor:pointer;">
+      <input type="checkbox" id="pfSound" style="width:auto;margin:0;"> 🔊 ding on conversions
+    </label>
+    <a class="btn primary" href="/super-launcher">🚀 Launch</a>
+  </div>
+</div>
+
+{# ---- Needs attention: top of the unified inbox ---------------------------- #}
+{% if attention %}
+<div class="card" style="padding:0;overflow:hidden;">
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border-bottom:1px solid var(--border-soft);">
+    <span style="font-weight:650;font-size:13px;">Needs attention
+      {% if inbox_counts.err %}<span class="pill err" style="margin-left:6px;">{{ inbox_counts.err }} error{{ 's' if inbox_counts.err != 1 }}</span>{% endif %}
+      {% if inbox_counts.warn %}<span class="pill warn" style="margin-left:4px;">{{ inbox_counts.warn }} warning{{ 's' if inbox_counts.warn != 1 }}</span>{% endif %}</span>
+    <a class="btn sm" href="/inbox">Inbox{% if inbox_counts.total > attention|length %} · all {{ inbox_counts.total }}{% endif %} →</a>
+  </div>
+  {% for it in attention %}
+  <div class="inbox-row lvl-{{ it.level }}">
+    <span class="inbox-dot"></span>
+    <div class="inbox-body">
+      <div class="inbox-title">{{ it.title }}{% if it.where %} <span class="muted">· {{ it.where }}</span>{% endif %}</div>
+      <div class="inbox-msg">{{ it.message }}</div>
+    </div>
+    <div class="inbox-acts">
+      {% if it.href %}<a class="btn sm" href="{{ it.href }}" {% if it.external %}target="_blank" rel="noopener"{% endif %}>{{ 'Open ↗' if it.external else 'View →' }}</a>{% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{# ---- Live KPI tiles (server-rendered today, then polled) ------------------ #}
+<div class="kpis">
+  <div class="kpi accent"><div class="lab">Spend</div><div class="val" id="pfSpend">${{ "%.2f"|format(kpis.spend) }}</div><div class="sub">today</div></div>
+  <div class="kpi"><div class="lab">Revenue</div><div class="val good" id="pfRevenue">${{ "%.2f"|format(kpis.revenue) }}</div><div class="sub">Glitchy postbacks</div></div>
+  <div class="kpi"><div class="lab">Profit</div><div class="val {{ 'good' if kpis.profit >= 0 else 'bad' }}" id="pfProfit">{{ '−' if kpis.profit < 0 }}${{ "%.2f"|format(kpis.profit|abs) }}</div><div class="sub">revenue − spend</div></div>
+  <div class="kpi"><div class="lab">ROAS</div><div class="val {{ 'good' if kpis.roas >= 1 else ('bad' if kpis.roas > 0 else '') }}" id="pfRoas">{{ "%.2f"|format(kpis.roas) }}×</div><div class="sub" id="pfCvr">{{ "%.1f"|format(kpis.cvr) }}% CVR</div></div>
+  <div class="kpi"><div class="lab">Conversions</div><div class="val" id="pfConv">{{ "{:,}".format(kpis.conversions) }}</div><div class="sub" id="pfCpa">{% if kpis.conversions %}${{ "%.2f"|format(kpis.cpa) }} CPA{% else %}—{% endif %}</div></div>
+  <div class="kpi"><div class="lab">Clicks</div><div class="val" id="pfClicks">{{ "{:,}".format(kpis.clicks) }}</div><div class="sub">postback clicks</div></div>
+</div>
+
+<div class="grid cols-2" style="grid-template-columns:1.6fr 1fr;">
+  {# ---- 14-day trend ---- #}
+  <div class="card mb0">
+    <div class="card-header">
+      <span class="card-title">Last 14 days</span>
+      <span class="card-meta">
+        <select id="chartA" style="width:auto;display:inline-block;font-size:12px;padding:4px 8px;"></select>
+        vs
+        <select id="chartB" style="width:auto;display:inline-block;font-size:12px;padding:4px 8px;"></select>
+      </span>
+    </div>
+    <div id="cmpChart"></div>
+  </div>
+  {# ---- Live feed ---- #}
+  <div class="card mb0" style="display:flex;flex-direction:column;">
+    <div class="card-header"><span class="card-title">Live feed</span><span class="card-meta">conversions · launches · errors</span></div>
+    <div id="pfFeed" style="flex:1;max-height:300px;overflow:auto;font-size:12.5px;">
+      <div class="empty">Waiting for events…</div>
+    </div>
+  </div>
+</div>
+
+<div style="height:14px;"></div>
+
+<div class="grid cols-2">
+  <div class="card mb0">
+    <div class="card-header"><span class="card-title">Top ad accounts</span><span class="card-meta">by spend today</span></div>
+    {% if top_accounts %}
+    <table class="data">
+      <thead><tr><th>Account</th><th class="num">Campaigns</th><th class="num">Spend</th></tr></thead>
+      <tbody>
+      {% for a in top_accounts %}
+        <tr><td><a href="/status?account={{ a.advertiser_id }}" style="color:inherit;">{{ a.name }}</a></td>
+            <td class="num">{{ a.campaigns }}</td><td class="num">${{ "%.2f"|format(a.spend) }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty">No campaign data yet.<br><a class="btn sm" href="/status" style="margin-top:8px;">Sync campaigns →</a></div>
+    {% endif %}
+  </div>
+  <div class="card mb0">
+    <div class="card-header"><span class="card-title">Active campaigns</span>
+      <span class="card-meta"><a href="/status?state=active">All active →</a></span></div>
+    {% if active_campaigns %}
+    <table class="data">
+      <thead><tr><th>Campaign</th><th>Account</th><th class="num">Spend</th></tr></thead>
+      <tbody>
+      {% for c in active_campaigns %}
+        <tr>
+          <td><a href="/campaigns/{{ c.advertiser_id }}/{{ c.campaign_id }}/edit" style="color:inherit;">{{ c.campaign_name[:36] }}</a></td>
+          <td class="muted">{{ (account_names.get(c.advertiser_id) or c.advertiser_id)[:22] }}</td>
+          <td class="num">${{ "%.2f"|format(c.spend_today) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty">No active campaigns.<br><a class="btn sm primary" href="/super-launcher" style="margin-top:8px;">🚀 Launch one →</a></div>
+    {% endif %}
+  </div>
+</div>
+
+<audio id="pfDing" src="/static/cash-money.wav" preload="none"></audio>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/chart.js?v={{ STATIC_V }}"></script>
+<script>
+(function () {
+  // ---- live poll (overlap-guarded; the page never blanks mid-refresh) ------
+  var lastId = 0, lastConversions = null, inflight = null;
+  function money(n) { return "$" + Number(Math.abs(n)).toLocaleString("en-US", {minimumFractionDigits: 2, maximumFractionDigits: 2}); }
+  function setVal(id, txt, cls) { var el = document.getElementById(id); el.textContent = txt; if (cls !== undefined) el.className = "val " + cls; }
+  function apply(d) {
+    setVal("pfSpend", money(d.spend));
+    setVal("pfRevenue", money(d.revenue), "good");
+    setVal("pfProfit", (d.profit < 0 ? "−" : "") + money(d.profit), d.profit >= 0 ? "good" : "bad");
+    setVal("pfRoas", Number(d.roas).toFixed(2) + "×", d.roas >= 1 ? "good" : (d.roas > 0 ? "bad" : ""));
+    document.getElementById("pfConv").textContent = Number(d.conversions).toLocaleString();
+    document.getElementById("pfClicks").textContent = Number(d.clicks).toLocaleString();
+    document.getElementById("pfCvr").textContent = (d.clicks ? (d.conversions / d.clicks * 100).toFixed(1) : "0.0") + "% CVR";
+    document.getElementById("pfCpa").textContent = d.conversions ? money(d.spend / d.conversions) + " CPA" : "—";
+    document.getElementById("pfSynced").textContent = d.synced_ago;
+    if (d.events && d.events.length) {
+      var feed = document.getElementById("pfFeed");
+      if (feed.querySelector(".empty")) feed.innerHTML = "";
+      d.events.forEach(function (e) {
+        lastId = Math.max(lastId, e.id);
+        var row = document.createElement("div");
+        row.style.cssText = "padding:7px 2px;border-bottom:1px solid var(--border-soft);display:flex;gap:8px;align-items:flex-start;";
+        var icon = { conversion: "💰", launch: "🚀", error: "⚠️" }[e.kind] || "·";
+        var m = document.createElement("span"); m.textContent = e.message; m.style.flex = "1";
+        var t = document.createElement("span"); t.className = "muted mono"; t.style.cssText = "font-size:10.5px;white-space:nowrap;";
+        t.textContent = new Date(e.at).toLocaleTimeString();
+        var i = document.createElement("span"); i.textContent = icon;
+        row.appendChild(i); row.appendChild(m); row.appendChild(t);
+        feed.prepend(row);
+      });
+    }
+    if (lastConversions !== null && d.conversions > lastConversions && document.getElementById("pfSound").checked) {
+      document.getElementById("pfDing").play().catch(function () {});
+    }
+    lastConversions = d.conversions;
+  }
+  function poll() {
+    if (inflight) inflight.abort();
+    inflight = new AbortController();
+    fetch("/performance/data?last_id=" + lastId, { signal: inflight.signal })
+      .then(function (r) { return r.json(); })
+      .then(function (d) { apply(d); document.getElementById("pfStatus").textContent = "live · " + new Date().toLocaleTimeString(); })
+      .catch(function (err) { if (err.name !== "AbortError") document.getElementById("pfStatus").textContent = "reconnecting…"; });
+  }
+  poll(); setInterval(poll, 15000);
+
+  // ---- 14-day trend chart --------------------------------------------------
+  var DATA = {{ chart_json | safe }};
+  var METRICS = { revenue: "Revenue", spend: "Spend", profit: "Profit" };
+  var cs = getComputedStyle(document.documentElement);
+  var COLORS = { a: cs.getPropertyValue("--accent").trim() || "#5b5bd6", b: cs.getPropertyValue("--warn").trim() || "#b9770a" };
+  var selA = document.getElementById("chartA"), selB = document.getElementById("chartB");
+  Object.keys(METRICS).forEach(function (k) { selA.add(new Option(METRICS[k], k)); selB.add(new Option(METRICS[k], k)); });
+  selA.value = "revenue"; selB.value = "spend";
+  function draw() {
+    var series = [];
+    if (DATA.series[selA.value]) series.push({ name: METRICS[selA.value], values: DATA.series[selA.value], color: COLORS.a });
+    if (selB.value !== selA.value && DATA.series[selB.value]) series.push({ name: METRICS[selB.value], values: DATA.series[selB.value], color: COLORS.b });
+    AdopsChart(document.getElementById("cmpChart"), { labels: DATA.labels, series: series });
+  }
+  selA.addEventListener("change", draw); selB.addEventListener("change", draw); draw();
+})();
+</script>
+{% endblock %}

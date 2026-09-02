@@ -1,15 +1,138 @@
 {% extends "base.html" %}
 {% block content %}
+{% set range_labels = {'today': 'Today', 'yesterday': 'Yesterday', '7d': 'Last 7 days', '30d': 'Last 30 days', 'mtd': 'This month'} %}
 <div class="page-head">
   <div>
     <h1>Creatives</h1>
-    <div class="muted">{{ available }} available · {{ rows|length - available - processing }} used{% if processing %} · {{ processing }} enhancing…{% endif %} — each creative launches exactly once.</div>
+    <div class="muted" style="font-size:12.5px;">{{ available }} available · {{ rows|length - available - processing }} launched{% if processing %} · {{ processing }} enhancing…{% endif %} — each creative launches exactly once.</div>
+  </div>
+  <div class="actions">
+    <a class="btn {{ 'primary' if view == 'library' }}" href="/creatives">Library</a>
+    <a class="btn {{ 'primary' if view == 'performance' }}" href="/creatives?view=performance">📈 Performance</a>
   </div>
 </div>
 
-{% if ok %}<div class="flash ok">{{ ok }}</div>{% endif %}
-{% if err %}<div class="flash err">{{ err }}</div>{% endif %}
+{% if view == 'performance' %}
+{# ======================= PERFORMANCE: which creative wins ======================= #}
+<div class="card" style="margin-bottom:14px;padding:12px 14px;">
+  <div class="filterbar">
+    <div class="fsel" data-fsel>
+      <button type="button"><span class="k">Range</span> <span class="v">{{ range_labels[range_key] }}</span> <span class="chev">▾</span></button>
+      <div class="fmenu">{% for k, lbl in range_labels.items() %}<a href="/creatives?view=performance&range={{ k }}&sort={{ sort }}" class="{{ 'sel' if range_key == k }}">{{ lbl }}</a>{% endfor %}</div>
+    </div>
+    <div class="fsel" data-fsel>
+      <button type="button"><span class="k">Sort</span> <span class="v">{{ {'roas':'ROAS','revenue':'Revenue','profit':'Profit','spend':'Spend','conversions':'Conversions','ctr':'CTR'}[sort] }}</span> <span class="chev">▾</span></button>
+      <div class="fmenu">{% for k, lbl in [('roas','ROAS'),('revenue','Revenue'),('profit','Profit'),('spend','Spend'),('conversions','Conversions'),('ctr','CTR')] %}<a href="/creatives?view=performance&range={{ range_key }}&sort={{ k }}" class="{{ 'sel' if sort == k }}">{{ lbl }}</a>{% endfor %}</div>
+    </div>
+    <span class="hint">Spend · revenue · profit · ROAS are range-aware (TikTok snapshots + Glitchy postbacks by source). Impr · clicks · conv · CTR are the linked campaign's latest sync.</span>
+  </div>
+</div>
 
+{% if perf %}
+<div class="perf-grid">
+  {# ---- leaderboard ---- #}
+  <div class="card" style="padding:0;overflow:hidden;margin:0;">
+    <div class="table-scroll">
+    <table class="data dense" id="perfTable">
+      <thead><tr>
+        <th>#</th><th>Creative</th><th>Campaign · account</th>
+        <th class="num col-money grp-start">Spend</th><th class="num col-money">Revenue</th>
+        <th class="num col-money">Profit</th><th class="num col-money grp-end">ROAS</th>
+        <th class="num">Conv.</th><th class="num">CTR</th><th class="num">Impr.</th>
+      </tr></thead>
+      <tbody>
+      {% for r in perf %}
+        {% set c = r.c %}
+        <tr class="perf-row" data-id="{{ c.id }}" data-src="/creatives/{{ c.id }}/file" data-name="{{ c.name }}"
+            data-spend="{{ '%.2f'|format(r.spend) }}" data-rev="{{ '%.2f'|format(r.revenue) }}" data-profit="{{ '%.2f'|format(r.profit) }}"
+            data-roas="{{ '%.2f'|format(r.roas) }}" data-conv="{{ r.conversions }}" data-ctr="{{ '%.2f'|format(r.ctr) }}" data-impr="{{ r.impressions }}"
+            data-campaign="{{ r.campaign_name }}" data-account="{{ r.account_name }}" data-source="{{ c.source }}"
+            data-edit="/campaigns/{{ c.used_advertiser_id }}/{{ c.used_campaign_id }}/edit" data-active="{{ '1' if r.active else '0' }}">
+          <td class="mono muted">{{ loop.index }}</td>
+          <td>
+            <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+              <button type="button" class="btn sm playBtn" title="Play in the side player" style="padding:3px 8px;">▶</button>
+              <div style="min-width:0;">
+                <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px;">{{ c.name }}{% if c.freshen %} <span title="variant">✨</span>{% endif %}</div>
+                <div class="muted" style="font-size:10.5px;">{% if c.source %}<span class="mono">{{ c.source }}</span>{% else %}no source{% endif %}</div>
+              </div>
+            </div>
+          </td>
+          <td style="min-width:150px;">
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span class="dot {{ 'on' if r.active else 'off' }}"></span>
+              <a href="/campaigns/{{ c.used_advertiser_id }}/{{ c.used_campaign_id }}/edit" style="color:inherit;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:170px;display:inline-block;">{{ r.campaign_name[:36] }}</a>
+            </div>
+            <div class="muted" style="font-size:10.5px;"><a href="/status?account={{ c.used_advertiser_id }}" style="color:inherit;">{{ r.account_name[:26] }}</a></div>
+          </td>
+          <td class="num col-money grp-start">${{ "%.2f"|format(r.spend) }}</td>
+          <td class="num col-money"><span style="color:var(--ok);font-weight:600;">${{ "%.2f"|format(r.revenue) }}</span></td>
+          <td class="num col-money {{ 'pos' if r.profit >= 0 else 'neg' }}">{{ '−' if r.profit < 0 }}${{ "%.2f"|format(r.profit|abs) }}</td>
+          <td class="num col-money grp-end"><span class="roas"><span class="x {{ 'g' if r.roas >= 1 else ('r' if r.spend else 'n') }}">{% if r.spend %}{{ "%.2f"|format(r.roas) }}×{% else %}—{% endif %}</span></span></td>
+          <td class="num">{{ r.conversions }}</td>
+          <td class="num">{{ "%.2f"|format(r.ctr) }}%</td>
+          <td class="num">{{ "{:,}".format(r.impressions) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+
+  {# ---- sticky player + metrics ---- #}
+  <div class="card perf-player" style="margin:0;">
+    <div id="ppEmpty" class="empty" style="padding:40px 10px;">Pick a creative to play it here and see its numbers side by side.</div>
+    <div id="ppBody" style="display:none;">
+      <video id="ppVideo" controls playsinline preload="metadata" style="width:100%;max-height:52vh;border-radius:8px;background:#000;display:block;"></video>
+      <div style="margin-top:10px;">
+        <div id="ppName" style="font-weight:650;font-size:13.5px;"></div>
+        <div class="muted" style="font-size:11.5px;margin-top:2px;"><span class="dot" id="ppDot"></span> <a id="ppCampaign" href="#" style="color:inherit;"></a> · <span id="ppAccount"></span></div>
+        <div class="muted mono" style="font-size:11px;margin-top:2px;" id="ppSource"></div>
+      </div>
+      <div class="pp-metrics">
+        <div><div class="lab">Spend</div><div class="val" id="ppSpend"></div></div>
+        <div><div class="lab">Revenue</div><div class="val good" id="ppRev"></div></div>
+        <div><div class="lab">Profit</div><div class="val" id="ppProfit"></div></div>
+        <div><div class="lab">ROAS</div><div class="val" id="ppRoas"></div></div>
+        <div><div class="lab">Conv.</div><div class="val" id="ppConv"></div></div>
+        <div><div class="lab">CTR</div><div class="val" id="ppCtr"></div></div>
+      </div>
+      <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">
+        <a class="btn sm" id="ppEdit" href="#">Edit campaign ✎</a>
+        <a class="btn sm" id="ppPrev" href="#">← Prev</a><a class="btn sm" id="ppNext" href="#">Next →</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if families|length > 1 or (families and families[0].n > 1) %}
+<div class="card" style="margin-top:14px;">
+  <div class="card-header"><span class="card-title">By original upload</span>
+    <span class="card-meta">variants rolled up — which source video wins overall</span></div>
+  <table class="data dense">
+    <thead><tr><th>Original</th><th class="num">Variants</th><th class="num">Spend</th><th class="num">Revenue</th><th class="num">Profit</th><th class="num">ROAS</th><th>Best variant</th></tr></thead>
+    <tbody>
+    {% for f in families %}
+      <tr>
+        <td style="font-weight:600;">{{ f.name[:48] }}</td>
+        <td class="num">{{ f.n }}</td>
+        <td class="num">${{ "%.2f"|format(f.spend) }}</td>
+        <td class="num"><span style="color:var(--ok);font-weight:600;">${{ "%.2f"|format(f.revenue) }}</span></td>
+        <td class="num {{ 'pos' if f.profit >= 0 else 'neg' }}">{{ '−' if f.profit < 0 }}${{ "%.2f"|format(f.profit|abs) }}</td>
+        <td class="num"><span class="roas"><span class="x {{ 'g' if f.roas >= 1 else ('r' if f.spend else 'n') }}">{% if f.spend %}{{ "%.2f"|format(f.roas) }}×{% else %}—{% endif %}</span></span></td>
+        <td class="muted">{% if f.best and f.best.spend %}{{ f.best.c.name[:30] }} · {{ "%.2f"|format(f.best.roas) }}×{% else %}—{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% else %}
+<div class="card"><div class="empty">No launched creatives in this range yet. Once library creatives launch, they show up here ranked by what they earn.</div></div>
+{% endif %}
+
+{% else %}
+{# ============================== LIBRARY ============================== #}
 <div class="card" style="margin-bottom:14px;">
   <div class="card-header"><span class="card-title">Upload videos</span>
     <span class="card-meta">mp4 · mov · webm — up to 500MB each</span></div>
@@ -67,16 +190,18 @@
   </form>
 </div>
 
-<div class="card">
+<div class="card" style="padding:0;overflow:hidden;">
   {% if rows %}
+  <div class="table-scroll">
   <table class="data">
     <thead><tr>
-      <th>Creative</th><th>Source</th><th>Status</th><th>Launched on</th>
+      <th>Creative</th><th>Source</th><th>Status</th><th>Launched in</th>
       <th class="num">Size</th><th class="num">Actions</th>
     </tr></thead>
     <tbody>
     {% for r in rows %}
-      <tr>
+      {% set camp = camp_by_id.get(r.used_campaign_id) if r.used_campaign_id else none %}
+      <tr id="c{{ r.id }}">
         <td>
           <form id="cf{{ r.id }}" method="post" action="/creatives/{{ r.id }}/update"></form>
           <div style="display:flex;align-items:center;gap:6px;">
@@ -98,12 +223,16 @@
           {% if r.status == 'available' %}<span class="pill ok">Available{% if r.freshen %} ✨{% endif %}</span>
           {% elif r.status == 'processing' %}<span class="pill dim">Enhancing…</span>
           {% elif r.status == 'error' %}<span class="pill err" title="{{ r.error }}">Error</span>
-          {% else %}<span class="pill dim">Used{% if r.freshen %} ✨{% endif %}</span>{% endif %}
+          {% else %}<span class="pill dim">Launched{% if r.freshen %} ✨{% endif %}</span>{% endif %}
         </td>
-        <td class="muted">
-          {% if r.used_advertiser_id %}
-            {{ accounts.get(r.used_advertiser_id, r.used_advertiser_id)[:26] }}
-            {% if r.used_at %}<div style="font-size:11px;">{{ r.used_at.strftime('%b %d %H:%M') }}</div>{% endif %}
+        <td class="muted" style="font-size:12px;">
+          {% if r.used_campaign_id %}
+            <div style="display:flex;align-items:center;gap:6px;">
+              {% if camp %}<span class="dot {{ 'on' if camp.operation_status == 'ENABLE' else 'off' }}"></span>{% endif %}
+              <a href="/campaigns/{{ r.used_advertiser_id }}/{{ r.used_campaign_id }}/edit" style="color:inherit;font-weight:600;">{{ (camp.campaign_name if camp else r.used_campaign_id)[:30] }}</a>
+            </div>
+            <div style="font-size:11px;"><a href="/status?account={{ r.used_advertiser_id }}" style="color:inherit;">{{ accounts.get(r.used_advertiser_id, r.used_advertiser_id)[:26] }}</a>{% if r.used_at %} · {{ r.used_at.strftime('%b %d %H:%M') }}{% endif %}</div>
+            <div style="font-size:11px;"><a href="/creatives?view=performance">📈 performance →</a></div>
           {% else %}—{% endif %}
         </td>
         <td class="num">{{ "%.1f"|format(r.size_bytes / 1048576) }} MB</td>
@@ -120,10 +249,104 @@
     {% endfor %}
     </tbody>
   </table>
+  </div>
   {% else %}
   <div class="empty">No creatives yet — upload videos above. Launches with “Creative library” presets pull the next available one automatically.</div>
   {% endif %}
 </div>
+
+{# ============================== IMAGES ============================== #}
+<div class="card" id="images" style="margin-top:14px;">
+  <div class="card-header"><span class="card-title">🖼 Images</span>
+    <span class="card-meta">{{ images|length }} image(s) · png · jpg · webp — edit or generate with AI (Nano Banana)</span></div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;">
+    <form method="post" action="/creatives/upload-images" enctype="multipart/form-data" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <input type="file" name="files" accept="image/png,image/jpeg,image/webp" multiple required style="width:auto;">
+      <input type="text" name="source_prefix" placeholder="source prefix (optional)" style="width:170px;">
+      <button class="btn primary" type="submit">⬆ Upload images</button>
+    </form>
+    <div>
+      {% if nb_configured %}
+      <form method="post" action="/creatives/ai-generate" class="ai-form" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+        <input type="text" name="prompt" placeholder="Generate a new image from a prompt…" required style="flex:1;min-width:220px;">
+        <input type="text" name="name" placeholder="name" style="width:110px;">
+        <select name="model" class="ai-model" style="width:auto;">{% for m in nb_models %}<option value="{{ m.id }}" {{ 'selected' if m.id == nb_default }}>{{ m.label }}</option>{% endfor %}</select>
+        <select name="size" class="ai-size" style="width:auto;"></select>
+        <select name="aspect" style="width:auto;"><option value="">Aspect: auto</option>{% for a in nb_aspects %}<option value="{{ a }}">{{ a }}</option>{% endfor %}</select>
+        <input type="number" name="variants" class="ai-variants" value="1" min="1" max="8" style="width:64px;" title="how many">
+        <button class="btn" type="submit">✨ Generate <span class="ai-cost mono muted" style="font-size:11px;"></span></button>
+      </form>
+      {% else %}
+      <div class="hint">AI image editing is off — add <code>GEMINI_API_KEY</code> as an environment variable (Google AI Studio key) to enable “Edit with AI” and “Generate”.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if images %}
+  <div class="img-grid" style="margin-top:14px;">
+    {% for r in images %}
+    <div class="img-card" id="c{{ r.id }}">
+      <div class="img-thumb">
+        {% if r.status == 'processing' %}<div class="img-ph">✨ generating…</div>
+        {% elif r.status == 'error' %}<div class="img-ph" style="color:var(--err);" title="{{ r.error }}">✕ failed</div>
+        {% elif r.file_path %}<a href="/creatives/{{ r.id }}/file" target="_blank" rel="noopener"><img src="/creatives/{{ r.id }}/file" alt="{{ r.name }}" loading="lazy"></a>
+        {% else %}<div class="img-ph">—</div>{% endif %}
+      </div>
+      <div class="img-meta">
+        <form id="if{{ r.id }}" method="post" action="/creatives/{{ r.id }}/update"></form>
+        <input form="if{{ r.id }}" type="text" name="name" value="{{ r.name }}" style="font-size:12px;padding:4px 7px;">
+        <input form="if{{ r.id }}" type="text" name="source" value="{{ r.source }}" placeholder="source" style="font-size:11.5px;padding:4px 7px;margin-top:4px;">
+        {% if r.ai_prompt %}<div class="muted" style="font-size:10.5px;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="{{ r.ai_prompt }}">✨ {{ r.ai_prompt[:60] }}</div>
+        <div class="muted mono" style="font-size:10px;">{{ r.ai_model.replace('gemini-','') }} · ${{ "%.3f"|format(r.ai_cost) }}</div>{% endif %}
+        {% if r.status == 'error' %}<div style="font-size:10.5px;color:var(--err);margin-top:3px;overflow-wrap:anywhere;">{{ r.error[:120] }}</div>{% endif %}
+        <div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap;">
+          <button form="if{{ r.id }}" class="btn sm" type="submit">Save</button>
+          {% if r.status == 'available' and nb_configured %}
+          <button type="button" class="btn sm aiEditBtn" data-id="{{ r.id }}" data-name="{{ r.name }}" data-src="/creatives/{{ r.id }}/file">✨ Edit with AI</button>
+          {% endif %}
+          {% if r.status in ('available', 'error') %}
+          <form method="post" action="/creatives/{{ r.id }}/delete" style="display:inline;" onsubmit="return confirm('Delete this image?');"><button class="btn sm danger" type="submit">✕</button></form>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty" style="padding:22px 0;">No images yet — upload some, or generate one from a prompt.</div>
+  {% endif %}
+  <div class="hint" style="margin-top:8px;">Images live on their own shelf: the video launcher never picks them. Edits keep the original and add new copies (grouped as a family), each stamped with its prompt, model and list price.</div>
+</div>
+
+{# ---- AI edit modal ---- #}
+<div id="aiModal" style="display:none;position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.7);align-items:center;justify-content:center;">
+  <form method="post" id="aiForm" class="ai-form" style="background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;width:min(94vw,560px);box-shadow:var(--shadow);">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+      <div><div style="font-weight:650;">✨ Edit with AI</div><div class="muted" style="font-size:12px;" id="aiName"></div></div>
+      <button type="button" id="aiClose" class="btn sm">✕</button>
+    </div>
+    <div style="display:grid;grid-template-columns:120px 1fr;gap:12px;align-items:start;">
+      <img id="aiPreview" src="" alt="" style="width:120px;height:120px;object-fit:cover;border-radius:8px;border:1px solid var(--border);background:var(--panel-hover);">
+      <div>
+        <label class="field"><span class="field-label">What should change?</span>
+          <textarea name="prompt" required placeholder="e.g. Replace the background with a bright kitchen, keep the product exactly as is, add bold text “50% OFF” top-left" style="min-height:90px;font-family:var(--font-sans);font-size:13px;"></textarea></label>
+        <div class="form-row-3">
+          <label class="field"><span class="field-label">Model</span>
+            <select name="model" class="ai-model">{% for m in nb_models %}<option value="{{ m.id }}" {{ 'selected' if m.id == nb_default }}>{{ m.label }}</option>{% endfor %}</select></label>
+          <label class="field"><span class="field-label">Resolution</span><select name="size" class="ai-size"></select></label>
+          <label class="field"><span class="field-label">Copies</span><input type="number" name="variants" class="ai-variants" value="1" min="1" max="8"></label>
+        </div>
+        <label class="field"><span class="field-label">Aspect (optional)</span>
+          <select name="aspect"><option value="">Keep as-is / auto</option>{% for a in nb_aspects %}<option value="{{ a }}">{{ a }}</option>{% endfor %}</select></label>
+      </div>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
+      <span class="muted" style="font-size:12px;">Estimated cost <b class="ai-cost mono"></b> (Google list price)</span>
+      <button class="btn primary" type="submit">Create edit(s)</button>
+    </div>
+  </form>
+</div>
+{% endif %}
 
 <div id="vidModal" style="display:none;position:fixed;inset:0;z-index:1000;
      background:rgba(0,0,0,.8);align-items:center;justify-content:center;">
@@ -141,37 +364,105 @@
 {% endblock %}
 {% block scripts %}
 <script>
-  // hide variation options when the toggle is off
+(function () {
+  // ---- chip dropdowns (links, no form) ----
+  document.querySelectorAll("[data-fsel]").forEach(function (fs) {
+    fs.querySelector("button").addEventListener("click", function (e) {
+      e.stopPropagation(); var open = fs.classList.contains("open");
+      document.querySelectorAll("[data-fsel].open").forEach(function (o) { o.classList.remove("open"); });
+      if (!open) fs.classList.add("open");
+    });
+  });
+  document.addEventListener("click", function () { document.querySelectorAll("[data-fsel].open").forEach(function (o) { o.classList.remove("open"); }); });
+
+  // ---- library: hide variation options when the toggle is off ----
   var chk = document.getElementById("freshenChk"), opts = document.getElementById("freshenOpts");
   function syncFreshen() { if (opts) opts.style.display = chk.checked ? "flex" : "none"; }
   if (chk) { chk.addEventListener("change", syncFreshen); syncFreshen(); }
-  // while anything is still processing, refresh so finished copies appear
-  {% if processing %}
+  {% if processing and view == 'library' %}
   setTimeout(function () { location.reload(); }, 5000);
   {% endif %}
 
-  // video preview modal
-  var modal = document.getElementById("vidModal"),
-      player = document.getElementById("vidPlayer"),
-      vidTitle = document.getElementById("vidTitle");
-  function closeModal() {
-    modal.style.display = "none";
-    player.pause();
-    player.removeAttribute("src");
-    player.load();
+  // ---- AI forms: resolution options + live cost estimate --------------------
+  var PRICES = {{ nb_models_json | safe }};
+  function wireAi(form) {
+    var model = form.querySelector(".ai-model"), size = form.querySelector(".ai-size"),
+        n = form.querySelector(".ai-variants"), cost = form.querySelector(".ai-cost");
+    if (!model || !size) return;
+    function sizes() {
+      var cur = size.value, ps = PRICES[model.value] || {};
+      size.innerHTML = "";
+      Object.keys(ps).forEach(function (k) { size.add(new Option(k + " · $" + ps[k].toFixed(3), k)); });
+      if (ps[cur]) size.value = cur; else if (ps["1K"]) size.value = "1K";
+      est();
+    }
+    function est() {
+      var ps = PRICES[model.value] || {}, per = ps[size.value] || 0, k = Math.max(1, parseInt(n && n.value || "1", 10) || 1);
+      if (cost) cost.textContent = "≈$" + (per * k).toFixed(2);
+    }
+    model.addEventListener("change", sizes); size.addEventListener("change", est);
+    if (n) n.addEventListener("input", est);
+    sizes();
   }
-  document.querySelectorAll(".previewBtn").forEach(function (b) {
+  document.querySelectorAll(".ai-form").forEach(wireAi);
+  var aiModal = document.getElementById("aiModal"), aiForm = document.getElementById("aiForm");
+  document.querySelectorAll(".aiEditBtn").forEach(function (b) {
     b.addEventListener("click", function () {
-      vidTitle.textContent = b.dataset.name || "Preview";
-      player.src = b.dataset.src;
-      modal.style.display = "flex";
-      player.play().catch(function () {});
+      aiForm.action = "/creatives/" + b.dataset.id + "/ai-edit";
+      document.getElementById("aiName").textContent = b.dataset.name;
+      document.getElementById("aiPreview").src = b.dataset.src;
+      aiModal.style.display = "flex";
+      aiForm.querySelector("textarea").focus();
     });
+  });
+  if (aiModal) {
+    document.getElementById("aiClose").addEventListener("click", function () { aiModal.style.display = "none"; });
+    aiModal.addEventListener("click", function (e) { if (e.target === aiModal) aiModal.style.display = "none"; });
+  }
+
+  // ---- library: modal preview ----
+  var modal = document.getElementById("vidModal"), player = document.getElementById("vidPlayer"), vidTitle = document.getElementById("vidTitle");
+  function closeModal() { modal.style.display = "none"; player.pause(); player.removeAttribute("src"); player.load(); }
+  document.querySelectorAll(".previewBtn").forEach(function (b) {
+    b.addEventListener("click", function () { vidTitle.textContent = b.dataset.name || "Preview"; player.src = b.dataset.src; modal.style.display = "flex"; player.play().catch(function () {}); });
   });
   document.getElementById("vidClose").addEventListener("click", closeModal);
   modal.addEventListener("click", function (e) { if (e.target === modal) closeModal(); });
-  document.addEventListener("keydown", function (e) {
-    if (e.key === "Escape" && modal.style.display === "flex") closeModal();
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape" && modal.style.display === "flex") closeModal(); });
+
+  // ---- performance: side player driven by the leaderboard ----
+  var rows = Array.prototype.slice.call(document.querySelectorAll(".perf-row"));
+  if (!rows.length) return;
+  var cur = -1, v = document.getElementById("ppVideo");
+  function money(s) { var n = Number(s); return (n < 0 ? "−" : "") + "$" + Math.abs(n).toFixed(2); }
+  function load(i) {
+    if (i < 0 || i >= rows.length) return;
+    cur = i; var r = rows[i], d = r.dataset;
+    rows.forEach(function (x) { x.classList.remove("sel"); }); r.classList.add("sel");
+    document.getElementById("ppEmpty").style.display = "none";
+    document.getElementById("ppBody").style.display = "";
+    if (v.getAttribute("src") !== d.src) { v.src = d.src; v.play().catch(function () {}); }
+    document.getElementById("ppName").textContent = d.name;
+    var camp = document.getElementById("ppCampaign"); camp.textContent = d.campaign; camp.href = d.edit;
+    document.getElementById("ppAccount").textContent = d.account;
+    document.getElementById("ppSource").textContent = d.source ? "source " + d.source : "no source";
+    document.getElementById("ppDot").className = "dot " + (d.active === "1" ? "on" : "off");
+    document.getElementById("ppSpend").textContent = money(d.spend);
+    document.getElementById("ppRev").textContent = money(d.rev);
+    var p = document.getElementById("ppProfit"); p.textContent = money(d.profit); p.className = "val " + (Number(d.profit) >= 0 ? "good" : "bad");
+    var ro = document.getElementById("ppRoas"); ro.textContent = Number(d.spend) ? d.roas + "×" : "—"; ro.className = "val " + (Number(d.roas) >= 1 ? "good" : (Number(d.spend) ? "bad" : ""));
+    document.getElementById("ppConv").textContent = d.conv;
+    document.getElementById("ppCtr").textContent = d.ctr + "%";
+    document.getElementById("ppEdit").href = d.edit;
+    r.scrollIntoView({ block: "nearest" });
+  }
+  rows.forEach(function (r, i) {
+    r.addEventListener("click", function (e) { if (e.target.closest("a")) return; load(i); });
   });
+  document.getElementById("ppPrev").addEventListener("click", function (e) { e.preventDefault(); load(cur - 1); });
+  document.getElementById("ppNext").addEventListener("click", function (e) { e.preventDefault(); load(cur + 1); });
+  v.addEventListener("ended", function () { if (cur + 1 < rows.length) load(cur + 1); });   // autoplay next: review the whole set hands-free
+  load(0);
+})();
 </script>
 {% endblock %}

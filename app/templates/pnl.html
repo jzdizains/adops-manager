@@ -42,7 +42,7 @@
     <tbody>
     {% for r in sources %}
       <tr>
-        <td class="mono">{{ r.source }}</td>
+        <td class="mono"><a href="/status?source={{ r.source|urlencode }}&range={{ range_key }}&origin=all" style="color:inherit;" title="Campaigns on this source">{{ r.source }}</a></td>
         <td class="muted">{{ r.spark }}</td>
         <td class="num">{{ r.clicks or "—" }}</td>
         <td class="num">{{ r.conversions or "—" }}</td>

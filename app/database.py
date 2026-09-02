@@ -69,6 +69,10 @@ schema_additions: dict[str, dict[str, str]] = {
         "tp_cost": "REAL DEFAULT 0",
         "tp_checked_at": "DATETIME",
         "uniquify": "BOOLEAN DEFAULT 0",
+        "kind": "TEXT DEFAULT 'video'",
+        "ai_prompt": "TEXT DEFAULT ''",
+        "ai_model": "TEXT DEFAULT ''",
+        "ai_cost": "REAL DEFAULT 0",
     },
 }
 

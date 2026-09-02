@@ -1,27 +1,24 @@
 {% extends "base.html" %}
 {% block content %}
-{% set range_labels = {'today': 'today', 'yesterday': 'yesterday', '7d': 'last 7 days', '30d': 'last 30 days', 'mtd': 'this month', 'custom': (start ~ ' → ' ~ end)} %}
+{% set range_labels = {'today': 'Today', 'yesterday': 'Yesterday', '7d': 'Last 7 days', '30d': 'Last 30 days', 'mtd': 'This month', 'custom': 'Custom'} %}
+{% set origin_labels = {'tool': 'Launched by this tool', 'all': 'All on TikTok'} %}
+{% set state_labels = {'all': 'All statuses', 'active': 'Active only', 'paused': 'Paused only'} %}
+{% set roas = (totals.revenue / totals.spend) if totals.spend else 0 %}
 {% macro sort_link(key, label) -%}
   <a class="th-sort {{ 'on' if sort == key else '' }}"
-     href="?q={{ q|urlencode }}&state={{ state }}&account={{ account }}&origin={{ origin }}&range={{ range_key }}&start={{ start }}&end={{ end }}&sort={{ key }}">{{ label }}{% if sort == key %} ▾{% endif %}</a>
+     href="?q={{ q|urlencode }}&state={{ state }}&account={{ account }}&source={{ source_f|urlencode }}&origin={{ origin }}&range={{ range_key }}&start={{ start }}&end={{ end }}&sort={{ key }}">{{ label }}{% if sort == key %} ▾{% endif %}</a>
 {%- endmacro %}
+
 <div class="page-head">
   <div>
     <h1>Campaigns</h1>
-    <div class="muted">{{ active_count }} active of {{ rows|length }} shown · ${{ "%.2f"|format(totals.spend) }} spent · ${{ "%.2f"|format(totals.revenue) }} revenue ·
-      <span class="{{ 'pos' if totals.profit >= 0 else 'neg' }}">${{ "%.2f"|format(totals.profit) }} profit</span> · {{ range_labels[range_key] }} · synced {{ synced_ago }}</div>
+    <div class="muted" style="font-size:12.5px;">{{ range_labels[range_key] }} · {{ 'launched by this tool' if origin == 'tool' else 'all campaigns on TikTok' }} · synced {{ synced_ago }}</div>
   </div>
   <div class="actions">
     <form method="post" action="/status/sync"><button class="btn primary" type="submit">↻ Sync now</button></form>
   </div>
 </div>
 
-{% if request.query_params.get('err') %}
-<div class="flash err">TikTok rejected the change — {{ request.query_params.get('err') }}</div>
-{% endif %}
-{% if request.query_params.get('ok') %}
-<div class="flash ok">{{ request.query_params.get('ok') }}</div>
-{% endif %}
 {% if origin == 'tool' and pending_tool %}
 <div class="flash ok">{{ pending_tool }} tool-launched campaign(s) exist on TikTok but aren't in the synced cache yet:
   {% for pd in pending_details %}
@@ -36,102 +33,208 @@
 </div>
 {% endif %}
 
-<div class="card" style="margin-bottom:14px;">
-  <form method="get" action="/status" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-    <input type="text" name="q" value="{{ q }}" placeholder="Filter by campaign or account…" style="width:230px;">
-    <select name="range" id="rangeSel" style="width:auto;">
-      <option value="today" {{ 'selected' if range_key == 'today' }}>Today</option>
-      <option value="yesterday" {{ 'selected' if range_key == 'yesterday' }}>Yesterday</option>
-      <option value="7d" {{ 'selected' if range_key == '7d' }}>Last 7 days</option>
-      <option value="30d" {{ 'selected' if range_key == '30d' }}>Last 30 days</option>
-      <option value="mtd" {{ 'selected' if range_key == 'mtd' }}>This month</option>
-      <option value="custom" {{ 'selected' if range_key == 'custom' }}>Custom…</option>
-    </select>
-    <span id="customDates" style="display:{{ '' if range_key == 'custom' else 'none' }};gap:6px;">
-      <input type="date" name="start" value="{{ start }}" style="width:auto;">
-      <input type="date" name="end" value="{{ end }}" style="width:auto;">
+{# ---- KPI delta chip macro (only when real prior-period data exists) ---- #}
+{% macro pct_chip(pct, good_up=true) -%}
+  {% if deltas.has_prev and pct is not none %}
+    {% set up = pct >= 0 %}
+    {% set cls = 'flat' if not good_up else ('up' if up else 'down') %}
+    <span class="delta {{ cls }}">{{ '▲' if up else '▼' }} {{ "%.0f"|format(pct|abs) }}%</span>
+  {% endif %}
+{%- endmacro %}
+
+<!-- KPI tiles: real figures + vs-previous-period deltas + daily sparklines -->
+<div class="kpis">
+  <div class="kpi accent">
+    <div class="lab">Spend</div>
+    <div class="val">${{ "%.2f"|format(totals.spend) }} {{ pct_chip(deltas.spend_pct, good_up=false) }}</div>
+    <div class="spark" data-spark="spend"></div>
+  </div>
+  <div class="kpi">
+    <div class="lab">Revenue</div>
+    <div class="val"><span class="good">${{ "%.2f"|format(totals.revenue) }}</span> {{ pct_chip(deltas.revenue_pct) }}</div>
+    <div class="spark" data-spark="revenue"></div>
+  </div>
+  <div class="kpi">
+    <div class="lab">Profit</div>
+    <div class="val"><span class="{{ 'good' if totals.profit >= 0 else 'bad' }}">{{ '−' if totals.profit < 0 }}${{ "%.2f"|format(totals.profit|abs) }}</span>
+      {% if deltas.has_prev %}<span class="delta {{ 'up' if deltas.profit_abs >= 0 else 'down' }}">{{ '▲' if deltas.profit_abs >= 0 else '▼' }} {{ '−' if deltas.profit_abs < 0 }}${{ "%.0f"|format(deltas.profit_abs|abs) }}</span>{% endif %}</div>
+    <div class="sub">revenue − spend</div>
+  </div>
+  <div class="kpi">
+    <div class="lab">ROAS</div>
+    <div class="val"><span class="{{ 'good' if roas >= 1 else ('bad' if roas > 0 else '') }}">{{ "%.2f"|format(roas) }}×</span>
+      {% if deltas.has_prev and deltas.roas_abs is not none %}<span class="delta {{ 'up' if deltas.roas_abs >= 0 else 'down' }}">{{ '▲' if deltas.roas_abs >= 0 else '▼' }} {{ "%.2f"|format(deltas.roas_abs|abs) }}</span>{% endif %}</div>
+    <div class="sub">{{ "%.0f"|format(totals.pb_clicks) }} PB clicks{% if totals.pb_clicks %} · {{ "%.1f"|format(totals.cvr) }}% CVR{% endif %}</div>
+  </div>
+  <div class="kpi">
+    <div class="lab">Conversions</div>
+    <div class="val">{{ "{:,}".format(totals.conversions) }}</div>
+    <div class="sub">{{ "{:,}".format(totals.impressions) }} impr · {{ "{:,}".format(totals.clicks) }} clicks</div>
+  </div>
+  <div class="kpi">
+    <div class="lab">Active</div>
+    <div class="val">{{ active_count }}</div>
+    <div class="sub">of {{ rows|length }} shown</div>
+  </div>
+</div>
+
+<!-- filter bar: chip-style dropdowns backed by a real GET form -->
+<div class="card" style="margin-bottom:14px;padding:12px 14px;">
+  <form method="get" action="/status" id="filterForm" class="filterbar">
+    <div class="search-wrap"><input type="text" name="q" value="{{ q }}" placeholder="Search campaign or account…"></div>
+
+    <div class="fsel" data-fsel>
+      <button type="button"><span class="k">Range</span> <span class="v">{{ range_labels[range_key] }}</span> <span class="chev">▾</span></button>
+      <div class="fmenu">
+        {% for k, lbl in range_labels.items() %}<a data-val="{{ k }}" class="{{ 'sel' if range_key == k }}">{{ lbl }}</a>{% endfor %}
+      </div>
+      <input type="hidden" name="range" value="{{ range_key }}">
+    </div>
+    <span id="customDates" style="display:{{ 'inline-flex' if range_key == 'custom' else 'none' }};gap:6px;">
+      <input type="date" name="start" value="{{ start }}">
+      <input type="date" name="end" value="{{ end }}">
     </span>
-    <select name="origin" style="width:auto;">
-      <option value="tool" {{ 'selected' if origin == 'tool' }}>Launched by this tool</option>
-      <option value="all" {{ 'selected' if origin == 'all' }}>All campaigns on TikTok</option>
-    </select>
-    <select name="state" style="width:auto;">
-      <option value="all" {{ 'selected' if state == 'all' }}>All statuses</option>
-      <option value="active" {{ 'selected' if state == 'active' }}>Active only</option>
-      <option value="paused" {{ 'selected' if state == 'paused' }}>Paused only</option>
-    </select>
-    <select name="account" style="width:auto;max-width:260px;">
-      <option value="">All accounts</option>
-      {% for aid, label in account_options %}
-      <option value="{{ aid }}" {{ 'selected' if account == aid }}>{{ label[:34] }}</option>
-      {% endfor %}
-    </select>
+
+    <div class="fsel" data-fsel>
+      <button type="button"><span class="k">Show</span> <span class="v">{{ origin_labels[origin] }}</span> <span class="chev">▾</span></button>
+      <div class="fmenu">
+        {% for k, lbl in origin_labels.items() %}<a data-val="{{ k }}" class="{{ 'sel' if origin == k }}">{{ lbl }}</a>{% endfor %}
+      </div>
+      <input type="hidden" name="origin" value="{{ origin }}">
+    </div>
+
+    <div class="fsel" data-fsel>
+      <button type="button"><span class="k">Status</span> <span class="v">{{ state_labels[state] }}</span> <span class="chev">▾</span></button>
+      <div class="fmenu">
+        {% for k, lbl in state_labels.items() %}<a data-val="{{ k }}" class="{{ 'sel' if state == k }}">{{ lbl }}</a>{% endfor %}
+      </div>
+      <input type="hidden" name="state" value="{{ state }}">
+    </div>
+
+    <div class="fsel" data-fsel>
+      <button type="button"><span class="k">Account</span> <span class="v">{% if account %}{% for aid, lbl in account_options %}{% if aid == account %}{{ lbl[:20] }}{% endif %}{% endfor %}{% else %}All accounts{% endif %}</span> <span class="chev">▾</span></button>
+      <div class="fmenu">
+        <a data-val="" class="{{ 'sel' if not account }}">All accounts</a>
+        {% for aid, lbl in account_options %}<a data-val="{{ aid }}" class="{{ 'sel' if account == aid }}">{{ lbl[:34] }}</a>{% endfor %}
+      </div>
+      <input type="hidden" name="account" value="{{ account }}">
+    </div>
+
+    {% if source_options %}
+    <div class="fsel" data-fsel>
+      <button type="button"><span class="k">Source</span> <span class="v">{{ source_f if source_f else 'All sources' }}</span> <span class="chev">▾</span></button>
+      <div class="fmenu">
+        <a data-val="" class="{{ 'sel' if not source_f }}">All sources</a>
+        {% for sname in source_options %}<a data-val="{{ sname }}" class="{{ 'sel' if source_f == sname }}"><span class="mono">{{ sname[:34] }}</span></a>{% endfor %}
+      </div>
+      <input type="hidden" name="source" value="{{ source_f }}">
+    </div>
+    {% endif %}
+
     <input type="hidden" name="sort" value="{{ sort }}">
     <button class="btn" type="submit">Apply</button>
-    {% if q or state != 'all' or account or origin != 'tool' or range_key != 'today' %}<a class="btn sm" href="/status">✕ Clear</a>{% endif %}
+    {% if q or state != 'all' or account or source_f or origin != 'tool' or range_key != 'today' %}<a class="btn sm" href="/status">✕ Clear</a>{% endif %}
     {% if range_errors %}<span class="hint" style="color:var(--warn);">{{ range_errors }} account(s) failed to load range metrics</span>{% endif %}
   </form>
 </div>
 
-<div class="card">
+<div class="card" style="padding:0;overflow:hidden;">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;border-bottom:1px solid var(--border-soft);">
+    <div style="font-size:12.5px;font-weight:650;">{{ rows|length }} campaigns
+      <span class="muted" style="font-weight:400;">· money-first view</span></div>
+    <button type="button" class="detail-toggle" id="detailToggle">Show details <span class="chev">▾</span></button>
+  </div>
   {% if rows %}
-  <div style="overflow-x:auto;">
-  <table class="data dense">
+  <div class="table-scroll">
+  <table class="data dense" id="campTable">
     <thead><tr>
       <th>{{ sort_link('name', 'Campaign') }}</th>
+      <th>Creative</th>
       <th>Account</th>
-      <th>Status</th>
       <th>{{ sort_link('source', 'Source') }}</th>
-      <th class="num">{{ sort_link('spend', 'Spend') }}</th>
-      <th class="num" title="Revenue from Glitchy postbacks (via source)">{{ sort_link('revenue', 'Revenue') }}</th>
-      <th class="num" title="Profit = postback revenue − TikTok spend">{{ sort_link('profit', 'Profit') }}</th>
-      <th class="num" title="Clicks reported by Glitchy postbacks">{{ sort_link('pb_clicks', 'PB clicks') }}</th>
-      <th class="num" title="CVR from Glitchy postbacks (conversions / clicks, source level)">{{ sort_link('cvr', 'CVR') }}</th>
-      <th class="num">{{ sort_link('budget', 'Budget') }}</th>
-      <th class="num">{{ sort_link('impr', 'Impr.') }}</th>
-      <th class="num">{{ sort_link('clicks', 'Clicks') }}</th>
-      <th class="num">{{ sort_link('ctr', 'CTR') }}</th>
-      <th class="num">{{ sort_link('cpc', 'CPC') }}</th>
-      <th class="num">{{ sort_link('cpm', 'CPM') }}</th>
+      <th class="num col-money grp-start">{{ sort_link('spend', 'Spend') }}</th>
+      <th class="num col-money" title="Revenue from Glitchy postbacks (via source)">{{ sort_link('revenue', 'Revenue') }}</th>
+      <th class="num col-money" title="Profit = postback revenue − TikTok spend">{{ sort_link('profit', 'Profit') }}</th>
+      <th class="num col-money grp-end" title="Return on ad spend = revenue ÷ spend">ROAS</th>
       <th class="num">{{ sort_link('conv', 'Conv.') }}</th>
-      <th class="num">{{ sort_link('cpa', 'CPA') }}</th>
+      <th class="num">{{ sort_link('budget', 'Budget') }}</th>
+      <th class="num col-detail" title="Clicks reported by Glitchy postbacks">{{ sort_link('pb_clicks', 'PB clicks') }}</th>
+      <th class="num col-detail" title="CVR from Glitchy postbacks (conversions / clicks, source level)">{{ sort_link('cvr', 'CVR') }}</th>
+      <th class="num col-detail">{{ sort_link('impr', 'Impr.') }}</th>
+      <th class="num col-detail">{{ sort_link('clicks', 'Clicks') }}</th>
+      <th class="num col-detail">{{ sort_link('ctr', 'CTR') }}</th>
+      <th class="num col-detail">{{ sort_link('cpc', 'CPC') }}</th>
+      <th class="num col-detail">{{ sort_link('cpm', 'CPM') }}</th>
+      <th class="num col-detail">{{ sort_link('cpa', 'CPA') }}</th>
       <th class="num sticky-r">Actions</th>
     </tr></thead>
     <tbody>
     {% for row in rows %}
       {% set r = row.r %}
+      {% set cr = (row.revenue / row.m.spend) if (row.source and row.m.spend) else 0 %}
       <tr>
-        <td style="min-width:170px;">{{ r.campaign_name[:42] }}{% if r.is_smart_plus %} <span class="pill dim" title="Smart+ campaign — TikTok automates targeting & placements">S+</span>{% endif %}</td>
-        <td class="muted" style="white-space:nowrap;">{{ row.account_name[:22] }}</td>
-        <td style="white-space:nowrap;">
-          {% if r.operation_status == "ENABLE" %}<span class="pill ok">Active</span>
-          {% elif r.operation_status == "DISABLE" %}<span class="pill warn">Paused</span>
-          {% else %}<span class="pill dim">{{ r.operation_status or "—" }}</span>{% endif %}
-          {% if r.secondary_status and "DISABLE" not in r.operation_status %}
-            <div class="muted" style="font-size:11px;">{{ r.secondary_status.replace('CAMPAIGN_STATUS_','').replace('_',' ')|lower }}</div>
-          {% endif %}
+        <td style="min-width:180px;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span class="dot {{ 'on' if r.operation_status == 'ENABLE' else 'off' }}"
+                  title="{% if r.operation_status == 'ENABLE' %}Active{% elif r.operation_status == 'DISABLE' %}Paused{% else %}{{ r.operation_status or '—' }}{% endif %}"></span>
+            <div style="min-width:0;">
+              <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:210px;"><a href="/campaigns/{{ r.advertiser_id }}/{{ r.campaign_id }}/edit" style="color:inherit;" title="Open campaign">{{ r.campaign_name[:46] }}</a>{% if r.is_smart_plus %} <span class="pill dim" title="Smart+ campaign — TikTok automates targeting & placements">S+</span>{% endif %}</div>
+              {% if r.secondary_status and r.operation_status != 'DISABLE' %}
+                <div class="muted" style="font-size:10.5px;">{{ r.secondary_status.replace('CAMPAIGN_STATUS_','').replace('_',' ')|lower }}</div>
+              {% elif r.operation_status == 'DISABLE' %}
+                <div style="font-size:10.5px;color:var(--warn);">paused</div>
+              {% endif %}
+            </div>
+          </div>
+        </td>
+        <td>
+          {% set cr_ = creative_by_cid.get(r.campaign_id) %}
+          {% set sp_ = spark_by_cid.get(r.campaign_id, '') %}
+          {% if cr_ %}
+            <div class="creat">
+              <span class="thumb previewBtn" title="Play creative" data-src="/creatives/{{ cr_.id }}/file" data-name="{{ cr_.name }}">▶</span>
+              <div style="min-width:0;">
+                <div class="nm"><a href="/creatives?view=performance" style="color:inherit;" title="Creative performance">{{ cr_.name }}</a></div>
+                <div class="kind">library{% if cr_.freshen %} · variant ✨{% endif %}</div>
+              </div>
+            </div>
+          {% elif sp_ %}
+            <div class="creat">
+              <span class="thumb" style="cursor:default;">✦</span>
+              <div style="min-width:0;"><div class="nm"><a href="/spark-codes" style="color:inherit;">{{ sp_[:28] }}</a></div><div class="kind">spark code</div></div>
+            </div>
+          {% else %}<span class="muted">—</span>{% endif %}
         </td>
         <td style="white-space:nowrap;">
-          {% if row.source %}{{ row.source }}
+          <a href="/status?account={{ r.advertiser_id }}&range={{ range_key }}&origin={{ origin }}" style="color:inherit;" title="Only this account">{{ row.account_name[:22] }}</a>
+          {% if bc_by_aid.get(r.advertiser_id) %}<div class="muted" style="font-size:10.5px;">{{ bc_by_aid.get(r.advertiser_id)[:22] }}</div>{% endif %}
+        </td>
+        <td style="white-space:nowrap;">
+          {% if row.source %}<a href="/status?source={{ row.source|urlencode }}&range={{ range_key }}&origin={{ origin }}" class="mono" style="font-size:11px;color:inherit;" title="Only this source">{{ row.source[:20] }}</a> <a href="/pnl?range={{ range_key }}" class="muted" style="font-size:10px;" title="P&L by source">P&L</a>
             {% if row.shared_n %}<span class="muted" title="This spark/source runs on {{ row.shared_n }} campaigns — revenue & clicks are split by spend share" style="font-size:11px;"> ÷{{ row.shared_n }}</span>{% endif %}
           {% else %}<span class="muted">—</span>{% endif %}
         </td>
-        <td class="num">${{ "%.2f"|format(row.m.spend) }}</td>
-        <td class="num">{% if row.source %}${{ "%.2f"|format(row.revenue) }}{% else %}—{% endif %}</td>
-        <td class="num {{ 'pos' if row.profit >= 0 else 'neg' }}">{% if row.source %}{{ '−' if row.profit < 0 }}${{ "%.2f"|format(row.profit|abs) }}{% else %}—{% endif %}</td>
-        <td class="num">{% if row.source %}{{ "%.0f"|format(row.pb_clicks) }}{% else %}—{% endif %}</td>
-        <td class="num">{% if row.source and row.pb_clicks %}{{ "%.2f"|format(row.cvr) }}%{% else %}—{% endif %}</td>
-        <td class="num">{% if r.budget %}${{ "%.0f"|format(r.budget) }}{% if r.budget_mode == 'BUDGET_MODE_DAY' %}/d{% endif %}{% else %}—{% endif %}</td>
-        <td class="num">{{ "{:,}".format(row.m.impressions) }}</td>
-        <td class="num">{{ "{:,}".format(row.m.clicks) }}</td>
-        <td class="num">{{ "%.2f"|format(row.m.ctr) }}%</td>
-        <td class="num">{% if row.m.clicks %}${{ "%.2f"|format(row.m.cpc) }}{% else %}—{% endif %}</td>
-        <td class="num">{% if row.m.impressions %}${{ "%.2f"|format(row.m.cpm) }}{% else %}—{% endif %}</td>
+        <td class="num col-money grp-start">${{ "%.2f"|format(row.m.spend) }}</td>
+        <td class="num col-money">{% if row.source %}<span style="color:var(--ok);font-weight:600;">${{ "%.2f"|format(row.revenue) }}</span>{% else %}—{% endif %}</td>
+        <td class="num col-money {{ 'pos' if row.profit >= 0 else 'neg' }}">{% if row.source %}{{ '−' if row.profit < 0 }}${{ "%.2f"|format(row.profit|abs) }}{% else %}—{% endif %}</td>
+        <td class="num col-money grp-end">
+          {% if row.source and row.m.spend %}
+            <span class="roas"><span class="x {{ 'g' if cr >= 1 else 'r' }}">{{ "%.2f"|format(cr) }}×</span></span>
+          {% else %}<span class="roas"><span class="x n">—</span></span>{% endif %}
+        </td>
         <td class="num">{{ row.m.conversions }}</td>
-        <td class="num">{% if row.m.conversions %}${{ "%.2f"|format(row.m.cpa) }}{% else %}—{% endif %}</td>
+        <td class="num">{% if r.budget %}${{ "%.0f"|format(r.budget) }}{% if r.budget_mode == 'BUDGET_MODE_DAY' %}/d{% endif %}{% else %}—{% endif %}</td>
+        <td class="num col-detail">{% if row.source %}{{ "%.0f"|format(row.pb_clicks) }}{% else %}—{% endif %}</td>
+        <td class="num col-detail">{% if row.source and row.pb_clicks %}{{ "%.2f"|format(row.cvr) }}%{% else %}—{% endif %}</td>
+        <td class="num col-detail">{{ "{:,}".format(row.m.impressions) }}</td>
+        <td class="num col-detail">{{ "{:,}".format(row.m.clicks) }}</td>
+        <td class="num col-detail">{{ "%.2f"|format(row.m.ctr) }}%</td>
+        <td class="num col-detail">{% if row.m.clicks %}${{ "%.2f"|format(row.m.cpc) }}{% else %}—{% endif %}</td>
+        <td class="num col-detail">{% if row.m.impressions %}${{ "%.2f"|format(row.m.cpm) }}{% else %}—{% endif %}</td>
+        <td class="num col-detail">{% if row.m.conversions %}${{ "%.2f"|format(row.m.cpa) }}{% else %}—{% endif %}</td>
         <td class="num sticky-r" style="white-space:nowrap;">
           <form method="post" action="/campaigns/{{ r.advertiser_id }}/{{ r.campaign_id }}/status" style="display:inline;">
-            <input type="hidden" name="next" value="/status?q={{ q|urlencode }}&state={{ state }}&account={{ account }}&origin={{ origin }}&range={{ range_key }}&start={{ start }}&end={{ end }}&sort={{ sort }}">
+            <input type="hidden" name="next" value="/status?q={{ q|urlencode }}&state={{ state }}&account={{ account }}&source={{ source_f|urlencode }}&origin={{ origin }}&range={{ range_key }}&start={{ start }}&end={{ end }}&sort={{ sort }}">
             {% if r.operation_status == "ENABLE" %}
               <input type="hidden" name="operation_status" value="DISABLE">
               <button class="btn sm" type="submit" title="Pause this campaign on TikTok">⏸</button>
@@ -146,48 +249,144 @@
     {% endfor %}
     </tbody>
     <tfoot>
-      <tr style="font-weight:600;">
+      <tr style="font-weight:650;">
         <td colspan="4">Totals ({{ rows|length }} campaigns)</td>
-        <td class="num">${{ "%.2f"|format(totals.spend) }}</td>
-        <td class="num">${{ "%.2f"|format(totals.revenue) }}</td>
-        <td class="num {{ 'pos' if totals.profit >= 0 else 'neg' }}">{{ '−' if totals.profit < 0 }}${{ "%.2f"|format(totals.profit|abs) }}</td>
-        <td class="num">{{ "%.0f"|format(totals.pb_clicks) }}</td>
-        <td class="num">{% if totals.pb_clicks %}{{ "%.2f"|format(totals.cvr) }}%{% else %}—{% endif %}</td>
-        <td></td>
-        <td class="num">{{ "{:,}".format(totals.impressions) }}</td>
-        <td class="num">{{ "{:,}".format(totals.clicks) }}</td>
-        <td class="num">{{ "%.2f"|format(totals.ctr) }}%</td>
-        <td class="num">{% if totals.clicks %}${{ "%.2f"|format(totals.cpc) }}{% else %}—{% endif %}</td>
-        <td class="num">{% if totals.impressions %}${{ "%.2f"|format(totals.cpm) }}{% else %}—{% endif %}</td>
+        <td class="num col-money grp-start">${{ "%.2f"|format(totals.spend) }}</td>
+        <td class="num col-money">${{ "%.2f"|format(totals.revenue) }}</td>
+        <td class="num col-money {{ 'pos' if totals.profit >= 0 else 'neg' }}">{{ '−' if totals.profit < 0 }}${{ "%.2f"|format(totals.profit|abs) }}</td>
+        <td class="num col-money grp-end"><span class="roas"><span class="x {{ 'g' if roas >= 1 else ('r' if roas > 0 else 'n') }}">{% if roas %}{{ "%.2f"|format(roas) }}×{% else %}—{% endif %}</span></span></td>
         <td class="num">{{ totals.conversions }}</td>
-        <td class="num">{% if totals.conversions %}${{ "%.2f"|format(totals.cpa) }}{% else %}—{% endif %}</td>
         <td></td>
+        <td class="num col-detail">{{ "%.0f"|format(totals.pb_clicks) }}</td>
+        <td class="num col-detail">{% if totals.pb_clicks %}{{ "%.2f"|format(totals.cvr) }}%{% else %}—{% endif %}</td>
+        <td class="num col-detail">{{ "{:,}".format(totals.impressions) }}</td>
+        <td class="num col-detail">{{ "{:,}".format(totals.clicks) }}</td>
+        <td class="num col-detail">{{ "%.2f"|format(totals.ctr) }}%</td>
+        <td class="num col-detail">{% if totals.clicks %}${{ "%.2f"|format(totals.cpc) }}{% else %}—{% endif %}</td>
+        <td class="num col-detail">{% if totals.impressions %}${{ "%.2f"|format(totals.cpm) }}{% else %}—{% endif %}</td>
+        <td class="num col-detail">{% if totals.conversions %}${{ "%.2f"|format(totals.cpa) }}{% else %}—{% endif %}</td>
+        <td class="sticky-r"></td>
       </tr>
     </tfoot>
   </table>
   </div>
-  <div class="muted" style="font-size:11px;margin-top:8px;">
-    Revenue · PB clicks · CVR come from Glitchy postbacks (per source, today). “÷N” = that source runs on N campaigns, so its revenue and clicks are split between them by spend share; CVR stays source-level. Conv. / CPA are TikTok-pixel numbers.
+  <div class="muted" style="font-size:11px;padding:10px 14px;border-top:1px solid var(--border-soft);">
+    Revenue · PB clicks · CVR · ROAS come from Glitchy postbacks (per source). “÷N” = that source runs on N campaigns, so its revenue and clicks are split between them by spend share; CVR stays source-level. Conv. / CPA are TikTok-pixel numbers. KPI deltas compare the same campaigns to the previous period.
   </div>
   {% else %}
-  <div class="empty">{% if origin == 'tool' %}No tool-launched campaigns yet — everything this tool launches will appear here automatically. Switch the filter to “All campaigns on TikTok” to see manually-created ones.{% else %}No campaigns cached yet — hit “Sync now” to pull them from every account.{% endif %}</div>
+  <div class="empty">{% if origin == 'tool' %}No tool-launched campaigns yet — everything this tool launches will appear here automatically. Switch the Source filter to “All on TikTok” to see manually-created ones.{% else %}No campaigns cached yet — hit “Sync now” to pull them from every account.{% endif %}</div>
   {% endif %}
 </div>
+
+<div id="vidModal" style="display:none;position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.8);align-items:center;justify-content:center;">
+  <div style="background:var(--panel);border-radius:12px;padding:12px;max-width:min(94vw,420px);box-shadow:0 12px 40px rgba(0,0,0,.5);">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px;">
+      <span id="vidTitle" style="font-weight:600;font-size:13px;color:var(--text-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></span>
+      <button type="button" id="vidClose" class="btn sm" style="padding:2px 10px;">✕</button>
+    </div>
+    <video id="vidPlayer" controls playsinline preload="metadata" style="width:100%;max-height:78vh;border-radius:8px;background:#000;display:block;"></video>
+  </div>
+</div>
+<script id="sparkData" type="application/json">{{ spark_json|safe }}</script>
 <script>
-  // custom range: show the date inputs only when "Custom…" is picked
-  var rangeSel = document.getElementById("rangeSel"), customDates = document.getElementById("customDates");
-  if (rangeSel) rangeSel.addEventListener("change", function () {
-    customDates.style.display = rangeSel.value === "custom" ? "inline-flex" : "none";
+(function () {
+  // ---- chip-style filter dropdowns (backed by hidden inputs) --------------
+  var form = document.getElementById("filterForm");
+  var customDates = document.getElementById("customDates");
+  document.querySelectorAll("[data-fsel]").forEach(function (fs) {
+    var btn = fs.querySelector("button"), input = fs.querySelector("input[type=hidden]");
+    btn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      var open = fs.classList.contains("open");
+      document.querySelectorAll("[data-fsel].open").forEach(function (o) { o.classList.remove("open"); });
+      if (!open) fs.classList.add("open");
+    });
+    fs.querySelectorAll(".fmenu a").forEach(function (a) {
+      a.addEventListener("click", function (e) {
+        e.preventDefault();
+        var val = a.getAttribute("data-val");
+        input.value = val;
+        fs.querySelector(".v").textContent = a.textContent.trim();
+        fs.classList.remove("open");
+        if (input.name === "range" && val === "custom") {
+          customDates.style.display = "inline-flex";     // let the user pick dates, then Apply
+          return;
+        }
+        if (input.name === "range") customDates.style.display = "none";
+        form.submit();
+      });
+    });
   });
-  // auto-refresh only the LIVE (today) view: the background worker syncs every
-  // sweep; historical ranges don't change and cost API calls to refetch.
+  document.addEventListener("click", function () {
+    document.querySelectorAll("[data-fsel].open").forEach(function (o) { o.classList.remove("open"); });
+  });
+
+  // ---- money-first table: Details toggle (remembered) ---------------------
+  var tbl = document.getElementById("campTable"), tg = document.getElementById("detailToggle");
+  if (tbl && tg) {
+    function apply(on) {
+      tbl.classList.toggle("show-detail", on);
+      tg.classList.toggle("on", on);
+      tg.childNodes[0].nodeValue = on ? "Hide details " : "Show details ";
+    }
+    var saved = false;
+    try { saved = localStorage.getItem("adops-camp-detail") === "1"; } catch (e) {}
+    apply(saved);
+    tg.addEventListener("click", function () {
+      var on = !tbl.classList.contains("show-detail");
+      try { localStorage.setItem("adops-camp-detail", on ? "1" : "0"); } catch (e) {}
+      apply(on);
+    });
+  }
+
+  // ---- KPI sparklines (real daily series; inline SVG, no library) ---------
+  var spark = {};
+  try { spark = JSON.parse(document.getElementById("sparkData").textContent || "{}"); } catch (e) {}
+  function draw(el, data, color) {
+    if (!data || data.length < 3) { el.style.display = "none"; return; }
+    var w = 120, h = 22, mx = Math.max.apply(null, data), mn = Math.min.apply(null, data);
+    var rng = (mx - mn) || 1, n = data.length;
+    var pts = data.map(function (v, i) {
+      var x = (i / (n - 1)) * w, y = h - 2 - ((v - mn) / rng) * (h - 4);
+      return x.toFixed(1) + "," + y.toFixed(1);
+    });
+    var area = "M0," + h + " L" + pts.join(" L") + " L" + w + "," + h + " Z";
+    var line = "M" + pts.join(" L");
+    var lx = (w).toFixed(1), ly = (h - 2 - ((data[n - 1] - mn) / rng) * (h - 4)).toFixed(1);
+    el.innerHTML =
+      '<svg viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none">' +
+      '<path d="' + area + '" fill="' + color + '" opacity="0.12"/>' +
+      '<path d="' + line + '" fill="none" stroke="' + color + '" stroke-width="1.5" ' +
+      'stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>' +
+      '<circle cx="' + lx + '" cy="' + ly + '" r="1.8" fill="' + color + '"/></svg>';
+  }
+  var cs = getComputedStyle(document.documentElement);
+  var accent = cs.getPropertyValue("--accent").trim() || "#5b5bd6";
+  var good = cs.getPropertyValue("--ok").trim() || "#0e9f6e";
+  document.querySelectorAll("[data-spark]").forEach(function (el) {
+    var k = el.getAttribute("data-spark");
+    draw(el, spark[k], k === "revenue" ? good : accent);
+  });
+
+  // ---- creative preview modal (thumb in the Creative column) ---------------
+  var modal = document.getElementById("vidModal"), player = document.getElementById("vidPlayer"), vidTitle = document.getElementById("vidTitle");
+  function closeModal() { modal.style.display = "none"; player.pause(); player.removeAttribute("src"); player.load(); }
+  document.querySelectorAll(".previewBtn").forEach(function (b) {
+    b.addEventListener("click", function (e) { e.stopPropagation(); vidTitle.textContent = b.dataset.name || "Preview"; player.src = b.dataset.src; modal.style.display = "flex"; player.play().catch(function () {}); });
+  });
+  document.getElementById("vidClose").addEventListener("click", closeModal);
+  modal.addEventListener("click", function (e) { if (e.target === modal) closeModal(); });
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape" && modal.style.display === "flex") closeModal(); });
+
+  // ---- auto-refresh only the LIVE (today) view ----------------------------
   {% if range_key == 'today' %}
   setInterval(function () {
     var el = document.activeElement;
     var typing = el && (el.tagName === "INPUT" || el.tagName === "SELECT" || el.tagName === "TEXTAREA");
     var selecting = window.getSelection && String(window.getSelection());
-    if (!typing && !selecting) location.reload();
+    if (!typing && !selecting && !document.querySelector("[data-fsel].open") && modal.style.display !== "flex") location.reload();
   }, 60000);
   {% endif %}
+})();
 </script>
 {% endblock %}

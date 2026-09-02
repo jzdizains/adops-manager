@@ -118,10 +118,15 @@ class Creative(Base):
     size_bytes = Column(Integer, default=0)
     source = Column(String, default="", index=True)        # P&L join key (like spark source)
     status = Column(String, default="available")           # available | used | processing | error
+    kind = Column(String, default="video")                 # video | image (images never enter the video launch pool)
     used_advertiser_id = Column(String, default="")
     used_campaign_id = Column(String, default="")
     used_at = Column(DateTime, nullable=True)
     uploaded_at = Column(DateTime, default=utcnow)
+    # --- AI image editing (Gemini / "Nano Banana") ----------------------------
+    ai_prompt = Column(Text, default="")                   # prompt that produced this image
+    ai_model = Column(String, default="")                  # gemini model id used
+    ai_cost = Column(Float, default=0.0)                   # list price per generated image (USD)
     # --- variation processing (TensorPix): each reads as a new video ----------
     freshen = Column(Boolean, default=False)               # is this a processed variant?
     freshen_intensity = Column(String, default="")         # uniquify strength: light|medium|strong

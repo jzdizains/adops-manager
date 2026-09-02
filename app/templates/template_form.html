@@ -304,7 +304,11 @@
           <option value="spark" {{ 'selected' if blob.get('creative_source', 'spark') == 'spark' }}>Spark code (organic post)</option>
           <option value="library" {{ 'selected' if blob.get('creative_source') == 'library' }}>Creative library — next unused video</option>
         </select>
-        <span class="hint" id="libraryHint" style="display:none;">Each launch consumes ONE unused creative from the <a href="/creatives">library</a>. Needs the ad identity (name + avatar) configured there.</span></label>
+        <span class="hint" id="libraryHint" style="display:none;">Each launch consumes ONE unused creative from the <a href="/creatives">library</a> (unless Smart Creative is on).</span>
+        <label id="smartCreativeToggle" style="display:none;align-items:center;gap:6px;font-size:12px;color:var(--text-soft);cursor:pointer;margin-top:8px;">
+          <input type="checkbox" name="smart_creative" id="smartCreative" value="1" style="width:auto;"
+                 {{ 'checked' if blob.get('smart_creative') }}> 🧠 Smart Creative (auto-combine several videos)
+        </label></label>
       <label class="field" id="sparkField"><span class="field-label">Spark code (default)</span>
         <select name="spark_code_id">
           <option value="">— pick at launch —</option>
@@ -320,6 +324,18 @@
             <option value="{{ cta }}" {{ 'selected' if blob.get('call_to_action', 'LEARN_MORE') == cta else '' }}>{{ cta.replace('_',' ')|title }}</option>
           {% endfor %}
         </select></label>
+    </div>
+    <div class="form-row-3" id="smartCreativeOpts" style="display:none;">
+      <label class="field"><span class="field-label">Videos per ad</span>
+        <input type="number" name="smart_creative_videos" min="2" max="20"
+               value="{{ blob.get('smart_creative_videos', 5) }}">
+        <span class="hint">Reserves this many unused library videos per ad; TikTok combines &amp; rotates them.</span></label>
+      <label class="field"><span class="field-label">Texts per ad</span>
+        <input type="number" name="smart_creative_texts" min="1" max="20"
+               value="{{ blob.get('smart_creative_texts', 5) }}">
+        <span class="hint">Pulls this many from the <a href="/ad-texts">Ad Texts</a> list (falls back to the Ad text above).</span></label>
+      <div class="field"><span class="field-label">&nbsp;</span>
+        <span class="hint">Smart Creative needs the <b>Library</b> source and ≥2 available videos. It makes ONE auto-optimizing ad per ad group (ignores “ads per ad group”).</span></div>
     </div>
     <div class="form-row-3" id="poolModes" style="display:none;">
       <label class="field"><span class="field-label">Ad text (required by TikTok)</span>
@@ -388,13 +404,21 @@
       sparkField = document.getElementById("sparkField"),
       libraryHint = document.getElementById("libraryHint");
   var poolModes = document.getElementById("poolModes");
+  var smartCreative = document.getElementById("smartCreative"),
+      smartCreativeOpts = document.getElementById("smartCreativeOpts"),
+      smartCreativeChk = document.getElementById("smartCreative");
   function syncCreative() {
     var lib = csSel.value === "library";
     sparkField.style.display = lib ? "none" : "";
     libraryHint.style.display = lib ? "" : "none";
     poolModes.style.display = lib ? "" : "none";
+    // Smart Creative toggle only applies to the library source
+    document.getElementById("smartCreativeToggle").style.display = lib ? "flex" : "none";
+    smartCreativeOpts.style.display = (lib && smartCreativeChk.checked) ? "" : "none";
   }
-  csSel.addEventListener("change", syncCreative); syncCreative();
+  csSel.addEventListener("change", syncCreative);
+  smartCreativeChk.addEventListener("change", syncCreative);
+  syncCreative();
 
   var modeSel = document.getElementById("budgetMode"), cbo = document.getElementById("cboBudgetField");
   function syncMode() { cbo.style.display = modeSel.value === "ABO" ? "none" : ""; }

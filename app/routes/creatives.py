@@ -52,13 +52,45 @@ def creatives_page(request: Request, db: Session = Depends(get_db)):
                 })
         except tensorpix.TensorPixError as e:
             tp_error = e.message
+    # ---- Performance view: which creative is making money -------------------
+    from .. import creative_perf, timeutil
+    view = request.query_params.get("view", "library")
+    if view not in ("library", "performance"):
+        view = "library"
+    range_key = request.query_params.get("range", "7d")
+    if range_key not in ("today", "yesterday", "7d", "30d", "mtd"):
+        range_key = "7d"
+    sort = request.query_params.get("sort", "roas")
+    if sort not in creative_perf.SORTS:
+        sort = "roas"
+    perf, fams = [], []
+    if view == "performance":
+        s_utc, e_utc = timeutil.range_bounds(range_key)
+        perf = creative_perf.rows(db, s_utc, e_utc, today=(range_key == "today"))
+        perf.sort(key=creative_perf.SORTS[sort], reverse=True)
+        fams = creative_perf.families(perf)
+    # library cross-links: creative -> its campaign's cached record
+    camp_by_id = {c.campaign_id: c for c in db.query(models.CampaignRecord).all()}
+
+    # images (separate shelf; never part of the video launch pool) + AI editing
+    from .. import nanobanana
+    videos = [r for r in rows if (r.kind or "video") == "video"]
+    images = [r for r in rows if r.kind == "image"]
+    available = sum(1 for r in videos if r.status == "available")
+    processing = sum(1 for r in rows if r.status == "processing")
+    nb_models = [{"id": mid, "label": lbl, "prices": prices}
+                 for mid, (lbl, prices) in nanobanana.MODELS.items()]
+
     return render(request, "creatives.html", {
-        "rows": rows, "accounts": accounts, "available": available,
+        "rows": videos, "images": images, "accounts": accounts, "available": available,
+        "nb_configured": nanobanana.configured(), "nb_models": nb_models,
+        "nb_default": nanobanana.DEFAULT_MODEL, "nb_aspects": nanobanana.ASPECTS,
+        "nb_models_json": __import__("json").dumps({m["id"]: m["prices"] for m in nb_models}),
         "processing": processing, "tp_configured": tp_configured,
         "tp_models": tp_models, "tp_error": tp_error,
         "uniquify_ok": video_freshen.available(),
-        "ok": request.query_params.get("ok", ""),
-        "err": request.query_params.get("err", ""),
+        "view": view, "range_key": range_key, "sort": sort,
+        "perf": perf, "families": fams, "camp_by_id": camp_by_id,
         "title": "Creatives",
     })
 
@@ -66,7 +98,10 @@ def creatives_page(request: Request, db: Session = Depends(get_db)):
 SRC_DIR = CREATIVES_DIR / "_src"
 
 _MIME = {".mp4": "video/mp4", ".mov": "video/quicktime", ".webm": "video/webm",
-         ".mpeg": "video/mpeg", ".avi": "video/x-msvideo", ".3gp": "video/3gpp"}
+         ".mpeg": "video/mpeg", ".avi": "video/x-msvideo", ".3gp": "video/3gpp",
+         ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
+ALLOWED_IMAGE = {".png", ".jpg", ".jpeg", ".webp"}
+MAX_IMAGE_BYTES = 25 * 1024 * 1024
 
 
 @router.get("/creatives/{creative_id}/file")
@@ -86,8 +121,177 @@ def creative_file(creative_id: int, db: Session = Depends(get_db)):
     if not p.exists():
         return RedirectResponse("/creatives?err=file+missing", status_code=303)
     ext = p.suffix.lower()
-    return FileResponse(str(p), media_type=_MIME.get(ext, "video/mp4"),
+    return FileResponse(str(p), media_type=_MIME.get(ext, "application/octet-stream"),
                         filename=row.file_name or p.name)
+
+
+# ============================================================================
+# IMAGES: upload + AI editing / generation (Gemini "Nano Banana")
+# ============================================================================
+@router.post("/creatives/upload-images")
+async def upload_images(request: Request, db: Session = Depends(get_db)):
+    import os as _os
+    form = await request.form()
+    files = [v for v in form.getlist("files") if isinstance(v, UploadFile)]
+    source_prefix = str(form.get("source_prefix") or "").strip()
+    CREATIVES_DIR.mkdir(parents=True, exist_ok=True)
+    saved, skipped = 0, []
+    for f in files:
+        fname = _safe_name(f.filename)
+        ext = ("." + fname.rsplit(".", 1)[-1].lower()) if "." in fname else ""
+        if ext not in ALLOWED_IMAGE:
+            skipped.append(f"{fname}: not a supported image type (png/jpg/webp)")
+            continue
+        data = await f.read(MAX_IMAGE_BYTES + 1)
+        if not data or len(data) > MAX_IMAGE_BYTES:
+            skipped.append(f"{fname}: {'over 25MB' if data else 'empty file'}")
+            continue
+        md5 = hashlib.md5(data).hexdigest()
+        if db.query(models.Creative).filter_by(md5=md5).first():
+            skipped.append(f"{fname}: duplicate")
+            continue
+        row = models.Creative(name=fname, file_name=fname, md5=md5, source_md5=md5,
+                              size_bytes=len(data), kind="image")
+        db.add(row)
+        db.flush()
+        path = CREATIVES_DIR / f"{row.id}_{fname}"
+        with open(path, "wb") as out:
+            out.write(data)
+        row.file_path = str(path)
+        if source_prefix:
+            row.source = f"{source_prefix}_{row.id}"
+        db.commit()
+        saved += 1
+    q = f"ok={saved}+image(s)+uploaded" if saved else "ok=nothing+uploaded"
+    if skipped:
+        q += "&err=" + "+·+".join(skipped)[:300].replace(" ", "+")
+    return RedirectResponse(f"/creatives?{q}#images", status_code=303)
+
+
+def _ai_job_rows(db: Session, *, prompt: str, model: str, size: str, aspect: str,
+                 variants: int, parent: models.Creative | None, base_name: str) -> list[int]:
+    """Create N placeholder image rows (status=processing) and return their ids."""
+    from .. import nanobanana
+    cost = nanobanana.price(model, size)
+    ids = []
+    family = (parent.source_md5 or parent.md5) if parent else ""
+    for n in range(variants):
+        vname = f"{base_name}_ai{n + 1}.png"
+        row = models.Creative(name=vname, file_name=vname, kind="image", status="processing",
+                              ai_prompt=prompt, ai_model=model, ai_cost=cost,
+                              source_md5=family, source=(parent.source if parent else ""))
+        db.add(row)
+        db.flush()
+        if not family:
+            row.source_md5 = f"ai{row.id}"      # its own family when generated from scratch
+        ids.append(row.id)
+    db.commit()
+    return ids
+
+
+def _run_ai_jobs(row_ids: list[int], parent_id: int | None, model: str, size: str, aspect: str):
+    """Background: call Gemini once per placeholder row and store the result."""
+    import os as _os
+    from pathlib import Path
+
+    from .. import nanobanana
+    from ..database import SessionLocal
+    d = SessionLocal()
+    try:
+        src_bytes, src_mime = None, "image/png"
+        if parent_id:
+            parent = d.get(models.Creative, parent_id)
+            if parent and parent.file_path and Path(parent.file_path).exists():
+                src_bytes = Path(parent.file_path).read_bytes()
+                src_mime = _MIME.get(Path(parent.file_path).suffix.lower(), "image/png")
+        for rid in row_ids:
+            row = d.get(models.Creative, rid)
+            if not row:
+                continue
+            try:
+                out, mime = nanobanana.generate(row.ai_prompt, image=src_bytes, image_mime=src_mime,
+                                                model=model, size=size, aspect=aspect)
+                ext = ".jpg" if mime == "image/jpeg" else ".png"
+                CREATIVES_DIR.mkdir(parents=True, exist_ok=True)
+                fname = _safe_name(row.name.rsplit(".", 1)[0] + ext)
+                path = CREATIVES_DIR / f"{row.id}_{fname}"
+                path.write_bytes(out)
+                row.file_path, row.file_name, row.name = str(path), fname, fname
+                row.md5 = hashlib.md5(out).hexdigest()
+                row.size_bytes = len(out)
+                row.status, row.error = "available", ""
+            except nanobanana.NanoBananaError as e:
+                row.status, row.error = "error", e.message[:500]
+            except Exception as e:      # never leave a row stuck in 'processing'
+                row.status, row.error = "error", f"{type(e).__name__}: {e}"[:500]
+            d.commit()
+    finally:
+        d.close()
+
+
+def _parse_ai_form(form) -> tuple[str, str, str, str, int]:
+    from .. import nanobanana
+    prompt = str(form.get("prompt") or "").strip()[:2000]
+    model = str(form.get("model") or nanobanana.DEFAULT_MODEL)
+    if model not in nanobanana.MODELS:
+        model = nanobanana.DEFAULT_MODEL
+    size = str(form.get("size") or nanobanana.DEFAULT_SIZE)
+    if size not in nanobanana.sizes_for(model):
+        size = nanobanana.sizes_for(model)[0]
+    aspect = str(form.get("aspect") or "")
+    if aspect not in nanobanana.ASPECTS:
+        aspect = ""
+    try:
+        variants = min(max(int(form.get("variants") or 1), 1), 8)
+    except ValueError:
+        variants = 1
+    return prompt, model, size, aspect, variants
+
+
+@router.post("/creatives/{creative_id}/ai-edit")
+async def ai_edit(creative_id: int, request: Request, db: Session = Depends(get_db)):
+    import threading
+
+    from .. import nanobanana
+    if not nanobanana.configured():
+        return RedirectResponse("/creatives?err=GEMINI_API_KEY+is+not+set+—+add+it+as+an+env+var+to+enable+AI+editing",
+                                status_code=303)
+    row = db.get(models.Creative, creative_id)
+    if not row or row.kind != "image" or not row.file_path:
+        return RedirectResponse("/creatives?err=pick+an+image+creative", status_code=303)
+    prompt, model, size, aspect, variants = _parse_ai_form(await request.form())
+    if not prompt:
+        return RedirectResponse("/creatives?err=describe+the+edit+you+want", status_code=303)
+    base = (row.name or "image").rsplit(".", 1)[0]
+    ids = _ai_job_rows(db, prompt=prompt, model=model, size=size, aspect=aspect,
+                       variants=variants, parent=row, base_name=base)
+    threading.Thread(target=_run_ai_jobs, args=(ids, row.id, model, size, aspect),
+                     name="nanobanana-edit", daemon=True).start()
+    est = nanobanana.price(model, size) * variants
+    return RedirectResponse(f"/creatives?ok={variants}+AI+edit(s)+started+(≈${est:.2f})#images",
+                            status_code=303)
+
+
+@router.post("/creatives/ai-generate")
+async def ai_generate(request: Request, db: Session = Depends(get_db)):
+    import threading
+
+    from .. import nanobanana
+    if not nanobanana.configured():
+        return RedirectResponse("/creatives?err=GEMINI_API_KEY+is+not+set+—+add+it+as+an+env+var+to+enable+AI+images",
+                                status_code=303)
+    form = await request.form()
+    prompt, model, size, aspect, variants = _parse_ai_form(form)
+    if not prompt:
+        return RedirectResponse("/creatives?err=describe+the+image+you+want", status_code=303)
+    base = _safe_name(str(form.get("name") or "generated").strip() or "generated").rsplit(".", 1)[0]
+    ids = _ai_job_rows(db, prompt=prompt, model=model, size=size, aspect=aspect,
+                       variants=variants, parent=None, base_name=base)
+    threading.Thread(target=_run_ai_jobs, args=(ids, None, model, size, aspect),
+                     name="nanobanana-gen", daemon=True).start()
+    est = nanobanana.price(model, size) * variants
+    return RedirectResponse(f"/creatives?ok={variants}+image(s)+generating+(≈${est:.2f})#images",
+                            status_code=303)
 
 
 @router.post("/creatives/upload")

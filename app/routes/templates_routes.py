@@ -75,6 +75,10 @@ def parse_form(form) -> dict:
         "optimization_goal": val("optimization_goal"),
         "creative_source": val("creative_source", "spark"),    # spark | library
         "ad_text_mode": val("ad_text_mode", "fixed"),          # fixed | pool
+        # Smart Creative (library source): auto-combine several videos + texts
+        "smart_creative": val("smart_creative") == "1",
+        "smart_creative_videos": int(val("smart_creative_videos") or 5),
+        "smart_creative_texts": int(val("smart_creative_texts") or 5),
         "spark_code_id": int(val("spark_code_id")) if val("spark_code_id") else None,
         "ad_text": val("ad_text"),
         "call_to_action": val("call_to_action", "LEARN_MORE"),

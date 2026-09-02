@@ -224,7 +224,10 @@ def check_pool_inventory(db: Session, settings: dict | None = None):
     low_water = 5
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     for label, model, page in checks:
-        n = db.query(model).filter_by(status="available").count()
+        q = db.query(model).filter_by(status="available")
+        if model is models.Creative:
+            q = q.filter_by(kind="video")       # images aren't launch inventory
+        n = q.count()
         if n >= low_water:
             continue
         last = (db.query(models.Alert).filter_by(kind="pool_low", ref_id=label)

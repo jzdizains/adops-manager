@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Inbox</h1>
+    <div class="muted" style="font-size:12.5px;">Everything that needs attention, in one place — wallets, account errors, failed launches, TikTok-side issues, rule actions.</div></div>
+  <div class="actions">
+    {% if items|selectattr('ack')|list %}
+    <form method="post" action="/inbox/dismiss"><input type="hidden" name="id" value="all"><input type="hidden" name="next" value="/inbox?level={{ level }}">
+      <button class="btn" type="submit">Dismiss all notices</button></form>
+    {% endif %}
+    <form method="post" action="/issues/scan"><button class="btn primary" type="submit">🔍 Re-scan TikTok</button></form>
+  </div>
+</div>
+
+<div class="filterbar" style="margin-bottom:14px;">
+  <a class="btn sm {{ 'primary' if level == 'all' }}" href="/inbox">All <span class="mono">{{ counts.total }}</span></a>
+  <a class="btn sm {{ 'primary' if level == 'err' }}" href="/inbox?level=err">Errors <span class="mono">{{ counts.err }}</span></a>
+  <a class="btn sm {{ 'primary' if level == 'warn' }}" href="/inbox?level=warn">Warnings <span class="mono">{{ counts.warn }}</span></a>
+  <a class="btn sm {{ 'primary' if level == 'info' }}" href="/inbox?level=info">Info <span class="mono">{{ counts.info }}</span></a>
+</div>
+
+<div class="card" style="padding:0;overflow:hidden;">
+  {% if items %}
+  {% for it in items %}
+  <div class="inbox-row lvl-{{ it.level }}">
+    <span class="inbox-dot"></span>
+    <div class="inbox-body">
+      <div class="inbox-title">{{ it.title }}{% if it.where %} <span class="muted">· {{ it.where }}</span>{% endif %}</div>
+      <div class="inbox-msg">{{ it.message }}</div>
+    </div>
+    <div class="inbox-when muted">{% if it.at %}{{ it.at.strftime('%b %d %H:%M') }}{% else %}now{% endif %}</div>
+    <div class="inbox-acts">
+      {% if it.href %}<a class="btn sm" href="{{ it.href }}" {% if it.external %}target="_blank" rel="noopener"{% endif %}>{{ 'Open ↗' if it.external else 'View →' }}</a>{% endif %}
+      {% if it.ack %}
+      <form method="post" action="/inbox/dismiss" style="display:inline;"><input type="hidden" name="id" value="{{ it.id }}"><input type="hidden" name="next" value="/inbox?level={{ level }}">
+        <button class="btn sm" type="submit" title="Dismiss">✕</button></form>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+  {% else %}
+  <div class="empty" style="padding:48px 0;">
+    <div style="font-size:30px;margin-bottom:6px;color:var(--ok);">✓</div>
+    <div style="font-weight:650;">Inbox zero</div>
+    <div class="muted" style="margin-top:3px;">Nothing needs your attention right now.</div>
+  </div>
+  {% endif %}
+</div>
+<div class="muted" style="font-size:11px;margin-top:8px;">Notices (wallet, rule actions) can be dismissed. TikTok-side issues clear themselves on the next scan once fixed; failed launches age out after 24h.</div>
+{% endblock %}

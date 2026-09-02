@@ -8,18 +8,19 @@ the same truth as the P&L: SpendSnapshot (TikTok) + PostbackEvent (Glitchy).
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request
+from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
 from .. import live_log, pnl_data, queries, timeutil
 from ..database import get_db
-from ..templating import render
 
 router = APIRouter()
 
 
 @router.get("/performance")
-def performance_page(request: Request, db: Session = Depends(get_db)):
-    return render(request, "performance.html", {"title": "Performance"})
+def performance_page(request: Request):
+    """Merged into Home (live KPIs + feed) — keep the old URL working."""
+    return RedirectResponse("/", status_code=303)
 
 
 @router.get("/performance/data")

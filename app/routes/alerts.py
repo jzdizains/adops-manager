@@ -24,13 +24,13 @@ def _alert_href(a: models.Alert) -> str:
 
 @router.get("/alerts/data")
 def alerts_data(db: Session = Depends(get_db)):
-    rows = balances.unacknowledged(db)
-    return {"count": len(rows), "alerts": [
-        {"id": a.id, "kind": a.kind, "level": a.level, "message": a.message,
-         "href": _alert_href(a),
-         "external": a.kind == "bc_low_balance",
-         "at": (a.created_at.isoformat() + "Z") if a.created_at else ""}
-        for a in rows]}
+    """Bell poller: the UNIFIED inbox (alerts + issues + failed launches +
+    queue + cooldown + connection), not just Alert rows."""
+    from .. import inbox as inbox_mod
+    items = inbox_mod.build(db)
+    counts = inbox_mod.counts(items)
+    return {"count": counts["total"], "counts": counts,
+            "alerts": [inbox_mod.serialize(i) for i in items[:8]]}
 
 
 @router.post("/alerts/{alert_id}/ack")

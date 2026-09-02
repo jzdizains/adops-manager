@@ -114,11 +114,34 @@ def monitor(request: Request, db: Session = Depends(get_db)):
             except _json.JSONDecodeError:
                 pass
 
+    # ---- Issues (merged from the old /issues page) ---------------------------
+    from .issues_page import CATEGORY_META
+    issue_rows = (db.query(models.Issue)
+                  .order_by(models.Issue.category, models.Issue.advertiser_name).all())
+    issue_groups = []
+    for key, (icon, label) in CATEGORY_META.items():
+        matched = [i for i in issue_rows if i.category == key]
+        if matched:
+            issue_groups.append({"key": key, "icon": icon, "label": label, "rows": matched})
+    scanned_at = queries.get_setting(db, "issues_scanned_at", "")
+
+    # ---- System status (merged from the old Overview) ------------------------
+    from sqlalchemy import func as _func
+    token_ok = bool(queries.any_access_token(db))
+    accounts_count = db.query(_func.count(models.AdAccount.id)).scalar() or 0
+
+    view = request.query_params.get("view", "accounts")
+    if view not in ("accounts", "balances", "issues"):
+        view = "accounts"
     return render(request, "monitor.html", {
-        "title": "Monitor", "groups": groups, "orphans": orphans,
+        "title": "Health", "groups": groups, "orphans": orphans,
         "synced_ago": queries.campaigns_synced_ago(db),
         "inventory": {"fresh": fresh, "active": with_active, "cooling": cooling},
-        "view": request.query_params.get("view", "accounts"),
+        "view": view,
         "balance_rows": balance_rows, "btotals": btotals,
         "sync_reports": reports,
+        "issue_groups": issue_groups, "issue_total": len(issue_rows),
+        "scanned_at": scanned_at[:16].replace("T", " ") if scanned_at else "never",
+        "token_ok": token_ok, "accounts_count": accounts_count,
+        "low_count": sum(1 for g in groups if g["low"]),
     })

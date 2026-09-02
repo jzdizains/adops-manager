@@ -74,6 +74,45 @@ def source_pnl(db: Session, start_utc: datetime, end_utc: datetime) -> dict[str,
     return out
 
 
+def daily_series(db: Session, start_utc: datetime, end_utc: datetime,
+                 campaign_ids: list[str] | None = None,
+                 sources: set[str] | None = None) -> tuple[list[str], list[float], list[float]]:
+    """Per-local-day (spend, revenue) over [start,end), restricted to a campaign
+    set (spend) and a source set (revenue). DB-only — for KPI sparklines.
+    Returns (days, spend_per_day, revenue_per_day) aligned by index."""
+    from datetime import timedelta
+    # ordered list of local day strings the range covers
+    days: list[str] = []
+    cur = start_utc
+    while cur < end_utc:
+        days.append(timeutil.local_date_str(cur))
+        cur += timedelta(days=1)
+    days = sorted(set(days))
+    idx = {d: i for i, d in enumerate(days)}
+    spend = [0.0] * len(days)
+    rev = [0.0] * len(days)
+
+    sq = db.query(models.SpendSnapshot).filter(
+        models.SpendSnapshot.day >= days[0], models.SpendSnapshot.day <= days[-1])
+    if campaign_ids:
+        sq = sq.filter(models.SpendSnapshot.campaign_id.in_(list(campaign_ids)))
+    for r in sq.all():
+        if r.day in idx:
+            spend[idx[r.day]] += float(r.spend or 0)
+
+    s_naive, e_naive = start_utc.replace(tzinfo=None), end_utc.replace(tzinfo=None)
+    pq = db.query(models.PostbackEvent).filter(
+        models.PostbackEvent.created_at >= s_naive,
+        models.PostbackEvent.created_at < e_naive)
+    for p in pq.all():
+        if sources is not None and p.source not in sources:
+            continue
+        d = timeutil.local_date_str(p.created_at)
+        if d in idx:
+            rev[idx[d]] += float(p.revenue or 0)
+    return days, spend, rev
+
+
 def overall_totals(db: Session, start_utc: datetime, end_utc: datetime) -> dict:
     """Range KPIs for the Overview: spend is ALL spend (snapshots, sourced or
     not); revenue/clicks/conversions from all postbacks."""

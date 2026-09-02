@@ -1,20 +1,35 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="page-head">
-  <div><h1>Monitor</h1>
-    <div class="muted">Every Business Center, account, campaign and balance · synced {{ synced_ago }} ·
-      inventory: <strong style="color:var(--ok);">{{ inventory.fresh }} fresh</strong> ·
-      {{ inventory.active }} running ·
-      {% if inventory.cooling %}<strong style="color:var(--warn);">{{ inventory.cooling }} cooling down</strong>{% else %}0 cooling down{% endif %}
-    </div></div>
+  <div><h1>Health</h1>
+    <div class="muted" style="font-size:12.5px;">Business Centers, accounts, balances and every TikTok-side problem · synced {{ synced_ago }}</div></div>
   <div class="actions">
+    <form method="post" action="/issues/scan"><button class="btn" type="submit">🔍 Scan issues</button></form>
     <form method="post" action="/balances/sync"><button class="btn primary" type="submit">↻ Sync balances & metrics</button></form>
   </div>
 </div>
 
+{# ---- system status strip ------------------------------------------------ #}
+<div class="kpis" style="grid-template-columns:repeat(6,1fr);">
+  <div class="kpi"><div class="lab">TikTok API</div>
+    <div class="val {{ 'good' if token_ok else 'bad' }}" style="font-size:15px;">{{ 'Connected' if token_ok else 'Not connected' }}</div>
+    <div class="sub">{% if not token_ok %}<a href="/oauth/connect">Connect →</a>{% else %}token OK{% endif %}</div></div>
+  <div class="kpi"><div class="lab">Web cookies</div>
+    <div class="val" style="font-size:15px;" id="cookieVerdict">checking…</div>
+    <div class="sub"><a href="/cookies">Manage →</a></div></div>
+  <div class="kpi"><div class="lab">Ad accounts</div><div class="val">{{ accounts_count }}</div><div class="sub">synced</div></div>
+  <div class="kpi"><div class="lab">Fresh accounts</div><div class="val good">{{ inventory.fresh }}</div><div class="sub">never launched</div></div>
+  <div class="kpi"><div class="lab">Running</div><div class="val">{{ inventory.active }}</div>
+    <div class="sub">{% if inventory.cooling %}<span style="color:var(--warn);">{{ inventory.cooling }} cooling down</span>{% else %}0 cooling down{% endif %}</div></div>
+  <div class="kpi"><div class="lab">Issues</div>
+    <div class="val {{ 'bad' if issue_total else 'good' }}">{{ issue_total }}</div>
+    <div class="sub">{% if low_count %}<span style="color:var(--err);">{{ low_count }} wallet(s) low</span>{% else %}last scan {{ scanned_at }}{% endif %}</div></div>
+</div>
+
 <div style="display:flex;gap:6px;margin-bottom:16px;">
-  <a class="btn {{ 'primary' if view != 'balances' else '' }}" href="/monitor">Accounts & campaigns</a>
+  <a class="btn {{ 'primary' if view == 'accounts' else '' }}" href="/monitor">Accounts & campaigns</a>
   <a class="btn {{ 'primary' if view == 'balances' else '' }}" href="/monitor?view=balances">💰 Balances</a>
+  <a class="btn {{ 'primary' if view == 'issues' else '' }}" href="/monitor?view=issues">⚠ Issues{% if issue_total %} <span class="mono">{{ issue_total }}</span>{% endif %}</a>
 </div>
 
 {% if sync_reports %}
@@ -98,7 +113,60 @@
 </div>
 {% endif %}
 
-{% if view != 'balances' %}
+{% if view == 'issues' %}
+{% if not issue_groups %}
+<div class="card">
+  <div class="empty" style="padding:48px 0;">
+    <div style="font-size:32px;margin-bottom:8px;color:var(--ok);">✓</div>
+    <div style="font-weight:650;font-size:15px;">No issues found</div>
+    <div class="muted" style="margin-top:4px;">The last scan ({{ scanned_at }}) came back clean. Scans also run automatically on the slow sweep.</div>
+  </div>
+</div>
+{% endif %}
+{% for g in issue_groups %}
+<div class="card">
+  <div class="card-header">
+    <span class="card-title">{{ g.icon }} {{ g.label }}</span>
+    <span class="card-meta">{{ g.rows|length }} issue(s)</span>
+  </div>
+  <table class="data">
+    <thead><tr><th style="width:26%;">Where</th><th>Problem</th><th class="num">Fix</th></tr></thead>
+    <tbody>
+    {% for i in g.rows %}
+      <tr>
+        <td>
+          {% if i.advertiser_id %}
+            {{ i.advertiser_name }}
+            <div class="mono muted" style="font-size:10px;">{{ i.advertiser_id }}</div>
+          {% else %}{{ i.advertiser_name or "—" }}{% endif %}
+        </td>
+        <td>
+          <span style="color:var(--{{ 'err' if i.level == 'err' else 'warn' }});">●</span>
+          {{ i.message }}
+          {% if i.detail %}
+          <details style="margin-top:4px;">
+            <summary class="muted" style="cursor:pointer;font-size:11px;">raw TikTok detail</summary>
+            <span class="mono" style="font-size:11px;color:var(--text-dim);word-break:break-all;">{{ i.detail }}</span>
+          </details>
+          {% endif %}
+        </td>
+        <td class="num" style="white-space:nowrap;">
+          {% if g.key == 'bc' %}
+            <a class="btn sm" target="_blank" rel="noopener" href="https://business.tiktok.com/manage/overview?org_id={{ i.ref }}">Open BC ↗</a>
+          {% elif i.advertiser_id %}
+            <a class="btn sm" target="_blank" rel="noopener" href="https://ads.tiktok.com/i18n/dashboard?aadvid={{ i.advertiser_id }}">Open account ↗</a>
+          {% endif %}
+          {% if g.key == 'spark' %}<a class="btn sm" href="/spark-codes">Spark codes</a>{% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endfor %}
+{% endif %}
+
+{% if view == 'accounts' %}
 
 {% macro metric(v, money=False, pct=False) -%}
   {%- if v is none or v == 0 -%}<span class="muted">—</span>
@@ -209,4 +277,16 @@
 <div class="card"><div class="empty">Nothing to monitor yet — connect TikTok and sync.</div></div>
 {% endif %}
 {% endif %}{# end accounts view #}
+{% endblock %}
+
+{% block scripts %}
+<script>
+  fetch("/admin/cookie-check").then(function (r) { return r.json(); }).then(function (h) {
+    var v = document.getElementById("cookieVerdict");
+    var map = { live: ["good", "Live"], live_no_permission: ["good", "Live (scoped)"],
+                expired: ["bad", "Expired"], missing: ["", "Not set"], unknown: ["", "Unknown"] };
+    var m = map[h.verdict] || map.unknown;
+    v.className = "val " + m[0]; v.style.fontSize = "15px"; v.textContent = m[1];
+  }).catch(function () {});
+</script>
 {% endblock %}

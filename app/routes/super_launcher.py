@@ -26,7 +26,7 @@ def page(request: Request, db: Session = Depends(get_db)):
     sparks = (db.query(models.SparkCode).filter_by(status="active")
               .order_by(models.SparkCode.name).all())
     creatives_available = (db.query(models.Creative)
-                           .filter_by(status="available").count())
+                           .filter_by(status="available", kind="video").count())
     # preset id -> destination label, for the auto-lock UI
     dest_labels = {}
     for p in presets:
@@ -153,7 +153,7 @@ async def launch(request: Request, db: Session = Depends(get_db)):
         accounts = [by_id[i] for i in ordered if i in by_id]
 
     if assign_mode:
-        avail = (db.query(models.Creative).filter_by(status="available")
+        avail = (db.query(models.Creative).filter_by(status="available", kind="video")
                  .order_by(models.Creative.id).all())
         import math
         needed = creatives_count if creatives_count > 0 else math.ceil(len(accounts) / per_creative)

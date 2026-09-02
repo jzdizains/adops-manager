@@ -46,6 +46,7 @@ def status_page(request: Request, db: Session = Depends(get_db)):
     q = request.query_params.get("q", "").strip().lower()
     state = request.query_params.get("state", "all")          # all | active | paused
     account = request.query_params.get("account", "")          # advertiser_id
+    source_f = request.query_params.get("source", "").strip()  # P&L source filter
     origin = request.query_params.get("origin", "tool")        # tool | all
     range_key = request.query_params.get("range", "today")
     start = request.query_params.get("start") or None
@@ -155,6 +156,8 @@ def status_page(request: Request, db: Session = Depends(get_db)):
             continue
         if account and r.advertiser_id != account:
             continue
+        if source_f and sources.get(r.campaign_id, "") != source_f:
+            continue
 
         m = metrics_cache[r.campaign_id]
         src = sources.get(r.campaign_id, "")
@@ -215,7 +218,73 @@ def status_page(request: Request, db: Session = Depends(get_db)):
          for aid in adv_ids_with_campaigns),
         key=lambda t: t[1].lower())
 
+    # --- entity linking: creative / spark / BC per campaign ---------------------
+    shown_ids = [row["r"].campaign_id for row in rows]
+    creative_by_cid: dict[str, models.Creative] = {}
+    if shown_ids:
+        for c in (db.query(models.Creative)
+                  .filter(models.Creative.used_campaign_id.in_(shown_ids))):
+            creative_by_cid.setdefault(c.used_campaign_id, c)
+    spark_by_cid: dict[str, str] = {}
+    if shown_ids:
+        spark_names = {s.id: (s.name or "") for s in db.query(models.SparkCode).all()}
+        for log_row in (db.query(models.LaunchLog)
+                        .filter(models.LaunchLog.campaign_id.in_(shown_ids),
+                                models.LaunchLog.spark_code_id != None)):        # noqa: E711
+            spark_by_cid.setdefault(log_row.campaign_id, spark_names.get(log_row.spark_code_id, ""))
+    bc_names = {b.bc_id: (b.name or b.bc_id) for b in db.query(models.BusinessCenter).all()}
+    bc_by_aid = {aid: bc_names.get(a.owner_bc_id, "") for aid, a in accounts.items() if a.owner_bc_id}
+    source_options = sorted({s for s in sources.values() if s})
+
+    # --- KPI period-over-period deltas + sparklines (DB-only, no API cost) -----
+    # Previous window = equal-length span immediately before the current one.
+    # Basis is the SAME campaign/source set as the visible rows so the delta is
+    # consistent with each tile's headline; only shown when a prior figure exists.
+    import json as _json2
+
+    from sqlalchemy import func as _func
+    shown_cids = [row["r"].campaign_id for row in rows]
+    shown_srcs = {row["source"] for row in rows if row["source"]}
+    span = end_utc - start_utc
+    prev_start, prev_end = start_utc - span, start_utc
+    prev_spend = 0.0
+    if shown_cids:
+        ps_day = timeutil.local_date_str(prev_start)
+        pe_day = timeutil.local_date_str(prev_end - _td(seconds=1))
+        prev_spend = float(
+            db.query(_func.coalesce(_func.sum(models.SpendSnapshot.spend), 0.0))
+            .filter(models.SpendSnapshot.campaign_id.in_(shown_cids),
+                    models.SpendSnapshot.day >= ps_day,
+                    models.SpendSnapshot.day <= pe_day).scalar() or 0)
+    prev_pb = pnl_data.revenue_by_source(db, prev_start, prev_end)
+    prev_rev = sum(prev_pb.get(s, {}).get("revenue", 0.0) for s in shown_srcs)
+    prev = {"spend": prev_spend, "revenue": prev_rev,
+            "profit": prev_rev - prev_spend,
+            "roas": (prev_rev / prev_spend) if prev_spend else 0.0}
+
+    def _pct(cur, was):
+        return ((cur - was) / was * 100) if was else None
+    cur_roas = (totals["revenue"] / totals["spend"]) if totals["spend"] else 0.0
+    deltas = {
+        "has_prev": bool(prev_spend > 0 or prev_rev > 0),
+        "spend_pct": _pct(totals["spend"], prev["spend"]),
+        "revenue_pct": _pct(totals["revenue"], prev["revenue"]),
+        "profit_abs": totals["profit"] - prev["profit"],   # $ change (signed base)
+        "roas_abs": (cur_roas - prev["roas"]) if prev["spend"] else None,
+    }
+
+    # sparklines: real per-day series, only when the range is wide enough to read
+    spark = {}
+    days_in_range = round(span.total_seconds() / 86400)
+    if days_in_range >= 3 and shown_cids:
+        _days, _sp, _rv = pnl_data.daily_series(
+            db, start_utc, end_utc, shown_cids, shown_srcs)
+        spark = {"spend": _sp, "revenue": _rv}
+
     return render(request, "status.html", {
+        "deltas": deltas, "spark_json": _json2.dumps(spark),
+        "creative_by_cid": creative_by_cid, "spark_by_cid": spark_by_cid,
+        "bc_by_aid": bc_by_aid, "source_f": source_f, "source_options": source_options,
         "rows": rows, "totals": totals, "active_count": active,
         "synced_ago": queries.campaigns_synced_ago(db),
         "q": q, "state": state, "account": account, "sort": sort, "origin": origin,

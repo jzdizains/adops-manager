@@ -149,6 +149,10 @@ def synthesize(template: models.Template, overrides: dict[str, Any] | None = Non
         "adgroup_budget": float(s.get("adgroup_budget") or 20.0),
         "duplicates": int(s.get("duplicates") or 1),           # ad groups per campaign
         "ads_per_group": int(s.get("ads_per_group") or 1),      # ads per ad group
+        # Smart Creative: TikTok auto-combines several library videos + texts
+        "smart_creative": bool(s.get("smart_creative")),
+        "smart_creative_videos": int(s.get("smart_creative_videos") or 5),
+        "smart_creative_texts": int(s.get("smart_creative_texts") or 5),
         "optimization_goal": s.get("optimization_goal") or opt_goal,
         "billing_event": s.get("billing_event") or billing_event,
         "bid_type": s.get("bid_type") or bid_type,

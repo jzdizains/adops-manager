@@ -24,24 +24,13 @@ CATEGORY_META = {
 
 @router.get("/issues")
 def issues_page(request: Request, db: Session = Depends(get_db)):
-    rows = (db.query(models.Issue)
-            .order_by(models.Issue.category, models.Issue.advertiser_name).all())
-    groups = []
-    for key, (icon, label) in CATEGORY_META.items():
-        matched = [i for i in rows if i.category == key]
-        if matched:
-            groups.append({"key": key, "icon": icon, "label": label, "rows": matched})
-    scanned_at = queries.get_setting(db, "issues_scanned_at", "")
-    return render(request, "issues.html", {
-        "title": "Issues", "groups": groups, "total": len(rows),
-        "scanned_at": scanned_at[:16].replace("T", " ") if scanned_at else "never",
-        "ok": request.query_params.get("ok", ""),
-    })
+    """Merged into Health — keep the old URL working."""
+    return RedirectResponse("/monitor?view=issues", status_code=303)
 
 
 @router.post("/issues/scan")
 def scan_now(db: Session = Depends(get_db)):
     result = issues_mod.scan(db)
     return RedirectResponse(
-        f"/issues?ok=Scanned+{result['accounts_scanned']}+account(s),+found+{result['issues']}+issue(s)",
+        f"/monitor?view=issues&ok=Scanned+{result['accounts_scanned']}+account(s),+found+{result['issues']}+issue(s)",
         status_code=303)
