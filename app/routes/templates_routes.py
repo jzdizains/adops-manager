@@ -80,6 +80,7 @@ def parse_form(form) -> dict:
         "smart_creative_videos": int(val("smart_creative_videos") or 5),
         "smart_creative_texts": int(val("smart_creative_texts") or 5),
         "spark_code_id": int(val("spark_code_id")) if val("spark_code_id") else None,
+        "carousel_id": int(val("carousel_id")) if val("carousel_id") else None,   # pinned carousel (None = next unused)
         "ad_text": val("ad_text"),
         "call_to_action": val("call_to_action", "LEARN_MORE"),
         # auto-pick policy: which accounts qualify when the launcher picks for you
@@ -135,6 +136,8 @@ def _form_ctx(db: Session) -> dict:
         "bid_strategy_options": BID_STRATEGY_OPTIONS,
         "pixels": db.query(models.PixelRecord)
                     .order_by(models.PixelRecord.pixel_name).all(),
+        "carousels": db.query(models.Creative).filter_by(kind="carousel")
+                       .order_by(models.Creative.status, models.Creative.name).all(),
         "sparks": db.query(models.SparkCode).filter_by(status="active")
                     .order_by(models.SparkCode.name).all(),
         # pages/forms deduped BY NAME with per-name account counts — the preset

@@ -306,6 +306,14 @@
           <option value="carousel" {{ 'selected' if blob.get('creative_source') == 'carousel' }}>Creative library — next unused carousel (images + music)</option>
         </select>
         <span class="hint" id="libraryHint" style="display:none;">Each launch consumes ONE unused creative from the <a href="/creatives">library</a> (unless Smart Creative is on).</span>
+        <label class="field" id="carouselPick" style="display:none;margin-top:8px;"><span class="field-label">Which carousel</span>
+          <select name="carousel_id">
+            <option value="">Next unused — automatic (each launch consumes one)</option>
+            {% for cz in carousels %}
+              <option value="{{ cz.id }}" {{ 'selected' if blob.get('carousel_id') == cz.id }}>{{ cz.name }} · 🎵 {{ cz.music_name or cz.music_id }}{% if cz.status != 'available' %} (launched — reusable){% endif %}</option>
+            {% endfor %}
+          </select>
+          <span class="hint">Pin one carousel and this preset puts it on <b>every</b> account it launches to (each account uploads its own copies). Manage carousels on the <a href="/creatives?view=carousels">Creatives → Carousels</a> tab.</span></label>
         <label id="smartCreativeToggle" style="display:none;align-items:center;gap:6px;font-size:12px;color:var(--text-soft);cursor:pointer;margin-top:8px;">
           <input type="checkbox" name="smart_creative" id="smartCreative" value="1" style="width:auto;"
                  {{ 'checked' if blob.get('smart_creative') }}> 🧠 Use Smart Creative to create ads — auto-combines several videos + texts into one self-optimising ad
@@ -413,6 +421,7 @@
   function syncCreative() {
     var lib = csSel.value === "library", car = csSel.value === "carousel";
     sparkField.style.display = (lib || car) ? "none" : "";
+    document.getElementById("carouselPick").style.display = car ? "" : "none";
     libraryHint.style.display = (lib || car) ? "" : "none";
     poolModes.style.display = (lib || car) ? "" : "none";
     // Smart Creative toggle only applies to the (video) library source — TikTok

@@ -209,8 +209,15 @@ def synthesize(template: models.Template, overrides: dict[str, Any] | None = Non
         "call_to_action": s.get("call_to_action") or "LEARN_MORE",
         "account_policy": s.get("account_policy") or "new_only",
     }
+    # a preset can PIN a specific carousel (else: next unused). A pinned carousel is
+    # meant to run on every account the preset launches to, so it's reusable.
+    fields["carousel_id"] = int(s.get("carousel_id") or 0) or None
     if overrides:
         fields.update({k: v for k, v in overrides.items() if v not in (None, "")})
+    if (fields.get("creative_source") == "carousel" and fields.get("carousel_id")
+            and not (overrides or {}).get("creative_id") and not (overrides or {}).get("creative_source")):
+        fields["creative_id"] = fields["carousel_id"]
+        fields["allow_creative_reuse"] = True
     return fields
 
 
