@@ -475,6 +475,19 @@ def get_music(access_token: str, advertiser_id: str, search_type: str,
     return data if isinstance(data, dict) else {"musics": []}
 
 
+def create_cta_portfolio(access_token: str, advertiser_id: str, ctas: list[str]) -> str:
+    """Dynamic CTA: a portfolio of candidate CTAs TikTok optimises between
+    (POST /creative/portfolio/create/, creative_portfolio_type=CTA,
+    portfolio_content[].call_to_action). Returns creative_portfolio_id."""
+    data = api_post("/creative/portfolio/create/", access_token, {
+        "advertiser_id": advertiser_id, "creative_portfolio_type": "CTA",
+        "portfolio_content": [{"call_to_action": c} for c in ctas]})
+    pid = str((data or {}).get("creative_portfolio_id") or "")
+    if not pid:
+        raise TikTokError("APP", "CTA portfolio create returned no creative_portfolio_id")
+    return pid
+
+
 def upload_image_by_url(access_token: str, advertiser_id: str, image_url: str,
                         file_name: str = "") -> dict:
     """Upload an image (e.g. a video's poster/cover) by URL. Returns {image_id,...}."""

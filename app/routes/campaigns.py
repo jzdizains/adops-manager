@@ -34,6 +34,29 @@ def apply_source_to_url(url: str, param: str, source: str) -> str:
 CAMPAIGN_NAME_MACRO = "__CAMPAIGN_NAME__"     # TikTok substitutes the campaign name at click time
 
 
+def _cta(fields: dict) -> dict:
+    """Ad-creative CTA fields: a fixed button, or the Dynamic-CTA portfolio id
+    resolved for this account (fields["_cta_portfolio_id"]) when CTA is Auto."""
+    from .launch import CTA_AUTO
+    if fields.get("call_to_action") == CTA_AUTO:
+        return {"call_to_action_id": fields["_cta_portfolio_id"]}
+    return {"call_to_action": fields["call_to_action"]}
+
+
+def resolve_cta_portfolio(db: Session, acct: models.AdAccount) -> str:
+    """One Dynamic-CTA portfolio per account (cached in settings by candidate set)."""
+    import hashlib as _hl
+
+    from .launch import CTA_AUTO_SET
+    key = f"cta_portfolio:{acct.advertiser_id}:{_hl.md5(','.join(CTA_AUTO_SET).encode()).hexdigest()[:8]}"
+    cached = queries.get_setting(db, key, "")
+    if cached:
+        return cached
+    pid = tiktok_api.create_cta_portfolio(acct.access_token, acct.advertiser_id, CTA_AUTO_SET)
+    queries.set_setting(db, key, pid)
+    return pid
+
+
 def url_safe_name(name: str) -> str:
     """Only [A-Za-z0-9_-]: TikTok doesn't guarantee URL-encoding of substituted
     macros, so a campaign name with spaces or symbols would corrupt ?source=."""
@@ -539,7 +562,7 @@ def build_ad_payload(fields: dict, adgroup_id: str, spark_ref: dict | None,
         "ad_name": f"{fields['template_name']} ad"[:512],
         "ad_format": ("CAROUSEL_ADS" if (spark and spark.media_type == "CAROUSEL") else "SINGLE_VIDEO"),
         "ad_text": fields["ad_text"] or " ",
-        "call_to_action": fields["call_to_action"],
+        **_cta(fields),
     }
     if spark_ref:  # Spark ad: promote the creator's own post
         creative["identity_id"] = spark_ref["identity_id"]
@@ -659,7 +682,9 @@ def build_spc_ad_payload(fields: dict, adgroup_id: str, spark_ref: dict,
             "identity_type": spark_ref["identity_type"],
             "tiktok_item_id": spark_ref["item_id"],
         }}],
-        "call_to_action_list": [{"call_to_action": fields["call_to_action"]}],
+        "call_to_action_list": ([{"call_to_action": c} for c in __import__("app.routes.launch", fromlist=["CTA_AUTO_SET"]).CTA_AUTO_SET]
+                                if fields.get("call_to_action") == "AUTO"
+                                else [{"call_to_action": fields["call_to_action"]}]),
     }
     if fields.get("ad_text"):
         payload["ad_text_list"] = [{"ad_text": fields["ad_text"]}]
@@ -799,7 +824,7 @@ def build_carousel_ad_payload(fields: dict, adgroup_id: str, identity: dict,
         "ad_name": f"{fields['template_name']} carousel"[:512],
         "ad_format": "CAROUSEL_ADS",
         "ad_text": fields["ad_text"] or " ",
-        "call_to_action": fields["call_to_action"],
+        **_cta(fields),
         "image_ids": list(image_ids),
         "music_id": music_id,
         "identity_id": identity["identity_id"],
@@ -817,7 +842,7 @@ def build_library_ad_payload(fields: dict, adgroup_id: str, identity: dict,
         "ad_name": f"{fields['template_name']} ad"[:512],
         "ad_format": "SINGLE_VIDEO",
         "ad_text": fields["ad_text"],
-        "call_to_action": fields["call_to_action"],
+        **_cta(fields),
         "identity_id": identity["identity_id"],
         "identity_type": identity["identity_type"],
         "video_id": video_id,
@@ -841,7 +866,7 @@ def build_smart_creative_ad_payload(fields: dict, adgroup_id: str, identity: dic
             "ad_name": f"{fields['template_name']} smart {i + 1}"[:512],
             "ad_format": "SINGLE_VIDEO",
             "ad_text": text or " ",
-            "call_to_action": fields["call_to_action"],
+            **_cta(fields),
             "identity_id": identity["identity_id"],
             "identity_type": identity["identity_type"],
             "video_id": video_id,
@@ -1004,6 +1029,12 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                 fields["landing_page_url"] = apply_source_to_url(
                     fields["landing_page_url"], settings["url_param"], log.source)
                 log.landing_url = fields["landing_page_url"]
+
+        # Dynamic CTA ("Auto"): resolve/create this account's CTA portfolio first —
+        # a failure here surfaces cleanly before any campaign exists
+        if fields.get("call_to_action") == "AUTO" and not fields.get("smart_plus"):
+            fields = dict(fields)
+            fields["_cta_portfolio_id"] = resolve_cta_portfolio(db, acct)
 
         # carousel: reserve the next unused carousel (or the one picked), upload
         # every slide into THIS account, resolve the identity — before creating anything

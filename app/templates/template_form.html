@@ -68,7 +68,7 @@
       <label class="field" data-dest="website pixel"><span class="field-label">Landing page URL</span>
         <input type="url" name="landing_page_url" value="{{ blob.get('landing_page_url', '') }}"
                placeholder="https://offer.example.com/page">
-        <span class="hint">The spark's source is appended automatically at launch.</span></label>
+        <span class="hint">Just the page URL — the source is appended at launch automatically (<span class="mono">?source=__CAMPAIGN_NAME__</span> in campaign-name mode, see Settings). Other parameters you add here are kept.</span></label>
     </div>
     <div class="form-row-3">
       <label class="field" data-dest="pixel website" data-needs-event="1"><span class="field-label">Pixel</span>
@@ -308,7 +308,7 @@
         <span class="hint" id="libraryHint" style="display:none;">Each launch consumes ONE unused creative from the <a href="/creatives">library</a> (unless Smart Creative is on).</span>
         <label id="smartCreativeToggle" style="display:none;align-items:center;gap:6px;font-size:12px;color:var(--text-soft);cursor:pointer;margin-top:8px;">
           <input type="checkbox" name="smart_creative" id="smartCreative" value="1" style="width:auto;"
-                 {{ 'checked' if blob.get('smart_creative') }}> 🧠 Smart Creative (auto-combine several videos)
+                 {{ 'checked' if blob.get('smart_creative') }}> 🧠 Use Smart Creative to create ads — auto-combines several videos + texts into one self-optimising ad
         </label></label>
       <label class="field" id="sparkField"><span class="field-label">Spark code (default)</span>
         <select name="spark_code_id">
@@ -321,10 +321,12 @@
         <input type="text" name="ad_text" value="{{ blob.get('ad_text', '') }}" maxlength="100"></label>
       <label class="field"><span class="field-label">Call to action</span>
         <select name="call_to_action">
+          <option value="AUTO" {{ 'selected' if blob.get('call_to_action') == 'AUTO' }}>Auto — Dynamic CTA (TikTok picks the best button per viewer)</option>
           {% for cta in cta_options %}
             <option value="{{ cta }}" {{ 'selected' if blob.get('call_to_action', 'LEARN_MORE') == cta else '' }}>{{ cta.replace('_',' ')|title }}</option>
           {% endfor %}
-        </select></label>
+        </select>
+        <span class="hint">Auto = TikTok's Dynamic CTA: it rotates between Learn more, Shop now, Sign up, Get quote… and serves each viewer the one most likely to click. Set up once per account automatically.</span></label>
     </div>
     <div class="form-row-3" id="smartCreativeOpts" style="display:none;">
       <label class="field"><span class="field-label">Videos per ad</span>

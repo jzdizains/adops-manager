@@ -536,6 +536,42 @@ def delete_creative(creative_id: int, db: Session = Depends(get_db)):
 
 
 # ============================================================================
+# TEXT ON IMAGES — TikTok Sans, baked server-side at native resolution
+# ============================================================================
+@router.post("/creatives/{creative_id}/text")
+async def add_text(creative_id: int, request: Request, db: Session = Depends(get_db)):
+    from .. import text_overlay
+    row = db.get(models.Creative, creative_id)
+    if not row or row.kind != "image" or not row.file_path:
+        return RedirectResponse("/creatives?err=pick+an+image", status_code=303)
+    form = await request.form()
+    back = "/creatives?view=carousels" if form.get("back") == "carousels" else "/creatives"
+    try:
+        png = text_overlay.render(row.file_path, dict(form))
+    except ValueError as e:
+        return RedirectResponse(f"{back}&err={str(e).replace(' ', '+')}" if "?" in back else f"{back}?err={str(e).replace(' ', '+')}", status_code=303)
+    except OSError as e:
+        return RedirectResponse(f"{back}{'&' if '?' in back else '?'}err=couldn't+read+the+image:+{str(e)[:80].replace(' ', '+')}", status_code=303)
+    base = (row.name or "image").rsplit(".", 1)[0]
+    ext = ".jpg" if row.file_path.lower().endswith((".jpg", ".jpeg")) else ".png"
+    n = db.query(models.Creative).filter(models.Creative.name.like(f"{base}_txt%")).count() + 1
+    fname = _safe_name(f"{base}_txt{n}{ext}")
+    new = models.Creative(name=fname, file_name=fname, kind="image", status="available",
+                          md5=hashlib.md5(png).hexdigest(), size_bytes=len(png),
+                          source_md5=row.source_md5 or row.md5, source=row.source,
+                          ai_prompt=f"text: {str(form.get('text') or '')[:200]}")
+    db.add(new)
+    db.flush()
+    CREATIVES_DIR.mkdir(parents=True, exist_ok=True)
+    path = CREATIVES_DIR / f"{new.id}_{fname}"
+    path.write_bytes(png)
+    new.file_path = str(path)
+    db.commit()
+    sep = "&" if "?" in back else "?"
+    return RedirectResponse(f"{back}{sep}ok=Saved+“{fname}”+with+your+text#c{new.id}", status_code=303)
+
+
+# ============================================================================
 # CAROUSELS: ordered image slides + a TikTok soundtrack (doc: Create Carousel Ads)
 # ============================================================================
 def _browse_account(db: Session):

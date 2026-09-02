@@ -85,6 +85,12 @@ OBJECTIVE_RULES = {
 }
 
 # Full Ads-Manager option sets (used by the preset form + payload builders)
+CTA_AUTO = "AUTO"        # Dynamic CTA: TikTok picks the best from a candidate set per viewer
+# candidate set for web objectives (all this tool's objectives are web/lead) — the
+# pool TikTok optimises between when the preset's CTA is "Auto"
+CTA_AUTO_SET = ["LEARN_MORE", "SHOP_NOW", "SIGN_UP", "SUBSCRIBE", "CONTACT_US", "APPLY_NOW",
+                "BOOK_NOW", "GET_QUOTE", "ORDER_NOW", "VISIT_STORE", "READ_MORE", "VIEW_NOW",
+                "INTERESTED", "WATCH_NOW"]
 CTA_OPTIONS = [
     "LEARN_MORE", "SHOP_NOW", "SIGN_UP", "SUBSCRIBE", "CONTACT_US", "APPLY_NOW",
     "BOOK_NOW", "DOWNLOAD_NOW", "GET_QUOTE", "ORDER_NOW", "PLAY_GAME",

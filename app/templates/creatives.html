@@ -147,9 +147,12 @@
         <div class="field-label" style="margin-bottom:6px;">1 · Pick slides <span class="muted" id="czCount">(0 selected)</span></div>
         <div class="cz-pool">
           {% for r in image_pool %}
-          <button type="button" class="cz-img" data-id="{{ r.id }}" title="{{ r.name }}">
-            <img src="/creatives/{{ r.id }}/thumb" alt="{{ r.name }}" loading="lazy" decoding="async"><span class="cz-badge"></span>
-          </button>
+          <span class="cz-tile">
+            <button type="button" class="cz-img" data-id="{{ r.id }}" title="{{ r.name }}">
+              <img src="/creatives/{{ r.id }}/thumb" alt="{{ r.name }}" loading="lazy" decoding="async"><span class="cz-badge"></span>
+            </button>
+            <button type="button" class="cz-t txtBtn" data-id="{{ r.id }}" data-name="{{ r.name }}" data-src="/creatives/{{ r.id }}/file" data-back="carousels" title="Add text to this image">T</button>
+          </span>
           {% endfor %}
         </div>
         <div class="field-label" style="margin:12px 0 6px;">Slide order <span class="muted">(click a slide to move it: ← → ✕)</span></div>
@@ -386,6 +389,9 @@
         {% if r.status == 'error' %}<div style="font-size:10.5px;color:var(--err);margin-top:3px;overflow-wrap:anywhere;">{{ r.error[:120] }}</div>{% endif %}
         <div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap;">
           <button form="if{{ r.id }}" class="btn sm" type="submit">Save</button>
+          {% if r.status == 'available' %}
+          <button type="button" class="btn sm txtBtn" data-id="{{ r.id }}" data-name="{{ r.name }}" data-src="/creatives/{{ r.id }}/file" data-back="library" title="Add text (TikTok Sans)">T Add text</button>
+          {% endif %}
           {% if r.status == 'available' and nb_configured %}
           <button type="button" class="btn sm aiEditBtn" data-id="{{ r.id }}" data-name="{{ r.name }}" data-src="/creatives/{{ r.id }}/thumb">✨ Edit with AI</button>
           {% endif %}
@@ -401,6 +407,52 @@
   <div class="empty" style="padding:22px 0;">No images yet — upload some, or generate one from a prompt.</div>
   {% endif %}
   <div class="hint" style="margin-top:8px;">Images live on their own shelf: the video launcher never picks them. Edits keep the original and add new copies (grouped as a family), each stamped with its prompt, model and list price.</div>
+</div>
+
+{# ---- Text editor modal (shared by Library + Carousels) ---- #}
+<div id="txtModal" class="txt-modal" style="display:none;">
+  <form method="post" id="txtForm" class="txt-panel">
+    <div class="txt-head">
+      <div><div style="font-weight:650;">T Add text</div><div class="muted" style="font-size:12px;" id="txtName"></div></div>
+      <button type="button" id="txtClose" class="btn sm">✕</button>
+    </div>
+    <div class="txt-body">
+      <div class="txt-stage" id="txtStage">
+        <img id="txtImg" src="" alt="" draggable="false">
+        <div id="txtOverlay" class="txt-overlay plain" title="Drag to move"></div>
+      </div>
+      <div class="txt-controls">
+        <label class="field"><span class="field-label">Text <span class="muted">(Enter = new line)</span></span>
+          <textarea name="text" id="txtText" required rows="3" placeholder="Your headline" style="font-family:'TikTok Sans',var(--font-sans);font-size:14px;min-height:70px;"></textarea></label>
+        <label class="field"><span class="field-label">Size <span class="mono muted" id="txtSizeLbl"></span></span>
+          <input type="range" id="txtSize" min="2" max="25" step="0.5" value="6" style="width:100%;padding:0;border:none;box-shadow:none;"></label>
+        <div class="form-row-3">
+          <label class="field"><span class="field-label">Weight</span>
+            <select id="txtWeight" name="weight"><option value="regular">Regular</option><option value="semibold" selected>SemiBold</option><option value="bold">Bold</option></select></label>
+          <label class="field"><span class="field-label">Style</span>
+            <select id="txtStyle" name="style"><option value="plain">Plain + shadow</option><option value="box">Box (highlight)</option><option value="outline">Outline</option></select></label>
+          <label class="field"><span class="field-label">Align</span>
+            <select id="txtAlign" name="align"><option value="center" selected>Center</option><option value="left">Left</option><option value="right">Right</option></select></label>
+        </div>
+        <div class="form-row">
+          <label class="field"><span class="field-label">Text colour</span><input type="color" id="txtColor" name="color" value="#ffffff" style="height:36px;padding:2px;"></label>
+          <label class="field" id="txtBoxField"><span class="field-label">Box colour</span><input type="color" id="txtBox" name="box_color" value="#000000" style="height:36px;padding:2px;"></label>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          <button type="button" class="btn sm" data-pos="0.5,0.15">Top</button>
+          <button type="button" class="btn sm" data-pos="0.5,0.5">Middle</button>
+          <button type="button" class="btn sm" data-pos="0.5,0.85">Bottom</button>
+          <span class="hint" style="align-self:center;">…or drag the text on the image. Scroll on it to resize.</span>
+        </div>
+        <input type="hidden" name="x" id="txtX" value="0.5"><input type="hidden" name="y" id="txtY" value="0.5">
+        <input type="hidden" name="size" id="txtSizeVal" value="0.06"><input type="hidden" name="back" id="txtBack" value="library">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;">
+          <span class="muted" style="font-size:11.5px;">Rendered with TikTok Sans at the image's full resolution. The original is kept; a new copy is added to the shelf.</span>
+          <button class="btn primary" type="submit">Save as new image</button>
+        </div>
+      </div>
+    </div>
+  </form>
 </div>
 
 {# ---- AI edit modal ---- #}
@@ -502,6 +554,56 @@
     sizes();
   }
   document.querySelectorAll(".ai-form").forEach(wireAi);
+  // ---- text editor: drag to move, scroll/slider to resize, live preview in TikTok Sans ----
+  (function () {
+    var modal = document.getElementById("txtModal"); if (!modal) return;
+    var form = document.getElementById("txtForm"), stage = document.getElementById("txtStage"), img = document.getElementById("txtImg"),
+        ov = document.getElementById("txtOverlay"), ta = document.getElementById("txtText"), size = document.getElementById("txtSize");
+    var st = { x: 0.5, y: 0.5, size: 0.06 };
+    function esc(t) { var d = document.createElement("div"); d.textContent = t; return d.innerHTML; }
+    function paint() {
+      var W = img.clientWidth, H = img.clientHeight, px = st.size * H;
+      ov.className = "txt-overlay " + document.getElementById("txtStyle").value + " " + document.getElementById("txtWeight").value;
+      ov.style.fontSize = px + "px"; ov.style.color = document.getElementById("txtColor").value;
+      ov.style.textAlign = document.getElementById("txtAlign").value;
+      ov.style.setProperty("--box", document.getElementById("txtBox").value);
+      var lines = ta.value.replace(/\r/g, "").split("\n");
+      ov.innerHTML = lines.map(function (l) { return '<span class="ln">' + (esc(l) || "&nbsp;") + '</span>'; }).join("<br>");
+      ov.style.left = (st.x * W) + "px"; ov.style.top = (st.y * H) + "px";
+      document.getElementById("txtX").value = st.x.toFixed(4); document.getElementById("txtY").value = st.y.toFixed(4);
+      document.getElementById("txtSizeVal").value = st.size.toFixed(4);
+      document.getElementById("txtSizeLbl").textContent = Math.round(st.size * 100) + "% of height";
+      document.getElementById("txtBoxField").style.visibility = document.getElementById("txtStyle").value === "box" ? "visible" : "hidden";
+    }
+    ["input", "change"].forEach(function (ev) {
+      ["txtText", "txtWeight", "txtStyle", "txtAlign", "txtColor", "txtBox"].forEach(function (id) { document.getElementById(id).addEventListener(ev, paint); });
+    });
+    size.addEventListener("input", function () { st.size = Number(size.value) / 100; paint(); });
+    modal.querySelectorAll("[data-pos]").forEach(function (b) { b.addEventListener("click", function () { var p = b.dataset.pos.split(","); st.x = +p[0]; st.y = +p[1]; paint(); }); });
+    // drag
+    var drag = null;
+    ov.addEventListener("pointerdown", function (e) { drag = { sx: e.clientX, sy: e.clientY, x: st.x, y: st.y }; ov.setPointerCapture(e.pointerId); e.preventDefault(); });
+    ov.addEventListener("pointermove", function (e) {
+      if (!drag) return;
+      var W = img.clientWidth, H = img.clientHeight;
+      st.x = Math.min(1, Math.max(0, drag.x + (e.clientX - drag.sx) / W)); st.y = Math.min(1, Math.max(0, drag.y + (e.clientY - drag.sy) / H)); paint();
+    });
+    ov.addEventListener("pointerup", function () { drag = null; }); ov.addEventListener("pointercancel", function () { drag = null; });
+    // wheel over the text = resize
+    stage.addEventListener("wheel", function (e) { e.preventDefault(); st.size = Math.min(0.25, Math.max(0.02, st.size * (e.deltaY < 0 ? 1.06 : 0.94))); size.value = (st.size * 100).toFixed(1); paint(); }, { passive: false });
+    window.addEventListener("resize", function () { if (modal.style.display !== "none") paint(); });
+    document.querySelectorAll(".txtBtn").forEach(function (b) {
+      b.addEventListener("click", function () {
+        form.action = "/creatives/" + b.dataset.id + "/text";
+        document.getElementById("txtName").textContent = b.dataset.name; document.getElementById("txtBack").value = b.dataset.back || "library";
+        st = { x: 0.5, y: 0.5, size: 0.06 }; size.value = 6; ta.value = "";
+        img.onload = paint; img.src = b.dataset.src; modal.style.display = "flex"; ta.focus();
+      });
+    });
+    document.getElementById("txtClose").addEventListener("click", function () { modal.style.display = "none"; });
+    modal.addEventListener("click", function (e) { if (e.target === modal) modal.style.display = "none"; });
+  })();
+
   var aiModal = document.getElementById("aiModal"), aiForm = document.getElementById("aiForm");
   document.querySelectorAll(".aiEditBtn").forEach(function (b) {
     b.addEventListener("click", function () {

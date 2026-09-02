@@ -530,3 +530,31 @@ table.data.show-detail th.col-detail, table.data.show-detail td.col-detail { dis
 /* Health: one card per Business Center can hold hundreds of rows — let the
    browser skip layout & paint for the ones that are off-screen. */
 .bc-section { content-visibility: auto; contain-intrinsic-size: auto 480px; }
+
+/* ==========================================================================
+   TikTok Sans (SIL OFL, © TikTok Inc.) — used ONLY for text baked onto images,
+   so the editor preview matches the server render glyph for glyph.
+   ========================================================================== */
+@font-face { font-family: "TikTok Sans"; src: url("/static/fonts/TikTokSans-Regular.ttf") format("truetype"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "TikTok Sans"; src: url("/static/fonts/TikTokSans-SemiBold.ttf") format("truetype"); font-weight: 600; font-display: swap; }
+@font-face { font-family: "TikTok Sans"; src: url("/static/fonts/TikTokSans-Bold.ttf") format("truetype"); font-weight: 700; font-display: swap; }
+
+/* ---- text-on-image editor ---- */
+.txt-modal { position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,.7); display: flex; align-items: center; justify-content: center; }
+.txt-panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; width: min(96vw, 980px); max-height: 94vh; display: flex; flex-direction: column; box-shadow: var(--shadow); }
+.txt-head { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border-soft); }
+.txt-body { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; padding: 16px; overflow: auto; }
+@media (max-width: 820px) { .txt-body { grid-template-columns: 1fr; } }
+.txt-stage { position: relative; display: inline-block; align-self: start; justify-self: center; max-width: 100%; user-select: none; background: var(--panel-hover); border-radius: 8px; overflow: hidden; }
+.txt-stage img { display: block; max-width: 100%; max-height: 70vh; }
+/* geometry mirrored from text_overlay.py: line-height 1.15em; box pad .22em/.5em radius .35em; shadow .03em/.06em; stroke .08em */
+.txt-overlay { position: absolute; transform: translate(-50%, -50%); font-family: "TikTok Sans", sans-serif; line-height: 1.15; white-space: nowrap; cursor: move; touch-action: none; }
+.txt-overlay.regular { font-weight: 400; } .txt-overlay.semibold { font-weight: 600; } .txt-overlay.bold { font-weight: 700; }
+.txt-overlay.plain { text-shadow: 0 0.03em 0.06em rgba(0, 0, 0, 0.6); }
+.txt-overlay.outline { -webkit-text-stroke: 0.08em #000; paint-order: stroke fill; }
+.txt-overlay.box .ln { background: var(--box, #000); padding: 0.22em 0.5em; border-radius: 0.35em; box-decoration-break: clone; -webkit-box-decoration-break: clone; line-height: 1.15; display: inline-block; }
+.txt-overlay.box { line-height: 1.59; }   /* 1.15em line box + 2 × .22em box padding */
+.txt-controls .field { margin-bottom: 8px; }
+.cz-tile { position: relative; display: block; }
+.cz-tile .cz-t { position: absolute; right: 4px; bottom: 4px; width: 22px; height: 22px; border-radius: 6px; border: 1px solid var(--border); background: var(--panel); color: var(--text); font-family: "TikTok Sans", sans-serif; font-weight: 700; font-size: 12px; cursor: pointer; opacity: 0; }
+.cz-tile:hover .cz-t { opacity: 1; }
