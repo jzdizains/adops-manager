@@ -45,7 +45,8 @@ def build(db: Session) -> list[dict]:
         items.append({
             "id": f"alert:{a.id}", "kind": a.kind, "level": a.level or "warn",
             "title": {"bc_low_balance": "Wallet low", "account_error": "Account error",
-                      "rule_action": "Rule fired", "inventory_low": "Inventory low"}.get(a.kind, "Notice"),
+                      "rule_action": "Rule fired", "inventory_low": "Inventory low",
+                      "cta_fallback": "Auto CTA fallback"}.get(a.kind, "Notice"),
             "message": a.message, "href": href, "external": external,
             "at": a.created_at, "ack": True, "where": "",
         })

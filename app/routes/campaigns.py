@@ -52,7 +52,19 @@ def resolve_cta_portfolio(db: Session, acct: models.AdAccount) -> str:
     cached = queries.get_setting(db, key, "")
     if cached:
         return cached
-    pid = tiktok_api.create_cta_portfolio(acct.access_token, acct.advertiser_id, CTA_AUTO_SET)
+    try:
+        pid = tiktok_api.create_cta_portfolio(acct.access_token, acct.advertiser_id, CTA_AUTO_SET)
+    except tiktok_api.TikTokError as e:
+        # Never let the CTA setup sink a launch: fall back to a fixed button and
+        # say so ONCE in the Inbox (deduped while the notice is unread).
+        msg = ("Auto CTA isn't active yet — TikTok rejected the Dynamic-CTA setup "
+               f"(code {e.code}: {(e.message or '')[:120]}). Launches use “Learn more” until it's fixed.")
+        exists = (db.query(models.Alert).filter_by(kind="cta_fallback", acknowledged=False).first())
+        if not exists:
+            db.add(models.Alert(kind="cta_fallback", ref_id=acct.advertiser_id, level="warn", message=msg))
+            db.commit()
+        live_log.push("error", f"Auto CTA fell back to Learn more on {acct.advertiser_name or acct.advertiser_id}")
+        return ""
     queries.set_setting(db, key, pid)
     return pid
 
@@ -1034,7 +1046,11 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
         # a failure here surfaces cleanly before any campaign exists
         if fields.get("call_to_action") == "AUTO" and not fields.get("smart_plus"):
             fields = dict(fields)
-            fields["_cta_portfolio_id"] = resolve_cta_portfolio(db, acct)
+            pid = resolve_cta_portfolio(db, acct)
+            if pid:
+                fields["_cta_portfolio_id"] = pid
+            else:
+                fields["call_to_action"] = "LEARN_MORE"     # graceful fallback (see resolve_cta_portfolio)
 
         # carousel: reserve the next unused carousel (or the one picked), upload
         # every slide into THIS account, resolve the identity — before creating anything
