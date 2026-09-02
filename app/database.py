@@ -82,6 +82,7 @@ schema_additions: dict[str, dict[str, str]] = {
     "creative_uploads": {
         "image_id": "TEXT DEFAULT ''",
         "image_url": "TEXT DEFAULT ''",
+        "upload_md5": "TEXT DEFAULT ''",
     },
 }
 

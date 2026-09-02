@@ -2,7 +2,13 @@
 
 Postback URL (from /settings) — per-event style:
   /postback?key=<POSTBACK_KEY>&source={source}&revenue={payout}
-           &txn={transaction_id}&event=purchase&ttclid={ttclid}
+           &txn={transaction_id}&event=purchase
+
+Glitchy only echoes {source} and {payout}, so the TikTok click id rides INSIDE
+the source: the lander script sends Glitchy  source=<campaign name>~<ttclid>
+and this endpoint splits it back — the name is what the P&L joins on, the
+ttclid is what the Events API needs. A plain `ttclid=` param (if a network
+ever offers one) still wins over the packed value.
 
 The old aggregate params (clicks/conversions/cvr) still work. Per-event
 behavior: `txn` dedupes retries (same transaction never counts twice), and
@@ -96,6 +102,26 @@ def _forward_to_tiktok(db: Session, event: models.PostbackEvent, s: dict) -> str
 
 
 UNATTRIBUTED = "(unattributed)"   # postbacks whose {source} macro came through empty
+SOURCE_SEP = "~"                  # source=<name>~<ttclid> — see module docstring / pass-source.js
+
+
+def unpack_source(raw: str) -> tuple[str, str]:
+    """'camp_a1234~E.C.P.abc' -> ('camp_a1234', 'E.C.P.abc'); plain -> (plain, '').
+    Split on the FIRST separator: names can't contain it, a click id might."""
+    raw = (raw or "").strip()
+    if SOURCE_SEP not in raw:
+        return raw, ""
+    name, packed = raw.split(SOURCE_SEP, 1)
+    return name.strip(), packed.strip()
+
+
+def _clean_ttclid(v: str) -> str:
+    """An UNREPLACED macro ('{ttclid}', '__CLICKID__') must never be stored as
+    a click id — TikTok would just reject the event."""
+    v = (v or "").strip()
+    if not v or "{" in v or "}" in v or (v.startswith("__") and v.endswith("__")):
+        return ""
+    return v[:500]
 
 
 def _num(v, cast=float, default=0):
@@ -112,7 +138,8 @@ async def postback(request: Request, db: Session = Depends(get_db)):
     s = get_settings(db)
     if q.get("key", "") != s["postback_key"]:
         return JSONResponse({"ok": False, "error": "bad key"}, status_code=403)
-    source = (q.get("source") or "").strip()
+    source, packed_ttclid = unpack_source(q.get("source") or "")
+    ttclid = _clean_ttclid(q.get("ttclid") or q.get("click_id") or "") or _clean_ttclid(packed_ttclid)
     if not source:
         # Glitchy fired but its {source} macro was EMPTY — the click that reached
         # Glitchy never carried ?source=. Keep the revenue (as unattributed) and
@@ -134,7 +161,7 @@ async def postback(request: Request, db: Session = Depends(get_db)):
         conversions=_num(q.get("conversions"), int, default_conv),
         cvr=_num(q.get("cvr")),
         txn=txn,
-        ttclid=(q.get("ttclid") or q.get("click_id") or "").strip()[:500],
+        ttclid=ttclid,
         event=(q.get("event") or "").strip()[:60],
         raw_query=str(request.url.query)[:2000],
     )

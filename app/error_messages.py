@@ -36,6 +36,15 @@ FRIENDLY: dict[str, tuple[str, str]] = {
 # 40002 messages that actually mean "permission", not "bad field" (§9.6)
 _PERMISSION_HINTS = re.compile(r"permission|not authorized|no access|无权限", re.I)
 
+# 40002 messages with a KNOWN cause — matched on TikTok's wording, checked in order
+_MESSAGE_HINTS: list[tuple[re.Pattern, str, str]] = [
+    (re.compile(r"image size is not supported", re.I),
+     "TikTok rejected a carousel slide's pixel size.",
+     "Carousel slides must be exactly 720×1280, 640×640 or 1200×628. The launcher now sends a "
+     "resized delivery copy of every slide and re-uploads any slide that was uploaded at its "
+     "original size earlier — use Retry failed on this batch."),
+]
+
 
 def new_ref() -> str:
     """Short ref id shown on the launch-result page."""
@@ -52,6 +61,11 @@ def explain(code, raw_message: str = "") -> dict:
     if is_permission:
         friendly = FRIENDLY["40102"][0]
         action = FRIENDLY["40102"][1]
+    elif key == "40002":
+        for pat, f, a in _MESSAGE_HINTS:
+            if pat.search(raw_message or ""):
+                friendly, action = f, a
+                break
     return {
         "code": key,
         "friendly": friendly,

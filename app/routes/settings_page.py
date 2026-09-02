@@ -23,8 +23,8 @@ def settings_page(request: Request, db: Session = Depends(get_db)):
     postback_template = (
         f"{base_url}/postback?key={s['postback_key']}"
         "&source={source}&revenue={payout}&txn={transaction_id}"
-        "&event=purchase&ttclid={ttclid}"
-    )
+        "&event=purchase"
+    )   # no ttclid param: Glitchy has no macro for it — it rides inside {source}
     from pathlib import Path
 
     from .. import background
@@ -61,15 +61,16 @@ async def test_event(request: Request, db: Session = Depends(get_db)):
     P&L stays clean. Works even while forwarding is switched off."""
     from urllib.parse import quote
     form = await request.form()
+    from . import postback as pb
     ttclid = str(form.get("ttclid") or "").strip()
-    source = str(form.get("source") or "").strip()
+    source, packed = pb.unpack_source(str(form.get("source") or ""))
+    ttclid = ttclid or packed          # a pasted "name~ttclid" works too
     value = str(form.get("value") or "1")
     if not ttclid:
         return RedirectResponse("/settings?ok=" + quote(
             "Test NOT sent — paste a ttclid first (click your own ad and copy "
             "it from the landing URL)."), status_code=303)
     from .. import models
-    from . import postback as pb
     s = dict(get_settings(db))
     s["events_api_enabled"] = True          # a test always tries to send
     ev = models.PostbackEvent(              # transient — never added to the DB

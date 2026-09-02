@@ -159,6 +159,9 @@ class CreativeUpload(Base):
     cover_image_id = Column(String, default="")
     image_id = Column(String, default="")                  # image creatives: the uploaded image id
     image_url = Column(Text, default="")                   # …and TikTok-hosted URL (music recommendations)
+    upload_md5 = Column(String, default="")                # md5 of the file ACTUALLY sent (delivery copy);
+    #   a cached image row whose md5 differs — or is empty (uploaded before the
+    #   carousel-size delivery copies existed) — is stale and gets re-uploaded
     created_at = Column(DateTime, default=utcnow)
 
 

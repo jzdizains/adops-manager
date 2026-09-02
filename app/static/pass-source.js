@@ -4,10 +4,16 @@
  * (plus ttclid etc.). This script carries those parameters through every hop
  * until they reach Glitchy's offer link, so Glitchy's {source} macro is filled:
  *
- *   ad → prelander?source=X → lander?source=X → glitchy-offer?source=X
+ *   ad → prelander?source=X&ttclid=T → lander?source=X~T → glitchy-offer?source=X~T
+ *
+ * TikTok's click id (ttclid, appended to the landing URL by TikTok) is PACKED
+ * into the source as  <campaign name>~<ttclid>  — Glitchy only echoes {source}
+ * back in its postback, so this is how the click id survives the round trip;
+ * the dashboard splits it again (P&L on the name, Events API on the ttclid).
+ * "~" never appears in a campaign name (they're limited to A-Z 0-9 _ -).
  *
  * How it works
- *   1. reads the query string of the current page
+ *   1. reads the query string of the current page (a packed source is unpacked)
  *   2. remembers it in sessionStorage (survives internal navigation / a second
  *      page in the same tab, e.g. a quiz step that drops the query string)
  *   3. rewrites every outbound link, form and late-injected button to carry it
@@ -18,7 +24,26 @@
  * Only same-tab, first-party — nothing is sent anywhere except in the links you already have.
  */
 (function () {
-  var KEY = "adops_pass", ALWAYS_WIN = { source: 1, ttclid: 1 };
+  var KEY = "adops_pass", ALWAYS_WIN = { source: 1, ttclid: 1 }, SEP = "~";
+
+  // source=X~T  →  source=X, ttclid=T (an explicit ttclid param wins). Safe to
+  // run on every hop, so a page that already received a packed source is fine.
+  function unpack(p) {
+    var s = p.source, i = s ? s.indexOf(SEP) : -1;
+    if (i < 0) return p;
+    var t = s.slice(i + 1);
+    p.source = s.slice(0, i);
+    if (!p.ttclid && t) p.ttclid = t;
+    if (!p.source) delete p.source;
+    return p;
+  }
+  // what goes into outbound links: the source with the ttclid packed in
+  function outgoing(p) {
+    var o = {};
+    for (var k in p) o[k] = p[k];
+    if (o.source && o.ttclid) o.source = o.source + SEP + o.ttclid;
+    return o;
+  }
 
   function parse(qs) {
     var out = {};
@@ -35,17 +60,20 @@
   function save(p) { try { sessionStorage.setItem(KEY, JSON.stringify(p)); } catch (e) {} }
 
   // current URL beats what was remembered; remembered fills gaps
-  var params = load(), fresh = parse(location.search);
+  var params = unpack(load()), fresh = unpack(parse(location.search));
+  // a NEW ad click (fresh source, no click id) must not inherit an old ttclid
+  if (fresh.source && !fresh.ttclid) delete params.ttclid;
   for (var k in fresh) params[k] = fresh[k];
   save(params);
   if (!Object.keys(params).length) return;
+  var out = outgoing(params);
 
   function withParams(url) {
     if (!url || /^(#|javascript:|mailto:|tel:)/i.test(url)) return url;
     var a = document.createElement("a"); a.href = url;
     var existing = parse(a.search), q = [];
-    for (var k in params) {
-      if (existing[k] === undefined || ALWAYS_WIN[k]) existing[k] = params[k];
+    for (var k in out) {
+      if (existing[k] === undefined || ALWAYS_WIN[k]) existing[k] = out[k];
     }
     for (var k2 in existing) q.push(encodeURIComponent(k2) + "=" + encodeURIComponent(existing[k2]));
     a.search = q.length ? "?" + q.join("&") : "";
@@ -67,9 +95,9 @@
       f.dataset.passDone = "1";
       var method = (f.getAttribute("method") || "get").toLowerCase();
       if (method === "get") { f.action = withParams(f.action || location.href); return; }
-      for (var k in params) {
+      for (var k in out) {
         if (f.querySelector('[name="' + k + '"]')) continue;
-        var i = document.createElement("input"); i.type = "hidden"; i.name = k; i.value = params[k]; f.appendChild(i);
+        var i = document.createElement("input"); i.type = "hidden"; i.name = k; i.value = out[k]; f.appendChild(i);
       }
     });
   }

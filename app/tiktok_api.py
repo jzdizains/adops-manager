@@ -19,22 +19,35 @@ TIMEOUT = httpx.Timeout(30.0, connect=10.0)
 
 
 class TikTokError(Exception):
-    def __init__(self, code: Any, message: str, request_id: str = "", data: Any = None):
+    def __init__(self, code: Any, message: str, request_id: str = "", data: Any = None,
+                 path: str = ""):
         self.code = code
         self.message = message
         self.request_id = request_id
         self.data = data
+        self.path = path            # endpoint that answered, e.g. "/ad/create/" — which STEP failed
         super().__init__(f"TikTok API error {code}: {message}")
+
+
+def _endpoint(resp: httpx.Response) -> str:
+    """'/ad/create/' from the response URL (…/open_api/v1.3/ad/create/)."""
+    try:
+        p = resp.request.url.path
+    except Exception:
+        return ""
+    return p.split("/v1.3", 1)[1] if "/v1.3" in p else p
 
 
 def _parse(resp: httpx.Response) -> Any:
     try:
         body = resp.json()
     except Exception:
-        raise TikTokError("HTTP", f"Non-JSON response (HTTP {resp.status_code})", data=resp.text[:500])
+        raise TikTokError("HTTP", f"Non-JSON response (HTTP {resp.status_code})",
+                          data=resp.text[:500], path=_endpoint(resp))
     code = body.get("code")
     if code != 0:
-        raise TikTokError(code, body.get("message", ""), body.get("request_id", ""), body.get("data"))
+        raise TikTokError(code, body.get("message", ""), body.get("request_id", ""), body.get("data"),
+                          path=_endpoint(resp))
     return body.get("data", {})
 
 

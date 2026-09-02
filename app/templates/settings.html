@@ -128,10 +128,12 @@
   <label class="field"><span class="field-label">Your postback URL — paste this into Glitchy</span>
     <input type="text" readonly value="{{ postback_template }}" onclick="this.select()"
            style="font-family:var(--font-mono);font-size:12px;background:var(--panel-hover);">
-    <span class="hint">Replace the {curly} placeholders with Glitchy's own macros for those values.
-      <span class="mono">txn</span> dedupes retried postbacks; <span class="mono">ttclid</span> is the TikTok
-      click id (needed for Events API forwarding below). The older aggregate params
-      (<span class="mono">clicks / conversions / cvr</span>) still work too.
+    <span class="hint">Replace the {curly} placeholders with Glitchy's own macros for those values
+      (Glitchy documents <span class="mono">{source}</span> and <span class="mono">{payout}</span>).
+      <span class="mono">txn</span> dedupes retried postbacks. The TikTok click id needs no extra macro:
+      the lander script below sends Glitchy <span class="mono">source=&lt;campaign name&gt;~&lt;ttclid&gt;</span>, Glitchy echoes it back
+      inside <span class="mono">{source}</span>, and this dashboard splits it — P&amp;L on the name, Events API on the ttclid.
+      The older aggregate params (<span class="mono">clicks / conversions / cvr</span>) still work too.
       The <span class="mono">key</span> is this dashboard's postback password — keep the URL private.</span></label>
 
   <details style="margin-top:6px;">
@@ -140,9 +142,13 @@
       The ad lands on your prelander with <span class="mono">?{{ s.url_param }}=&lt;campaign name&gt;</span>. Put this ONE script on the
       <b>prelander and the lander</b> (just before <span class="mono">&lt;/body&gt;</span>). It remembers the parameters and adds them to every
       outbound link, form and late-injected button, so the click into Glitchy's offer link still carries <span class="mono">{{ s.url_param }}=</span> —
-      which Glitchy echoes back as <span class="mono">{source}</span>. For JS redirects use <span class="mono">location.href = passSource(url)</span>.
+      which Glitchy echoes back as <span class="mono">{source}</span>. TikTok adds its click id (<span class="mono">ttclid</span>) to the landing URL
+      on every ad click; the script packs it into the source as <span class="mono">&lt;campaign name&gt;~&lt;ttclid&gt;</span> so it comes back in the
+      postback too (that's what feeds the Events API below). For JS redirects use <span class="mono">location.href = passSource(url)</span>.
+      <br><b>Update both pages</b> whenever this script changes — the older version forwarded the source only.
       <br><b>Self-check:</b> open a launched campaign's landing URL from the launch result (it shows the exact URL) → click through prelander → lander →
-      the offer link in the address bar must still contain <span class="mono">{{ s.url_param }}=</span>. If postbacks arrive with an empty source, the Inbox flags it.
+      the offer link in the address bar must contain <span class="mono">{{ s.url_param }}=&lt;name&gt;~&lt;ttclid&gt;</span> (the ~ part appears
+      only when you arrived from a real ad click). If postbacks arrive with an empty source, the Inbox flags it.
     </div>
     <textarea readonly onclick="this.select()" style="min-height:220px;font-size:11px;">{{ pass_script }}</textarea>
     <div class="hint">Also served at <span class="mono">/static/pass-source.js</span> (you can host it on your landers instead of inlining).</div>
@@ -155,7 +161,7 @@
   <label style="display:flex;align-items:center;gap:8px;font-weight:600;font-size:13px;
                 color:var(--text-soft);margin-bottom:12px;cursor:pointer;">
     <input type="checkbox" name="events_api_enabled" style="width:auto;" {{ 'checked' if s.events_api_enabled }}>
-    Forward postbacks to TikTok (only ones carrying a <span class="mono">ttclid</span> are sent)
+    Forward postbacks to TikTok (only ones carrying a <span class="mono">ttclid</span> — packed into the source by the lander script — are sent)
   </label>
   <div class="form-row-3">
     <label class="field"><span class="field-label">Pixel ID (optional override)</span>

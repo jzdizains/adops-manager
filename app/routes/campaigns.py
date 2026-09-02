@@ -85,11 +85,15 @@ def ensure_source(db: Session, obj, prefix: str) -> str:
     """Every launch MUST carry a source or Glitchy can never attribute it.
     A spark/creative saved without one gets a stable auto source (persisted)."""
     src = (getattr(obj, "source", "") or "").strip()
-    if not src:
-        src = f"{prefix}{obj.id}"
-        obj.source = src
+    # "~" is the separator the lander script packs the ttclid behind (see
+    # routes/postback.py) — a source containing it would be split wrongly
+    cleaned = src.replace("~", "_")
+    if not cleaned:
+        cleaned = f"{prefix}{obj.id}"
+    if cleaned != (getattr(obj, "source", "") or ""):
+        obj.source = cleaned
         db.flush()
-    return src
+    return cleaned
 
 router = APIRouter()
 
@@ -813,17 +817,27 @@ def carousel_slides(db: Session, carousel: models.Creative) -> list[models.Creat
 def _upload_image_to_account(db: Session, acct: models.AdAccount,
                              image: models.Creative) -> tuple[str, str]:
     """Upload an image creative into THIS account's asset library (cached so a
-    retry or a second carousel never re-uploads). Returns (image_id, image_url)."""
-    cached = (db.query(models.CreativeUpload)
-              .filter_by(creative_id=image.id, advertiser_id=acct.advertiser_id).first())
-    if cached and cached.image_id:
-        return cached.image_id, cached.image_url or ""
-    # deliver in a TikTok-approved carousel size (720x1280 / 640x640 / 1200x628) —
-    # the raw upload/AI output size is what triggers "Image size is not supported"
+    retry or a second carousel never re-uploads). Returns (image_id, image_url).
+
+    The file sent is the *delivery copy* in a TikTok carousel size (720x1280 /
+    640x640 / 1200x628 — help.tiktok "Specifications for Carousel Ads"); the
+    asset-library upload accepts almost any size, it's /ad/create/ that answers
+    "Image size is not supported" for anything else. The cache is therefore
+    keyed on the md5 of the file actually sent: a row uploaded at the raw size
+    (before delivery copies existed, or by the music "recommend" step back then)
+    has a different/empty md5 and is re-uploaded instead of being reused."""
+    import hashlib
+
     from .. import image_fit
     from .creatives import CREATIVES_DIR
     send_path, _fmt = image_fit.carousel_ready(
         image.file_path, CREATIVES_DIR / "_delivery", f"{image.id}_{(image.md5 or 'x')[:10]}")
+    with open(send_path, "rb") as fh:
+        send_md5 = hashlib.md5(fh.read()).hexdigest()
+    cached = (db.query(models.CreativeUpload)
+              .filter_by(creative_id=image.id, advertiser_id=acct.advertiser_id).first())
+    if cached and cached.image_id and cached.upload_md5 == send_md5:
+        return cached.image_id, cached.image_url or ""
     fname = f"c{image.id}_{image.file_name}"
     if send_path != image.file_path:
         fname = fname.rsplit(".", 1)[0] + ".jpg"
@@ -833,10 +847,10 @@ def _upload_image_to_account(db: Session, acct: models.AdAccount,
         raise tiktok_api.TikTokError("APP", "image upload returned no image_id")
     image_url = str(up.get("image_url") or up.get("url") or "")
     if cached:
-        cached.image_id, cached.image_url = image_id, image_url
+        cached.image_id, cached.image_url, cached.upload_md5 = image_id, image_url, send_md5
     else:
         db.add(models.CreativeUpload(creative_id=image.id, advertiser_id=acct.advertiser_id,
-                                     image_id=image_id, image_url=image_url))
+                                     image_id=image_id, image_url=image_url, upload_md5=send_md5))
     db.commit()
     return image_id, image_url
 
@@ -1437,7 +1451,8 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
         log.ok = False
         log.error_code = info["code"]
         log.error_message = f"{info['friendly']} {info['action']}".strip()
-        log.error_technical = f"code={e.code} message={e.message} request_id={e.request_id}"
+        log.error_technical = (f"code={e.code} message={e.message} request_id={e.request_id}"
+                               + (f" at={e.path}" if getattr(e, "path", "") else ""))
         live_log.push("error", f"Launch failed on {acct.advertiser_id}: {info['friendly']}")
     except Exception as e:  # never let one account kill the batch
         log.ok = False
