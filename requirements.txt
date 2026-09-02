@@ -8,3 +8,4 @@ itsdangerous>=2.1
 tzdata
 playwright>=1.49,<2.0
 imageio-ffmpeg>=0.5,<1.0    # bundled static ffmpeg for creative "freshening"
+Pillow>=10,<12                # thumbnails, text on images, carousel slide sizing

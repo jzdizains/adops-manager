@@ -83,18 +83,23 @@ def creatives_page(request: Request, db: Session = Depends(get_db)):
 
     # image dimensions + the carousel size each will be delivered in (PIL reads
     # just the header here — no pixel decode)
-    from .. import image_fit
     dims = {}
-    for r in images:
-        if r.file_path:
-            try:
-                from PIL import Image as _Img
-                with _Img.open(r.file_path) as im:
-                    w, h = im.size
-                fmt, (tw, th) = image_fit.pick_format(w, h)
-                dims[r.id] = {"w": w, "h": h, "tw": tw, "th": th, "fmt": fmt, "exact": (w, h) == (tw, th)}
-            except Exception:
-                pass
+    try:
+        from PIL import Image as _Img
+
+        from .. import image_fit
+    except Exception:          # image tooling unavailable → page still renders
+        _Img = None
+    if _Img is not None:
+        for r in images:
+            if r.file_path:
+                try:
+                    with _Img.open(r.file_path) as im:
+                        w, h = im.size
+                    fmt, (tw, th) = image_fit.pick_format(w, h)
+                    dims[r.id] = {"w": w, "h": h, "tw": tw, "th": th, "fmt": fmt, "exact": (w, h) == (tw, th)}
+                except Exception:
+                    pass
 
     carousels = [r for r in rows if r.kind == "carousel"]
     import json as _json
