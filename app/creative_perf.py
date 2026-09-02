@@ -53,19 +53,26 @@ def rows(db: Session, start_utc: datetime, end_utc: datetime,
             spend_by_cid[cid] = float(total or 0)
 
     pb = pnl_data.revenue_by_source(db, start_utc, end_utc)
+    # the creative's P&L key is its CAMPAIGN's source (campaign-name mode) —
+    # fall back to the creative's own source (static mode)
+    camp_src = pnl_data.campaign_source_map(db)
+    def _src(c):
+        return camp_src.get(c.used_campaign_id) or (c.source or "")
     # a source can be shared by several creatives (rare) — split evenly
     src_share: dict[str, int] = {}
     for c in creatives:
-        if c.source:
-            src_share[c.source] = src_share.get(c.source, 0) + 1
+        k = _src(c)
+        if k:
+            src_share[k] = src_share.get(k, 0) + 1
 
     out = []
     for c in creatives:
         camp = camps.get(c.used_campaign_id)
         acct = accounts.get(c.used_advertiser_id)
         spend = spend_by_cid.get(c.used_campaign_id, 0.0)
-        share = 1.0 / src_share.get(c.source, 1) if c.source else 0.0
-        p = pb.get(c.source, {}) if c.source else {}
+        key = _src(c)
+        share = 1.0 / src_share.get(key, 1) if key else 0.0
+        p = pb.get(key, {}) if key else {}
         revenue = float(p.get("revenue", 0.0)) * share
         pb_conv = float(p.get("conversions", 0)) * share
         pb_clicks = float(p.get("clicks", 0)) * share

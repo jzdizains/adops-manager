@@ -42,6 +42,9 @@ DEFAULTS: dict = {
     "launch_pace_sec": 1.0,        # pause between accounts in a direct batch (rate-limit safety)
     # --- sources / postback ---------------------------------------------------
     "url_param": "source",         # query param appended to the landing URL
+    "source_mode": "campaign",     # campaign = ?source=__CAMPAIGN_NAME__ (TikTok fills the campaign
+                                   #   name at click time; names made URL-safe + unique)
+                                   # static   = per spark/creative source (legacy)
     "postback_key": "",            # generated on first read; auths /postback
     "postback_mode": "incremental",  # incremental = sum every postback;
                                      # snapshot = latest value per source per day
@@ -93,6 +96,8 @@ def save_settings(db: Session, values: dict):
     clean["slow_every_n_sweeps"] = max(clean["slow_every_n_sweeps"], 1)
     if clean["url_param"] == "":
         clean["url_param"] = "source"
+    if clean.get("source_mode") not in ("campaign", "static"):
+        clean["source_mode"] = "campaign"
     row = db.query(models.Setting).filter_by(key=KEY).first()
     if not row:
         row = models.Setting(key=KEY)

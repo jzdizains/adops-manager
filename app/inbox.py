@@ -107,7 +107,20 @@ def build(db: Session) -> list[dict]:
                       "message": f"{cooling} account(s) cooling down after launch failures",
                       "href": "/monitor", "external": False, "at": None, "ack": False, "where": ""})
 
-    # ---- 6. TikTok not connected ---------------------------------------------
+    # ---- 6. postbacks arriving WITHOUT a source (source lost before Glitchy) --
+    from .routes.postback import UNATTRIBUTED
+    lost = (db.query(func.count(models.PostbackEvent.id), func.coalesce(func.sum(models.PostbackEvent.revenue), 0.0))
+            .filter(models.PostbackEvent.source == UNATTRIBUTED,
+                    models.PostbackEvent.created_at >= since).one())
+    if lost[0]:
+        items.append({"id": "unattributed", "kind": "unattributed", "level": "err",
+                      "title": "Source not reaching Glitchy",
+                      "message": (f"{lost[0]} postback(s) (${float(lost[1] or 0):.2f}) arrived in the last 24h with an EMPTY "
+                                  "{source} — the click that hit Glitchy had no ?source=. Check the prelander/lander "
+                                  "forwards the query string to the offer link, and that the launch's landing URL carries it."),
+                      "href": "/pnl", "external": False, "at": None, "ack": False, "where": ""})
+
+    # ---- 7. TikTok not connected ---------------------------------------------
     if not queries.any_access_token(db):
         items.append({"id": "token", "kind": "token", "level": "err",
                       "title": "Not connected",

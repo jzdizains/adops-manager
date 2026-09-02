@@ -105,11 +105,19 @@
 </div>
 
 <div class="card">
-  <div class="card-header"><span class="card-title">Sources & postback</span></div>
+  <div class="card-header"><span class="card-title">Sources & postback</span>
+    <span class="card-meta">how each click tells Glitchy which campaign it came from</span></div>
   <div class="form-row">
+    <label class="field"><span class="field-label">Source value</span>
+      <select name="source_mode">
+        <option value="campaign" {{ 'selected' if s.source_mode == 'campaign' }}>Campaign name — ?{{ s.url_param }}=__CAMPAIGN_NAME__ (recommended)</option>
+        <option value="static" {{ 'selected' if s.source_mode == 'static' }}>Static — the spark's / creative's own source</option>
+      </select>
+      <span class="hint"><b>Campaign name:</b> TikTok fills in the campaign name at click time, so every campaign is its own source with zero setup — the P&L joins on the campaign names you already see in Campaigns. Names are made URL-safe (<span class="mono">A-Z 0-9 _ -</span>, no spaces) and unique per account automatically; renaming a campaign here keeps attribution intact (renaming inside Ads Manager breaks it).
+        <b>Static:</b> the old behaviour — a source you set per spark/creative (one is auto-assigned if empty).</span></label>
     <label class="field"><span class="field-label">URL parameter name</span>
       <input type="text" name="url_param" value="{{ s.url_param }}">
-      <span class="hint">Appended to the landing URL at launch: ?{{ s.url_param }}=&lt;spark's source&gt;</span></label>
+      <span class="hint">Appended to the landing URL at launch. Glitchy reads <span class="mono">source=</span> and echoes it back as <span class="mono">{source}</span> — keep it <span class="mono">source</span> unless Glitchy tells you otherwise.</span></label>
     <label class="field"><span class="field-label">Postback mode</span>
       <select name="postback_mode">
         <option value="incremental" {{ 'selected' if s.postback_mode == 'incremental' }}>Incremental — each postback adds revenue</option>
@@ -125,6 +133,20 @@
       click id (needed for Events API forwarding below). The older aggregate params
       (<span class="mono">clicks / conversions / cvr</span>) still work too.
       The <span class="mono">key</span> is this dashboard's postback password — keep the URL private.</span></label>
+
+  <details style="margin-top:6px;">
+    <summary style="cursor:pointer;font-weight:650;font-size:13px;">Prelander / lander pass-through script — makes sure the source reaches Glitchy</summary>
+    <div class="hint" style="margin:8px 0;">
+      The ad lands on your prelander with <span class="mono">?{{ s.url_param }}=&lt;campaign name&gt;</span>. Put this ONE script on the
+      <b>prelander and the lander</b> (just before <span class="mono">&lt;/body&gt;</span>). It remembers the parameters and adds them to every
+      outbound link, form and late-injected button, so the click into Glitchy's offer link still carries <span class="mono">{{ s.url_param }}=</span> —
+      which Glitchy echoes back as <span class="mono">{source}</span>. For JS redirects use <span class="mono">location.href = passSource(url)</span>.
+      <br><b>Self-check:</b> open a launched campaign's landing URL from the launch result (it shows the exact URL) → click through prelander → lander →
+      the offer link in the address bar must still contain <span class="mono">{{ s.url_param }}=</span>. If postbacks arrive with an empty source, the Inbox flags it.
+    </div>
+    <textarea readonly onclick="this.select()" style="min-height:220px;font-size:11px;">{{ pass_script }}</textarea>
+    <div class="hint">Also served at <span class="mono">/static/pass-source.js</span> (you can host it on your landers instead of inlining).</div>
+  </details>
 </div>
 
 <div class="card">

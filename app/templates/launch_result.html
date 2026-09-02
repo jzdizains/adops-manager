@@ -36,6 +36,13 @@
     </details>
   {% else %}
     <p class="muted" style="margin:0;">Preset “{{ l.template_name }}” — campaign created{% if l.campaign_id %} (id {{ l.campaign_id }}){% endif %}.</p>
+    {% if l.source %}
+    <div style="margin-top:8px;font-size:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <span class="pill dim" title="P&L join key — Glitchy must echo this back as {source}">source <span class="mono">{{ l.source }}</span></span>
+      {% if l.landing_url %}<span class="mono muted" style="font-size:11px;overflow-wrap:anywhere;" title="Exact landing URL sent to TikTok — the ?{{ '{' }}param{{ '}' }}= carries the source">→ {{ l.landing_url }}</span>
+      {% else %}<span class="muted" style="font-size:11px;">no landing URL on this destination — the source can't ride an Instant Page / Lead Form, so Glitchy can't attribute it</span>{% endif %}
+    </div>
+    {% endif %}
   {% endif %}
 </div>
 {% endfor %}

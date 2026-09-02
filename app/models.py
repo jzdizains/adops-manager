@@ -283,6 +283,7 @@ class LaunchLog(Base):
     campaign_id = Column(String, default="")
     spark_code_id = Column(Integer, nullable=True)
     source = Column(String, default="", index=True)        # source active on this launch
+    landing_url = Column(Text, default="")                 # the exact landing URL sent to TikTok (carries ?source=)
     ok = Column(Boolean, default=False)
     error_code = Column(String, default="")
     error_message = Column(Text, default="")               # plain-English

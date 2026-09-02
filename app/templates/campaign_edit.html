@@ -13,7 +13,7 @@
     <div class="card-header"><span class="card-title">Change budgets & caps</span></div>
     <form method="post" action="/campaigns/{{ advertiser_id }}/{{ campaign_id }}/edit">
       <label class="field"><span class="field-label">Campaign name</span>
-        <input type="text" name="campaign_name" value="{{ rec.campaign_name if rec else '' }}"
+        <input type="text" name="campaign_name" value="{{ rec.campaign_name if rec else '' }}" title="In campaign-name source mode the name is the ?source= value: it is kept URL-safe (A-Z 0-9 _ -) and the P&L key moves with it"
                placeholder="leave unchanged to keep">
         <span class="hint">Renames the campaign on TikTok.</span></label>
       <label class="field"><span class="field-label">Campaign budget (CBO campaigns only)</span>

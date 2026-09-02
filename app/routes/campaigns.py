@@ -19,11 +19,37 @@ from . import launch as launch_mod
 
 
 def apply_source_to_url(url: str, param: str, source: str) -> str:
-    """Append ?param=source to the landing URL (respects existing queries)."""
+    """Append ?param=source to the landing URL (respects existing queries; the
+    value is URL-encoded so odd characters can't corrupt the URL). If the URL
+    already carries this param it is replaced, never duplicated."""
+    from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
     if not url or not source:
         return url
-    sep = "&" if "?" in url else "?"
-    return f"{url}{sep}{param}={source}"
+    parts = urlsplit(url)
+    query = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if k != param]
+    query.append((param, source))
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+
+
+CAMPAIGN_NAME_MACRO = "__CAMPAIGN_NAME__"     # TikTok substitutes the campaign name at click time
+
+
+def url_safe_name(name: str) -> str:
+    """Only [A-Za-z0-9_-]: TikTok doesn't guarantee URL-encoding of substituted
+    macros, so a campaign name with spaces or symbols would corrupt ?source=."""
+    import re as _re
+    return _re.sub(r"_+", "_", _re.sub(r"[^A-Za-z0-9_-]+", "_", name)).strip("_") or "campaign"
+
+
+def ensure_source(db: Session, obj, prefix: str) -> str:
+    """Every launch MUST carry a source or Glitchy can never attribute it.
+    A spark/creative saved without one gets a stable auto source (persisted)."""
+    src = (getattr(obj, "source", "") or "").strip()
+    if not src:
+        src = f"{prefix}{obj.id}"
+        obj.source = src
+        db.flush()
+    return src
 
 router = APIRouter()
 
@@ -369,13 +395,21 @@ def _campaign_name(fields: dict, acct: models.AdAccount) -> str:
     suffix is appended automatically when the pattern has no {time}, because
     TikTok rejects duplicate campaign names within an account."""
     now = datetime.now(timezone.utc)
-    name = (fields["campaign_name_pattern"]
+    pattern = fields["campaign_name_pattern"]
+    name = (pattern
             .replace("{account}", acct.advertiser_name or acct.advertiser_id)
             .replace("{date}", now.strftime("%m%d")))
     if "{time}" in name:
         name = name.replace("{time}", now.strftime("%H%M%S"))
     else:
         name = f"{name} · {now.strftime('%H%M%S')}"
+    if fields.get("_url_safe_names"):
+        # source mode = campaign: the name IS the P&L source and rides the URL.
+        # Make it URL-safe, and globally unique across accounts (two accounts
+        # launched in the same second from one preset would otherwise collide).
+        name = url_safe_name(name)
+        if "{account}" not in pattern:
+            name = f"{name}_a{(acct.advertiser_id or '')[-4:]}"
     return name[:512]
 
 
@@ -870,15 +904,31 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
             if spark:
                 spark_ref = resolve_spark(db, acct, spark)
 
-        # source wiring: the spark's source rides the landing URL (P&L join key)
-        if spark and (spark.source or "").strip():
-            settings = get_settings(db)
+        # ---- source wiring (P&L join key — must reach Glitchy on every launch) ---
+        settings = get_settings(db)
+        source_mode = settings.get("source_mode", "campaign")
+        if source_mode == "campaign":
+            # ?source=__CAMPAIGN_NAME__ — TikTok fills in the campaign name at click
+            # time, so the source is unique per campaign and needs no per-asset setup.
+            # The name is made URL-safe (see _campaign_name) and log.source is set to
+            # the literal name once the campaign exists, so the join stays exact.
+            fields = dict(fields)
+            fields["_url_safe_names"] = True
+            if fields.get("landing_page_url"):
+                fields["landing_page_url"] = apply_source_to_url(
+                    fields["landing_page_url"], settings["url_param"], CAMPAIGN_NAME_MACRO)
+                log.landing_url = fields["landing_page_url"]
+        if spark:
             log.spark_code_id = spark.id
-            log.source = spark.source.strip()
+        if spark and source_mode == "static":
+            # legacy: the spark's own source rides the URL. A spark without one
+            # gets a stable auto source — a sourceless launch is invisible to Glitchy.
+            log.source = ensure_source(db, spark, "sp")
             if fields.get("landing_page_url"):
                 fields = dict(fields)
                 fields["landing_page_url"] = apply_source_to_url(
                     fields["landing_page_url"], settings["url_param"], log.source)
+                log.landing_url = fields["landing_page_url"]
 
         # creative library: reserve the next unused creative, then upload it and
         # the ad identity into THIS account — all before creating anything
@@ -945,11 +995,13 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                     f"Couldn't get a cover image for “{creative.name}” yet — TikTok "
                     "hadn't finished processing the video. Hit Retry in a moment "
                     "(the upload is cached, so it's instant).")
-            if (creative.source or "").strip():
-                log.source = creative.source.strip()
-                fields = dict(fields)
-                fields["landing_page_url"] = apply_source_to_url(
-                    fields["landing_page_url"], settings["url_param"], log.source)
+            if source_mode == "static":
+                log.source = ensure_source(db, creative, "c")
+                if fields.get("landing_page_url"):
+                    fields = dict(fields)
+                    fields["landing_page_url"] = apply_source_to_url(
+                        fields["landing_page_url"], settings["url_param"], log.source)
+                    log.landing_url = fields["landing_page_url"]
 
             # SMART CREATIVE: gather several more videos + texts and let TikTok
             # auto-combine/refresh them. Material #1 is the creative reserved above.
@@ -1041,6 +1093,8 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
         created_name = ""
         if fields.get("smart_plus"):
             log.campaign_id, created_name = _launch_smart_plus(acct, fields, spark_ref, spark, pixel_id)
+            if source_mode == "campaign":
+                log.source = created_name
         else:
             camp_payload = build_campaign_payload(fields, acct)
             camp = tiktok_api.create_campaign(acct.access_token, acct.advertiser_id,
@@ -1049,6 +1103,8 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
             log.campaign_id = campaign_id
             new_campaign_id = campaign_id     # remember for orphan cleanup on failure
             created_name = camp_payload["campaign_name"]
+            if source_mode == "campaign":
+                log.source = created_name     # exactly what TikTok will put in ?source=
 
             # duplicated ad groups + cost-cap ladder.
             # duplicates multiplies EVERY bid: one cap + duplicates=10 → 10 ad
@@ -1472,7 +1528,11 @@ def apply_campaign_edit(advertiser_id: str, campaign_id: str,
     rec = (db.query(models.CampaignRecord)
            .filter_by(advertiser_id=advertiser_id, campaign_id=campaign_id).first())
     new_name = campaign_name.strip()
-    if new_name and new_name != ((rec.campaign_name if rec else "") or ""):
+    src_mode = get_settings(db).get("source_mode", "campaign")
+    if new_name and src_mode == "campaign":
+        new_name = url_safe_name(new_name)    # the name IS the ?source= value
+    old_name = (rec.campaign_name if rec else "") or ""
+    if new_name and new_name != old_name:
         try:
             tiktok_api.update_campaign_name(
                 acct.access_token, advertiser_id, campaign_id, new_name,
@@ -1480,6 +1540,16 @@ def apply_campaign_edit(advertiser_id: str, campaign_id: str,
             changed.append(f"name → {new_name[:40]}")
             if rec:
                 rec.campaign_name = new_name
+            if src_mode == "campaign":
+                # TikTok will now substitute the NEW name — move the join key with
+                # it, and re-key the revenue already booked under the old name so
+                # the campaign's history stays attributed.
+                for lg in db.query(models.LaunchLog).filter_by(campaign_id=campaign_id):
+                    if (lg.source or "") in ("", old_name):
+                        lg.source = new_name
+                if old_name:
+                    (db.query(models.PostbackEvent).filter_by(source=old_name)
+                       .update({"source": new_name}))
         except tiktok_api.TikTokError as e:
             errors.append(f"rename: code {e.code} {e.message[:80]}")
 

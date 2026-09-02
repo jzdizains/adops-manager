@@ -95,6 +95,9 @@ def _forward_to_tiktok(db: Session, event: models.PostbackEvent, s: dict) -> str
         return f"error: code {e.code}: {(e.message or '')[:160]}"
 
 
+UNATTRIBUTED = "(unattributed)"   # postbacks whose {source} macro came through empty
+
+
 def _num(v, cast=float, default=0):
     try:
         return cast(str(v).replace(",", "").replace("$", ""))
@@ -111,7 +114,10 @@ async def postback(request: Request, db: Session = Depends(get_db)):
         return JSONResponse({"ok": False, "error": "bad key"}, status_code=403)
     source = (q.get("source") or "").strip()
     if not source:
-        return JSONResponse({"ok": False, "error": "missing source"}, status_code=400)
+        # Glitchy fired but its {source} macro was EMPTY — the click that reached
+        # Glitchy never carried ?source=. Keep the revenue (as unattributed) and
+        # make the failure visible instead of silently discarding it.
+        source = UNATTRIBUTED
     txn = (q.get("txn") or q.get("transaction_id") or "").strip()[:120]
     if txn:
         # retries/duplicates of the same transaction must never double revenue
