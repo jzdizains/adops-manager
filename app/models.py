@@ -294,6 +294,7 @@ class LaunchLog(Base):
     spark_code_id = Column(Integer, nullable=True)
     source = Column(String, default="", index=True)        # source active on this launch
     landing_url = Column(Text, default="")                 # the exact landing URL sent to TikTok (carries ?source=)
+    optimization_event = Column(String, default="")        # pixel event the ad group optimises for (ON_WEB_REGISTER, SHOPPING…)
     ok = Column(Boolean, default=False)
     error_code = Column(String, default="")
     error_message = Column(Text, default="")               # plain-English
@@ -478,4 +479,24 @@ class AppLog(Base):
     level = Column(String, default="info")
     source = Column(String, default="")
     message = Column(Text, default="")
+    created_at = Column(DateTime, default=utcnow, index=True)
+
+
+class EscapeTest(Base):
+    """One row per phone that opened the in-app escape test page (/t/escape).
+    Records what was tried and — via the landed page — where the visitor
+    actually ended up (a real browser, or still inside TikTok's WebView)."""
+    __tablename__ = "escape_tests"
+
+    id = Column(Integer, primary_key=True)
+    visit = Column(String, index=True, default="")      # random id minted by the test page
+    platform = Column(String, default="")               # ios | android | other
+    inapp = Column(Boolean, default=False)              # TikTok WebView detected on open
+    app_version = Column(String, default="")            # TikTok app version from the UA, if present
+    ua_open = Column(Text, default="")                  # user agent when the page opened
+    method = Column(String, default="")                 # intent | x-safari | direct (no in-app browser) | none
+    clicked = Column(Boolean, default=False)            # the visitor pressed the button
+    landed_at = Column(DateTime, nullable=True)         # the landed page was reached
+    ua_landed = Column(Text, default="")                # user agent where it landed — the proof
+    outcome = Column(String, default="")                # escaped | stayed | no-click | lost
     created_at = Column(DateTime, default=utcnow, index=True)

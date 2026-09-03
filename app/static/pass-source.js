@@ -18,6 +18,8 @@
  *      page in the same tab, e.g. a quiz step that drops the query string)
  *   3. rewrites every outbound link, form and late-injected button to carry it
  *      (source / ttclid from the ad always win over a hard-coded value in the link)
+ *      and wraps window.open() so builder buttons that open a hard-coded URL
+ *      (Lovable / Webflow / Framer "open link" actions) carry it too
  *   4. exposes window.passSource(url) for JS redirects: location.href = passSource(url)
  *
  * Install: <script src="pass-source.js"></script> just before </body> (or inline it).
@@ -80,6 +82,17 @@
     return a.href;
   }
   window.passSource = withParams;
+
+  // JS-driven navigation: page builders (Lovable, Webflow, Framer…) wire buttons
+  // to window.open(url) with a hard-coded URL — no <a> for us to rewrite, so the
+  // source would be lost right at the offer. Wrap it so the URL gets the params.
+  var _open = window.open;
+  if (typeof _open === "function") {
+    window.open = function (url, target, features) {
+      try { if (url) url = withParams(String(url)); } catch (e) {}
+      return _open.call(window, url, target, features);
+    };
+  }
 
   function isOutbound(a) {
     // rewrite links that leave this page's origin, plus anything marked data-pass

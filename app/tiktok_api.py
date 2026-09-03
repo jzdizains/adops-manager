@@ -668,6 +668,18 @@ def list_ads(access_token: str, advertiser_id: str, page: int = 1,
     return api_get("/ad/get/", access_token, params)
 
 
+def update_ad_landing_url(access_token: str, advertiser_id: str, adgroup_id: str,
+                          ad_id: str, landing_page_url: str) -> dict:
+    """Change ONE ad's landing page URL in place (/ad/update/ with
+    patch_update=true, so only the field sent is touched — per the official SDK's
+    AdUpdateBody {advertiser_id, adgroup_id, creatives[{ad_id, landing_page_url}],
+    patch_update}). TikTok re-reviews the ad after a URL change."""
+    return api_post("/ad/update/", access_token, {
+        "advertiser_id": advertiser_id, "adgroup_id": adgroup_id, "patch_update": True,
+        "creatives": [{"ad_id": ad_id, "landing_page_url": landing_page_url}],
+    })
+
+
 def list_adgroups(access_token: str, advertiser_id: str, campaign_ids: list[str] | None = None,
                   page: int = 1, page_size: int = 100) -> dict:
     params: dict = {"advertiser_id": advertiser_id, "page": page, "page_size": page_size}

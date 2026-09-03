@@ -168,14 +168,20 @@
     <input type="checkbox" name="events_api_enabled" style="width:auto;" {{ 'checked' if s.events_api_enabled }}>
     Forward postbacks to TikTok (only ones carrying a <span class="mono">ttclid</span> — packed into the source by the lander script — are sent)
   </label>
-  <div class="form-row-3">
+  <div class="form-row">
     <label class="field"><span class="field-label">Pixel ID (optional override)</span>
       <input type="text" name="events_pixel_code" value="{{ s.events_pixel_code }}"
              placeholder="auto-resolve from the source's launch">
       <span class="hint">Empty = use the pixel the source's campaign launched with.</span></label>
-    <label class="field"><span class="field-label">TikTok event name</span>
+    <label class="field"><span class="field-label">Which event to send</span>
+      <select name="events_event_mode">
+        <option value="campaign" {{ 'selected' if s.events_event_mode == 'campaign' }}>Match each campaign's optimization event (split tests)</option>
+        <option value="fixed" {{ 'selected' if s.events_event_mode == 'fixed' }}>Always the event below</option>
+      </select>
+      <span class="hint"><b>Match:</b> a campaign optimising for Complete registration gets CompleteRegistration, one optimising for Purchase gets CompletePayment — so both can run at once and each learns from its own goal. The event below is the fallback for launches that recorded no optimization event.</span></label>
+    <label class="field"><span class="field-label">Fixed / fallback event name</span>
       <input type="text" name="events_event_name" value="{{ s.events_event_name }}">
-      <span class="hint">CompleteRegistration = standard registration event (CompletePayment = purchase).</span></label>
+      <span class="hint">CompleteRegistration = registration, CompletePayment = purchase, PlaceAnOrder, SubmitForm, ViewContent…</span></label>
     <label class="field"><span class="field-label">Currency</span>
       <input type="text" name="events_currency" value="{{ s.events_currency }}"></label>
   </div>

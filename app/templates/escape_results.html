@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div><h1>In-app escape test</h1>
+    <div class="muted">Does TikTok's in-app browser let a visitor be moved to their real browser? Measured on your own phones and traffic — not a guess.</div></div>
+  <div class="actions">
+    <a class="btn" href="/escape-test">↻ Refresh</a>
+    {% if rows %}
+    <form method="post" action="/escape-test/clear" onsubmit="return confirm('Clear all test results?');"><button class="btn danger" type="submit">Clear results</button></form>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><span class="card-title">How to run it</span><span class="card-meta">2 minutes by hand · a $5 ad for real numbers</span></div>
+  <div class="form-row" style="align-items:start;">
+    <div>
+      <label class="field"><span class="field-label">Test page URL</span>
+        <input type="text" readonly value="{{ test_url }}" onclick="this.select()" style="font-family:var(--font-mono);font-size:12px;background:var(--panel-hover);">
+        <span class="hint">Opens fine from any phone. Only visits that come from <b>inside the TikTok app</b> count — a visit from Safari or Chrome proves nothing and is listed separately.</span></label>
+    </div>
+    <div class="hint" style="font-size:12.5px;line-height:1.6;margin-top:4px;">
+      <b>By hand (right now):</b> send the URL to yourself in a TikTok DM, open it from inside TikTok on an iPhone and an Android, tap Continue. The result shows on the phone and here.<br>
+      <b>On real traffic:</b> launch a tiny campaign with this URL as the landing page (any preset; the source param does no harm). Every visitor who taps Continue becomes a row here, with the TikTok version they run.<br>
+      <b>What the button does:</b> Android → Chrome intent; iPhone → <span class="mono">x-safari-</span> scheme; if the page is still visible ~1 s later it continues in-app. The final page reads the browser's identity — that's the proof.
+    </div>
+  </div>
+</div>
+
+{% set total_inapp = summary.values()|map(attribute='opened')|sum %}
+<div class="kpis kpis-4">
+  {% for plat in ['ios', 'android'] %}
+    {% set s = summary.get(plat) %}
+    <div class="kpi {{ 'accent' if loop.first }}"><div class="lab">{{ 'iPhone' if plat == 'ios' else 'Android' }} · escaped</div>
+      <div class="val">{% if s and s.clicked %}<span class="{{ 'good' if s.escaped else 'bad' }}">{{ "%.0f"|format(s.escaped / s.clicked * 100) }}%</span>{% else %}—{% endif %}</div>
+      <div class="sub">{% if s %}{{ s.escaped }} escaped · {{ s.stayed }} stayed · {{ s.lost }} lost · of {{ s.clicked }} taps ({{ s.opened }} opened){% else %}no in-app visits yet{% endif %}</div></div>
+  {% endfor %}
+  <div class="kpi"><div class="lab">In-app visits</div><div class="val">{{ total_inapp }}</div><div class="sub">{{ not_inapp }} more came from a regular browser (ignored)</div></div>
+  <div class="kpi"><div class="lab">TikTok versions seen</div><div class="val" style="font-size:14px;">{{ versions|join(', ') if versions else '—' }}</div><div class="sub">behaviour can change per app update</div></div>
+</div>
+
+<div class="card" style="padding:0;overflow:hidden;">
+  <div class="card-header" style="padding:12px 14px;margin:0;border-bottom:1px solid var(--border-soft);">
+    <span class="card-title">Visits</span><span class="card-meta">newest first · “lost” = tapped but never reached the final page (closed the app, or the scheme hung)</span></div>
+  {% if rows %}
+  <div class="table-scroll">
+  <table class="data dense">
+    <thead><tr><th>When</th><th>Phone</th><th>Opened in</th><th>TikTok</th><th>Tried</th><th>Outcome</th><th>Ended up in</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr>
+        <td style="white-space:nowrap;"><span title="{{ r.created_at|local('%Y-%m-%d %H:%M:%S') }}">{{ r.created_at|ago }}</span></td>
+        <td>{{ {'ios': 'iPhone', 'android': 'Android'}.get(r.platform, r.platform) }}</td>
+        <td>{% if r.inapp %}<span class="pill warn">TikTok in-app</span>{% else %}<span class="pill dim">regular browser</span>{% endif %}</td>
+        <td class="mono muted">{{ r.app_version or '—' }}</td>
+        <td class="mono muted">{{ r.method or ('—' if not r.clicked else '?') }}</td>
+        <td>{% if r.outcome == 'escaped' %}<span class="pill ok">escaped ✓</span>{% elif r.outcome == 'stayed' %}<span class="pill err">stayed in-app</span>
+            {% elif r.outcome == 'lost' %}<span class="pill warn">lost</span>{% else %}<span class="pill dim">no tap</span>{% endif %}</td>
+        <td class="muted clip" style="max-width:360px;font-size:11px;" title="{{ r.ua_landed }}">{{ r.ua_landed or '—' }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <div class="empty"><div class="empty-title">No visits yet</div>Open the test URL from inside TikTok on a phone and tap Continue — the row appears here within seconds.</div>
+  {% endif %}
+</div>
+{% endblock %}

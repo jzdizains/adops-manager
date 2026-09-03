@@ -40,16 +40,50 @@ from ..templating import render
 router = APIRouter()
 
 
+# TikTok optimization events (ad group) -> Events API standard web event names.
+# The event TikTok's algorithm learns from must be the one the ad group optimises
+# for, so a split test (registration vs purchase campaigns side by side) needs each
+# postback to fire ITS campaign's event, not one global name.
+OPT_EVENT_TO_WEB_EVENT = {
+    "ON_WEB_REGISTER": "CompleteRegistration",
+    "SHOPPING": "CompletePayment",
+    "ON_WEB_ORDER": "PlaceAnOrder",
+    "FORM": "SubmitForm",
+    "ON_WEB_DETAIL": "ViewContent",
+    "BUTTON": "ClickButton",
+}
+
+
+def _launch_for_source(db: Session, source: str):
+    """The most recent successful launch that carries this source (campaign name)."""
+    return (db.query(models.LaunchLog)
+            .filter(models.LaunchLog.ok == True,                     # noqa: E712
+                    models.LaunchLog.source == source)
+            .order_by(models.LaunchLog.id.desc()).first())
+
+
+def event_name_for(db: Session, source: str, settings: dict, log=None) -> tuple[str, str]:
+    """(event name to fire, how it was chosen). Campaign mode fires the event the
+    campaign's ad group optimises for; the fixed name is the fallback when the
+    launch didn't record one (older launches, non-pixel destinations)."""
+    fixed = (settings.get("events_event_name") or "CompleteRegistration").strip()
+    if settings.get("events_event_mode", "campaign") != "campaign":
+        return fixed, "fixed"
+    log = log or _launch_for_source(db, source)
+    opt = (getattr(log, "optimization_event", "") or "") if log else ""
+    ev = OPT_EVENT_TO_WEB_EVENT.get(opt, "")
+    if ev:
+        return ev, f"campaign optimises for {opt}"
+    return fixed, "fallback (launch has no optimization event)"
+
+
 def _events_pixel_code(db: Session, source: str, settings: dict) -> tuple[str, str]:
     """(access_token, pixel_code) to fire the Events API with, for a source.
 
     Settings override wins for the pixel; otherwise the source's most recent
     successful launch tells us the account, whose PixelCache entry (resolved
     at launch time — §9.7) carries the pixel code TikTok knows."""
-    log = (db.query(models.LaunchLog)
-           .filter(models.LaunchLog.ok == True,                     # noqa: E712
-                   models.LaunchLog.source == source)
-           .order_by(models.LaunchLog.id.desc()).first())
+    log = _launch_for_source(db, source)
     token = ""
     pixel_code = (settings.get("events_pixel_code") or "").strip()
     if log:
@@ -88,15 +122,16 @@ def _forward_to_tiktok(db: Session, event: models.PostbackEvent, s: dict) -> str
     if not pixel_code:
         return ("error: no pixel to fire to — set one in Settings → Events API, "
                 "or launch this source once so it can be auto-resolved")
+    event_name, _how = event_name_for(db, event.source, s)
     try:
         tiktok_api.track_event(
             token, pixel_code,
-            event=(s.get("events_event_name") or "CompleteRegistration").strip(),
+            event=event_name,
             event_id=event.txn or f"pb{event.id}",
             ttclid=event.ttclid, value=float(event.revenue or 0),
             currency=(s.get("events_currency") or "USD").strip(),
             test_event_code=(s.get("events_test_code") or "").strip())
-        return "sent"
+        return f"sent {event_name}"
     except tiktok_api.TikTokError as e:
         return f"error: code {e.code}: {(e.message or '')[:160]}"
 
@@ -223,6 +258,22 @@ def _spend_by_source(db: Session, start_utc, end_utc) -> dict[str, float]:
     return out
 
 
+GOAL_LABELS = {"ON_WEB_REGISTER": "Registration", "SHOPPING": "Purchase", "ON_WEB_ORDER": "Place order",
+               "FORM": "Form", "ON_WEB_DETAIL": "View content", "BUTTON": "Button"}
+
+
+def _goals_by_source(db: Session, sources: list[str]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    if not sources:
+        return out
+    for lg in (db.query(models.LaunchLog)
+               .filter(models.LaunchLog.ok == True, models.LaunchLog.source.in_(sources))  # noqa: E712
+               .order_by(models.LaunchLog.id.asc())):
+        if lg.optimization_event:
+            out[lg.source] = GOAL_LABELS.get(lg.optimization_event, lg.optimization_event)
+    return out
+
+
 @router.get("/pnl")
 def pnl(request: Request, db: Session = Depends(get_db)):
     range_key = request.query_params.get("range", "today")
@@ -290,4 +341,6 @@ def pnl(request: Request, db: Session = Depends(get_db)):
         "recent": recent,
         # spark-code roll-up only means something in static-source mode
         "has_spark": any(r["spark"] != "—" for r in sources),
+        # which pixel event each source's campaign optimises for (split-test view)
+        "goal_by_src": _goals_by_source(db, [r["source"] for r in sources]),
     })

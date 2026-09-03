@@ -121,6 +121,22 @@ def build(db: Session) -> list[dict]:
                                   "forwards the query string to the offer link, and that the launch's landing URL carries it."),
                       "href": "/pnl", "external": False, "at": None, "ack": False, "where": ""})
 
+    # ---- 6b. running campaigns launched WITHOUT a source (pre-source-wiring) --
+    live_ids = {(r.advertiser_id, r.campaign_id) for r in
+                db.query(models.CampaignRecord).filter(models.CampaignRecord.operation_status == "ENABLE")}
+    nosrc = set()
+    for lg in (db.query(models.LaunchLog).filter(models.LaunchLog.ok == True,          # noqa: E712
+                                                 models.LaunchLog.campaign_id != "",
+                                                 models.LaunchLog.source == "")):
+        if (lg.advertiser_id, lg.campaign_id) in live_ids:
+            nosrc.add(lg.campaign_id)
+    if nosrc:
+        items.append({"id": "nosource", "kind": "nosource", "level": "err",
+                      "title": "Running campaigns without a source",
+                      "message": (f"{len(nosrc)} running campaign(s) were launched with no ?source= on the landing URL — "
+                                  "their clicks reach Glitchy unattributed. Source check reads the live URLs and can fix them."),
+                      "href": "/campaigns/source-check", "external": False, "at": None, "ack": False, "where": ""})
+
     # ---- 7. TikTok not connected ---------------------------------------------
     if not queries.any_access_token(db):
         items.append({"id": "token", "kind": "token", "level": "err",

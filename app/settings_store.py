@@ -55,7 +55,10 @@ DEFAULTS: dict = {
     "events_access_token": "",     # dedicated Events API token (Events Manager →
                                    # pixel → Settings → Generate Access Token);
                                    # empty = try the account's Marketing token
-    "events_event_name": "CompleteRegistration",  # TikTok standard web event to fire
+    "events_event_mode": "campaign",  # campaign = fire the event the campaign's ad group optimises for
+                                      #   (split tests: CompleteRegistration vs CompletePayment side by side)
+                                      # fixed    = always fire events_event_name
+    "events_event_name": "CompleteRegistration",  # TikTok standard web event to fire (fixed mode / fallback)
     "events_currency": "USD",
     "events_test_code": "",        # TikTok test_event_code (Events Manager test tab)
 }
@@ -98,6 +101,8 @@ def save_settings(db: Session, values: dict):
         clean["url_param"] = "source"
     if clean.get("source_mode") not in ("campaign", "static"):
         clean["source_mode"] = "campaign"
+    if clean.get("events_event_mode") not in ("campaign", "fixed"):
+        clean["events_event_mode"] = "campaign"
     row = db.query(models.Setting).filter_by(key=KEY).first()
     if not row:
         row = models.Setting(key=KEY)

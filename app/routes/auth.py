@@ -10,7 +10,7 @@ router = APIRouter()
 
 # /postback is public so Glitchy's servers can reach it (auth = its key param)
 PUBLIC_PATHS = ("/login", "/static", "/health", "/oauth/callback", "/favicon.ico",
-                "/postback")
+                "/postback", "/t/escape")   # /t/escape/* = phone-side test pages (results stay behind login)
 
 
 @router.get("/login")

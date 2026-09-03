@@ -15,6 +15,7 @@
     <div class="muted" style="font-size:12.5px;">{{ range_labels[range_key] }} · {{ 'launched by this tool' if origin == 'tool' else 'all campaigns on TikTok' }} · synced {{ synced_ago }}</div>
   </div>
   <div class="actions">
+    <a class="btn" href="/campaigns/source-check" title="Read every running campaign's landing URL from TikTok and confirm the source reaches Glitchy">🔎 Source check</a>
     <form method="post" action="/status/sync"><button class="btn primary" type="submit">↻ Sync now</button></form>
   </div>
 </div>

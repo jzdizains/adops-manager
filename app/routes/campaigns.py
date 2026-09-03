@@ -954,7 +954,8 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
     log = models.LaunchLog(
         batch_ref=batch_ref, advertiser_id=acct.advertiser_id,
         advertiser_name=acct.advertiser_name,
-        template_id=fields.get("template_id"), template_name=fields.get("template_name", ""))
+        template_id=fields.get("template_id"), template_name=fields.get("template_name", ""),
+        optimization_event=str(fields.get("optimization_event") or ""))
     creative: models.Creative | None = None      # library creative (reserved below)
     carousel: models.Creative | None = None      # carousel creative (reserved below)
     carousel_image_ids: list[str] = []            # per-account uploaded slide ids
@@ -1570,6 +1571,50 @@ def run_batch_assigned(db: Session, pairs: list, base_fields: dict) -> str:
 # ---------------------------------------------------------------------------
 # Routes: single-account "Create Campaign" + result page
 # ---------------------------------------------------------------------------
+
+@router.get("/campaigns/source-check")
+def source_check_page(request: Request, db: Session = Depends(get_db)):
+    """Live audit: does every running campaign's landing URL carry the source?"""
+    from .. import source_check
+    show_all = request.query_params.get("all") == "1"
+    rows = source_check.audit(db, only_active=not show_all)
+    counts = {k: sum(1 for r in rows if r["worst"] == k) for k in ("ok", "ok-static", "unsafe-name", "missing", "no-url", "error")}
+    s = get_settings(db)
+    return render(request, "source_check.html", {
+        "title": "Source check", "rows": rows, "counts": counts, "show_all": show_all,
+        "param": s.get("url_param") or "source", "mode": s.get("source_mode", "campaign"),
+    })
+
+
+@router.post("/campaigns/source-fix")
+async def source_fix(request: Request, db: Session = Depends(get_db)):
+    """Repair one campaign (or every broken one) so its clicks carry the source."""
+    from urllib.parse import quote
+    from .. import source_check
+    form = await request.form()
+    targets = []
+    if form.get("all") == "1":
+        for r in source_check.audit(db, only_active=True):
+            if r["worst"] in ("missing", "unsafe-name"):
+                targets.append((r["advertiser_id"], r["campaign_id"]))
+    else:
+        targets.append((str(form.get("advertiser_id") or ""), str(form.get("campaign_id") or "")))
+    changes, errors = [], []
+    for aid, cid in targets:
+        if not aid or not cid:
+            continue
+        c, e = source_check.fix_campaign(db, aid, cid)
+        changes += [f"{cid[-6:]}: {x}" for x in c]
+        errors += [f"{cid[-6:]}: {x}" for x in e]
+    q = []
+    if changes:
+        q.append("ok=" + quote("; ".join(changes)[:300]))
+    if errors:
+        q.append("err=" + quote("; ".join(errors)[:300]))
+    if not changes and not errors:
+        q.append("ok=" + quote("Nothing to fix."))
+    return RedirectResponse("/campaigns/source-check?" + "&".join(q), status_code=303)
+
 
 @router.get("/campaigns/launch")
 def launch_form(request: Request, db: Session = Depends(get_db)):

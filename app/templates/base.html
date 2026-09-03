@@ -93,6 +93,10 @@
     {{ sn('/instant-pages', 'pages', 'Instant Pages', active.startswith('/instant-pages')) }}
     {{ sn('/lead-forms', 'forms', 'Lead Forms', active.startswith('/lead-forms')) }}
     {{ sn('/locations', 'pin', 'Locations', active.startswith('/locations')) }}
+
+    <div class="sn-group"><span>Tools</span></div>
+    {{ sn('/campaigns/source-check', 'link', 'Source check', active.startswith('/campaigns/source-check')) }}
+    {{ sn('/escape-test', 'system', 'Escape test', active.startswith('/escape-test')) }}
   </nav>
   <div class="side-foot">
     {{ sn('/settings', 'settings', 'Settings', active.startswith('/settings')) }}

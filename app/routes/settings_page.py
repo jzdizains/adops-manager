@@ -78,7 +78,7 @@ async def test_event(request: Request, db: Session = Depends(get_db)):
         revenue=float(value or 1) if value.replace(".", "", 1).isdigit() else 1.0,
         txn=f"test-{__import__('time').time():.0f}")
     status = pb._forward_to_tiktok(db, ev, s)
-    label = ("Test event SENT — check Events Manager (Test Events tab if you set "
+    label = (f"Test event SENT ({status[5:]}) — check Events Manager (Test Events tab if you set "
              "a test code, otherwise the pixel's event overview)."
-             if status == "sent" else f"Test event: {status}")
+             if status.startswith("sent") else f"Test event: {status}")
     return RedirectResponse("/settings?ok=" + quote(label), status_code=303)

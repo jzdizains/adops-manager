@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Source check</h1>
+    <div class="muted">Read straight from TikTok: the landing URL on every ad of every {{ 'running' if not show_all else 'tool-launched' }} campaign, and whether a click will reach Glitchy with a <span class="mono">?{{ param }}=</span>.</div></div>
+  <div class="actions">
+    <a class="btn" href="/escape-test" title="Measure whether TikTok's in-app browser lets visitors out">📱 In-app escape test</a>
+    <a class="btn" href="/campaigns/source-check{{ '' if show_all else '?all=1' }}">{{ 'Running only' if show_all else 'Include paused' }}</a>
+    <a class="btn" href="/campaigns/source-check{{ '?all=1' if show_all else '' }}">↻ Re-check</a>
+    {% if counts.missing or counts['unsafe-name'] %}
+    <form method="post" action="/campaigns/source-fix" onsubmit="return confirm('Fix {{ counts.missing + counts['unsafe-name'] }} running campaign(s)? Their ads get the source added to the landing URL (TikTok re-reviews an ad whose URL changes) and campaigns with unsafe names are renamed URL-safe.');">
+      <input type="hidden" name="all" value="1">
+      <button class="btn primary" type="submit">🔧 Fix all broken ({{ counts.missing + counts['unsafe-name'] }})</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+
+<div class="kpis kpis-5">
+  <div class="kpi"><div class="lab">Attributable</div><div class="val"><span class="good">{{ counts.ok + counts['ok-static'] }}</span></div><div class="sub">source rides the landing URL</div></div>
+  <div class="kpi"><div class="lab">No source</div><div class="val">{% if counts.missing %}<span class="bad">{{ counts.missing }}</span>{% else %}0{% endif %}</div><div class="sub">clicks reach Glitchy unattributed</div></div>
+  <div class="kpi"><div class="lab">Unsafe name</div><div class="val">{% if counts['unsafe-name'] %}<span class="bad">{{ counts['unsafe-name'] }}</span>{% else %}0{% endif %}</div><div class="sub">macro present, name breaks the URL</div></div>
+  <div class="kpi"><div class="lab">No landing URL</div><div class="val">{{ counts['no-url'] }}</div><div class="sub">instant page / lead form</div></div>
+  <div class="kpi"><div class="lab">Couldn't read</div><div class="val">{% if counts.error %}<span class="bad">{{ counts.error }}</span>{% else %}0{% endif %}</div><div class="sub">TikTok didn't answer</div></div>
+</div>
+
+<div class="card" style="padding:0;overflow:hidden;">
+  <div class="card-header" style="padding:12px 14px;margin:0;border-bottom:1px solid var(--border-soft);">
+    <span class="card-title">{{ rows|length }} campaign(s)</span>
+    <span class="card-meta">broken ones first · “Test click” opens the real landing URL with the campaign name filled in — click through to the offer and the address bar must still show <span class="mono">{{ param }}=</span></span></div>
+  {% if rows %}
+  <div class="table-scroll">
+  <table class="data dense">
+    <thead><tr><th>Verdict</th><th>Campaign</th><th>Account</th><th class="num">Spend today</th><th>Ads · landing URL on TikTok</th><th class="num">Actions</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      {% set w = r.worst %}
+      <tr>
+        <td style="white-space:nowrap;">
+          {% if w == 'ok' %}<span class="pill ok">✓ attributable</span>
+          {% elif w == 'ok-static' %}<span class="pill ok">✓ static source</span>
+          {% elif w == 'missing' %}<span class="pill err">✕ no source</span>
+          {% elif w == 'unsafe-name' %}<span class="pill err">✕ unsafe name</span>
+          {% elif w == 'no-url' %}<span class="pill dim">no landing URL</span>
+          {% else %}<span class="pill warn">couldn't read</span>{% endif %}
+        </td>
+        <td><div style="font-weight:600;"><a href="/campaigns/{{ r.advertiser_id }}/{{ r.campaign_id }}/edit" style="color:inherit;">{{ r.campaign_name or r.campaign_id }}</a></div>
+          <div class="muted" style="font-size:10.5px;">{{ 'running' if r.status == 'ENABLE' else 'paused' }} · joins P&amp;L as <span class="mono">{{ r.source or '—' }}</span></div></td>
+        <td class="muted">{{ r.advertiser_name }}</td>
+        <td class="num">{{ r.spend|money }}</td>
+        <td style="max-width:560px;">
+          {% if r.error %}<span style="color:var(--warn);font-size:12px;">{{ r.error }}</span>{% endif %}
+          {% for ad in r.ads %}
+            <div style="font-size:11.5px;margin:2px 0;">
+              {% if ad.code in ('ok','ok-static') %}<span style="color:var(--ok);">✓</span>{% elif ad.code == 'no-url' %}<span class="muted">–</span>{% else %}<span style="color:var(--err);">✕</span>{% endif %}
+              <span class="mono clip" style="display:inline-block;max-width:460px;vertical-align:bottom;" title="{{ ad.url }}">{{ ad.url or '(no landing URL)' }}</span>
+              <div class="muted" style="font-size:10.5px;padding-left:16px;">{{ ad.why }}</div>
+            </div>
+          {% endfor %}
+        </td>
+        <td class="num" style="white-space:nowrap;">
+          {% if r.test_url %}<a class="btn sm" href="{{ r.test_url }}" target="_blank" rel="noopener" title="Open the real landing URL as a click from this campaign would">Test click ↗</a>{% endif %}
+          {% if w in ('missing', 'unsafe-name') %}
+          <form method="post" action="/campaigns/source-fix" style="display:inline;" onsubmit="return confirm('Fix “{{ r.campaign_name }}”? Its ads get ?{{ param }}= added to the landing URL (TikTok re-reviews them){% if w == 'unsafe-name' %} and the campaign is renamed URL-safe{% endif %}.');">
+            <input type="hidden" name="advertiser_id" value="{{ r.advertiser_id }}"><input type="hidden" name="campaign_id" value="{{ r.campaign_id }}">
+            <button class="btn sm primary" type="submit">🔧 Fix</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <div class="empty"><div class="empty-title">No {{ 'running' if not show_all else '' }} tool-launched campaigns</div>Campaigns launched by this tool show up here with their live landing URLs.</div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="card-header"><span class="card-title">How a source reaches Glitchy</span></div>
+  <div class="hint" style="font-size:12.5px;line-height:1.6;">
+    <b>1.</b> The ad's landing URL carries <span class="mono">?{{ param }}={{ '__CAMPAIGN_NAME__' if mode == 'campaign' else '<value>' }}</span> — this page checks that on TikTok itself.<br>
+    <b>2.</b> TikTok fills in the value at click time and adds its own <span class="mono">ttclid</span>. The visitor lands on your prelander.<br>
+    <b>3.</b> The pass-through script on the prelander <em>and</em> lander (Settings → Sources) carries <span class="mono">{{ param }}</span> through every link, form and JS redirect to the Glitchy offer link, packed as <span class="mono">name~ttclid</span>. If either page still runs an older script, or sends visitors on with a link the script can't see (a redirect on another domain, a button that builds its URL itself), the source is lost there — the “Test click” button reproduces exactly that path so you can watch the address bar.<br>
+    <b>4.</b> Glitchy echoes it back in the postback; sourceless postbacks show up as <b>unattributed</b> on the P&amp;L page and in the Inbox.
+  </div>
+</div>
+{% endblock %}

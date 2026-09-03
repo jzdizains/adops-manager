@@ -44,6 +44,7 @@ schema_additions: dict[str, dict[str, str]] = {
         "spark_code_id": "INTEGER",
         "source": "TEXT DEFAULT ''",
         "landing_url": "TEXT DEFAULT ''",
+        "optimization_event": "TEXT DEFAULT ''",
     },
     # Phase 1 (multi-BC monitor): metric columns land on live DBs untouched
     "campaign_records": {

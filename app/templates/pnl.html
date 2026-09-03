@@ -36,7 +36,7 @@
   {% if sources %}
   <div class="table-scroll">
   <table class="data dense">
-    <thead><tr><th>Source</th>{% if has_spark %}<th>Spark code</th>{% endif %}
+    <thead><tr><th>Source</th><th>Goal</th>{% if has_spark %}<th>Spark code</th>{% endif %}
       <th class="num col-money grp-start">Spend</th><th class="num col-money">Revenue</th>
       <th class="num col-money">Profit</th><th class="num col-money grp-end">ROAS</th>
       <th class="num">PB clicks</th><th class="num">Conv</th><th class="num">CVR</th><th class="num">Rev / conv</th></tr></thead>
@@ -45,6 +45,7 @@
       {% set cr = (r.revenue / r.spend) if r.spend else 0 %}
       <tr>
         <td><a href="/status?source={{ r.source|urlencode }}&range={{ range_key }}&start={{ start }}&end={{ end }}&origin=all" class="mono" style="color:inherit;font-weight:600;" title="Campaigns on this source">{{ r.source }}</a></td>
+        <td class="muted" style="white-space:nowrap;">{{ goal_by_src.get(r.source, '—') }}</td>
         {% if has_spark %}<td class="muted">{{ r.spark }}</td>{% endif %}
         <td class="num col-money grp-start">{{ r.spend|money }}</td>
         <td class="num col-money" style="color:var(--ok);font-weight:600;">{{ r.revenue|money }}</td>
@@ -58,7 +59,7 @@
     {% endfor %}
     </tbody>
     <tfoot><tr style="font-weight:650;">
-      <td colspan="{{ 2 if has_spark else 1 }}">Totals ({{ sources|length }} sources)</td>
+      <td colspan="{{ 3 if has_spark else 2 }}">Totals ({{ sources|length }} sources)</td>
       <td class="num col-money grp-start">{{ totals.spend|money }}</td>
       <td class="num col-money">{{ totals.revenue|money }}</td>
       <td class="num col-money {{ 'pos' if totals.profit >= 0 else 'neg' }}">{{ totals.profit|money }}</td>
@@ -120,7 +121,7 @@
         <td class="num">{{ e.clicks }}</td>
         <td class="mono muted" style="font-size:11px;">{{ (e.txn or "—")[:14] }}</td>
         <td class="mono muted" style="font-size:11px;" title="{{ e.ttclid }}">{% if e.ttclid %}{{ e.ttclid[:10] }}…{% else %}—{% endif %}</td>
-        <td>{% if e.forward_status == 'sent' %}<span class="pill ok">sent</span>
+        <td>{% if e.forward_status and e.forward_status.startswith('sent') %}<span class="pill ok" title="{{ e.forward_status }}">{{ e.forward_status.replace('sent ', '') or 'sent' }}</span>
             {% elif e.forward_status and e.forward_status.startswith('error') %}
               <span class="pill err" title="{{ e.forward_status }}">error</span>
             {% elif e.forward_status %}<span class="pill dim" title="{{ e.forward_status }}">skipped</span>
