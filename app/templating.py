@@ -11,6 +11,9 @@ templates.env.globals.update({
     "APP_NAME": config.APP_NAME,
     "STATIC_V": config.STATIC_VERSION,
     "TZ_NAME": config.BUSINESS_TZ,
+    # Ads Manager deep link for one ad account (verified aadvid format) — every
+    # account name/id shown in a table links here, in a new tab.
+    "ads_manager_url": lambda advertiser_id: f"https://ads.tiktok.com/i18n/dashboard?aadvid={advertiser_id}",
 })
 
 

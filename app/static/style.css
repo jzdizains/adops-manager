@@ -604,3 +604,9 @@ table.data.show-detail th.col-detail, table.data.show-detail td.col-detail { dis
 .cz-tile { position: relative; display: block; }
 .cz-tile .cz-t { position: absolute; right: 4px; bottom: 4px; width: 22px; height: 22px; border-radius: 6px; border: 1px solid var(--border); background: var(--panel); color: var(--text); font-family: "TikTok Sans", sans-serif; font-weight: 700; font-size: 12px; cursor: pointer; opacity: 0; }
 .cz-tile:hover .cz-t { opacity: 1; }
+
+/* account name → Ads Manager (new tab) — used in every table that shows an ad account */
+.acct-link { color: inherit; text-decoration: none; font-weight: 600; }
+.acct-link .ext { font-size: 10px; margin-left: 3px; opacity: .45; }
+.acct-link:hover { color: var(--accent); text-decoration: none; }
+.acct-link:hover .ext { opacity: 1; }

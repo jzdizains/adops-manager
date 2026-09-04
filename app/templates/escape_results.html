@@ -27,6 +27,43 @@
   </div>
 </div>
 
+<div class="card">
+  <div class="card-header"><span class="card-title">Escape lab — every technique, one button each</span>
+    <span class="card-meta">the real answer for your phone and today's TikTok build</span></div>
+  <div class="form-row" style="align-items:start;">
+    <div>
+      <label class="field"><span class="field-label">Lab URL</span>
+        <input type="text" readonly value="{{ lab_url }}" onclick="this.select()" style="font-family:var(--font-mono);font-size:12px;background:var(--panel-hover);">
+        <span class="hint">Send it to yourself in a TikTok DM, open it inside TikTok, tap the methods one by one. Each tap is recorded below with what happened.</span></label>
+    </div>
+    <div class="hint" style="font-size:12.5px;line-height:1.6;margin-top:4px;">
+      <b>Android:</b> Chrome intent, package-less intent (default browser), VIEW+BROWSABLE intent, intent via popup, Chrome's scheme, and a Play-Store handoff check.<br>
+      <b>iPhone:</b> x-safari (navigation and popup), the Shortcuts x-callback trick, Chrome / Firefox schemes, a Safari-search handoff check and an App-Store handoff check.<br>
+      A method that lands as <b>escaped</b> is usable. <b>left</b> means another app opened but no page landed (the handoff checks are expected to do this). <b>stayed</b> means TikTok swallowed it.
+    </div>
+  </div>
+  {% if method_rows %}
+  <table class="data dense" style="margin-top:6px;">
+    <thead><tr><th>Phone</th><th>Method</th><th class="num">Taps</th><th class="num">Escaped</th><th class="num">Left (no landing)</th><th class="num">Stayed</th><th class="num">Lost / error</th></tr></thead>
+    <tbody>
+    {% for m in method_rows %}
+      <tr>
+        <td>{{ 'iPhone' if m.platform == 'ios' else ('Android' if m.platform == 'android' else m.platform) }}</td>
+        <td>{{ m.label }}</td>
+        <td class="num">{{ m.taps }}</td>
+        <td class="num">{% if m.escaped %}<span class="pill ok">{{ m.escaped }}</span>{% else %}0{% endif %}</td>
+        <td class="num">{% if m.left %}<span class="pill dim">{{ m.left }}</span>{% else %}0{% endif %}</td>
+        <td class="num">{% if m.stayed %}<span class="pill err">{{ m.stayed }}</span>{% else %}0{% endif %}</td>
+        <td class="num">{{ m.lost + m.error }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="hint" style="margin-top:8px;">No lab taps yet.</div>
+  {% endif %}
+</div>
+
 {% set total_inapp = summary.values()|map(attribute='opened')|sum %}
 <div class="kpis kpis-4">
   {% for plat in ['ios', 'android'] %}
@@ -53,8 +90,9 @@
         <td>{{ {'ios': 'iPhone', 'android': 'Android'}.get(r.platform, r.platform) }}</td>
         <td>{% if r.inapp %}<span class="pill warn">TikTok in-app</span>{% else %}<span class="pill dim">regular browser</span>{% endif %}</td>
         <td class="mono muted">{{ r.app_version or '—' }}</td>
-        <td class="mono muted">{{ r.method or ('—' if not r.clicked else '?') }}</td>
+        <td class="mono muted">{{ labels.get(r.method, r.method) or ('—' if not r.clicked else '?') }}</td>
         <td>{% if r.outcome == 'escaped' %}<span class="pill ok">escaped ✓</span>{% elif r.outcome == 'stayed' %}<span class="pill err">stayed in-app</span>
+            {% elif r.outcome == 'left' %}<span class="pill dim">left (no landing)</span>{% elif r.outcome == 'error' %}<span class="pill err">error</span>
             {% elif r.outcome == 'lost' %}<span class="pill warn">lost</span>{% else %}<span class="pill dim">no tap</span>{% endif %}</td>
         <td class="muted clip" style="max-width:360px;font-size:11px;" title="{{ r.ua_landed }}">{{ r.ua_landed or '—' }}</td>
       </tr>

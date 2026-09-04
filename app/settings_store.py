@@ -12,6 +12,15 @@ from . import models
 
 KEY = "app_settings"
 
+# Sent with every automatic appeal (the Ads Manager form makes a description
+# mandatory; the API field is appeal_reason). Kept factual and generic — an
+# appeal is a request for a second human look, not an argument.
+DEFAULT_APPEAL_REASON = (
+    "Requesting a second review of this ad. The creative, text and landing page follow "
+    "TikTok's advertising policies for this category; we believe the rejection "
+    "({reasons}) was applied in error. Please re-evaluate.")
+APPEAL_REASON_MAX = 500   # the API models cap appeal text at 512 chars; leave headroom for placeholders
+
 DEFAULTS: dict = {
     # --- automation rules (auto-pause) ---------------------------------------
     "rules_enabled": False,        # master switch — OFF until the operator opts in
@@ -61,6 +70,12 @@ DEFAULTS: dict = {
     "events_event_name": "CompleteRegistration",  # TikTok standard web event to fire (fixed mode / fallback)
     "events_currency": "USD",
     "events_test_code": "",        # TikTok test_event_code (Events Manager test tab)
+
+    # --- automatic ad-rejection appeals (/adgroup/appeal/) -----------------
+    "appeal_auto_enabled": False,  # file an appeal for every newly rejected ad found by the scan
+    "appeal_reason": DEFAULT_APPEAL_REASON,  # text sent with each appeal; {ad_name} {campaign_name} {reasons} fill in
+    "appeal_skip_keywords": "",    # comma-separated; a rejection whose TikTok reason contains one is NOT auto-appealed
+    "appeal_daily_cap": 50,        # max auto-appeals per local day (an account-wide problem must not burn every appeal)
 }
 
 
@@ -103,6 +118,10 @@ def save_settings(db: Session, values: dict):
         clean["source_mode"] = "campaign"
     if clean.get("events_event_mode") not in ("campaign", "fixed"):
         clean["events_event_mode"] = "campaign"
+    if not clean.get("appeal_reason"):
+        clean["appeal_reason"] = DEFAULT_APPEAL_REASON
+    clean["appeal_reason"] = clean["appeal_reason"][:APPEAL_REASON_MAX]
+    clean["appeal_daily_cap"] = max(int(clean.get("appeal_daily_cap") or 0), 1)
     row = db.query(models.Setting).filter_by(key=KEY).first()
     if not row:
         row = models.Setting(key=KEY)

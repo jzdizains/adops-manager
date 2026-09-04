@@ -46,7 +46,7 @@
         </td>
         <td><div style="font-weight:600;"><a href="/campaigns/{{ r.advertiser_id }}/{{ r.campaign_id }}/edit" style="color:inherit;">{{ r.campaign_name or r.campaign_id }}</a></div>
           <div class="muted" style="font-size:10.5px;">{{ 'running' if r.status == 'ENABLE' else 'paused' }} · joins P&amp;L as <span class="mono">{{ r.source or '—' }}</span></div></td>
-        <td class="muted">{{ r.advertiser_name }}</td>
+        <td class="muted" style="white-space:nowrap;">{{ acct_link(r.advertiser_id, r.advertiser_name) }}</td>
         <td class="num">{{ r.spend|money }}</td>
         <td style="max-width:560px;">
           {% if r.error %}<span style="color:var(--warn);font-size:12px;">{{ r.error }}</span>{% endif %}

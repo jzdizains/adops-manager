@@ -57,7 +57,7 @@
           <div class="muted" style="font-size:10.5px;">{{ a.created_at|local }}</div></td>
         <td><a href="/campaigns/{{ a.advertiser_id }}/{{ a.campaign_id }}/edit" style="color:inherit;font-weight:600;">{{ a.campaign_name[:40] or a.campaign_id }}</a>
           {% if a.campaign_id in paused_ids %}<div style="font-size:10.5px;color:var(--warn);">still paused</div>{% endif %}</td>
-        <td class="muted">{{ (names.get(a.advertiser_id) or a.advertiser_id)[:26] }}</td>
+        <td class="muted" style="white-space:nowrap;">{{ acct_link(a.advertiser_id, (names.get(a.advertiser_id) or a.advertiser_id)[:26]) }}</td>
         <td><span class="pill {{ 'warn' if a.action == 'pause' else 'dim' }}">{{ a.action }}</span>
           <span class="mono" style="font-size:11px;">{{ a.rule }}</span></td>
         <td class="num">{{ "%.2f"|format(a.metric_value) if a.metric_value else "—" }}</td>
@@ -93,7 +93,7 @@
       <tr>
         <td style="white-space:nowrap;"><span title="{{ t.created_at|local('%Y-%m-%d %H:%M:%S') }}">{{ t.created_at|ago }}</span>
           <div class="muted" style="font-size:10.5px;">{{ t.created_at|local }}</div></td>
-        <td>{{ (names.get(t.advertiser_id) or t.advertiser_id)[:26] }}</td>
+        <td style="white-space:nowrap;">{{ acct_link(t.advertiser_id, (names.get(t.advertiser_id) or t.advertiser_id)[:26]) }}</td>
         <td class="mono muted">{{ t.bc_id }}</td>
         <td class="num">{{ t.amount|money }}</td>
         <td>{% if t.ok %}<span class="pill ok">sent</span>{% else %}

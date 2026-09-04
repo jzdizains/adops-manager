@@ -136,8 +136,7 @@
       <tr>
         <td>
           {% if i.advertiser_id %}
-            {{ i.advertiser_name }}
-            <div class="mono muted" style="font-size:10px;">{{ i.advertiser_id }}</div>
+            {{ acct_link(i.advertiser_id, i.advertiser_name, True) }}
           {% else %}{{ i.advertiser_name or "—" }}{% endif %}
         </td>
         <td>

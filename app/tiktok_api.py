@@ -680,6 +680,65 @@ def update_ad_landing_url(access_token: str, advertiser_id: str, adgroup_id: str
     })
 
 
+# ---------------------------------------------------------------------------
+# Ad review + appeals (API Reference → Ad Review)
+# ---------------------------------------------------------------------------
+
+# Ad secondary statuses that mean "TikTok's review rejected it" and that the
+# ad-group appeal endpoint covers. Account-level denials (ADVERTISER_AUDIT_DENY)
+# and industry-qualification denials are different processes — not appealable here.
+AD_REJECTED_STATUSES = ("AD_STATUS_AUDIT_DENY",)            # the ad itself failed review → appeal with ad_id
+ADGROUP_REJECTED_STATUSES = ("AD_STATUS_ADGROUP_AUDIT_DENY",)  # the ad group failed review → appeal the ad group
+
+
+def get_ad_review_info(access_token: str, advertiser_id: str, ad_ids: list[str]) -> dict:
+    """GET /ad/review_info/ — per-ad review verdict with reject_info
+    [{reasons[], suggestion, content_info}] and review_status
+    (ALL_AVAILABLE / PART_AVAILABLE / UNAVAILABLE). 1–100 ad ids per call.
+    Returns data.ad_review_map: {ad_id: {...}}."""
+    out: dict = {}
+    for i in range(0, len(ad_ids), 100):
+        data = api_get("/ad/review_info/", access_token,
+                       {"advertiser_id": advertiser_id, "ad_ids": [str(a) for a in ad_ids[i:i + 100]]})
+        out.update((data or {}).get("ad_review_map") or {})
+    return out
+
+
+def get_adgroup_review_info(access_token: str, advertiser_id: str, adgroup_ids: list[str]) -> dict:
+    """GET /adgroup/review_info/ — ad-group review verdict incl. appeal_status
+    (NOT_APPEALED / APPEALING / APPEAL_SUCCESSFUL / APPEAL_FAILED / APPEAL_DONE),
+    last_audit_time (UTC 'YYYY-MM-DD HH:MM:SS', real only when rejected),
+    contain_rejected_ads, reject_info[]. Max 20 ad group ids per call.
+    Returns {"groups": {adgroup_id: {...}}, "ads": {adgroup_id: {ad_id: {...}}}}."""
+    groups: dict = {}
+    ads: dict = {}
+    for i in range(0, len(adgroup_ids), 20):
+        data = api_get("/adgroup/review_info/", access_token,
+                       {"advertiser_id": advertiser_id,
+                        "adgroup_ids": [str(a) for a in adgroup_ids[i:i + 20]]}) or {}
+        groups.update(data.get("ad_group_review_map") or {})
+        ads.update(data.get("ad_review_map") or {})
+    return {"groups": groups, "ads": ads}
+
+
+def appeal_adgroup(access_token: str, advertiser_id: str, adgroup_id: str,
+                   ad_id: str | None = None, appeal_reason: str = "",
+                   attachment_list: list[str] | None = None) -> dict:
+    """POST /adgroup/appeal/ — ask TikTok to re-evaluate a rejection. ad_id is
+    optional: with it the appeal targets that ad, without it the ad group.
+    TikTok allows ONE appeal per rejection (Ads Manager hides the button once an
+    ad group or any ad in it has been appealed) — the caller must dedupe.
+    Afterwards /adgroup/review_info/ reports appeal_status."""
+    payload: dict = {"advertiser_id": advertiser_id, "adgroup_id": str(adgroup_id)}
+    if ad_id:
+        payload["ad_id"] = str(ad_id)
+    if appeal_reason:
+        payload["appeal_reason"] = appeal_reason
+    if attachment_list:
+        payload["attachment_list"] = list(attachment_list)
+    return api_post("/adgroup/appeal/", access_token, payload)
+
+
 def list_adgroups(access_token: str, advertiser_id: str, campaign_ids: list[str] | None = None,
                   page: int = 1, page_size: int = 100) -> dict:
     params: dict = {"advertiser_id": advertiser_id, "page": page, "page_size": page_size}

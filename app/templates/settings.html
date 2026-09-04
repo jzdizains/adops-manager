@@ -9,7 +9,7 @@
 
 <nav class="section-nav" aria-label="Sections">
   <a href="#rules">Auto-pause</a><a href="#profit">Profit rules</a><a href="#lifecycle">Accounts &amp; queue</a>
-  <a href="#topups">Top-ups</a><a href="#sweeps">Sweeps</a><a href="#sources">Sources &amp; postback</a><a href="#events">Events API</a><a href="#test">Test event</a>
+  <a href="#topups">Top-ups</a><a href="#sweeps">Sweeps</a><a href="#sources">Sources &amp; postback</a><a href="#events">Events API</a><a href="#appeals">Appeals</a><a href="#test">Test event</a>
 </nav>
 <form method="post" action="/settings/save">
 
@@ -196,6 +196,27 @@
            placeholder="from Events Manager → Test events">
     <span class="hint">Set while testing so events land in the pixel's Test tab, then CLEAR it —
       test events don't feed optimization. Delivery status per postback shows on the P&amp;L page.</span></label>
+</div>
+
+<div class="card" id="appeals">
+  <div class="card-header"><span class="card-title">Automatic ad appeals</span>
+    <span class="card-meta">rejected ads are appealed through TikTok's appeal API — one appeal per rejection, so choose the rules with care</span></div>
+  <label style="display:flex;align-items:center;gap:8px;font-weight:600;font-size:13px;
+                color:var(--text-soft);margin-bottom:12px;cursor:pointer;">
+    <input type="checkbox" name="appeal_auto_enabled" style="width:auto;" {{ 'checked' if s.appeal_auto_enabled }}>
+    Appeal every newly rejected ad automatically (found on each slow sweep; results on the <a href="/appeals">Appeals</a> page and in the Inbox)
+  </label>
+  <label class="field"><span class="field-label">Reason sent with each appeal</span>
+    <textarea name="appeal_reason" rows="3" maxlength="500" style="font-size:12.5px;">{{ s.appeal_reason }}</textarea>
+    <span class="hint">TikTok's form makes a reason mandatory. Placeholders: <span class="mono">{ad_name}</span>, <span class="mono">{campaign_name}</span>, <span class="mono">{reasons}</span> (TikTok's own rejection reason). Max 500 characters.</span></label>
+  <div class="form-row">
+    <label class="field"><span class="field-label">Don't auto-appeal when the reason contains</span>
+      <input type="text" name="appeal_skip_keywords" value="{{ s.appeal_skip_keywords }}" placeholder="e.g. prohibited, gambling, counterfeit, misleading claims">
+      <span class="hint">Comma-separated, case-insensitive. A rejection whose TikTok reason matches waits on the Appeals page instead — a real policy hit would only burn the one appeal.</span></label>
+    <label class="field"><span class="field-label">Daily cap</span>
+      <input type="number" name="appeal_daily_cap" value="{{ s.appeal_daily_cap }}" min="1" step="1">
+      <span class="hint">Max automatic appeals per day, so an account-wide problem doesn't fire hundreds at once. The rest wait for you.</span></label>
+  </div>
 </div>
 
 <div class="save-bar">

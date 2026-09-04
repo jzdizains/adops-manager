@@ -12,14 +12,16 @@
 <div class="page-head">
   <div>
     <h1>Campaigns</h1>
-    <div class="muted" style="font-size:12.5px;">{{ range_labels[range_key] }} · {{ 'launched by this tool' if origin == 'tool' else 'all campaigns on TikTok' }} · synced {{ synced_ago }}</div>
+    <div class="muted" style="font-size:12.5px;">{{ range_labels[range_key] }} · {{ 'launched by this tool' if origin == 'tool' else 'all campaigns on TikTok' }} · synced <span id="syncedAgo">{{ synced_ago }}</span></div>
   </div>
   <div class="actions">
     <a class="btn" href="/campaigns/source-check" title="Read every running campaign's landing URL from TikTok and confirm the source reaches Glitchy">🔎 Source check</a>
-    <form method="post" action="/status/sync"><button class="btn primary" type="submit">↻ Sync now</button></form>
+    <button type="button" class="btn" id="refreshBtn" title="Reload the numbers and the table in place — filters, sort and scroll position stay">↻ Refresh</button>
+    <form method="post" action="/status/sync" id="syncForm"><button class="btn primary" type="submit" id="syncBtn" title="Pull fresh campaign data from every TikTok account, then refresh in place">⟳ Sync now</button></form>
   </div>
 </div>
 
+<div id="pendingFlash">
 {% if origin == 'tool' and pending_tool %}
 <div class="flash ok">{{ pending_tool }} tool-launched campaign(s) exist on TikTok but aren't in the synced cache yet:
   {% for pd in pending_details %}
@@ -33,6 +35,7 @@
   </form>
 </div>
 {% endif %}
+</div>
 
 {# ---- KPI delta chip macro (only when real prior-period data exists) ---- #}
 {% macro pct_chip(pct, good_up=true) -%}
@@ -44,7 +47,7 @@
 {%- endmacro %}
 
 <!-- KPI tiles: real figures + vs-previous-period deltas + daily sparklines -->
-<div class="kpis">
+<div class="kpis" id="campKpis">
   <div class="kpi accent">
     <div class="lab">Spend</div>
     <div class="val">${{ "%.2f"|format(totals.spend) }} {{ pct_chip(deltas.spend_pct, good_up=false) }}</div>
@@ -139,7 +142,7 @@
   </form>
 </div>
 
-<div class="card" style="padding:0;overflow:hidden;">
+<div class="card" style="padding:0;overflow:hidden;" id="campCard">
   <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;border-bottom:1px solid var(--border-soft);">
     <div style="font-size:12.5px;font-weight:650;">{{ rows|length }} campaigns
       <span class="muted" style="font-weight:400;">· spend, revenue &amp; profit lead; TikTok metrics follow</span></div>
@@ -207,8 +210,8 @@
           {% else %}<span class="muted">—</span>{% endif %}
         </td>
         <td style="white-space:nowrap;">
-          <a href="/status?account={{ r.advertiser_id }}&range={{ range_key }}&origin={{ origin }}" style="color:inherit;" title="Only this account">{{ row.account_name[:22] }}</a>
-          {% if bc_by_aid.get(r.advertiser_id) %}<div class="muted" style="font-size:10.5px;">{{ bc_by_aid.get(r.advertiser_id)[:22] }}</div>{% endif %}
+          {{ acct_link(r.advertiser_id, row.account_name[:22]) }}
+          <div class="muted" style="font-size:10.5px;">{% if bc_by_aid.get(r.advertiser_id) %}{{ bc_by_aid.get(r.advertiser_id)[:22] }} · {% endif %}<a href="/status?account={{ r.advertiser_id }}&range={{ range_key }}&origin={{ origin }}" style="color:inherit;" title="Show only this account's campaigns">filter</a></div>
         </td>
         <td style="white-space:nowrap;">
           {% if row.source %}<a href="/status?source={{ row.source|urlencode }}&range={{ range_key }}&origin={{ origin }}" class="mono" style="font-size:11px;color:inherit;" title="Only this source">{{ row.source[:34] }}</a> <a href="/pnl?range={{ range_key }}" class="muted" style="font-size:10px;" title="P&L by source">P&L</a>
@@ -323,22 +326,24 @@
   });
 
   // ---- money-first table: Details toggle (remembered) ---------------------
-  var tbl = document.getElementById("campTable"), tg = document.getElementById("detailToggle");
-  if (tbl && tg) {
-    function apply(on) {
-      tbl.classList.toggle("show-detail", on);
-      tg.classList.toggle("on", on);
-      tg.childNodes[0].nodeValue = on ? "Hide details " : "Show details ";
-    }
-    var saved = false;
-    try { saved = localStorage.getItem("adops-camp-detail") === "1"; } catch (e) {}
-    apply(saved);
-    tg.addEventListener("click", function () {
-      var on = !tbl.classList.contains("show-detail");
-      try { localStorage.setItem("adops-camp-detail", on ? "1" : "0"); } catch (e) {}
-      apply(on);
-    });
+  // Delegated, so it keeps working after an in-place refresh swaps the table.
+  function detailApply(on) {
+    var tbl = document.getElementById("campTable"), tg = document.getElementById("detailToggle");
+    if (!tbl || !tg) return;
+    tbl.classList.toggle("show-detail", on);
+    tg.classList.toggle("on", on);
+    tg.childNodes[0].nodeValue = on ? "Hide details " : "Show details ";
   }
+  function detailSaved() { try { return localStorage.getItem("adops-camp-detail") === "1"; } catch (e) { return false; } }
+  detailApply(detailSaved());
+  document.addEventListener("click", function (e) {
+    var tg = e.target.closest && e.target.closest("#detailToggle");
+    if (!tg) return;
+    var tbl = document.getElementById("campTable");
+    var on = !(tbl && tbl.classList.contains("show-detail"));
+    try { localStorage.setItem("adops-camp-detail", on ? "1" : "0"); } catch (e2) {}
+    detailApply(on);
+  });
 
   // ---- KPI sparklines (real daily series; inline SVG, no library) ---------
   var spark = {};
@@ -364,29 +369,72 @@
   var cs = getComputedStyle(document.documentElement);
   var accent = cs.getPropertyValue("--accent").trim() || "#5b5bd6";
   var good = cs.getPropertyValue("--ok").trim() || "#0e9f6e";
-  document.querySelectorAll("[data-spark]").forEach(function (el) {
-    var k = el.getAttribute("data-spark");
-    draw(el, spark[k], k === "revenue" ? good : accent);
-  });
+  function drawSparks() {
+    document.querySelectorAll("[data-spark]").forEach(function (el) {
+      var k = el.getAttribute("data-spark");
+      draw(el, spark[k], k === "revenue" ? good : accent);
+    });
+  }
+  drawSparks();
 
   // ---- creative preview modal (thumb in the Creative column) ---------------
   var modal = document.getElementById("vidModal"), player = document.getElementById("vidPlayer"), vidTitle = document.getElementById("vidTitle");
   function closeModal() { modal.style.display = "none"; player.pause(); player.removeAttribute("src"); player.load(); }
-  document.querySelectorAll(".previewBtn").forEach(function (b) {
-    b.addEventListener("click", function (e) { e.stopPropagation(); vidTitle.textContent = b.dataset.name || "Preview"; player.src = b.dataset.src; modal.style.display = "flex"; player.play().catch(function () {}); });
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest && e.target.closest(".previewBtn");
+    if (!b) return;
+    e.stopPropagation(); vidTitle.textContent = b.dataset.name || "Preview"; player.src = b.dataset.src; modal.style.display = "flex"; player.play().catch(function () {});
   });
   document.getElementById("vidClose").addEventListener("click", closeModal);
   modal.addEventListener("click", function (e) { if (e.target === modal) closeModal(); });
   document.addEventListener("keydown", function (e) { if (e.key === "Escape" && modal.style.display === "flex") closeModal(); });
 
-  // ---- auto-refresh only the LIVE (today) view ----------------------------
+  // ---- in-place refresh: swap KPIs + table (+ sparklines) without a reload --
+  // Filters, sort, scroll position and the Details toggle all stay put.
+  var refreshBtn = document.getElementById("refreshBtn"), syncBtn = document.getElementById("syncBtn"), syncForm = document.getElementById("syncForm");
+  var busy = false;
+  function setBusy(on, which) {
+    busy = on;
+    [refreshBtn, syncBtn].forEach(function (b) { if (b) b.disabled = on; });
+    if (refreshBtn) refreshBtn.textContent = on && which === "refresh" ? "↻ Refreshing…" : "↻ Refresh";
+    if (syncBtn) syncBtn.textContent = on && which === "sync" ? "⟳ Syncing…" : "⟳ Sync now";
+  }
+  function swapFrom(doc) {
+    ["pendingFlash", "campKpis", "campCard"].forEach(function (id) {
+      var cur = document.getElementById(id), nxt = doc.getElementById(id);
+      if (cur && nxt) cur.replaceWith(nxt);
+    });
+    var sa = doc.getElementById("syncedAgo"), sc = document.getElementById("syncedAgo");
+    if (sa && sc) sc.textContent = sa.textContent;
+    var sd = doc.getElementById("sparkData");
+    if (sd) { try { spark = JSON.parse(sd.textContent || "{}"); } catch (e) {} }
+    drawSparks();
+    detailApply(detailSaved());
+  }
+  function refreshInPlace(which) {
+    if (busy) return Promise.resolve();
+    setBusy(true, which || "refresh");
+    var url = location.pathname + location.search;
+    var pre = which === "sync"
+      ? fetch("/status/sync", { method: "POST", credentials: "same-origin", redirect: "manual" }).catch(function () {})
+      : Promise.resolve();
+    return pre.then(function () { return fetch(url, { credentials: "same-origin", headers: { "X-Requested-With": "fetch" } }); })
+      .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.text(); })
+      .then(function (html) { swapFrom(new DOMParser().parseFromString(html, "text/html")); })
+      .catch(function () { location.reload(); })       // fall back to a full reload — never leave stale numbers
+      .then(function () { setBusy(false); });
+  }
+  if (refreshBtn) refreshBtn.addEventListener("click", function () { refreshInPlace("refresh"); });
+  if (syncForm) syncForm.addEventListener("submit", function (e) { e.preventDefault(); refreshInPlace("sync"); });
+
+  // ---- auto-refresh only the LIVE (today) view (in place, not a reload) ----
   {% if range_key == 'today' %}
   setInterval(function () {
     var el = document.activeElement;
     var typing = el && (el.tagName === "INPUT" || el.tagName === "SELECT" || el.tagName === "TEXTAREA");
     var selecting = window.getSelection && String(window.getSelection());
     if (document.hidden) return;                       // never churn a background tab
-    if (!typing && !selecting && !document.querySelector("[data-fsel].open") && modal.style.display !== "flex") location.reload();
+    if (!typing && !selecting && !document.querySelector("[data-fsel].open") && modal.style.display !== "flex") refreshInPlace("refresh");
   }, 60000);
   {% endif %}
 })();

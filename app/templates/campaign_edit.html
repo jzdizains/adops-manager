@@ -4,7 +4,7 @@
 <div class="page-head">
   <div><h1>Edit campaign</h1>
     <div class="muted">{{ rec.campaign_name if rec else campaign_id }} ·
-      {{ acct.advertiser_name if acct else advertiser_id }}</div></div>
+      {{ acct_link(advertiser_id, acct.advertiser_name if acct else advertiser_id) }}</div></div>
   <div class="actions"><a class="btn" href="/status">← Status</a></div>
 </div>
 

@@ -24,7 +24,7 @@
   <div class="card-header">
     <span class="card-title">
       {% if l.ok %}<span class="pill ok">✓ launched</span>{% else %}<span class="pill err">✕ failed</span>{% endif %}
-      {{ l.advertiser_name or l.advertiser_id }}
+      {{ acct_link(l.advertiser_id, l.advertiser_name) }}
     </span>
     <span class="card-meta mono">{{ l.advertiser_id }}{% if l.campaign_id %} · campaign {{ l.campaign_id }}{% endif %}</span>
   </div>

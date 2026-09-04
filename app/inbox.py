@@ -55,6 +55,8 @@ def build(db: Session) -> list[dict]:
     for i in db.query(models.Issue).order_by(models.Issue.detected_at.desc()).all():
         if i.category == "bc" and i.ref:
             href, external = balances.bc_portal_url(i.ref), True
+        elif i.category == "ad":
+            href, external = "/appeals", False
         elif i.advertiser_id:
             href, external = f"https://ads.tiktok.com/i18n/dashboard?aadvid={i.advertiser_id}", True
         else:
@@ -136,6 +138,29 @@ def build(db: Session) -> list[dict]:
                       "message": (f"{len(nosrc)} running campaign(s) were launched with no ?source= on the landing URL — "
                                   "their clicks reach Glitchy unattributed. Source check reads the live URLs and can fix them."),
                       "href": "/campaigns/source-check", "external": False, "at": None, "ack": False, "where": ""})
+
+    # ---- 6c. ad-rejection appeals ---------------------------------------------
+    ap_open = (db.query(func.count(models.Appeal.id))
+               .filter(models.Appeal.status.in_(("pending", "skipped", "error"))).scalar() or 0)
+    if ap_open:
+        items.append({"id": "appeals-open", "kind": "appeals_open", "level": "warn",
+                      "title": "Rejected ads not appealed",
+                      "message": f"{ap_open} rejected ad group(s) have no appeal on file — auto-appeal is off, "
+                                 "a skip keyword matched, or TikTok refused the request. Review and appeal by hand.",
+                      "href": "/appeals", "external": False, "at": None, "ack": False, "where": ""})
+    for row in (db.query(models.Appeal)
+                .filter(models.Appeal.status.in_(("failed", "successful", "done")),
+                        models.Appeal.resolved_at >= since)
+                .order_by(models.Appeal.resolved_at.desc()).limit(50)):
+        lost = row.status == "failed"
+        items.append({"id": f"appeal:{row.id}", "kind": "appeal_result", "level": "err" if lost else "info",
+                      "title": "Appeal rejected" if lost else ("Appeal accepted" if row.status == "successful" else "Ad re-reviewed"),
+                      "message": (f"“{(row.ad_name or row.adgroup_id)[:60]}” in {row.campaign_name or row.adgroup_id}: "
+                                  + ("TikTok upheld the rejection" if lost
+                                     else (f"review status now {row.review_status}" if row.review_status and row.status == "done"
+                                           else "TikTok accepted the appeal — the ad is being re-reviewed"))),
+                      "href": "/appeals", "external": False, "at": row.resolved_at, "ack": False,
+                      "where": row.advertiser_name or ""})
 
     # ---- 7. TikTok not connected ---------------------------------------------
     if not queries.any_access_token(db):

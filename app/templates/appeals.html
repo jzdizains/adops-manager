@@ -1,0 +1,156 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Ad appeals</h1>
+    <div class="muted">Every ad TikTok's review rejected, the reason TikTok gave, and the appeal — filed automatically through TikTok's appeal API or by hand here.</div></div>
+  <div class="actions">
+    <a class="btn" href="/settings#appeals" title="Auto-appeal switch, reason text, skip keywords, daily cap">⚙ Appeal settings</a>
+    <form method="post" action="/appeals/scan"><button class="btn" type="submit" title="Re-read every account's ads from TikTok now">🔍 Scan now</button></form>
+    {% if waiting %}<form method="post" action="/appeals/refresh"><button class="btn" type="submit" title="Ask TikTok whether the open appeals were answered">↻ Check answers</button></form>{% endif %}
+    {% if open_rows %}
+    <form method="post" action="/appeals/file-all" onsubmit="return confirm('File an appeal for all {{ open_rows|length }} open rejection(s) with the reason text from Settings? TikTok allows one appeal per rejection — this uses it.');">
+      <button class="btn primary" type="submit">Appeal all open ({{ open_rows|length }})</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+
+<div class="kpis kpis-5">
+  <div class="kpi {{ 'accent' if s.appeal_auto_enabled }}"><div class="lab">Auto-appeal</div>
+    <div class="val">{% if s.appeal_auto_enabled %}<span class="good">ON</span>{% else %}<span class="muted">OFF</span>{% endif %}</div>
+    <div class="sub">{{ summary.today }} filed today · cap {{ s.appeal_daily_cap }}/day</div></div>
+  <div class="kpi"><div class="lab">Needs a decision</div>
+    <div class="val">{% if summary.open %}<span class="bad">{{ summary.open }}</span>{% else %}0{% endif %}</div>
+    <div class="sub">{{ summary.pending }} not appealed · {{ summary.skipped }} skipped · {{ summary.error }} refused</div></div>
+  <div class="kpi"><div class="lab">Waiting on TikTok</div><div class="val">{{ summary.appealing }}</div><div class="sub">TikTok aims to answer within 24 h</div></div>
+  <div class="kpi"><div class="lab">Won</div><div class="val">{% if summary.won %}<span class="good">{{ summary.won }}</span>{% else %}0{% endif %}</div><div class="sub">appeal accepted / re-reviewed</div></div>
+  <div class="kpi"><div class="lab">Lost</div><div class="val">{% if summary.lost %}<span class="bad">{{ summary.lost }}</span>{% else %}0{% endif %}</div><div class="sub">rejection upheld · {{ summary.cleared }} cleared without appeal</div></div>
+</div>
+
+{% macro acct(r) -%}
+  {{ acct_link(r.advertiser_id, r.advertiser_name, True) }}
+{%- endmacro %}
+{% macro what(r) -%}
+  <div style="font-weight:600;" class="clip" title="{{ r.ad_name }}">{{ r.ad_name or ('ad group ' ~ r.adgroup_id) }}</div>
+  <div class="muted" style="font-size:10.5px;">{{ r.campaign_name or r.campaign_id or '—' }} · {{ 'ad group rejected' if r.rejected_status == 'AD_STATUS_ADGROUP_AUDIT_DENY' else (r.ads_n ~ ' ad(s) rejected') }}{% if r.audit_time %} · reviewed {{ r.audit_time }} UTC{% endif %}</div>
+{%- endmacro %}
+{% macro why(r) -%}
+  {% if r.reasons %}<div style="font-size:12px;">{{ r.reasons }}</div>{% else %}<span class="muted" style="font-size:12px;">TikTok returned no reason text</span>{% endif %}
+  {% if r.suggestion %}<div class="muted" style="font-size:10.5px;margin-top:2px;">TikTok suggests: {{ r.suggestion }}</div>{% endif %}
+{%- endmacro %}
+
+<div class="card" style="padding:0;overflow:hidden;">
+  <div class="card-header" style="padding:12px 14px;margin:0;border-bottom:1px solid var(--border-soft);">
+    <span class="card-title">Needs a decision</span>
+    <span class="card-meta">rejected, no appeal on file · one appeal per rejection, so read the reason first</span></div>
+  {% if open_rows %}
+  <div class="table-scroll">
+  <table class="data dense">
+    <thead><tr><th>Account</th><th>What was rejected</th><th>TikTok's reason</th><th>Why not appealed</th><th class="num">Actions</th></tr></thead>
+    <tbody>
+    {% for r in open_rows %}
+      <tr>
+        <td style="white-space:nowrap;">{{ acct(r) }}</td>
+        <td style="max-width:260px;">{{ what(r) }}</td>
+        <td style="max-width:360px;">{{ why(r) }}</td>
+        <td style="max-width:220px;">
+          {% if r.status == 'error' %}<span class="pill err">refused</span> <span class="muted" style="font-size:11px;">{{ r.error }}</span>
+          {% elif r.status == 'skipped' %}<span class="pill warn">skipped</span> <span class="muted" style="font-size:11px;">{{ r.error }}</span>
+          {% else %}<span class="pill dim">pending</span> <span class="muted" style="font-size:11px;">{{ r.error or 'auto-appeal is off' }}</span>{% endif %}
+          <div class="muted" style="font-size:10.5px;margin-top:2px;">seen {{ r.last_seen_at|ago if r.last_seen_at else r.created_at|ago }}</div>
+        </td>
+        <td class="num" style="white-space:nowrap;vertical-align:top;">
+          <details style="text-align:left;">
+            <summary class="btn sm primary" style="display:inline-block;list-style:none;cursor:pointer;">Appeal…</summary>
+            <form method="post" action="/appeals/{{ r.id }}/file" style="margin-top:6px;min-width:280px;">
+              <textarea name="reason" rows="4" style="width:100%;font-size:12px;" maxlength="512" placeholder="Reason sent to TikTok (empty = the template from Settings)">{{ r.appeal_reason if r.status == 'error' else '' }}</textarea>
+              <div style="display:flex;gap:6px;justify-content:flex-end;margin-top:4px;">
+                <button class="btn sm primary" type="submit">File appeal</button>
+              </div>
+            </form>
+          </details>
+          <form method="post" action="/appeals/{{ r.id }}/dismiss" style="display:inline;margin-top:4px;" onsubmit="return confirm('Dismiss without appealing? Use this when you fixed or deleted the ad yourself.');">
+            <button class="btn sm" type="submit" title="Handled another way — stop tracking it">Dismiss</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <div class="empty"><div class="empty-title">Nothing waiting on you</div>Every rejection the scan found is either appealed or resolved. Rejections are picked up on each slow sweep and by “Scan now”.</div>
+  {% endif %}
+</div>
+
+<div class="card" style="padding:0;overflow:hidden;">
+  <div class="card-header" style="padding:12px 14px;margin:0;border-bottom:1px solid var(--border-soft);">
+    <span class="card-title">Waiting on TikTok</span>
+    <span class="card-meta">appeal filed · status re-checked every slow sweep, or press “Check answers”</span></div>
+  {% if waiting %}
+  <div class="table-scroll">
+  <table class="data dense">
+    <thead><tr><th>Account</th><th>What was rejected</th><th>TikTok's reason</th><th>Appeal</th><th>Filed</th></tr></thead>
+    <tbody>
+    {% for r in waiting %}
+      <tr>
+        <td style="white-space:nowrap;">{{ acct(r) }}</td>
+        <td style="max-width:260px;">{{ what(r) }}</td>
+        <td style="max-width:320px;">{{ why(r) }}</td>
+        <td style="max-width:320px;"><span class="pill warn">{{ r.tiktok_status or 'APPEALING' }}</span>
+          <div class="muted clip" style="font-size:11px;margin-top:2px;max-width:300px;" title="{{ r.appeal_reason }}">{{ r.appeal_reason }}</div></td>
+        <td style="white-space:nowrap;"><span title="{{ r.submitted_at|local('%Y-%m-%d %H:%M:%S') if r.submitted_at }}">{{ r.submitted_at|ago if r.submitted_at else '—' }}</span>
+          <div class="muted" style="font-size:10.5px;">by {{ r.filed_by or '?' }}{% if r.checked_at %} · checked {{ r.checked_at|ago }}{% endif %}</div></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <div class="empty" style="padding:22px 0;">No appeals in flight.</div>
+  {% endif %}
+</div>
+
+<div class="card" style="padding:0;overflow:hidden;">
+  <div class="card-header" style="padding:12px 14px;margin:0;border-bottom:1px solid var(--border-soft);">
+    <span class="card-title">History</span><span class="card-meta">answered appeals and rejections that cleared on their own · newest first</span></div>
+  {% if history %}
+  <div class="table-scroll">
+  <table class="data dense">
+    <thead><tr><th>Account</th><th>What was rejected</th><th>TikTok's reason</th><th>Outcome</th><th>When</th></tr></thead>
+    <tbody>
+    {% for r in history %}
+      <tr>
+        <td style="white-space:nowrap;">{{ acct(r) }}</td>
+        <td style="max-width:260px;">{{ what(r) }}</td>
+        <td style="max-width:320px;">{{ why(r) }}</td>
+        <td style="max-width:300px;">
+          {% if r.status == 'failed' %}<span class="pill err">appeal rejected</span>
+          {% elif r.status == 'successful' %}<span class="pill ok">appeal accepted</span>
+          {% elif r.status == 'done' %}<span class="pill {{ 'ok' if r.review_status == 'ALL_AVAILABLE' else 'warn' }}">re-reviewed · {{ r.review_status or '?' }}</span>
+          {% elif r.status == 'dismissed' %}<span class="pill dim">dismissed by hand</span>
+          {% else %}<span class="pill dim">cleared</span> <span class="muted" style="font-size:11px;">no longer rejected — edited, approved or deleted</span>{% endif %}
+          {% if r.appeal_reason %}<div class="muted clip" style="font-size:11px;margin-top:2px;max-width:280px;" title="{{ r.appeal_reason }}">{{ r.filed_by }}: {{ r.appeal_reason }}</div>{% endif %}
+        </td>
+        <td style="white-space:nowrap;"><span title="{{ (r.resolved_at or r.created_at)|local('%Y-%m-%d %H:%M:%S') }}">{{ (r.resolved_at or r.created_at)|ago }}</span></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <div class="empty" style="padding:22px 0;">No finished appeals yet.</div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="card-header"><span class="card-title">How this works</span><span class="card-meta">verified against TikTok's API reference and help centre</span></div>
+  <div class="hint" style="font-size:12.5px;line-height:1.6;">
+    <b>1.</b> Each slow sweep (and “Scan now”) reads every account's ads. An ad whose status is <span class="mono">AUDIT_DENY</span> (the ad or its ad group failed review) lands here with TikTok's own reason and suggestion from <span class="mono">/ad/review_info/</span>.<br>
+    <b>2.</b> With auto-appeal ON (Settings → Appeals) an appeal goes out through <span class="mono">/adgroup/appeal/</span> with your reason text — unless the reason matches one of your skip keywords{% if keywords %} (currently: {{ keywords|join(', ') }}){% endif %} or today's cap is used up. Those wait here for you instead.<br>
+    <b>3.</b> TikTok allows <b>one appeal per rejection</b>, and once an ad group (or any ad in it) was appealed, no second appeal is offered — so the engine never files twice, and “Appeal all” is deliberate. A rejection appealed in Ads Manager by hand is picked up too and simply tracked.<br>
+    <b>4.</b> The answer arrives as <span class="mono">APPEAL_SUCCESSFUL</span> / <span class="mono">APPEAL_FAILED</span>, then <span class="mono">APPEAL_DONE</span> once the ad group was re-reviewed; wins and losses also show in the Inbox.<br>
+    <b>Reason preview</b> with today's template: <em>“{{ preview }}”</em>
+  </div>
+</div>
+{% endblock %}

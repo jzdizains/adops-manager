@@ -500,3 +500,50 @@ class EscapeTest(Base):
     ua_landed = Column(Text, default="")                # user agent where it landed — the proof
     outcome = Column(String, default="")                # escaped | stayed | no-click | lost
     created_at = Column(DateTime, default=utcnow, index=True)
+
+
+class Appeal(Base):
+    """One TikTok review rejection and what happened to its appeal
+    (/adgroup/appeal/). TikTok allows ONE appeal per rejection and per ad group
+    (Ads Manager hides the button once an ad group or any ad in it has been
+    appealed), so a row is one AD GROUP + one rejection (audit_time), covering
+    every rejected ad in it, and the engine never files twice for it.
+
+    status: pending    — rejected, not appealed (auto-appeal off, daily cap hit)
+            skipped    — rejected, not appealed: a skip keyword matched the reason
+            appealing  — filed, waiting for TikTok
+            successful — TikTok accepted the appeal (re-review follows)
+            done       — re-reviewed after a successful appeal (see review_status)
+            failed     — TikTok rejected the appeal
+            error      — the appeal request itself failed (see error)
+            cleared    — the ad is no longer rejected without an appeal (edited / approved / deleted)
+            dismissed  — the operator chose not to appeal this rejection (sticks until a new review)"""
+    __tablename__ = "appeals"
+
+    id = Column(Integer, primary_key=True)
+    advertiser_id = Column(String, index=True, default="")
+    advertiser_name = Column(String, default="")
+    campaign_id = Column(String, default="")
+    campaign_name = Column(String, default="")
+    adgroup_id = Column(String, index=True, default="")
+    ad_id = Column(String, default="")                    # the ad the appeal targets; "" = the ad group itself
+    ad_name = Column(String, default="")                  # rejected ad name(s), "; "-joined
+    ads_n = Column(Integer, default=1)                    # how many rejected ads this row covers
+    rejected_status = Column(String, default="")          # AD_STATUS_AUDIT_DENY / AD_STATUS_ADGROUP_AUDIT_DENY
+    audit_time = Column(String, default="")               # TikTok's last_audit_time for THIS rejection (dedupe key)
+    reasons = Column(Text, default="")                    # TikTok's rejection reasons ("; "-joined)
+    suggestion = Column(Text, default="")                 # TikTok's review suggestion
+    appeal_reason = Column(Text, default="")              # the text we sent
+    filed_by = Column(String, default="")                 # auto | manual (Appeals page) | ads-manager (seen APPEALING, not ours)
+    status = Column(String, index=True, default="pending")
+    tiktok_status = Column(String, default="")            # raw appeal_status from /adgroup/review_info/
+    review_status = Column(String, default="")            # ad group review_status after the appeal (ALL_AVAILABLE…)
+    request_id = Column(String, default="")
+    error = Column(Text, default="")
+    attempts = Column(Integer, default=0)
+    submitted_at = Column(DateTime, nullable=True)
+    checked_at = Column(DateTime, nullable=True)
+    resolved_at = Column(DateTime, nullable=True)
+    last_seen_at = Column(DateTime, nullable=True)        # last scan that still reported the rejection
+    gone = Column(Boolean, default=False)                 # a later scan no longer saw this rejection (a new one = new row)
+    created_at = Column(DateTime, default=utcnow, index=True)

@@ -29,7 +29,7 @@
           <div class="muted" style="font-size:10.5px;">{{ i.created_at|local }}</div></td>
         <td>{{ templates.get(i.template_id, "?") }}</td>
         <td class="muted">{{ sparks.get(i.spark_code_id, "preset default") }}</td>
-        <td class="muted">{{ names.get(i.advertiser_id) or i.advertiser_id or "auto-pick" }}</td>
+        <td class="muted" style="white-space:nowrap;">{% if i.advertiser_id %}{{ acct_link(i.advertiser_id, names.get(i.advertiser_id)) }}{% else %}auto-pick{% endif %}</td>
         <td>
           {% if i.status == 'done' %}<span class="pill ok">done</span>
           {% elif i.status == 'pending' %}<span class="pill dim">waiting</span>

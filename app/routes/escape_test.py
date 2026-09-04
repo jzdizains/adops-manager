@@ -108,6 +108,122 @@ h1{font-size:24px;margin:0}p{margin:0;color:#b6bccc;font-size:14px;line-height:1
 <body><div class="wrap"><h1>Test complete</h1><span class="pill">__LABEL__</span>
 <p>__NOTE__</p><p style="font-size:12px;color:#666d84">You can close this page.</p></div></body></html>"""
 
+# ---------------------------------------------------------------------------
+# LAB: every known escape technique as its own button. Each tap is its own row
+# (visit + method); the landed page (?v=..&m=..) proves where it ended up.
+# Methods marked "handoff" open another app (store/search) and never reach the
+# landed page — for those "left the page" is the signal.
+# ---------------------------------------------------------------------------
+LAB_METHODS = {
+    "android": [
+        ("chrome-intent", "Chrome intent (package + https fallback)", "The standard trick; TikTok reported as 'not dependable'"),
+        ("intent-default", "Package-less intent → default browser", "intent:https://…#Intent;end — lets Android pick the default browser"),
+        ("intent-browsable", "Intent with VIEW + BROWSABLE", "Explicit action/category, no package"),
+        ("intent-open", "Chrome intent via window.open", "Same intent, opened as a popup instead of a navigation"),
+        ("chrome-scheme", "googlechrome:// scheme", "Chrome's own URL scheme"),
+        ("play-store", "Play Store link (handoff check)", "market:// — proves whether the WebView hands off to native apps at all"),
+    ],
+    "ios": [
+        ("x-safari", "x-safari- scheme (navigation)", "The standard trick; TikTok reported as blocked"),
+        ("x-safari-open", "x-safari- via window.open", "Works on Instagram/Facebook only this way — worth trying on TikTok"),
+        ("shortcuts", "Shortcuts x-callback fallback", "Opens Shortcuts, which fails and hands the URL to Safari"),
+        ("chrome-ios", "googlechromes:// (Chrome for iOS)", "Only if Chrome is installed"),
+        ("firefox-ios", "firefox://open-url", "Only if Firefox is installed"),
+        ("web-search", "x-web-search:// (handoff check)", "Opens Safari's search — proves whether any scheme leaves the app"),
+        ("app-store", "App Store link (handoff check)", "itms-apps:// — proves whether the store handoff works"),
+    ],
+}
+
+LAB = """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Escape lab</title>
+<style>
+html,body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0d0f15;color:#e7e9f1}
+.wrap{padding:22px 18px 40px;max-width:520px;margin:0 auto}
+h1{font-size:22px;margin:0 0 4px}.sub{color:#b6bccc;font-size:13px;margin:0 0 16px;line-height:1.5}
+.m{display:block;width:100%;text-align:left;font:inherit;color:#e7e9f1;background:#161922;border:1px solid #262a37;border-radius:14px;padding:14px 16px;margin:8px 0}
+.m b{display:block;font-size:15px}.m span{display:block;font-size:12px;color:#8b91a7;margin-top:3px}
+.m.done{border-color:#3ecf8e}.m.stay{border-color:#e0a54a}.m .st{color:#e0a54a;font-weight:700;margin-top:6px;font-size:12px}
+.tiny{font-size:12px;color:#666d84;margin-top:14px;line-height:1.5}
+</style></head><body><div class="wrap">
+<h1>Escape lab</h1>
+<p class="sub" id="who"></p>
+<div id="list"></div>
+<p class="tiny">Tap one method at a time. If you end up in Safari/Chrome the page there says <b>Opened in your real browser ✓</b>. If nothing happens within ~2 s the button turns amber — come back to this tab and try the next one. Results are recorded on the dashboard's Escape test page.</p>
+</div>
+<script>
+(function(){
+  var UA=navigator.userAgent||"", V=__VISIT__, BASE=__BASE__, METHODS=__METHODS__;
+  var isIOS=/iPhone|iPad|iPod/i.test(UA), isAndroid=/Android/i.test(UA);
+  var inApp=/TikTok|musical_ly|Bytedance|BytedanceWebview|ByteLocale|trill/i.test(UA);
+  var plat=isIOS?"ios":(isAndroid?"android":"other");
+  document.getElementById("who").textContent=(inApp?"TikTok in-app browser":"regular browser — open this from inside TikTok for a real test")+" · "+(isIOS?"iPhone":isAndroid?"Android":"desktop/other");
+  function ping(ev,method,extra){try{navigator.sendBeacon(BASE+"/t/escape/ping",JSON.stringify({v:V,ev:ev,method:method,ua:UA,extra:extra||""}));}catch(e){}}
+  function landed(m){return BASE+"/t/escape/landed?v="+V+"&m="+encodeURIComponent(m);}
+  function bare(u){return u.replace(/^https?:\/\//,"");}
+  var run={
+    "chrome-intent":function(u){location.href="intent://"+bare(u)+"#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url="+encodeURIComponent(u)+";end";},
+    "intent-default":function(u){location.href="intent:"+u+"#Intent;end";},
+    "intent-browsable":function(u){location.href="intent://"+bare(u)+"#Intent;scheme=https;action=android.intent.action.VIEW;category=android.intent.category.BROWSABLE;end";},
+    "intent-open":function(u){window.open("intent://"+bare(u)+"#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url="+encodeURIComponent(u)+";end","_blank");},
+    "chrome-scheme":function(u){location.href="googlechrome://navigate?url="+encodeURIComponent(u);},
+    "play-store":function(u){location.href="market://details?id=com.android.chrome";},
+    "x-safari":function(u){location.href="x-safari-"+u;},
+    "x-safari-open":function(u){window.open("x-safari-"+u,"_blank");},
+    "shortcuts":function(u){var id=(crypto.randomUUID?crypto.randomUUID():String(Date.now()));location.href="shortcuts://x-callback-url/run-shortcut?name="+id+"&x-error="+encodeURIComponent(u);},
+    "chrome-ios":function(u){location.href="googlechromes://"+bare(u);},
+    "firefox-ios":function(u){location.href="firefox://open-url?url="+encodeURIComponent(u);},
+    "web-search":function(u){location.href="x-web-search://?"+encodeURIComponent(bare(u).split("?")[0]);},
+    "app-store":function(u){location.href="itms-apps://apps.apple.com/app/id835599320";}
+  };
+  var list=document.getElementById("list"), ms=METHODS[plat]||[];
+  if(!ms.length){ list.innerHTML='<p class="sub">Open this page on an iPhone or Android phone.</p>'; }
+  ms.forEach(function(m){
+    var b=document.createElement("button"); b.className="m"; b.innerHTML="<b>"+m[1]+"</b><span>"+m[2]+"</span><div class='st'></div>";
+    b.addEventListener("click",function(){
+      var left=false, gone=function(){left=true;};
+      document.addEventListener("visibilitychange",function(){ if(document.visibilityState==="hidden") gone(); });
+      window.addEventListener("pagehide",gone); window.addEventListener("blur",gone);
+      ping("clicked", m[0]);
+      try{ run[m[0]](landed(m[0])); }catch(e){ ping("error", m[0], String(e)); }
+      setTimeout(function(){
+        if(left||document.visibilityState==="hidden"){ b.className="m done"; b.querySelector(".st").textContent="left the page ↗"; ping("left", m[0]); }
+        else { b.className="m stay"; b.querySelector(".st").textContent="nothing happened — stayed in-app"; ping("stayed", m[0]); }
+      },2000);
+    });
+    list.appendChild(b);
+  });
+})();
+</script></body></html>"""
+
+
+@router.get("/t/escape/lab", response_class=HTMLResponse)
+def escape_lab(request: Request, db: Session = Depends(get_db)):
+    import json
+    visit = secrets.token_hex(6)
+    info = classify(request.headers.get("user-agent", ""))
+    db.add(models.EscapeTest(visit=visit, platform=info["platform"], inapp=info["inapp"],
+                             app_version=info["app_version"], ua_open=request.headers.get("user-agent", "")[:500],
+                             method="lab", outcome="no-click"))
+    db.commit()
+    html = (LAB.replace("__VISIT__", json.dumps(visit)).replace("__BASE__", json.dumps(_base(request)))
+               .replace("__METHODS__", json.dumps(LAB_METHODS)))
+    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
+
+
+def _lab_row(db: Session, visit: str, method: str):
+    """One row per (visit, method): copy the phone facts from the lab's open row.
+    Lab rows are stored as method "lab:<name>" so they never mix with the simple test."""
+    method = method if method.startswith("lab:") else "lab:" + method
+    row = db.query(models.EscapeTest).filter_by(visit=visit, method=method).first()
+    if row:
+        return row
+    base = db.query(models.EscapeTest).filter_by(visit=visit).first()
+    row = models.EscapeTest(visit=visit, method=method, clicked=True, outcome="lost",
+                            platform=base.platform if base else "", inapp=base.inapp if base else False,
+                            app_version=base.app_version if base else "", ua_open=base.ua_open if base else "")
+    db.add(row)
+    return row
+
 
 @router.get("/t/escape", response_class=HTMLResponse)
 def escape_page(request: Request, db: Session = Depends(get_db)):
@@ -132,7 +248,26 @@ async def escape_ping(request: Request, db: Session = Depends(get_db)):
             data = json.loads((await request.body()).decode("utf-8", "ignore") or "{}")
         except Exception:
             return JSONResponse({"ok": False}, status_code=400)
-    row = db.query(models.EscapeTest).filter_by(visit=str(data.get("v") or "")).first()
+    visit = str(data.get("v") or "")
+    method = str(data.get("method") or "")[:24]
+    if method:                                   # lab: one row per method
+        if not db.query(models.EscapeTest).filter_by(visit=visit).first():
+            return JSONResponse({"ok": False}, status_code=404)
+        row = _lab_row(db, visit, method)
+        ev = str(data.get("ev") or "")
+        if ev == "clicked":
+            row.clicked = True
+            if row.outcome in ("no-click", ""):
+                row.outcome = "lost"
+        elif ev == "stayed" and row.outcome != "escaped":
+            row.outcome = "stayed"
+        elif ev == "left" and row.outcome == "lost":
+            row.outcome = "left"                 # left the page; no landing yet (store / search handoff)
+        elif ev == "error":
+            row.outcome = "error"
+        db.commit()
+        return {"ok": True}
+    row = db.query(models.EscapeTest).filter_by(visit=visit).first()
     if not row:
         return JSONResponse({"ok": False}, status_code=404)
     ev = str(data.get("ev") or "")
@@ -150,9 +285,13 @@ async def escape_ping(request: Request, db: Session = Depends(get_db)):
 @router.get("/t/escape/landed", response_class=HTMLResponse)
 def escape_landed(request: Request, db: Session = Depends(get_db)):
     visit = request.query_params.get("v", "")
+    method = request.query_params.get("m", "")[:24]
     ua = request.headers.get("user-agent", "")
     info = classify(ua)
-    row = db.query(models.EscapeTest).filter_by(visit=visit).first()
+    if method and db.query(models.EscapeTest).filter_by(visit=visit).first():
+        row = _lab_row(db, visit, method)
+    else:
+        row = db.query(models.EscapeTest).filter_by(visit=visit).first()
     outcome = "stayed" if info["inapp"] else "escaped"
     if not row:
         # your OWN prelander pointed here (v=prelander or anything unknown): record
@@ -185,7 +324,7 @@ def escape_results(request: Request, db: Session = Depends(get_db)):
     # summary: platform × outcome, in-app opens only (a regular-browser open proves nothing)
     summary: dict[str, dict[str, int]] = {}
     for r in rows:
-        if not r.inapp:
+        if not r.inapp or r.method == "lab" or r.method.startswith("lab:"):
             continue
         s = summary.setdefault(r.platform, {"opened": 0, "clicked": 0, "escaped": 0, "stayed": 0, "lost": 0})
         s["opened"] += 1
@@ -194,8 +333,21 @@ def escape_results(request: Request, db: Session = Depends(get_db)):
         if r.outcome in ("escaped", "stayed", "lost"):
             s[r.outcome] += 1
     versions = sorted({r.app_version for r in rows if r.app_version})
+    # lab: method × outcome, in-app taps only
+    labels = {"lab:" + k: v for plat in LAB_METHODS.values() for k, v, _ in plat}
+    methods: dict[str, dict] = {}
+    for r in rows:
+        if not r.inapp or not r.clicked or r.method not in labels:
+            continue
+        m = methods.setdefault(r.method, {"label": labels[r.method], "platform": r.platform,
+                                          "escaped": 0, "stayed": 0, "left": 0, "lost": 0, "error": 0, "taps": 0})
+        m["taps"] += 1
+        if r.outcome in m:
+            m[r.outcome] += 1
+    method_rows = sorted(methods.values(), key=lambda m: (m["platform"], -m["escaped"], -m["left"]))
     return render(request, "escape_results.html", {
         "title": "In-app escape test", "rows": rows, "summary": summary, "versions": versions,
+        "method_rows": method_rows, "lab_url": _base(request) + "/t/escape/lab", "labels": labels,
         "test_url": _base(request) + "/t/escape",
         "not_inapp": sum(1 for r in rows if not r.inapp),
     })

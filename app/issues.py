@@ -106,6 +106,11 @@ def scan(db: Session) -> dict:
                 detail=f"secondary_status={rec.secondary_status}"))
 
     # --- rejected ads (most recent 100 per account, best-effort) --------------
+    # Every rejected ad is handed to the appeals engine, which fetches TikTok's
+    # real reasons (/ad/review_info/), files the appeal when auto-appeal is on
+    # and tracks the answer — so the issue row can say what was done about it.
+    rejected_ads: list[dict] = []
+    scanned: set[str] = set()
     if token:
         for acct in accounts:
             if not acct.access_token:
@@ -114,22 +119,38 @@ def scan(db: Session) -> dict:
                 data = tiktok_api.list_ads(acct.access_token, acct.advertiser_id)
             except tiktok_api.TikTokError:
                 continue
+            scanned.add(acct.advertiser_id)
             for ad in data.get("list", []):
                 sec = str(ad.get("secondary_status", "") or "")
                 if not _status_is_bad(sec):
                     continue
-                reasons = ad.get("reject_reason") or ad.get("review_reject_reason") or ""
-                if isinstance(reasons, list):
-                    reasons = "; ".join(str(r) for r in reasons)
-                found.append(models.Issue(
-                    category="ad", level="err",
-                    advertiser_id=acct.advertiser_id,
-                    advertiser_name=names.get(acct.advertiser_id, acct.advertiser_id),
-                    ref=str(ad.get("ad_id", "")),
-                    message=f"Ad “{(ad.get('ad_name') or '')[:40]}” rejected"
-                            + (f": {str(reasons)[:160]}" if reasons else " (no reason returned)."),
-                    detail=f"secondary_status={sec}"
-                           + (f" reject_reason={reasons}" if reasons else "")))
+                rejected_ads.append({**ad, "advertiser_id": acct.advertiser_id,
+                                     "advertiser_name": names.get(acct.advertiser_id, acct.advertiser_id),
+                                     "access_token": acct.access_token})
+    appeal_by_ad: dict = {}
+    try:
+        from . import appeals
+        appeal_by_ad = appeals.sync(db, rejected_ads, scanned)
+    except Exception:  # the appeals step must never take the scan down
+        import logging
+        logging.getLogger("adops.issues").exception("appeals sync failed")
+    for ad in rejected_ads:
+        sec = str(ad.get("secondary_status", "") or "")
+        row = appeal_by_ad.get((ad["advertiser_id"], str(ad.get("ad_id", ""))))
+        reasons = (row.reasons if row else "") or ""
+        state = ""
+        if row:
+            from .appeals import STATUS_LABELS
+            state = STATUS_LABELS.get(row.status, row.status)
+        found.append(models.Issue(
+            category="ad", level="err",
+            advertiser_id=ad["advertiser_id"], advertiser_name=ad["advertiser_name"],
+            ref=str(ad.get("ad_id", "")),
+            message=f"Ad “{(ad.get('ad_name') or '')[:40]}” rejected"
+                    + (f": {reasons[:160]}" if reasons else " (no reason returned)")
+                    + (f" — {state}." if state else "."),
+            detail=f"secondary_status={sec}" + (f" reasons={reasons}" if reasons else "")
+                   + (f" appeal={row.status}" if row else "")))
 
     # --- spark resolution failures (last 7 days) ------------------------------
     week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).replace(tzinfo=None)
