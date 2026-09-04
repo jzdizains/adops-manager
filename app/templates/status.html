@@ -261,6 +261,7 @@
               <button class="btn sm" type="submit" title="Resume this campaign on TikTok">▶</button>
             {% endif %}
           </form>
+          <button type="button" class="btn sm bidBtn" data-adv="{{ r.advertiser_id }}" data-cid="{{ r.campaign_id }}" data-name="{{ r.campaign_name }}" title="Bid: change the cost cap on every ad group of this campaign">$</button>
           <a class="btn sm" href="/campaigns/{{ r.advertiser_id }}/{{ r.campaign_id }}/edit" title="Edit budgets & cost caps">✎</a>
         </td>
       </tr>
@@ -288,12 +289,28 @@
     </tfoot>
   </table>
   </div>
-  <div class="muted" style="font-size:11px;padding:10px 14px;border-top:1px solid var(--border-soft);">
-    Revenue · PB clicks · CVR · ROAS come from Glitchy postbacks (per source). “÷N” = that source runs on N campaigns, so its revenue and clicks are split between them by spend share; CVR stays source-level. Conv. / CPA are TikTok-pixel numbers. KPI deltas compare the same campaigns to the previous period.{% if range_key == 'today' %} <b>+N <small>15m</small></b> = gained in the last 15 minutes (hover for 5 min / 1 h); the pulsing dot means it moved in the last 5 minutes; the tiny bars are impressions per 5 minutes over the last hour — watch them after a bid change.{% endif %}
-  </div>
   {% else %}
   <div class="empty">{% if origin == 'tool' %}<div class="empty-title">No campaigns launched by this tool yet</div>Everything you launch appears here automatically. Switch “Show” to “All on TikTok” to see campaigns created elsewhere.<br><a class="btn primary" href="/super-launcher">🚀 Launch your first</a>{% else %}<div class="empty-title">No campaigns cached yet</div>Hit “Sync now” to pull them from every account.{% endif %}</div>
   {% endif %}
+</div>
+
+<div id="bidPop" class="bidpop" hidden>
+  <div class="bp-head"><b id="bpTitle">Bid</b><button type="button" class="btn sm" id="bpClose" style="padding:1px 8px;">✕</button></div>
+  <div id="bpBody" class="muted" style="font-size:12px;">Loading…</div>
+  <form id="bpForm" hidden>
+    <div class="bp-row">
+      <span class="bp-cur" id="bpCur"></span>
+      <div class="bp-quick" id="bpQuick">
+        <button type="button" data-pct="-10">−10%</button><button type="button" data-pct="-5">−5%</button>
+        <button type="button" data-pct="5">+5%</button><button type="button" data-pct="10">+10%</button><button type="button" data-pct="20">+20%</button>
+      </div>
+    </div>
+    <div class="bp-row">
+      <span class="bp-dollar">$</span><input type="text" inputmode="decimal" id="bpCap" placeholder="cost cap" autocomplete="off">
+      <button type="submit" class="btn sm primary" id="bpApply">Apply to all</button>
+    </div>
+    <div class="hint" id="bpHint" style="margin:4px 0 0;font-size:11px;">One cost cap for every ad group (BID_TYPE_CUSTOM). TikTok applies it within minutes — watch the pace chips.</div>
+  </form>
 </div>
 
 <div id="vidModal" style="display:none;position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.8);align-items:center;justify-content:center;">
@@ -402,6 +419,79 @@
   document.getElementById("vidClose").addEventListener("click", closeModal);
   modal.addEventListener("click", function (e) { if (e.target === modal) closeModal(); });
   document.addEventListener("keydown", function (e) { if (e.key === "Escape" && modal.style.display === "flex") closeModal(); });
+
+  // ---- inline bid popover ($ bid button on each row) -----------------------
+  var pop = document.getElementById("bidPop"), bpBody = document.getElementById("bpBody"), bpForm = document.getElementById("bpForm");
+  var bpCap = document.getElementById("bpCap"), bpCur = document.getElementById("bpCur"), bpTitle = document.getElementById("bpTitle"), bpApply = document.getElementById("bpApply");
+  var bp = { adv: "", cid: "", cap: null, busy: false };
+  function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
+  function money(v) { return "$" + (Math.round(v * 100) / 100).toFixed(2); }
+  function closePop() { pop.hidden = true; bp.adv = bp.cid = ""; }
+  function openPop(btn) {
+    var r = btn.getBoundingClientRect();
+    bp.adv = btn.dataset.adv; bp.cid = btn.dataset.cid; bp.cap = null;
+    bpTitle.textContent = "Bid · " + (btn.dataset.name || bp.cid);
+    bpBody.hidden = false; bpBody.textContent = "Reading ad groups from TikTok…"; bpForm.hidden = true;
+    pop.hidden = false;
+    var w = pop.offsetWidth || 320, h = pop.offsetHeight || 150;
+    var left = Math.min(Math.max(8, r.right - w), window.innerWidth - w - 8);
+    var top = r.bottom + 6 + window.scrollY;
+    if (r.bottom + h + 12 > window.innerHeight) top = r.top - h - 6 + window.scrollY;
+    pop.style.left = left + "px"; pop.style.top = top + "px";
+    fetch("/campaigns/" + bp.adv + "/" + bp.cid + "/bids", { credentials: "same-origin" })
+      .then(function (x) { return x.json().then(function (d) { return { ok: x.ok, d: d }; }); })
+      .then(function (res) {
+        var d = res.d;
+        if (!res.ok || d.error) { bpBody.innerHTML = '<span style="color:var(--warn);">' + esc(d.error || "couldn't load") + '</span>'; return; }
+        if (!d.n) { bpBody.textContent = "This campaign has no ad groups."; return; }
+        var cur;
+        if (d.cap) { cur = money(d.cap) + " cap on " + d.n + " ad group" + (d.n > 1 ? "s" : ""); bp.cap = d.cap; }
+        else if (d.caps && d.caps.length) { cur = "mixed: " + d.caps.map(money).join(", ") + (d.uncapped ? " + " + d.uncapped + " without cap" : "") + " (" + d.n + " ad groups)"; bp.cap = d.caps[d.caps.length - 1]; }
+        else { cur = (d.no_bid ? "no cap (lowest cost)" : "no cost cap set") + " · " + d.n + " ad group" + (d.n > 1 ? "s" : ""); }
+        bpCur.textContent = cur;
+        bpCap.value = bp.cap ? (Math.round(bp.cap * 100) / 100).toFixed(2) : "";
+        document.getElementById("bpQuick").style.visibility = bp.cap ? "visible" : "hidden";
+        bpBody.hidden = true; bpForm.hidden = false;
+        document.getElementById("bpHint").textContent = (d.smart_plus ? "Smart+ campaign: TikTok may refuse ad-group edits — the answer shows here. " : "")
+          + "One cost cap for every ad group (BID_TYPE_CUSTOM). TikTok applies it within minutes — watch the pace chips.";
+        bpCap.focus(); bpCap.select();
+      })
+      .catch(function () { bpBody.innerHTML = '<span style="color:var(--warn);">Couldn\'t reach the server.</span>'; });
+  }
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest && e.target.closest(".bidBtn");
+    if (b) { e.preventDefault(); if (!pop.hidden && bp.cid === b.dataset.cid) { closePop(); } else { openPop(b); } return; }
+    if (e.target.closest && e.target.closest("#bpClose")) { closePop(); return; }
+    var q = e.target.closest && e.target.closest("#bpQuick button");
+    if (q) { var base = parseFloat(bpCap.value) || bp.cap || 0; if (base) bpCap.value = (Math.round(base * (1 + parseInt(q.dataset.pct, 10) / 100) * 100) / 100).toFixed(2); return; }
+    if (!pop.hidden && !pop.contains(e.target)) closePop();
+  });
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape" && !pop.hidden) closePop(); });
+  bpForm.addEventListener("submit", function (e) {
+    e.preventDefault();
+    if (bp.busy) return;
+    var v = parseFloat(String(bpCap.value).replace(",", "."));
+    if (!(v > 0)) { bpCap.focus(); return; }
+    bp.busy = true; bpApply.disabled = true; bpApply.textContent = "Applying…";
+    var body = new URLSearchParams(); body.set("cap", v.toFixed(2));
+    fetch("/campaigns/" + bp.adv + "/" + bp.cid + "/bids", { method: "POST", credentials: "same-origin", body: body })
+      .then(function (x) { return x.json().then(function (d) { return { ok: x.ok, d: d }; }); })
+      .then(function (res) {
+        var d = res.d;
+        if (res.ok && d.ok) {
+          bpCur.textContent = money(d.cap) + " cap on " + d.applied + " ad group" + (d.applied > 1 ? "s" : "") + " ✓";
+          window.adopsToast && window.adopsToast("ok", "Cost cap set to " + money(d.cap) + " on " + d.applied + " ad group(s) of " + bpTitle.textContent.replace("Bid · ", ""));
+          setTimeout(closePop, 900);
+          refreshInPlace("refresh");
+        } else {
+          var msg = d.error || ((d.errors && d.errors.length) ? d.errors.join(" · ") : "TikTok refused");
+          if (d.applied) msg = d.applied + " of " + d.n + " ad groups updated — " + msg;
+          document.getElementById("bpHint").innerHTML = '<span style="color:var(--err);">' + esc(msg) + '</span>';
+        }
+      })
+      .catch(function () { document.getElementById("bpHint").innerHTML = '<span style="color:var(--err);">Couldn\'t reach the server.</span>'; })
+      .then(function () { bp.busy = false; bpApply.disabled = false; bpApply.textContent = "Apply to all"; });
+  });
 
   // ---- in-place refresh: swap KPIs + table (+ sparklines) without a reload --
   // Filters, sort, scroll position and the Details toggle all stay put.

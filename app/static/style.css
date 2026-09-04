@@ -626,3 +626,17 @@ table.data.show-detail th.col-detail, table.data.show-detail td.col-detail { dis
 .mbars { height: 10px; }
 .mbars i.on { background: var(--accent); }
 @media (prefers-reduced-motion: reduce) { .pace .live { animation: none; } }
+
+/* inline bid popover (Campaigns → $ bid) */
+.bidpop { position: absolute; z-index: 900; width: 340px; background: var(--panel); border: 1px solid var(--border);
+          border-radius: 10px; box-shadow: 0 12px 36px rgba(0,0,0,.35); padding: 10px 12px; }
+.bidpop .bp-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12.5px; }
+.bidpop .bp-head b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bidpop .bp-row { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+.bidpop .bp-cur { flex: 1; font-size: 11.5px; color: var(--text-soft); }
+.bidpop .bp-quick { display: flex; gap: 3px; }
+.bidpop .bp-quick button { font: inherit; font-size: 10.5px; padding: 2px 6px; border-radius: 6px; border: 1px solid var(--border);
+                           background: var(--panel-hover); color: var(--text-soft); cursor: pointer; }
+.bidpop .bp-quick button:hover { color: var(--accent); border-color: var(--accent); }
+.bidpop .bp-dollar { font-family: var(--font-mono); color: var(--text-dim); }
+.bidpop #bpCap { flex: 1; font-family: var(--font-mono); font-size: 14px; padding: 6px 8px; }

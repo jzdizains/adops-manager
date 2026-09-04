@@ -8,7 +8,7 @@ import json
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from .. import error_messages, live_log, models, queries, tiktok_api
@@ -1840,6 +1840,90 @@ def apply_campaign_edit(advertiser_id: str, campaign_id: str,
     if errors:
         q += f"&err={'+·+'.join(errors)[:180].replace(' ', '+')}"
     return RedirectResponse(f"/campaigns/{advertiser_id}/{campaign_id}/edit?{q}", status_code=303)
+
+
+# ---------------------------------------------------------------------------
+# Inline bid control (Campaigns table): read + change every ad group's cost cap
+# without leaving the page. Same /adgroup/update/ call the edit page makes.
+# ---------------------------------------------------------------------------
+
+def _bid_summary(adgroups: list[dict]) -> dict:
+    rows = []
+    for ag in adgroups:
+        cap = ag.get("conversion_bid_price")
+        bid = ag.get("bid_price")
+        try:
+            cap = float(cap) if cap not in (None, "", 0, "0") else None
+        except (TypeError, ValueError):
+            cap = None
+        try:
+            bid = float(bid) if bid not in (None, "", 0, "0") else None
+        except (TypeError, ValueError):
+            bid = None
+        rows.append({"adgroup_id": str(ag.get("adgroup_id", "")), "name": str(ag.get("adgroup_name", "") or ""),
+                     "bid_type": str(ag.get("bid_type", "") or ""), "cap": cap, "bid": bid,
+                     "budget": ag.get("budget"), "status": str(ag.get("operation_status", "") or ""),
+                     "goal": str(ag.get("optimization_goal", "") or "")})
+    caps = sorted({r["cap"] for r in rows if r["cap"]})
+    uncapped = sum(1 for r in rows if r["cap"] is None)
+    return {"adgroups": rows, "n": len(rows),
+            "cap": caps[0] if (len(caps) == 1 and not uncapped) else None,   # the one cap EVERY ad group shares
+            "caps": caps,                                                     # distinct caps in use
+            "uncapped": uncapped,                                             # ad groups running without a cap
+            "no_bid": bool(rows) and uncapped == len(rows)}
+
+
+@router.get("/campaigns/{advertiser_id}/{campaign_id}/bids")
+def campaign_bids(advertiser_id: str, campaign_id: str, db: Session = Depends(get_db)):
+    """JSON for the inline bid popover: every ad group's current cost cap."""
+    acct = db.query(models.AdAccount).filter_by(advertiser_id=advertiser_id).first()
+    if not acct or not acct.access_token:
+        return JSONResponse({"error": "no TikTok token for this account"}, status_code=400)
+    try:
+        data = tiktok_api.list_adgroups(acct.access_token, advertiser_id, [campaign_id])
+    except tiktok_api.TikTokError as e:
+        return JSONResponse({"error": f"TikTok didn't answer (code {e.code}): {(e.message or '')[:120]}"}, status_code=502)
+    out = _bid_summary(data.get("list", []))
+    rec = (db.query(models.CampaignRecord).filter_by(advertiser_id=advertiser_id, campaign_id=campaign_id).first())
+    out["smart_plus"] = bool(rec.is_smart_plus) if rec else False
+    out["campaign_name"] = rec.campaign_name if rec else campaign_id
+    return JSONResponse(out)
+
+
+@router.post("/campaigns/{advertiser_id}/{campaign_id}/bids")
+def campaign_bids_apply(advertiser_id: str, campaign_id: str, cap: str = Form(...),
+                        db: Session = Depends(get_db)):
+    """Set ONE cost cap on every ad group of the campaign (BID_TYPE_CUSTOM +
+    conversion_bid_price). Returns JSON {ok, applied, failed, errors, cap}."""
+    acct = db.query(models.AdAccount).filter_by(advertiser_id=advertiser_id).first()
+    if not acct or not acct.access_token:
+        return JSONResponse({"ok": False, "error": "no TikTok token for this account"}, status_code=400)
+    try:
+        new_cap = round(float(str(cap).replace(",", ".").strip()), 2)
+    except ValueError:
+        return JSONResponse({"ok": False, "error": "cap must be a number"}, status_code=400)
+    if new_cap <= 0 or new_cap > 10000:
+        return JSONResponse({"ok": False, "error": "cap must be between 0.01 and 10000"}, status_code=400)
+    try:
+        data = tiktok_api.list_adgroups(acct.access_token, advertiser_id, [campaign_id])
+    except tiktok_api.TikTokError as e:
+        return JSONResponse({"ok": False, "error": f"couldn't list ad groups (code {e.code}): {(e.message or '')[:120]}"}, status_code=502)
+    applied, errors = [], []
+    for ag in data.get("list", []):
+        agid = str(ag.get("adgroup_id", ""))
+        try:
+            tiktok_api.update_adgroup(acct.access_token, advertiser_id, agid, conversion_bid_price=new_cap)
+            applied.append(agid)
+        except tiktok_api.TikTokError as e:
+            errors.append(f"ad group …{agid[-6:]}: code {e.code} {(e.message or '')[:100]}")
+    db.add(models.RuleAction(advertiser_id=advertiser_id, campaign_id=campaign_id,
+                             rule="manual bid", action="edit", ok=not errors,
+                             detail=f"cost cap → ${new_cap:.2f} on {len(applied)} ad group(s)"
+                                    + ("; " + "; ".join(errors) if errors else "")))
+    db.commit()
+    return JSONResponse({"ok": bool(applied) and not errors, "cap": new_cap,
+                         "applied": len(applied), "failed": len(errors), "errors": errors,
+                         "n": len(data.get("list", []))})
 
 
 @router.post("/campaigns/{advertiser_id}/{campaign_id}/status")
