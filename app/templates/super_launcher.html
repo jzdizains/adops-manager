@@ -164,7 +164,7 @@
             style="width:100%;justify-content:center;font-size:15px;padding:12px;">
       🚀 Launch</button>
     <div class="hint" style="text-align:center;margin-top:8px;">
-      Builds campaign → ad group(s) → ad per account. One account failing never stops the others.</div>
+      Runs in the background — the result page opens at once and fills in as accounts finish; a notification pops up when it’s done. One account failing never stops the others.</div>
   </div>
 </div>
 </form>
@@ -325,7 +325,7 @@
       if (!n) { e.preventDefault(); alert("Pick at least one account (or use auto-pick)."); return; }
     }
     if (!confirm("Launch “" + preset.options[preset.selectedIndex].text + "” to " + label + "?")) { e.preventDefault(); return; }
-    launchBtn.disabled = true; launchBtn.textContent = "Launching… this can take a minute";
+    launchBtn.disabled = true; launchBtn.textContent = "Starting…";
   });
   applyFilter(); syncPreset();
 </script>

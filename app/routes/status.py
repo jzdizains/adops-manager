@@ -374,6 +374,17 @@ def verify_pending(db: Session = Depends(get_db)):
 
 
 @router.post("/status/sync")
-def sync_now(db: Session = Depends(get_db)):
-    live_spend.sync_campaigns(db)
-    return RedirectResponse("/status", status_code=303)
+def sync_now(request: Request, db: Session = Depends(get_db)):
+    """Queue a full campaign sync; the page refreshes itself when the job's
+    notification arrives. Returns JSON to fetch() callers, a redirect otherwise."""
+    from .. import jobs
+    from fastapi.responses import JSONResponse
+    running = (db.query(models.Job).filter(models.Job.kind == "status_sync",
+                                           models.Job.status.in_(("queued", "running"))).count())
+    if running:
+        job_id = None
+    else:
+        job_id = jobs.enqueue(db, "status_sync", "Sync campaigns from TikTok", {}, href="/status").id
+    if request.headers.get("x-requested-with") == "fetch" or "application/json" in request.headers.get("accept", ""):
+        return JSONResponse({"queued": True, "job_id": job_id, "already": bool(running)})
+    return RedirectResponse("/status?ok=Syncing+in+the+background+—+you%27ll+get+a+notification.", status_code=303)

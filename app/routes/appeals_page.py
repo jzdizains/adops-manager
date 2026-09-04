@@ -58,17 +58,20 @@ def appeals_page(request: Request, db: Session = Depends(get_db)):
 
 @router.post("/appeals/scan")
 def scan_now(db: Session = Depends(get_db)):
-    """Re-run the issue scan (which feeds the appeals engine) right now."""
-    result = issues_mod.scan(db)
-    return _back(ok=f"Scanned {result['accounts_scanned']} account(s) — rejections and appeal answers are up to date.")
+    """Queue the issue scan (which feeds the appeals engine)."""
+    from .. import jobs
+    jobs.enqueue(db, "issues_scan", "Scan every account for rejected ads", {}, href="/appeals")
+    return _back(ok="Scanning in the background — you'll get a notification when it's done.")
 
 
 @router.post("/appeals/refresh")
 def refresh_now(db: Session = Depends(get_db)):
-    n = appeals_mod.refresh(db, max_age_min=0)
+    from .. import jobs
     waiting = db.query(models.Appeal).filter(models.Appeal.status == "appealing").count()
-    return _back(ok=f"Asked TikTok about {waiting} open appeal(s): {n} answered." if waiting
-                 else "No appeals are waiting on TikTok.")
+    if not waiting:
+        return _back(ok="No appeals are waiting on TikTok.")
+    jobs.enqueue(db, "appeals_refresh", f"Check TikTok's answer on {waiting} open appeal(s)", {}, href="/appeals")
+    return _back(ok="Checking in the background — you'll get a notification.")
 
 
 @router.post("/appeals/{row_id}/file")
@@ -83,10 +86,10 @@ def file_one(row_id: int, reason: str = Form(""), db: Session = Depends(get_db))
     token = _token_for(db, row.advertiser_id)
     if not token:
         return _back(err=f"No TikTok token for account {row.advertiser_name or row.advertiser_id}.")
-    text = reason.strip() or None
-    if appeals_mod.file_appeal(db, row, token, filed_by="manual", reason=text):
-        return _back(ok=f"Appeal filed for “{(row.ad_name or row.adgroup_id)[:50]}”. TikTok aims to answer within 24 hours.")
-    return _back(err=f"TikTok refused the appeal: {row.error}")
+    from .. import jobs
+    jobs.enqueue(db, "appeals_file", f"Appeal “{(row.ad_name or row.adgroup_id)[:50]}”",
+                 {"ids": [row.id], "reason": reason.strip()}, href="/appeals")
+    return _back(ok="Filing in the background — you'll get a notification with TikTok's answer.")
 
 
 @router.post("/appeals/file-selected")
@@ -101,7 +104,14 @@ async def file_selected(request: Request, db: Session = Depends(get_db)):
             continue
     if not ids:
         return _back(err="Tick at least one ad group first.")
-    reason = str(form.get("reason") or "").strip() or None
+    from .. import jobs
+    jobs.enqueue(db, "appeals_file", f"Appeal {len(ids)} selected ad group(s)",
+                 {"ids": ids, "reason": str(form.get("reason") or "").strip()}, href="/appeals")
+    return _back(ok=f"Filing {len(ids)} appeal(s) in the background — you'll get a notification.")
+
+
+def file_rows(db: Session, ids: list[int], reason: str = "") -> dict:
+    """The filing itself (runs in a job)."""
     s = get_settings(db)
     ok = err = skipped = 0
     for row in db.query(models.Appeal).filter(models.Appeal.id.in_(ids)).all():
@@ -112,34 +122,25 @@ async def file_selected(request: Request, db: Session = Depends(get_db)):
         if not token:
             err += 1
             continue
-        if appeals_mod.file_appeal(db, row, token, s, filed_by="manual", reason=reason):
+        if appeals_mod.file_appeal(db, row, token, s, filed_by="manual", reason=(reason or None)):
             ok += 1
         else:
             err += 1
     msg = f"Filed {ok} appeal(s)" + (f", {err} refused — see the rows" if err else "") + (f", {skipped} already handled" if skipped else "") + "."
-    return _back(ok=msg) if ok and not err else _back(err=msg)
+    return {"ok": ok > 0 and err == 0, "detail": msg}
 
 
 @router.post("/appeals/file-all")
 def file_all(db: Session = Depends(get_db)):
     """Appeal every open rejection (pending, skipped and errored ones alike —
     the operator confirmed on the page)."""
-    s = get_settings(db)
-    rows = (db.query(models.Appeal)
-            .filter(models.Appeal.status.in_(("pending", "skipped", "error"))).all())
-    ok = err = 0
-    for row in rows:
-        token = _token_for(db, row.advertiser_id)
-        if not token:
-            err += 1
-            continue
-        if appeals_mod.file_appeal(db, row, token, s, filed_by="manual"):
-            ok += 1
-        else:
-            err += 1
-    if not rows:
+    from .. import jobs
+    ids = [r.id for r in db.query(models.Appeal.id)
+           .filter(models.Appeal.status.in_(("pending", "skipped", "error"))).all()]
+    if not ids:
         return _back(ok="Nothing to appeal.")
-    return _back(ok=f"Filed {ok} appeal(s)" + (f", {err} refused — see the rows" if err else "") + ".")
+    jobs.enqueue(db, "appeals_file", f"Appeal all {len(ids)} open ad group(s)", {"ids": ids, "reason": ""}, href="/appeals")
+    return _back(ok=f"Filing {len(ids)} appeal(s) in the background — you'll get a notification.")
 
 
 @router.post("/appeals/{row_id}/dismiss")

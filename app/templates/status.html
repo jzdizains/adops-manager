@@ -480,11 +480,10 @@
       .then(function (x) { return x.json().then(function (d) { return { ok: x.ok, d: d }; }); })
       .then(function (res) {
         var d = res.d;
-        if (res.ok && d.ok) {
-          bpCur.textContent = money(d.cap) + " cap on " + d.applied + " ad group" + (d.applied > 1 ? "s" : "") + " ✓";
-          window.adopsToast && window.adopsToast("ok", "Cost cap set to " + money(d.cap) + " on " + d.applied + " ad group(s) of " + bpTitle.textContent.replace("Bid · ", ""));
-          setTimeout(closePop, 900);
-          refreshInPlace("refresh");
+        if (res.ok && d.queued) {
+          bpCur.textContent = money(d.cap) + " queued — TikTok is being updated in the background ✓";
+          document.getElementById("bpHint").textContent = "You'll get a notification bottom-right when every ad group is done (or if TikTok refuses).";
+          setTimeout(closePop, 1400);
         } else {
           var msg = d.error || ((d.errors && d.errors.length) ? d.errors.join(" · ") : "TikTok refused");
           if (d.applied) msg = d.applied + " of " + d.n + " ad groups updated — " + msg;
@@ -517,13 +516,24 @@
     drawSparks();
     detailApply(detailSaved());
   }
+  var syncWaiting = false;
+  document.addEventListener("adops:job", function (e) {
+    var j = e.detail || {};
+    if (j.kind === "status_sync" && syncWaiting) { syncWaiting = false; setBusy(false); refreshInPlace("refresh"); return; }
+    if (j.kind === "bid" || j.kind === "campaign_edit" || j.kind === "launch") refreshInPlace("refresh");   // numbers changed on TikTok
+  });
   function refreshInPlace(which) {
     if (busy) return Promise.resolve();
+    if (which === "sync") {
+      setBusy(true, "sync"); syncWaiting = true;
+      return fetch("/status/sync", { method: "POST", credentials: "same-origin", headers: { "X-Requested-With": "fetch" } })
+        .then(function (r) { return r.json(); })
+        .then(function (d) { if (!d.queued) { syncWaiting = false; setBusy(false); } })
+        .catch(function () { syncWaiting = false; setBusy(false); });
+    }
     setBusy(true, which || "refresh");
     var url = location.pathname + location.search;
-    var pre = which === "sync"
-      ? fetch("/status/sync", { method: "POST", credentials: "same-origin", redirect: "manual" }).catch(function () {})
-      : Promise.resolve();
+    var pre = Promise.resolve();
     return pre.then(function () { return fetch(url, { credentials: "same-origin", headers: { "X-Requested-With": "fetch" } }); })
       .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.text(); })
       .then(function (html) { swapFrom(new DOMParser().parseFromString(html, "text/html")); })

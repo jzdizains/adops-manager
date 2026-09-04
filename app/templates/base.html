@@ -50,6 +50,7 @@
 {%- elif name == 'sun' %}<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>
 {%- elif name == 'moon' %}<path d="M21 13A9 9 0 1 1 11 3a7 7 0 0 0 10 10z"/>
 {%- elif name == 'partners' %}<circle cx="9" cy="8" r="3.2"/><path d="M3 19c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5"/><path d="M16 4.5a3 3 0 0 1 0 6"/><path d="M17.5 13.5c2.3.5 3.5 2.3 3.5 5"/>
+{%- elif name == 'jobs' %}<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>
 {%- elif name == 'shield' %}<path d="M12 3l7 3v5c0 4.5-3 8.5-7 10-4-1.5-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/>
 {%- elif name == 'system' %}<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>
 {%- endif %}</svg>
@@ -106,6 +107,8 @@
     {{ sn('/escape-test', 'system', 'Escape test', active.startswith('/escape-test')) }}
   </nav>
   <div class="side-foot">
+    <a href="/jobs" class="sn jr" id="jobsRunning" hidden title="Background jobs running — click for the list"><span class="jr-dot"></span><span class="sn-l jr-t">running</span></a>
+    {{ sn('/jobs', 'jobs', 'Jobs', active.startswith('/jobs')) }}
     {{ sn('/settings', 'settings', 'Settings', active.startswith('/settings')) }}
     {{ sn('/cookies', 'cookie', 'TikTok Cookies', active.startswith('/cookies')) }}
     {{ sn('/oauth/connect', 'link', 'Connect TikTok', active.startswith('/oauth')) }}
@@ -211,6 +214,47 @@
     refresh();
     setInterval(function () { if (!document.hidden) refresh(); }, 60000);
     document.addEventListener("visibilitychange", function () { if (!document.hidden) refresh(); });
+  })();
+
+  // ---- Background jobs: notifications bottom-right + "running" pill ----------
+  (function () {
+    var host = document.getElementById("jobNotes"), pill = document.getElementById("jobsRunning");
+    if (!host) { host = document.createElement("div"); host.id = "jobNotes"; host.className = "jn-host"; host.setAttribute("aria-live", "polite"); document.body.appendChild(host); }
+    if (!document.body.contains(host)) return;
+    var seen = {};
+    function note(j) {
+      if (seen[j.id]) return; seen[j.id] = true;
+      var a = document.createElement("a");
+      a.className = "jn " + (j.status === "error" ? "err" : "ok");
+      a.href = j.href || "/jobs";
+      a.innerHTML = '<span class="jn-ic">' + (j.status === "error" ? "✕" : "✓") + '</span><span class="jn-body"><b></b><span class="jn-d"></span></span><button type="button" class="jn-x" title="Dismiss">✕</button>';
+      a.querySelector("b").textContent = j.title;
+      a.querySelector(".jn-d").textContent = j.detail || (j.status === "error" ? "failed" : "done");
+      a.querySelector(".jn-x").addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); gone(); });
+      host.appendChild(a);
+      var t = setTimeout(gone, 10000);
+      function gone() { clearTimeout(t); a.classList.add("out"); setTimeout(function () { a.remove(); }, 250); }
+      a.addEventListener("mouseenter", function () { clearTimeout(t); });
+      a.addEventListener("mouseleave", function () { t = setTimeout(gone, 4000); });
+      try { document.dispatchEvent(new CustomEvent("adops:job", { detail: j })); } catch (e) {}
+    }
+    function poll() {
+      fetch("/jobs/data", { credentials: "same-origin" }).then(function (r) { return r.json(); }).then(function (d) {
+        (d.done || []).forEach(note);
+        if (pill) {
+          var n = (d.running || []).length;
+          pill.hidden = n === 0;
+          if (n) {
+            var r = d.running[0];
+            pill.querySelector(".jr-t").textContent = n === 1 ? (r.title + (r.progress ? " · " + r.progress : "")) : n + " jobs running";
+          }
+        }
+        window.adopsJobsRunning = (d.running || []).length;
+      }).catch(function () {});
+    }
+    poll();
+    setInterval(function () { if (!document.hidden) poll(); }, 4000);
+    document.addEventListener("visibilitychange", function () { if (!document.hidden) poll(); });
   })();
 </script>
 {% block scripts %}{% endblock %}

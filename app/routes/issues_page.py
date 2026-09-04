@@ -30,7 +30,6 @@ def issues_page(request: Request, db: Session = Depends(get_db)):
 
 @router.post("/issues/scan")
 def scan_now(db: Session = Depends(get_db)):
-    result = issues_mod.scan(db)
-    return RedirectResponse(
-        f"/monitor?view=issues&ok=Scanned+{result['accounts_scanned']}+account(s),+found+{result['issues']}+issue(s)",
-        status_code=303)
+    from .. import jobs
+    jobs.enqueue(db, "issues_scan", "Scan every account for issues", {}, href="/monitor?view=issues")
+    return RedirectResponse("/monitor?view=issues&ok=Scanning+in+the+background+—+you%27ll+get+a+notification.", status_code=303)

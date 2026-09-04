@@ -1511,11 +1511,12 @@ def _remember_batch(db: Session, batch_ref: str, fields: dict) -> None:
         pass
 
 
-def run_batch(db: Session, accounts: list[models.AdAccount], fields: dict) -> str:
+def run_batch(db: Session, accounts: list[models.AdAccount], fields: dict,
+              batch_ref: str | None = None, on_progress=None) -> str:
     import time as _time
 
     from .. import rules as rules_mod
-    batch_ref = error_messages.new_ref()
+    batch_ref = batch_ref or error_messages.new_ref()
     _remember_batch(db, batch_ref, fields)
     pace = _launch_pace(db)
     for i, acct in enumerate(accounts):
@@ -1524,6 +1525,8 @@ def run_batch(db: Session, accounts: list[models.AdAccount], fields: dict) -> st
         log = launch_to_account(db, acct, fields, batch_ref)
         if log.error_code not in ("ASSET", "CONFIG"):   # preset problems, not account health
             rules_mod.record_launch_outcome(db, acct, log.ok)
+        if on_progress:
+            on_progress(i + 1, len(accounts))
     db.commit()
     return batch_ref
 
@@ -1542,13 +1545,14 @@ def assign_creatives(accounts: list, creatives: list, per_creative: int) -> list
     return pairs
 
 
-def run_batch_assigned(db: Session, pairs: list, base_fields: dict) -> str:
+def run_batch_assigned(db: Session, pairs: list, base_fields: dict,
+                       batch_ref: str | None = None, on_progress=None) -> str:
     """Launch each (account, creative_id) with that specific creative, reusing a
     creative across its group of accounts (single-use is relaxed for this path)."""
     import time as _time
 
     from .. import rules as rules_mod
-    batch_ref = error_messages.new_ref()
+    batch_ref = batch_ref or error_messages.new_ref()
     _remember_batch(db, batch_ref, {**base_fields, "creative_source": "library"})
     pace = _launch_pace(db)
     for i, (acct, cid) in enumerate(pairs):
@@ -1564,7 +1568,22 @@ def run_batch_assigned(db: Session, pairs: list, base_fields: dict) -> str:
         log = launch_to_account(db, acct, fields, batch_ref)
         if log.error_code not in ("ASSET", "CONFIG"):
             rules_mod.record_launch_outcome(db, acct, log.ok)
+        if on_progress:
+            on_progress(i + 1, len(pairs))
     db.commit()
+    return batch_ref
+
+
+def queue_launch(db: Session, title: str, advertiser_ids: list[str], fields: dict,
+                 pairs: list | None = None) -> str:
+    """Hand a launch to the background jobs worker; returns the batch_ref the
+    result page will show (created up front so the notification can link to it)."""
+    from .. import jobs
+    batch_ref = error_messages.new_ref()
+    jobs.enqueue(db, "launch", title, {
+        "batch_ref": batch_ref, "advertiser_ids": list(advertiser_ids), "fields": fields,
+        "pairs": pairs,
+    }, href=f"/campaigns/result/{batch_ref}")
     return batch_ref
 
 
@@ -1591,14 +1610,32 @@ async def source_fix(request: Request, db: Session = Depends(get_db)):
     """Repair one campaign (or every broken one) so its clicks carry the source."""
     from urllib.parse import quote
     from .. import source_check
+    from .. import jobs
     form = await request.form()
-    targets = []
     if form.get("all") == "1":
+        jobs.enqueue(db, "source_fix", "Source check: fix every broken campaign", {"all": True},
+                     href="/campaigns/source-check")
+        return RedirectResponse("/campaigns/source-check?ok=" + quote(
+            "Fixing in the background — you'll get a notification when it's done."), status_code=303)
+    aid, cid = str(form.get("advertiser_id") or ""), str(form.get("campaign_id") or "")
+    if not aid or not cid:
+        return RedirectResponse("/campaigns/source-check?err=missing", status_code=303)
+    jobs.enqueue(db, "source_fix", f"Source check: fix campaign {cid[-6:]}",
+                 {"all": False, "advertiser_id": aid, "campaign_id": cid}, href="/campaigns/source-check")
+    return RedirectResponse("/campaigns/source-check?ok=" + quote(
+        "Fixing in the background — you'll get a notification when it's done."), status_code=303)
+
+
+def fix_sources(db: Session, all_broken: bool, advertiser_id: str = "", campaign_id: str = "") -> tuple[list, list]:
+    """The source-fix work itself (runs in a job)."""
+    from .. import source_check
+    targets = []
+    if all_broken:
         for r in source_check.audit(db, only_active=True):
             if r["worst"] in ("missing", "unsafe-name"):
                 targets.append((r["advertiser_id"], r["campaign_id"]))
     else:
-        targets.append((str(form.get("advertiser_id") or ""), str(form.get("campaign_id") or "")))
+        targets.append((advertiser_id, campaign_id))
     changes, errors = [], []
     for aid, cid in targets:
         if not aid or not cid:
@@ -1606,14 +1643,7 @@ async def source_fix(request: Request, db: Session = Depends(get_db)):
         c, e = source_check.fix_campaign(db, aid, cid)
         changes += [f"{cid[-6:]}: {x}" for x in c]
         errors += [f"{cid[-6:]}: {x}" for x in e]
-    q = []
-    if changes:
-        q.append("ok=" + quote("; ".join(changes)[:300]))
-    if errors:
-        q.append("err=" + quote("; ".join(errors)[:300]))
-    if not changes and not errors:
-        q.append("ok=" + quote("Nothing to fix."))
-    return RedirectResponse("/campaigns/source-check?" + "&".join(q), status_code=303)
+    return changes, errors
 
 
 @router.get("/campaigns/launch")
@@ -1681,7 +1711,8 @@ async def launch_submit(request: Request, db: Session = Depends(get_db)):
         picked = db.get(models.Creative, int(creative_id))
         overrides["creative_source"] = "carousel" if (picked and picked.kind == "carousel") else "library"
     fields = launch_mod.synthesize(template, overrides)
-    batch_ref = run_batch(db, accts, fields)
+    batch_ref = queue_launch(db, f"Launch {template.name} → {len(accts)} account(s)",
+                             [a.advertiser_id for a in accts], fields)
     return RedirectResponse(f"/campaigns/result/{batch_ref}", status_code=303)
 
 
@@ -1692,9 +1723,19 @@ def launch_result(request: Request, batch_ref: str, db: Session = Depends(get_db
     ok = sum(1 for l in logs if l.ok)
     import json as _json
     has_recipe = bool(queries.get_setting(db, f"batch_fields:{batch_ref}", ""))
+    job = (db.query(models.Job).filter(models.Job.href == f"/campaigns/result/{batch_ref}",
+                                       models.Job.status.in_(("queued", "running")))
+           .order_by(models.Job.id.desc()).first())
+    total = 0
+    if job:
+        try:
+            total = len(_json.loads(job.payload or "{}").get("advertiser_ids") or [])
+        except ValueError:
+            total = 0
     return render(request, "launch_result.html", {
         "logs": logs, "batch_ref": batch_ref, "ok_count": ok,
-        "fail_count": len(logs) - ok, "can_retry": has_recipe,
+        "fail_count": len(logs) - ok, "can_retry": has_recipe and not job,
+        "job": job, "job_total": total,
         "title": f"Launch result · {batch_ref}",
     })
 
@@ -1723,7 +1764,8 @@ def retry_failed(request: Request, batch_ref: str, db: Session = Depends(get_db)
     accounts = [by_id[i] for i in failed_ids if i in by_id]
     if not accounts:
         return RedirectResponse(f"/campaigns/result/{batch_ref}?note=nofail", status_code=303)
-    new_ref = run_batch(db, accounts, fields)
+    new_ref = queue_launch(db, f"Retry {len(accounts)} failed account(s) of {batch_ref}",
+                           [a.advertiser_id for a in accounts], fields)
     return RedirectResponse(f"/campaigns/result/{new_ref}", status_code=303)
 
 
@@ -1756,12 +1798,29 @@ def apply_campaign_edit(advertiser_id: str, campaign_id: str,
                         adgroup_budget_all: str = Form(""),
                         cost_cap_all: str = Form(""),
                         db: Session = Depends(get_db)):
-    """Apply whichever fields were filled: campaign name, CBO campaign budget,
+    """Queue whichever fields were filled: campaign name, CBO campaign budget,
     all ad-group budgets, and/or all cost caps."""
+    from .. import jobs
     acct = db.query(models.AdAccount).filter_by(advertiser_id=advertiser_id).first()
     if not acct or not acct.access_token:
         return RedirectResponse(
             f"/campaigns/{advertiser_id}/{campaign_id}/edit?err=no+token", status_code=303)
+    if not any(str(v).strip() for v in (campaign_name, campaign_budget, adgroup_budget_all, cost_cap_all)):
+        return RedirectResponse(f"/campaigns/{advertiser_id}/{campaign_id}/edit?err=no+changes+applied", status_code=303)
+    rec = db.query(models.CampaignRecord).filter_by(advertiser_id=advertiser_id, campaign_id=campaign_id).first()
+    jobs.enqueue(db, "campaign_edit", f"Edit {rec.campaign_name if rec else campaign_id}",
+                 {"advertiser_id": advertiser_id, "campaign_id": campaign_id, "campaign_name": campaign_name,
+                  "campaign_budget": campaign_budget, "adgroup_budget_all": adgroup_budget_all, "cost_cap_all": cost_cap_all},
+                 href=f"/campaigns/{advertiser_id}/{campaign_id}/edit")
+    return RedirectResponse(f"/campaigns/{advertiser_id}/{campaign_id}/edit?ok=Applying+in+the+background+—+you%27ll+get+a+notification.", status_code=303)
+
+
+def apply_edit(db: Session, advertiser_id: str, campaign_id: str, campaign_name: str = "",
+               campaign_budget: str = "", adgroup_budget_all: str = "", cost_cap_all: str = "") -> tuple[list, list]:
+    """The edit itself (runs in a job): rename, CBO budget, all ad-group budgets, all cost caps."""
+    acct = db.query(models.AdAccount).filter_by(advertiser_id=advertiser_id).first()
+    if not acct or not acct.access_token:
+        return [], ["no TikTok token for this account"]
 
     def _f(v):
         try:
@@ -1773,7 +1832,6 @@ def apply_campaign_edit(advertiser_id: str, campaign_id: str,
     new_ag_budget = _f(adgroup_budget_all)
     new_cap = _f(cost_cap_all)
     changed, errors = [], []
-
     rec = (db.query(models.CampaignRecord)
            .filter_by(advertiser_id=advertiser_id, campaign_id=campaign_id).first())
     new_name = campaign_name.strip()
@@ -1836,10 +1894,7 @@ def apply_campaign_edit(advertiser_id: str, campaign_id: str,
                              rule="manual edit", action="edit",
                              ok=not errors, detail="; ".join(changed + errors) or "no changes"))
     db.commit()
-    q = f"ok={'+'.join(changed).replace(' ', '+')}" if changed else "err=no+changes+applied"
-    if errors:
-        q += f"&err={'+·+'.join(errors)[:180].replace(' ', '+')}"
-    return RedirectResponse(f"/campaigns/{advertiser_id}/{campaign_id}/edit?{q}", status_code=303)
+    return changed, errors
 
 
 # ---------------------------------------------------------------------------
@@ -1893,8 +1948,9 @@ def campaign_bids(advertiser_id: str, campaign_id: str, db: Session = Depends(ge
 @router.post("/campaigns/{advertiser_id}/{campaign_id}/bids")
 def campaign_bids_apply(advertiser_id: str, campaign_id: str, cap: str = Form(...),
                         db: Session = Depends(get_db)):
-    """Set ONE cost cap on every ad group of the campaign (BID_TYPE_CUSTOM +
-    conversion_bid_price). Returns JSON {ok, applied, failed, errors, cap}."""
+    """Queue ONE cost cap for every ad group of the campaign. Returns JSON
+    {queued: true, job_id} at once; the result arrives as a notification."""
+    from .. import jobs
     acct = db.query(models.AdAccount).filter_by(advertiser_id=advertiser_id).first()
     if not acct or not acct.access_token:
         return JSONResponse({"ok": False, "error": "no TikTok token for this account"}, status_code=400)
@@ -1904,10 +1960,22 @@ def campaign_bids_apply(advertiser_id: str, campaign_id: str, cap: str = Form(..
         return JSONResponse({"ok": False, "error": "cap must be a number"}, status_code=400)
     if new_cap <= 0 or new_cap > 10000:
         return JSONResponse({"ok": False, "error": "cap must be between 0.01 and 10000"}, status_code=400)
+    rec = db.query(models.CampaignRecord).filter_by(advertiser_id=advertiser_id, campaign_id=campaign_id).first()
+    job = jobs.enqueue(db, "bid", f"Cost cap ${new_cap:.2f} → {rec.campaign_name if rec else campaign_id}",
+                       {"advertiser_id": advertiser_id, "campaign_id": campaign_id, "cap": new_cap}, href="/status")
+    return JSONResponse({"ok": True, "queued": True, "job_id": job.id, "cap": new_cap})
+
+
+def apply_bid(db: Session, advertiser_id: str, campaign_id: str, new_cap: float) -> dict:
+    """The bid change itself (runs in a job): BID_TYPE_CUSTOM + conversion_bid_price
+    on every ad group. Returns {ok, applied, failed, errors, cap, n}."""
+    acct = db.query(models.AdAccount).filter_by(advertiser_id=advertiser_id).first()
+    if not acct or not acct.access_token:
+        return {"ok": False, "error": "no TikTok token for this account", "applied": 0, "failed": 0, "errors": [], "n": 0, "cap": new_cap}
     try:
         data = tiktok_api.list_adgroups(acct.access_token, advertiser_id, [campaign_id])
     except tiktok_api.TikTokError as e:
-        return JSONResponse({"ok": False, "error": f"couldn't list ad groups (code {e.code}): {(e.message or '')[:120]}"}, status_code=502)
+        return {"ok": False, "error": f"couldn't list ad groups (code {e.code}): {(e.message or '')[:120]}", "applied": 0, "failed": 0, "errors": [], "n": 0, "cap": new_cap}
     applied, errors = [], []
     for ag in data.get("list", []):
         agid = str(ag.get("adgroup_id", ""))
@@ -1921,9 +1989,9 @@ def campaign_bids_apply(advertiser_id: str, campaign_id: str, cap: str = Form(..
                              detail=f"cost cap → ${new_cap:.2f} on {len(applied)} ad group(s)"
                                     + ("; " + "; ".join(errors) if errors else "")))
     db.commit()
-    return JSONResponse({"ok": bool(applied) and not errors, "cap": new_cap,
-                         "applied": len(applied), "failed": len(errors), "errors": errors,
-                         "n": len(data.get("list", []))})
+    return {"ok": bool(applied) and not errors, "cap": new_cap,
+            "applied": len(applied), "failed": len(errors), "errors": errors,
+            "n": len(data.get("list", []))}
 
 
 @router.post("/campaigns/{advertiser_id}/{campaign_id}/status")

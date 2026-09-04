@@ -16,9 +16,32 @@
     <a class="btn primary" href="/status">View Status</a>
   </div>
 </div>
+{% if job %}
+<div class="flash ok" id="launchLive">
+  <b>Launching in the background…</b> {{ logs|length }} of {{ job_total or '?' }} account(s) done{% if job.progress %} ({{ job.progress }}){% endif %}.
+  This page updates itself; you can leave it — the result pops up bottom-right on any page when it's finished.
+</div>
+<script>
+  (function () {
+    function tick() {
+      fetch(location.pathname, { credentials: "same-origin" }).then(function (r) { return r.text(); }).then(function (html) {
+        var doc = new DOMParser().parseFromString(html, "text/html");
+        var live = doc.getElementById("launchLive");
+        if (!live) { location.reload(); return; }        // finished → full result page
+        var cur = document.getElementById("launchLive"); if (cur) cur.innerHTML = live.innerHTML;
+        var list = doc.getElementById("launchLogs"), mine = document.getElementById("launchLogs");
+        if (list && mine) mine.innerHTML = list.innerHTML;
+        setTimeout(tick, 3000);
+      }).catch(function () { setTimeout(tick, 5000); });
+    }
+    setTimeout(tick, 3000);
+  })();
+</script>
+{% endif %}
 {% if request.query_params.get('note') == 'nofail' %}<div class="flash ok">Nothing to retry — every account in that batch succeeded.</div>{% endif %}
 {% if request.query_params.get('note') == 'norecipe' %}<div class="flash err">Can’t retry this batch — its launch settings weren’t recorded (older launch).</div>{% endif %}
 
+<div id="launchLogs">
 {% for l in logs %}
 <div class="card">
   <div class="card-header">
@@ -46,6 +69,7 @@
   {% endif %}
 </div>
 {% endfor %}
+</div>
 
 {% if not logs %}<div class="card"><div class="empty"><div class="empty-title">Nothing here</div>That reference has no launches — it may have been cleared, or the link is old.<br><a class="btn" href="/status">Go to Campaigns</a></div></div>{% endif %}
 {% endblock %}

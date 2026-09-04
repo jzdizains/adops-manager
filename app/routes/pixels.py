@@ -114,12 +114,18 @@ def pixels_page(request: Request, db: Session = Depends(get_db)):
 
 @router.post("/pixels/sync")
 def sync_pixels(db: Session = Depends(get_db)):
-    """Pull every enabled account's pixels into the inventory."""
+    """Queue: pull every enabled account's pixels into the inventory."""
+    from .. import jobs
+    if not queries.any_access_token(db):
+        return RedirectResponse("/pixels?err=Connect+TikTok+first", status_code=303)
+    jobs.enqueue(db, "pixels_sync", "Sync pixels from every account", {}, href="/pixels")
+    return RedirectResponse("/pixels?ok=Syncing+in+the+background+—+you%27ll+get+a+notification.", status_code=303)
+
+
+def sync_pixels_inventory(db: Session) -> tuple[int, int]:
+    """The pixel sync itself (runs in a job). Returns (found, failed_accounts)."""
     import time as _time
     from datetime import datetime, timezone
-    token = queries.any_access_token(db)
-    if not token:
-        return RedirectResponse("/pixels?err=Connect+TikTok+first", status_code=303)
     found, errors = 0, 0
     for acct in queries.enabled_accounts(db):
         try:
@@ -137,10 +143,7 @@ def sync_pixels(db: Session = Depends(get_db)):
     db.commit()
     queries.set_setting(db, "pixels_synced_at",
                         datetime.now(timezone.utc).isoformat())
-    msg = f"Synced+{found}+pixel(s)"
-    if errors:
-        msg += f"&err={errors}+account(s)+failed"
-    return RedirectResponse(f"/pixels?ok={msg}", status_code=303)
+    return found, errors
 
 
 @router.post("/pixels/{record_id}/move-to-bc")
@@ -172,11 +175,10 @@ def link_all(record_id: int, db: Session = Depends(get_db)):
     token = queries.any_access_token(db)
     if not p or not token or not p.owner_bc_id:
         return RedirectResponse("/pixels?err=missing", status_code=303)
-    ok_count, failed = _link_pixel_to_bc_accounts(db, token, p.owner_bc_id, p.pixel_id)
-    msg = f"Linked+to+{ok_count}+account(s)"
-    if failed:
-        msg += f"&err=Failed:+{'+'.join(failed[:8])}"
-    return RedirectResponse(f"/pixels?ok={msg}", status_code=303)
+    from .. import jobs
+    jobs.enqueue(db, "pixel_link_all", f"Link pixel {p.pixel_name or p.pixel_id} to every account of its BC",
+                 {"record_id": record_id}, href="/pixels")
+    return RedirectResponse("/pixels?ok=Linking+in+the+background+—+you%27ll+get+a+notification.", status_code=303)
 
 
 @router.post("/pixels/{record_id}/link-one")

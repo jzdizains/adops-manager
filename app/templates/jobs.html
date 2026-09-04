@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Background jobs</h1>
+    <div class="muted">Every launch, bid change, appeal, sync and partner step runs here so no page has to wait. Finished ones pop up bottom-right on whatever page you're on.</div></div>
+  <div class="actions"><a class="btn" href="/jobs">↻ Refresh</a></div>
+</div>
+<div class="kpis kpis-4">
+  <div class="kpi accent"><div class="lab">Running</div><div class="val">{{ summary.running }}</div><div class="sub">working right now</div></div>
+  <div class="kpi"><div class="lab">Queued</div><div class="val">{{ summary.queued }}</div><div class="sub">start within a second</div></div>
+  <div class="kpi"><div class="lab">Shown</div><div class="val">{{ rows|length }}</div><div class="sub">most recent, newest first</div></div>
+  <div class="kpi"><div class="lab">Kept</div><div class="val">14 d</div><div class="sub">older jobs are pruned</div></div>
+</div>
+<div class="card" style="padding:0;overflow:hidden;">
+  {% if rows %}
+  <div class="table-scroll">
+  <table class="data dense">
+    <thead><tr><th>When</th><th>Job</th><th>Status</th><th>Result</th><th class="num">Took</th></tr></thead>
+    <tbody>
+    {% for j in rows %}
+      <tr>
+        <td style="white-space:nowrap;"><span title="{{ j.created_at|local('%Y-%m-%d %H:%M:%S') }}">{{ j.created_at|ago }}</span></td>
+        <td><div style="font-weight:600;">{% if j.href %}<a href="{{ j.href }}" style="color:inherit;">{{ j.title }}</a>{% else %}{{ j.title }}{% endif %}</div>
+          <div class="mono muted" style="font-size:10.5px;">{{ j.kind }}</div></td>
+        <td>{% if j.status == 'done' %}<span class="pill ok">done</span>{% elif j.status == 'error' %}<span class="pill err">error</span>
+            {% elif j.status == 'running' %}<span class="pill warn">running{% if j.progress %} · {{ j.progress }}{% endif %}</span>{% else %}<span class="pill dim">queued</span>{% endif %}</td>
+        <td style="max-width:560px;font-size:12px;">{{ j.detail }}</td>
+        <td class="num muted" style="white-space:nowrap;">{% if j.started_at and j.finished_at %}{{ "%.0f"|format((j.finished_at - j.started_at).total_seconds()) }} s{% else %}—{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <div class="empty"><div class="empty-title">Nothing yet</div>Launch something, change a bid or run a sync — it shows up here and finishes in the background.</div>
+  {% endif %}
+</div>
+{% endblock %}

@@ -118,16 +118,10 @@ async def create(request: Request, db: Session = Depends(get_db)):
     db.commit()
     if invite_email:
         queries.set_setting(db, "partners_last_email", invite_email)
-    partners.run(db, row, token)
-    problems = [s for s in (row.partner_status, row.invite_status) if s == partners.ERROR]
-    if problems:
-        return _back(err="Setup recorded, but TikTok refused a step — see the row for the exact message.", anchor=f"setup-{row.id}")
-    msg = "Done on TikTok's side: " + ", ".join(
-        p for p in [("partner added" + (" + ad accounts shared" if row.share_advertiser_ids else "")) if partner_id else "",
-                    f"{invite_email} invited" if invite_email else "",
-                    ("TikTok account assigned" if row.assign_status == partners.DONE else
-                     "TikTok account will be assigned once the invite is accepted") if tt_id and invite_email else ""] if p)
-    return _back(ok=msg + ". Now the two website-only steps — tick them off below.", anchor=f"setup-{row.id}")
+    from .. import jobs
+    jobs.enqueue(db, "partner_setup", f"Partner setup: {row.partner_name or row.partner_id or row.invite_email}",
+                 {"row_id": row.id}, href=f"/partners#setup-{row.id}")
+    return _back(ok="Running in the background — you'll get a notification; the row below fills in as each step answers.", anchor=f"setup-{row.id}")
 
 
 @router.post("/partners/{row_id}/retry")
@@ -138,10 +132,11 @@ def retry(row_id: int, db: Session = Depends(get_db)):
         return _back(err="Setup not found or TikTok not connected.")
     if row.assign_status == partners.ERROR:
         row.assign_status = partners.PENDING
-    partners.run(db, row, token)
-    if row.assign_status == partners.WAITING or partners.ERROR in (row.partner_status, row.invite_status, row.assign_status):
-        return _back(err="Retried — a step still isn't through; the row shows TikTok's answer.", anchor=f"setup-{row.id}")
-    return _back(ok="Retried — every API step is done.", anchor=f"setup-{row.id}")
+        db.commit()
+    from .. import jobs
+    jobs.enqueue(db, "partner_setup", f"Partner setup retry: {row.partner_name or row.partner_id or row.invite_email}",
+                 {"row_id": row.id}, href=f"/partners#setup-{row.id}")
+    return _back(ok="Retrying in the background — you'll get a notification.", anchor=f"setup-{row.id}")
 
 
 @router.post("/partners/{row_id}/tick")

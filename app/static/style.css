@@ -652,3 +652,24 @@ table.data.show-detail th.col-detail, table.data.show-detail td.col-detail { dis
 .bc-tag.on .n { color: var(--accent); }
 .bc-tag.clear { border-style: dashed; color: var(--text-dim); }
 .bc-tag[hidden] { display: none; }
+
+/* background-job notifications (bottom-right) + running pill in the sidebar */
+.jn-host { position: fixed; right: 16px; bottom: 16px; z-index: 1200; display: flex; flex-direction: column; gap: 8px; max-width: min(380px, calc(100vw - 32px)); }
+.jn { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 10px; background: var(--panel);
+      border: 1px solid var(--border); box-shadow: 0 12px 32px rgba(0,0,0,.35); color: var(--text); text-decoration: none;
+      animation: jnIn .22s ease-out; }
+.jn:hover { border-color: var(--accent); text-decoration: none; }
+.jn.out { opacity: 0; transform: translateY(6px); transition: opacity .25s, transform .25s; }
+.jn .jn-ic { width: 20px; height: 20px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; flex: none; margin-top: 1px; }
+.jn.ok .jn-ic { background: color-mix(in srgb, var(--ok) 20%, transparent); color: var(--ok); }
+.jn.err .jn-ic { background: color-mix(in srgb, var(--err) 20%, transparent); color: var(--err); }
+.jn .jn-body { flex: 1; min-width: 0; font-size: 12.5px; line-height: 1.35; }
+.jn .jn-body b { display: block; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jn .jn-d { color: var(--text-soft); font-size: 12px; display: block; }
+.jn .jn-x { font: inherit; font-size: 11px; border: none; background: transparent; color: var(--text-dim); cursor: pointer; padding: 0 2px; }
+.jn .jn-x:hover { color: var(--text); }
+@keyframes jnIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.sn.jr { color: var(--accent); }
+.sn.jr .jr-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; margin: 0 6px 0 5px; animation: pacePulse 1.4s ease-in-out infinite; }
+[data-side="collapsed"] .sn.jr .jr-t { display: none; }
+@media (prefers-reduced-motion: reduce) { .sn.jr .jr-dot { animation: none; } }

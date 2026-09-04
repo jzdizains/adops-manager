@@ -609,3 +609,24 @@ class MetricTick(Base):
     impressions = Column(Integer, default=0)
     clicks = Column(Integer, default=0)
     conversions = Column(Integer, default=0)
+
+
+class Job(Base):
+    """A background action (launch, bid change, appeal, sync, partner setup…).
+    Pages enqueue and return at once; the jobs worker runs the handler and the
+    result surfaces as a clickable notification (bottom-right) on any open
+    page, then in the Jobs list. seen = the notification was delivered."""
+    __tablename__ = "jobs"
+
+    id = Column(Integer, primary_key=True)
+    kind = Column(String, index=True, default="")
+    title = Column(String, default="")
+    payload = Column(Text, default="{}")
+    status = Column(String, index=True, default="queued")   # queued | running | done | error
+    detail = Column(Text, default="")                       # result line shown in the notification
+    href = Column(String, default="")                       # where the notification takes you
+    progress = Column(String, default="")                   # optional "3 of 12" while running
+    seen = Column(Boolean, default=False, index=True)
+    created_at = Column(DateTime, default=utcnow, index=True)
+    started_at = Column(DateTime, nullable=True)
+    finished_at = Column(DateTime, nullable=True)

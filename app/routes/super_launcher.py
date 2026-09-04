@@ -215,7 +215,10 @@ async def launch(request: Request, db: Session = Depends(get_db)):
         if creatives_count > 0:                 # cap accounts to what the creatives cover
             accounts = accounts[:len(creatives) * per_creative]
         pairs = engine.assign_creatives(accounts, creatives, per_creative)
-        batch_ref = engine.run_batch_assigned(db, pairs, fields)
+        batch_ref = engine.queue_launch(db, f"Launch {template.name} → {len(pairs)} account(s)",
+                                        [a.advertiser_id for a, _ in pairs], fields,
+                                        pairs=[[a.advertiser_id, cid] for a, cid in pairs])
     else:
-        batch_ref = engine.run_batch(db, accounts, fields)
+        batch_ref = engine.queue_launch(db, f"Launch {template.name} → {len(accounts)} account(s)",
+                                        [a.advertiser_id for a in accounts], fields)
     return RedirectResponse(f"/campaigns/result/{batch_ref}", status_code=303)

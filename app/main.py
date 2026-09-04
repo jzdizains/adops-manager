@@ -1,4 +1,5 @@
 """FastAPI app — registers the routers, session middleware, auth gate, static."""
+import os
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -9,7 +10,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from . import background, config
 from .database import init_db
 from .routes import (
-    ad_texts, alerts, appeals_page, auth, automation, campaigns, partners_page, cookies_admin, creatives, dashboard,
+    ad_texts, alerts, appeals_page, auth, automation, campaigns, jobs_page, partners_page, cookies_admin, creatives, dashboard,
     inbox, instant_pages, issues_page, lead_forms, locations, monitor, oauth,
     performance, pixels, postback, security, settings_page, spark_codes, escape_test,
     status, super_launcher, templates_routes,
@@ -42,6 +43,18 @@ init_db()
 # Background worker: balance sync + low-balance alerts + metric refresh.
 background.start()
 
+# Jobs worker: launches, bid changes, appeals, syncs — anything a page shouldn't wait for.
+from . import job_handlers  # noqa: E402,F401 — registers the handlers
+from . import jobs as _jobs  # noqa: E402
+if os.environ.get("ADOPS_DISABLE_BG") != "1":
+    from .database import SessionLocal as _SL
+    _db = _SL()
+    try:
+        _jobs.recover(_db)
+    finally:
+        _db.close()
+    _jobs.start()
+
 
 for r in (auth.router, security.router, oauth.router, dashboard.router,
           templates_routes.router, campaigns.router, super_launcher.router,
@@ -51,5 +64,5 @@ for r in (auth.router, security.router, oauth.router, dashboard.router,
           settings_page.router, postback.router, pixels.router,
           automation.router, issues_page.router, creatives.router,
           ad_texts.router, locations.router, escape_test.router,
-          appeals_page.router, partners_page.router):
+          appeals_page.router, partners_page.router, jobs_page.router):
     app.include_router(r)
