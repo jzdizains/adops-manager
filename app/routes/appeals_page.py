@@ -41,8 +41,15 @@ def appeals_page(request: Request, db: Session = Depends(get_db)):
     preview = appeals_mod.render_reason(
         s.get("appeal_reason", ""), ad_name="My ad", campaign_name="MyCampaign_1",
         reasons="The ad or video has no background audio")
+    # when each campaign was created (TikTok create_time, synced into CampaignRecord)
+    cids = {r.campaign_id for r in rows if r.campaign_id}
+    created = {}
+    if cids:
+        for rec in db.query(models.CampaignRecord).filter(models.CampaignRecord.campaign_id.in_(cids)).all():
+            if rec.launched_at:
+                created[rec.campaign_id] = rec.launched_at
     return render(request, "appeals.html", {
-        "title": "Appeals", "s": s, "summary": appeals_mod.summary(db),
+        "title": "Appeals", "s": s, "summary": appeals_mod.summary(db), "created": created,
         "open_rows": open_rows, "waiting": waiting, "history": history,
         "labels": appeals_mod.STATUS_LABELS, "preview": preview,
         "keywords": appeals_mod.skip_keywords(s),
@@ -80,6 +87,37 @@ def file_one(row_id: int, reason: str = Form(""), db: Session = Depends(get_db))
     if appeals_mod.file_appeal(db, row, token, filed_by="manual", reason=text):
         return _back(ok=f"Appeal filed for “{(row.ad_name or row.adgroup_id)[:50]}”. TikTok aims to answer within 24 hours.")
     return _back(err=f"TikTok refused the appeal: {row.error}")
+
+
+@router.post("/appeals/file-selected")
+async def file_selected(request: Request, db: Session = Depends(get_db)):
+    """Appeal only the ticked rejections (one per ad group), optional shared reason."""
+    form = await request.form()
+    ids = []
+    for v in form.getlist("ids"):
+        try:
+            ids.append(int(v))
+        except (TypeError, ValueError):
+            continue
+    if not ids:
+        return _back(err="Tick at least one ad group first.")
+    reason = str(form.get("reason") or "").strip() or None
+    s = get_settings(db)
+    ok = err = skipped = 0
+    for row in db.query(models.Appeal).filter(models.Appeal.id.in_(ids)).all():
+        if row.status not in ("pending", "skipped", "error"):
+            skipped += 1
+            continue
+        token = _token_for(db, row.advertiser_id)
+        if not token:
+            err += 1
+            continue
+        if appeals_mod.file_appeal(db, row, token, s, filed_by="manual", reason=reason):
+            ok += 1
+        else:
+            err += 1
+    msg = f"Filed {ok} appeal(s)" + (f", {err} refused — see the rows" if err else "") + (f", {skipped} already handled" if skipped else "") + "."
+    return _back(ok=msg) if ok and not err else _back(err=msg)
 
 
 @router.post("/appeals/file-all")
