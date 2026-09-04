@@ -640,3 +640,15 @@ table.data.show-detail th.col-detail, table.data.show-detail td.col-detail { dis
 .bidpop .bp-quick button:hover { color: var(--accent); border-color: var(--accent); }
 .bidpop .bp-dollar { font-family: var(--font-mono); color: var(--text-dim); }
 .bidpop #bpCap { flex: 1; font-family: var(--font-mono); font-size: 14px; padding: 6px 8px; }
+
+/* Business Center tags above the account picker (Super Launcher) */
+.bc-tags { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: -2px 0 10px; }
+.bc-tags-lab { font-size: 10.5px; font-weight: 700; letter-spacing: .06em; color: var(--text-dim); margin-right: 2px; }
+.bc-tag { font: inherit; font-size: 11.5px; font-weight: 600; color: var(--text-soft); background: var(--panel); border: 1px solid var(--border);
+          border-radius: 999px; padding: 3px 10px; cursor: pointer; display: inline-flex; gap: 5px; align-items: center; }
+.bc-tag .n { font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); }
+.bc-tag:hover { border-color: var(--accent); color: var(--text); }
+.bc-tag.on { background: color-mix(in srgb, var(--accent) 18%, transparent); border-color: var(--accent); color: var(--text); }
+.bc-tag.on .n { color: var(--accent); }
+.bc-tag.clear { border-style: dashed; color: var(--text-dim); }
+.bc-tag[hidden] { display: none; }

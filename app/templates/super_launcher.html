@@ -36,9 +36,16 @@
         {% if counts.cooldown or counts.blocked %}<button type="button" data-f="cooldown">Cooling <span class="n">{{ counts.cooldown + counts.blocked }}</span></button>{% endif %}
       </div>
     </div>
+    <div class="bc-tags" id="slBcTags" title="Click a Business Center to show only its accounts — several can be on at once. Your choice is remembered on this browser.">
+      <span class="bc-tags-lab">BC</span>
+      {% for bc_name, members in groups.items() %}
+      <button type="button" class="bc-tag" data-bc="{{ bc_name }}">{{ bc_name }} <span class="n">{{ members|length }}</span></button>
+      {% endfor %}
+      <button type="button" class="bc-tag clear" id="slBcClear" hidden>✕ all BCs</button>
+    </div>
     <div class="sl-list" id="slList">
       {% for bc_name, members in groups.items() %}
-      <div class="sl-group" data-group>
+      <div class="sl-group" data-group data-bc="{{ bc_name }}">
         <div class="sl-group-head">
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
             <input type="checkbox" class="sl-group-all" style="width:auto;" title="Select every shown account in this Business Center">
@@ -47,7 +54,7 @@
         </div>
         {% for a in members %}
         {% set st = info[a.advertiser_id].state %}
-        <label class="sl-row" data-state="{{ st }}" data-search="{{ (a.advertiser_name or '')|lower }} {{ a.advertiser_id }} {{ bc_name|lower }}">
+        <label class="sl-row" data-state="{{ st }}" data-bc="{{ bc_name }}" data-search="{{ (a.advertiser_name or '')|lower }} {{ a.advertiser_id }} {{ bc_name|lower }}">
           <input type="checkbox" name="advertiser_ids" value="{{ a.advertiser_id }}" class="sl-acct" style="width:auto;" {{ 'disabled' if st == 'blocked' }}>
           <span class="sl-name">{{ a.advertiser_name or a.advertiser_id }}</span>
           <span class="pill {{ {'fresh':'ok','used':'dim','active':'warn','cooldown':'err','blocked':'err'}[st] }}" title="{{ {'fresh':'Never launched — best for a first campaign','used':'Has campaigns, none active','active':'Has an active campaign right now','cooldown':'Cooling down after launch failures','blocked':'TikTok status is not ENABLE — cannot launch'}[st] }}">{{ {'fresh':'fresh','used':'used','active':'live','cooldown':'cooling','blocked':'blocked'}[st] }}</span>
@@ -176,15 +183,37 @@
   var autoBox = document.getElementById("slAuto"), autoRow = document.getElementById("slAutoRow");
   var summary = document.getElementById("slSummary"), launchBtn = document.getElementById("slLaunch");
   var filterState = "";
+  // ---- Business Center tags: one click instead of typing the BC name; remembered per browser
+  var bcTags = Array.prototype.slice.call(document.querySelectorAll("#slBcTags .bc-tag[data-bc]"));
+  var bcClear = document.getElementById("slBcClear");
+  var activeBcs = {};
+  try { (JSON.parse(localStorage.getItem("adops-sl-bc") || "[]") || []).forEach(function (b) { activeBcs[b] = true; }); } catch (e) {}
+  function bcActiveList() { return Object.keys(activeBcs).filter(function (k) { return activeBcs[k]; }); }
+  function syncBcTags() {
+    var known = {}; bcTags.forEach(function (t) { known[t.getAttribute("data-bc")] = true; });
+    Object.keys(activeBcs).forEach(function (k) { if (!known[k]) delete activeBcs[k]; });   // a BC that disappeared
+    bcTags.forEach(function (t) { t.classList.toggle("on", !!activeBcs[t.getAttribute("data-bc")]); });
+    if (bcClear) bcClear.hidden = bcActiveList().length === 0;
+    try { localStorage.setItem("adops-sl-bc", JSON.stringify(bcActiveList())); } catch (e) {}
+  }
+  bcTags.forEach(function (t) {
+    t.addEventListener("click", function () {
+      var k = t.getAttribute("data-bc"); activeBcs[k] = !activeBcs[k];
+      syncBcTags(); applyFilter();
+    });
+  });
+  if (bcClear) bcClear.addEventListener("click", function () { activeBcs = {}; syncBcTags(); applyFilter(); });
+  syncBcTags();
 
   function visible(r) { return !r.hidden; }
   function applyFilter() {
-    var q = (search ? search.value : "").trim().toLowerCase(), n = 0;
+    var q = (search ? search.value : "").trim().toLowerCase(), n = 0, anyBc = bcActiveList().length > 0;
     rows.forEach(function (r) {
       var st = r.getAttribute("data-state");
       var okState = !filterState || st === filterState || (filterState === "cooldown" && st === "blocked");
       var okText = !q || r.getAttribute("data-search").indexOf(q) >= 0;
-      r.hidden = !(okState && okText);
+      var okBc = !anyBc || !!activeBcs[r.getAttribute("data-bc")];
+      r.hidden = !(okState && okText && okBc);
       if (!r.hidden) n++;
     });
     document.querySelectorAll("[data-group]").forEach(function (g) {
