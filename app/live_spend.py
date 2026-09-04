@@ -61,6 +61,7 @@ def sync_campaigns(db: Session, accounts: list[models.AdAccount] | None = None) 
                 pass  # reporting can lag; keep the campaign list anyway
 
             db.query(models.CampaignRecord).filter_by(advertiser_id=acct.advertiser_id).delete()
+            new_recs: list[models.CampaignRecord] = []
             for c in campaigns:
                 cid = str(c.get("campaign_id", ""))
                 m = metrics_by_campaign.get(cid, {})
@@ -71,7 +72,7 @@ def sync_campaigns(db: Session, accounts: list[models.AdAccount] | None = None) 
                         launched_at = datetime.strptime(raw_created[:19], "%Y-%m-%d %H:%M:%S")
                     except ValueError:
                         pass
-                db.add(models.CampaignRecord(
+                rec = models.CampaignRecord(
                     advertiser_id=acct.advertiser_id,
                     campaign_id=cid,
                     campaign_name=c.get("campaign_name", ""),
@@ -90,7 +91,9 @@ def sync_campaigns(db: Session, accounts: list[models.AdAccount] | None = None) 
                     ctr=_f(m, "ctr"),
                     launched_at=launched_at,
                     is_smart_plus=bool(c.get("_smart_plus")),
-                ))
+                )
+                db.add(rec)
+                new_recs.append(rec)
                 # upsert today's spend snapshot (P&L history)
                 snap = (db.query(models.SpendSnapshot)
                         .filter_by(campaign_id=cid, day=today).first())
@@ -100,12 +103,17 @@ def sync_campaigns(db: Session, accounts: list[models.AdAccount] | None = None) 
                     db.add(snap)
                 snap.spend = _f(m, "spend")
                 snap.conversions = int(_f(m, "conversion"))
+            # pace ticks (delivery velocity for the Campaigns page)
+            from . import pace as _pace
+            _pace.record(db, new_recs)
             db.commit()
             synced += 1
         except tiktok_api.TikTokError as e:
             db.rollback()
             errors.append({"advertiser_id": acct.advertiser_id, "code": str(e.code),
                            "message": (e.message or "")[:200]})
+    from . import pace as _pace
+    _pace.prune(db)
     # persist the report — sync failures must never be invisible
     import json as _json
     from datetime import datetime as _dt, timezone as _tz

@@ -60,7 +60,7 @@ def rss_mb() -> float:
 def _loop():
     import gc
 
-    from . import balances, issues, live_spend, queue_worker, rules, tensorpix_worker
+    from . import balances, issues, live_spend, partners, queue_worker, rules, tensorpix_worker
     from .database import SessionLocal
     from .settings_store import get_settings
 
@@ -87,6 +87,7 @@ def _loop():
                 rules.check_fresh_inventory(db, settings)
                 rules.check_pool_inventory(db, settings)
                 issues.scan(db)
+                partners.poll(db)               # TikTok-account assignments waiting on accepted invites
             else:
                 # fast pass: only accounts with something running
                 hot = _accounts_with_active_campaigns(db)

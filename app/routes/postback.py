@@ -44,14 +44,18 @@ router = APIRouter()
 # The event TikTok's algorithm learns from must be the one the ad group optimises
 # for, so a split test (registration vs purchase campaigns side by side) needs each
 # postback to fire ITS campaign's event, not one global name.
+# Event names as the Events API 2.0 "Web Standard Events" table spells them
+# (case-sensitive). The purchase event is "Purchase" there — "CompletePayment"
+# is the older browser-pixel name and is NOT in the 2.0 list.
 OPT_EVENT_TO_WEB_EVENT = {
     "ON_WEB_REGISTER": "CompleteRegistration",
-    "SHOPPING": "CompletePayment",
+    "SHOPPING": "Purchase",
     "ON_WEB_ORDER": "PlaceAnOrder",
     "FORM": "SubmitForm",
     "ON_WEB_DETAIL": "ViewContent",
     "BUTTON": "ClickButton",
 }
+LEGACY_EVENT_NAMES = {"CompletePayment": "Purchase"}   # normalise old pixel names typed into Settings
 
 
 def _launch_for_source(db: Session, source: str):
@@ -67,6 +71,7 @@ def event_name_for(db: Session, source: str, settings: dict, log=None) -> tuple[
     campaign's ad group optimises for; the fixed name is the fallback when the
     launch didn't record one (older launches, non-pixel destinations)."""
     fixed = (settings.get("events_event_name") or "CompleteRegistration").strip()
+    fixed = LEGACY_EVENT_NAMES.get(fixed, fixed)
     if settings.get("events_event_mode", "campaign") != "campaign":
         return fixed, "fixed"
     log = log or _launch_for_source(db, source)
@@ -75,6 +80,15 @@ def event_name_for(db: Session, source: str, settings: dict, log=None) -> tuple[
     if ev:
         return ev, f"campaign optimises for {opt}"
     return fixed, "fallback (launch has no optimization event)"
+
+
+def page_url_for(db: Session, source: str, settings: dict) -> str:
+    """page.url is REQUIRED on web events (Events API 2.0). Use the landing
+    URL the source's campaign launched with, else the URL from Settings, else
+    a bare https:// so the event is still well-formed."""
+    log = _launch_for_source(db, source) if source else None
+    url = (log.landing_url if log and log.landing_url else "") or (settings.get("events_page_url") or "").strip()
+    return url or "https://unknown.landing/"
 
 
 def _events_pixel_code(db: Session, source: str, settings: dict) -> tuple[str, str]:
@@ -130,7 +144,8 @@ def _forward_to_tiktok(db: Session, event: models.PostbackEvent, s: dict) -> str
             event_id=event.txn or f"pb{event.id}",
             ttclid=event.ttclid, value=float(event.revenue or 0),
             currency=(s.get("events_currency") or "USD").strip(),
-            test_event_code=(s.get("events_test_code") or "").strip())
+            test_event_code=(s.get("events_test_code") or "").strip(),
+            page_url=page_url_for(db, event.source, s))
         return f"sent {event_name}"
     except tiktok_api.TikTokError as e:
         return f"error: code {e.code}: {(e.message or '')[:160]}"

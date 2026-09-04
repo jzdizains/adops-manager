@@ -610,3 +610,19 @@ table.data.show-detail th.col-detail, table.data.show-detail td.col-detail { dis
 .acct-link .ext { font-size: 10px; margin-left: 3px; opacity: .45; }
 .acct-link:hover { color: var(--accent); text-decoration: none; }
 .acct-link:hover .ext { opacity: 1; }
+
+/* delivery pace chips + micro bars (Campaigns, today view) */
+.pl { display: flex; justify-content: flex-end; align-items: center; gap: 4px; margin-top: 2px; line-height: 1; }
+.pl.col { flex-direction: column; align-items: flex-end; gap: 3px; }
+.pace { display: inline-flex; align-items: center; gap: 3px; padding: 1px 5px; border-radius: 999px;
+        font-size: 10.5px; font-weight: 600; font-family: var(--font-mono); vertical-align: middle; white-space: nowrap; }
+.pace small { font-size: 8.5px; font-weight: 500; opacity: .7; margin-left: 1px; }
+.pace.up { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
+.pace.flat { background: var(--panel-hover); color: var(--text-dim); }
+.pace .live { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); display: inline-block; animation: pacePulse 1.6s ease-in-out infinite; }
+@keyframes pacePulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .35; transform: scale(.7); } }
+.mbars { display: inline-flex; align-items: flex-end; gap: 1px; height: 12px; vertical-align: middle; }
+.mbars i { display: inline-block; width: 3px; min-height: 2px; border-radius: 1px; background: var(--border); }
+.mbars { height: 10px; }
+.mbars i.on { background: var(--accent); }
+@media (prefers-reduced-motion: reduce) { .pace .live { animation: none; } }

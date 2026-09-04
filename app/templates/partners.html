@@ -1,0 +1,227 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Partners</h1>
+    <div class="muted">Set up a new partner Business Center in one go: add it as a partner, share ad accounts, invite your email, assign the TikTok account — then tick off the two steps TikTok only offers on its website.</div></div>
+  <div class="actions">
+    <a class="btn" href="/pixels" title="Pixel inventory — transfer to BC, link to accounts">Pixels</a>
+  </div>
+</div>
+
+{% if not has_token %}
+<div class="flash err">TikTok isn't connected — <a href="/oauth/connect">connect</a> first. Partner and member calls need a token whose user is an <b>Admin</b> of the Business Center.</div>
+{% elif not roles_loaded %}
+<div class="flash err">TikTok didn't answer <span class="mono">/bc/get/</span> just now, so I can't tell which Business Centers you're Admin of. The form still works — TikTok will refuse a step if the role is missing.</div>
+{% endif %}
+
+<div class="card" id="newPartner">
+  <div class="card-header"><span class="card-title">Set up a new partner</span>
+    <span class="card-meta">runs immediately · each step is recorded with TikTok's answer</span></div>
+  <form method="post" action="/partners/create" id="partnerForm">
+    <div class="form-row">
+      <div>
+        <div style="font-weight:650;font-size:12.5px;margin-bottom:8px;color:var(--text-soft);">1 · Add the partner to your main Business Center</div>
+        <label class="field"><span class="field-label">Main Business Center (owns the pixel + TikTok profile)</span>
+          <select name="bc_id" id="mainBc" required>
+            <option value="">— pick —</option>
+            {% for b in bcs %}<option value="{{ b.bc_id }}" data-admin="{{ '1' if b.admin else '0' }}">{{ b.name }} · {{ b.bc_id }}{% if b.user_role %} · you: {{ b.user_role|lower }}{% endif %}</option>{% endfor %}
+          </select>
+          <span class="hint" id="mainBcHint">Needs your Admin role there.</span></label>
+        <label class="field"><span class="field-label">Partner Business Center ID</span>
+          <input type="text" name="partner_id" id="partnerId" list="bcList" placeholder="Business Center ID of the new partner (digits)" inputmode="numeric" autocomplete="off">
+          <datalist id="bcList">{% for b in bcs %}<option value="{{ b.bc_id }}">{{ b.name }}</option>{% endfor %}</datalist>
+          <span class="hint">From the partner's Business Center → Settings. Leave empty to only invite an email.</span></label>
+        <label class="field"><span class="field-label">Partner name (for this list)</span>
+          <input type="text" name="partner_name" placeholder="optional label"></label>
+        <div class="field"><span class="field-label">Ad accounts of the main BC to share with the partner <span class="muted">(optional · max 50)</span></span>
+          <div class="pick" id="shareAccounts" data-type="ADVERTISER" data-name="share_advertiser_ids"><div class="muted" style="font-size:12px;">Pick the main BC to load its ad accounts.</div></div>
+          <div style="display:flex;gap:10px;align-items:center;margin-top:6px;">
+            <span class="hint" style="margin:0;">Role for the partner:</span>
+            <select name="share_advertiser_role" style="width:auto;">{% for r in adv_roles %}<option value="{{ r }}" {{ 'selected' if r == 'OPERATOR' }}>{{ r|capitalize }}</option>{% endfor %}</select>
+          </div>
+          <span class="hint">This is the <em>only</em> asset type TikTok's partner API can share (<span class="mono">/bc/partner/add/</span>, asset_type ADVERTISER). Pixels and TikTok accounts: step 3.</span></div>
+      </div>
+      <div>
+        <div style="font-weight:650;font-size:12.5px;margin-bottom:8px;color:var(--text-soft);">2 · Add your email as a member</div>
+        <label class="field"><span class="field-label">Invite into which Business Center</span>
+          <select name="invite_bc_id" id="inviteBc">
+            <option value="">— same as the partner BC above —</option>
+            {% for b in bcs %}<option value="{{ b.bc_id }}" data-admin="{{ '1' if b.admin else '0' }}">{{ b.name }} · {{ b.bc_id }}{% if b.user_role %} · you: {{ b.user_role|lower }}{% endif %}</option>{% endfor %}
+          </select>
+          <span class="hint" id="inviteBcHint">Your token's user must be Admin of that BC too; otherwise TikTok refuses the invite (and the TikTok-account assignment).</span></label>
+        <div class="form-row">
+          <label class="field"><span class="field-label">Email to invite</span>
+            <input type="email" name="invite_email" value="{{ last_email }}" placeholder="you@company.com" autocomplete="off"></label>
+          <label class="field"><span class="field-label">Role in the BC</span>
+            <select name="invite_role"><option value="STANDARD">Standard (only assigned assets)</option><option value="ADMIN">Admin (everything)</option></select></label>
+        </div>
+        <div class="field"><span class="field-label">Ad accounts of that BC to assign to the member <span class="muted">(optional)</span></span>
+          <div class="pick" id="inviteAccounts" data-type="ADVERTISER" data-name="invite_advertiser_ids"><div class="muted" style="font-size:12px;">Pick the BC to load its ad accounts.</div></div>
+          <div style="display:flex;gap:10px;align-items:center;margin-top:6px;">
+            <span class="hint" style="margin:0;">Ad account role:</span>
+            <select name="invite_advertiser_role" style="width:auto;">{% for r in adv_roles %}<option value="{{ r }}" {{ 'selected' if r == 'OPERATOR' }}>{{ r|capitalize }}</option>{% endfor %}</select>
+          </div></div>
+        <div class="field"><span class="field-label">TikTok account to assign to the member <span class="muted">(optional · after they accept)</span></span>
+          <div style="display:flex;gap:8px;">
+            <select id="ttSelect" style="flex:1;"><option value="">— pick the BC first —</option></select>
+            <input type="text" name="tt_account_id" id="ttId" placeholder="or paste the TikTok account (asset) ID" style="flex:1;" autocomplete="off">
+          </div>
+          <input type="hidden" name="tt_account_name" id="ttName">
+          <div style="display:flex;flex-wrap:wrap;gap:12px;margin-top:6px;font-size:12px;">
+            <label style="display:flex;gap:5px;align-items:center;"><input type="checkbox" name="tt_account_roles" value="POST" checked style="width:auto;"> Existing posts</label>
+            <label style="display:flex;gap:5px;align-items:center;"><input type="checkbox" name="tt_account_roles" value="PUBLISH_VIDEO_ADS_ONLY" style="width:auto;"> Only show as ads</label>
+            <label style="display:flex;gap:5px;align-items:center;"><input type="checkbox" name="tt_account_roles" value="PUBLISH_VIDEO_SHOW_ON_TT_PROFILE_AND_ADS" style="width:auto;"> Show on profile + ads</label>
+          </div>
+          <span class="hint">Lists the TikTok accounts that BC can see (its own, plus ones shared to it). The main BC's profile appears here only after step 3 — the assignment is retried on every slow sweep until the invite is accepted and the account is visible.</span></div>
+      </div>
+    </div>
+    <div style="display:flex;gap:12px;align-items:center;margin-top:8px;">
+      <button class="btn primary" type="submit" id="runBtn">Run setup</button>
+      <span class="hint" style="margin:0;">3 · Pixel + TikTok profile sharing with the partner is website-only — the row below gives you the link and a checklist.</span>
+    </div>
+  </form>
+</div>
+
+<div class="card" style="padding:0;overflow:hidden;">
+  <div class="card-header" style="padding:12px 14px;margin:0;border-bottom:1px solid var(--border-soft);">
+    <span class="card-title">Setups</span><span class="card-meta">{{ rows|length }} · newest first · “waiting” steps re-check every slow sweep</span></div>
+  {% if rows %}
+  {% macro step(st, err, label) -%}
+    <div style="display:flex;gap:6px;align-items:flex-start;font-size:12px;margin:2px 0;">
+      {% if st == 'done' %}<span class="pill ok">✓</span>{% elif st == 'error' %}<span class="pill err">✕</span>{% elif st == 'waiting' %}<span class="pill warn">…</span>{% elif st == 'skipped' %}<span class="pill dim">–</span>{% else %}<span class="pill dim">·</span>{% endif %}
+      <div><div>{{ label }}</div>{% if err and st != 'done' %}<div class="muted" style="font-size:10.5px;">{{ err }}</div>{% endif %}</div>
+    </div>
+  {%- endmacro %}
+  <div class="table-scroll">
+  <table class="data dense">
+    <thead><tr><th>When</th><th>Main BC → partner</th><th>API steps</th><th>Website-only checklist</th><th class="num">Actions</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr id="setup-{{ r.id }}" {% if complete(r) %}style="opacity:.75;"{% endif %}>
+        <td style="white-space:nowrap;"><span title="{{ r.created_at|local('%Y-%m-%d %H:%M:%S') }}">{{ r.created_at|ago }}</span>
+          {% if complete(r) %}<div><span class="pill ok">complete</span></div>{% endif %}</td>
+        <td style="max-width:260px;">
+          <div style="font-weight:600;">{{ r.bc_name or r.bc_id }}</div>
+          <div class="mono muted" style="font-size:10.5px;">{{ r.bc_id }}</div>
+          {% if r.partner_id %}<div style="margin-top:4px;">→ <b>{{ r.partner_name or r.partner_id }}</b> <span class="mono muted" style="font-size:10.5px;">{{ r.partner_id }}</span></div>{% endif %}
+          {% if r.invite_email %}<div class="muted" style="font-size:11px;margin-top:4px;">✉ {{ r.invite_email }} · {{ r.invite_role|lower }} → {{ r.invite_bc_name or r.invite_bc_id }}</div>{% endif %}
+        </td>
+        <td style="max-width:360px;">
+          {{ step(r.partner_status, r.partner_error, 'Partner added' + (' + ' ~ (r.share_advertiser_ids.split(',')|length) ~ ' ad account(s) shared as ' ~ r.share_advertiser_role|lower if r.share_advertiser_ids else '')) }}
+          {{ step(r.invite_status, r.invite_error, 'Email invited' + (' + ' ~ (r.invite_advertiser_ids.split(',')|length) ~ ' ad account(s) as ' ~ r.invite_advertiser_role|lower if r.invite_advertiser_ids else '')) }}
+          {{ step(r.assign_status, r.assign_error, 'TikTok account ' ~ (r.tt_account_name or r.tt_account_id or '—') ~ ' assigned to the member' ~ (' (' ~ r.member_status|lower ~ ')' if r.member_status else '')) }}
+        </td>
+        <td style="max-width:320px;">
+          <form method="post" action="/partners/{{ r.id }}/tick" style="font-size:12px;">
+            <label style="display:flex;gap:6px;align-items:center;"><input type="checkbox" name="pixel_shared" {{ 'checked' if r.pixel_shared }} style="width:auto;"> Pixel shared with the partner</label>
+            <label style="display:flex;gap:6px;align-items:center;margin-top:3px;"><input type="checkbox" name="profile_shared" {{ 'checked' if r.profile_shared }} style="width:auto;"> TikTok account shared with the partner</label>
+            <div class="muted" style="font-size:10.5px;margin:4px 0;">In <a href="{{ portal(r.bc_id) }}" target="_blank" rel="noopener">Business Center ↗</a>: Partners → {{ r.partner_name or r.partner_id or 'the partner' }} → “You've shared” → Share assets → Pixels / TikTok accounts. (Pixel sharing needs the pixel to be BC-owned — see Pixels.)</div>
+            <div style="display:flex;gap:6px;align-items:center;">
+              <input type="text" name="note" value="{{ r.note }}" placeholder="note" style="flex:1;font-size:11.5px;padding:4px 8px;">
+              <button class="btn sm" type="submit">Save</button>
+            </div>
+          </form>
+        </td>
+        <td class="num" style="white-space:nowrap;vertical-align:top;">
+          {% if r.partner_status == 'error' or r.invite_status == 'error' or r.assign_status in ('error', 'waiting') %}
+          <form method="post" action="/partners/{{ r.id }}/retry" style="display:inline;"><button class="btn sm primary" type="submit" title="Run the steps that aren't done yet">↻ Retry</button></form>
+          {% endif %}
+          <form method="post" action="/partners/{{ r.id }}/delete" style="display:inline;" onsubmit="return confirm('Remove this setup from the list? Nothing changes on TikTok.');"><button class="btn sm" type="submit">Remove</button></form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <div class="empty"><div class="empty-title">No partner setups yet</div>Fill the form above — the API steps run right away and every answer from TikTok is recorded here.</div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="card-header"><span class="card-title">What the API can and can't do here</span><span class="card-meta">checked against TikTok's API reference + help centre</span></div>
+  <div class="hint" style="font-size:12.5px;line-height:1.6;">
+    <b>Can:</b> add a partner BC (<span class="mono">/bc/partner/add/</span>) and share <b>ad accounts</b> with it (Admin/Operator/Analyst); invite an email into a BC as Admin or Standard with ad accounts pre-assigned (<span class="mono">/bc/member/invite/</span>); assign a <b>TikTok account</b> to a member who has joined (<span class="mono">/bc/asset/assign/</span>, TT_ACCOUNT).<br>
+    <b>Can't (website only):</b> share a <b>Pixel</b> or a <b>TikTok account</b> with a <em>partner</em> BC — TikTok's partner API accepts only ad accounts (and reads back ad accounts / catalogs). Assigning a pixel to a member isn't in the API either. That's why those two are a checklist with the deep link, not a button.<br>
+    <b>Rules:</b> every call needs your user to be an <b>Admin</b> of the BC it acts on; a BC holds at most 4000 members / 20 admins; invites already sent are silently ignored by TikTok; a pixel can only be shared once it's owned by the BC (Pixels page → move to BC).
+  </div>
+</div>
+
+<style>
+.pick { border:1px solid var(--border); border-radius:8px; padding:8px 10px; max-height:180px; overflow:auto; background:var(--panel-hover); }
+.pick label { display:flex; gap:7px; align-items:center; font-size:12px; padding:2px 0; cursor:pointer; }
+.pick input { width:auto !important; margin:0; }
+.pick .pick-tools { display:flex; gap:10px; font-size:11px; margin-bottom:4px; }
+.pick .pick-tools a { cursor:pointer; }
+</style>
+<script>
+(function () {
+  var mainBc = document.getElementById("mainBc"), partnerId = document.getElementById("partnerId"), inviteBc = document.getElementById("inviteBc");
+  var ttSelect = document.getElementById("ttSelect"), ttId = document.getElementById("ttId"), ttName = document.getElementById("ttName");
+  function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
+  function adminHint(sel, hintEl) {
+    var o = sel.options[sel.selectedIndex];
+    if (!o || !o.value) { hintEl.textContent = hintEl.getAttribute("data-default") || hintEl.textContent; return; }
+    var a = o.getAttribute("data-admin");
+    hintEl.textContent = a === "1" ? "You're Admin there — partner/member calls will be accepted." : (a === "0" ? "⚠ You are NOT Admin of this BC — TikTok will refuse partner and member calls for it." : "Role unknown (TikTok didn't answer /bc/get/).");
+    hintEl.style.color = a === "0" ? "var(--warn)" : "";
+  }
+  var mainHint = document.getElementById("mainBcHint"), invHint = document.getElementById("inviteBcHint");
+  mainHint.setAttribute("data-default", mainHint.textContent); invHint.setAttribute("data-default", invHint.textContent);
+
+  // ---- asset pickers (checkbox lists loaded from /partners/assets) --------
+  function loadPick(el, bcId) {
+    var name = el.getAttribute("data-name"), type = el.getAttribute("data-type");
+    if (!bcId) { el.innerHTML = '<div class="muted" style="font-size:12px;">Pick the BC to load its ' + (type === "ADVERTISER" ? "ad accounts" : "assets") + '.</div>'; return; }
+    el.innerHTML = '<div class="muted" style="font-size:12px;">Loading…</div>';
+    fetch("/partners/assets?bc_id=" + encodeURIComponent(bcId) + "&type=" + type, { credentials: "same-origin" })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d.error) { el.innerHTML = '<div style="font-size:12px;color:var(--warn);">' + esc(d.error) + '</div>'; return; }
+        if (!d.items.length) { el.innerHTML = '<div class="muted" style="font-size:12px;">No ad accounts in this BC.</div>'; return; }
+        var h = '<div class="pick-tools"><a data-all="1">all</a><a data-all="0">none</a><span class="muted">' + d.items.length + ' account(s)</span></div>';
+        d.items.forEach(function (it) {
+          h += '<label><input type="checkbox" name="' + name + '" value="' + esc(it.id) + '"> ' + esc(it.name) + ' <span class="mono muted" style="font-size:10.5px;">' + esc(it.id) + '</span></label>';
+        });
+        el.innerHTML = h;
+        el.querySelectorAll("[data-all]").forEach(function (a) {
+          a.addEventListener("click", function () { var on = a.getAttribute("data-all") === "1"; el.querySelectorAll("input[type=checkbox]").forEach(function (c) { c.checked = on; }); });
+        });
+      })
+      .catch(function () { el.innerHTML = '<div style="font-size:12px;color:var(--warn);">Couldn\'t load.</div>'; });
+  }
+  function loadTt(bcId) {
+    ttSelect.innerHTML = '<option value="">' + (bcId ? "Loading…" : "— pick the BC first —") + '</option>';
+    if (!bcId) return;
+    fetch("/partners/assets?bc_id=" + encodeURIComponent(bcId) + "&type=TT_ACCOUNT", { credentials: "same-origin" })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        var h = '<option value="">— none —</option>';
+        if (d.error) h = '<option value="">' + esc(d.error) + '</option>';
+        (d.items || []).forEach(function (it) { h += '<option value="' + esc(it.id) + '" data-name="' + esc(it.name) + '">' + esc(it.name) + ' · ' + esc(it.id) + '</option>'; });
+        if (!d.error && !(d.items || []).length) h = '<option value="">No TikTok accounts visible in this BC yet</option>';
+        ttSelect.innerHTML = h;
+        if (ttId.value && ttSelect.querySelector('option[value="' + ttId.value.replace(/"/g, "") + '"]')) ttSelect.value = ttId.value;
+      })
+      .catch(function () { ttSelect.innerHTML = '<option value="">Couldn\'t load</option>'; });
+  }
+  function inviteTarget() { return inviteBc.value || partnerId.value.trim(); }
+  function refreshInvite() {
+    var bc = inviteTarget();
+    loadPick(document.getElementById("inviteAccounts"), bc);
+    loadTt(bc);
+  }
+  mainBc.addEventListener("change", function () { adminHint(mainBc, mainHint); loadPick(document.getElementById("shareAccounts"), mainBc.value); });
+  inviteBc.addEventListener("change", function () { adminHint(inviteBc, invHint); refreshInvite(); });
+  var t; partnerId.addEventListener("input", function () { clearTimeout(t); if (!inviteBc.value) t = setTimeout(refreshInvite, 500); });
+  ttSelect.addEventListener("change", function () {
+    var o = ttSelect.options[ttSelect.selectedIndex];
+    ttId.value = o ? o.value : ""; ttName.value = o ? (o.getAttribute("data-name") || "") : "";
+  });
+  ttId.addEventListener("input", function () { if (ttSelect.value !== ttId.value) { ttSelect.value = ""; ttName.value = ""; } });
+  document.getElementById("partnerForm").addEventListener("submit", function () {
+    var b = document.getElementById("runBtn"); b.disabled = true; b.textContent = "Running…";
+  });
+})();
+</script>
+{% endblock %}

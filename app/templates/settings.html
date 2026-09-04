@@ -178,13 +178,16 @@
         <option value="campaign" {{ 'selected' if s.events_event_mode == 'campaign' }}>Match each campaign's optimization event (split tests)</option>
         <option value="fixed" {{ 'selected' if s.events_event_mode == 'fixed' }}>Always the event below</option>
       </select>
-      <span class="hint"><b>Match:</b> a campaign optimising for Complete registration gets CompleteRegistration, one optimising for Purchase gets CompletePayment — so both can run at once and each learns from its own goal. The event below is the fallback for launches that recorded no optimization event.</span></label>
+      <span class="hint"><b>Match:</b> a campaign optimising for Complete registration gets CompleteRegistration, one optimising for Purchase gets Purchase — so both can run at once and each learns from its own goal. The event below is the fallback for launches that recorded no optimization event.</span></label>
     <label class="field"><span class="field-label">Fixed / fallback event name</span>
       <input type="text" name="events_event_name" value="{{ s.events_event_name }}">
-      <span class="hint">CompleteRegistration = registration, CompletePayment = purchase, PlaceAnOrder, SubmitForm, ViewContent…</span></label>
+      <span class="hint">Events API 2.0 names, case-sensitive: CompleteRegistration, Purchase (the old pixel name CompletePayment is auto-converted), PlaceAnOrder, SubmitForm, ViewContent, Subscribe…</span></label>
     <label class="field"><span class="field-label">Currency</span>
       <input type="text" name="events_currency" value="{{ s.events_currency }}"></label>
   </div>
+  <label class="field"><span class="field-label">Page URL for events without a launch (optional)</span>
+    <input type="text" name="events_page_url" value="{{ s.events_page_url }}" placeholder="https://your-lander.com/">
+    <span class="hint">TikTok requires a page URL on every web event. Postbacks for a source this tool launched use that campaign's landing URL automatically; this is the fallback for anything else (and for the tool below).</span></label>
   <label class="field"><span class="field-label">Events API access token</span>
     <input type="text" name="events_access_token" value="{{ s.events_access_token }}"
            placeholder="from Events Manager → your pixel → Settings → Generate Access Token"
@@ -226,22 +229,31 @@
 </form>
 
 <div class="card" id="test" style="margin-top:14px;">
-  <div class="card-header"><span class="card-title">Send a test event to the pixel</span>
-    <span class="card-meta">fires one {{ s.events_event_name }} right now — nothing is stored, P&amp;L stays clean</span></div>
+  <div class="card-header"><span class="card-title">Fire events at the pixel</span>
+    <span class="card-meta">the same /event/track/ call a real postback makes — nothing is stored, P&amp;L stays clean</span></div>
   <form method="post" action="/settings/test-event">
     <div class="form-row-3">
-      <label class="field"><span class="field-label">ttclid (required)</span>
-        <input type="text" name="ttclid" placeholder="E.C0abc… — copy from your landing URL after clicking your own ad">
-      </label>
-      <label class="field"><span class="field-label">Source (optional)</span>
-        <input type="text" name="source" placeholder="helps auto-pick the right pixel">
-      </label>
-      <label class="field"><span class="field-label">Value ($)</span>
+      <label class="field"><span class="field-label">Event</span>
+        <select name="event">{% for e in web_events %}<option value="{{ e }}">{{ e }}{% if e == 'Purchase' %} (purchase / complete payment){% endif %}</option>{% endfor %}</select>
+        <span class="hint">Events API 2.0 names, case-sensitive. Or type a custom one:</span>
+        <input type="text" name="event_custom" placeholder="custom event name (optional)" style="margin-top:4px;"></label>
+      <label class="field"><span class="field-label">How many</span>
+        <input type="number" name="count" value="5" min="1" max="{{ fire_max }}" step="1">
+        <span class="hint">1–{{ fire_max }}, sent one by one with unique event IDs. Use several to seed a fresh pixel so the event can be picked as an optimisation goal.</span></label>
+      <label class="field"><span class="field-label">Value ($ each)</span>
         <input type="text" name="value" value="1"></label>
     </div>
-    <button class="btn" type="submit">⚡ Send test event</button>
-    <span class="hint" style="margin-left:10px;">Tip: set a Test event code above first so it lands in
-      Events Manager → Test Events, where it shows within seconds.</span>
+    <div class="form-row-3">
+      <label class="field"><span class="field-label">ttclid (optional)</span>
+        <input type="text" name="ttclid" placeholder="E.C0abc… — copy from your landing URL after clicking your own ad">
+        <span class="hint">With one, TikTok attributes the event to that click. Without, the pixel still records it.</span></label>
+      <label class="field"><span class="field-label">Source (optional)</span>
+        <input type="text" name="source" placeholder="picks the pixel + landing URL of that source's launch"></label>
+      <label class="field"><span class="field-label">Page URL (optional)</span>
+        <input type="text" name="page_url" placeholder="defaults to the source's landing URL / Settings fallback"></label>
+    </div>
+    <button class="btn primary" type="submit">⚡ Fire events</button>
+    <span class="hint" style="margin-left:10px;">Fires to the Pixel ID set above (or the source's pixel). Set a Test event code first if you want them in Events Manager → Test Events instead of the live event overview.</span>
   </form>
 </div>
 

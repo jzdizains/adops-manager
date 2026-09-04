@@ -212,6 +212,104 @@ def list_bc_advertisers(access_token: str, bc_id: str, page: int = 1, page_size:
     })
 
 
+# ---------------------------------------------------------------------------
+# Business Center partners + members (API Reference → BC Partners / BC Members /
+# BC Assets). Verified limits: /bc/partner/add/ can share ONLY ad accounts
+# (asset_type enum: ADVERTISER); pixels and TikTok accounts are shared with a
+# partner in the Business Center website only. Members: invite by email with
+# ADMIN/STANDARD role (+ ad accounts); a TikTok account (TT_ACCOUNT) can be
+# assigned to a member with /bc/asset/assign/ once they have joined.
+# ---------------------------------------------------------------------------
+
+BC_ASSET_TYPES = ("ADVERTISER", "CATALOG", "TIKTOK_SHOP", "LEAD", "TT_ACCOUNT", "MANAGED_BUSINESS_ACCOUNT")
+ADVERTISER_ROLES = ("ADMIN", "OPERATOR", "ANALYST")
+BC_USER_ROLES = ("ADMIN", "STANDARD")
+TT_ACCOUNT_ROLES = ("POST", "PUBLISH_VIDEO_ADS_ONLY", "PUBLISH_VIDEO_SHOW_ON_TT_PROFILE_AND_ADS",
+                    "LIVE", "SHOWCASE", "DIRECT_MESSAGE", "SERIES")
+
+
+def list_bc_assets(access_token: str, bc_id: str, asset_type: str, max_pages: int = 20) -> list[dict]:
+    """All assets of one type in a BC (/bc/asset/get/, 50 per page — the BC
+    endpoints reject page_size 100). Items: asset_id, asset_name, asset_type,
+    advertiser_role / tt_account_roles, owner_bc_name…"""
+    out: list[dict] = []
+    for page in range(1, max_pages + 1):
+        data = api_get_retry("/bc/asset/get/", access_token, {
+            "bc_id": bc_id, "asset_type": asset_type, "page": page, "page_size": 50}) or {}
+        batch = data.get("list") or []
+        out.extend(batch)
+        info = data.get("page_info") or {}
+        if len(batch) < 50 or (info.get("total_page") and page >= int(info["total_page"])):
+            break
+    return out
+
+
+def bc_partner_add(access_token: str, bc_id: str, partner_id: str,
+                   advertiser_ids: list[str] | None = None, advertiser_role: str = "OPERATOR") -> dict:
+    """POST /bc/partner/add/ — add partner_id as a partner of bc_id and
+    optionally share up to 50 of bc_id's AD ACCOUNTS with it (the only asset
+    type the endpoint accepts). Caller must be an Admin of bc_id."""
+    payload: dict = {"bc_id": str(bc_id), "partner_id": str(partner_id)}
+    if advertiser_ids:
+        payload.update({"asset_type": "ADVERTISER", "asset_ids": [str(a) for a in advertiser_ids][:50],
+                        "advertiser_role": advertiser_role})
+    return api_post("/bc/partner/add/", access_token, payload)
+
+
+def bc_partner_list(access_token: str, bc_id: str) -> list[dict]:
+    """GET /bc/partner/get/ — partners of a BC."""
+    out: list[dict] = []
+    for page in range(1, 11):
+        data = api_get_retry("/bc/partner/get/", access_token,
+                             {"bc_id": str(bc_id), "page": page, "page_size": 50}) or {}
+        batch = data.get("list") or []
+        out.extend(batch)
+        if len(batch) < 50:
+            break
+    return out
+
+
+def bc_member_invite(access_token: str, bc_id: str, emails: list[str], user_role: str = "STANDARD",
+                     advertiser_ids: list[str] | None = None, advertiser_role: str | None = None) -> dict:
+    """POST /bc/member/invite/ — invite up to 50 emails into a BC (ADMIN or
+    STANDARD), optionally pre-assigning ad accounts. Already-invited emails are
+    ignored by TikTok. Caller must be an Admin of bc_id."""
+    payload: dict = {"bc_id": str(bc_id), "emails": list(emails)[:50], "user_role": user_role}
+    if advertiser_ids:
+        payload["asset_ids"] = [str(a) for a in advertiser_ids][:50]
+        payload["advertiser_role"] = advertiser_role or "OPERATOR"
+    return api_post("/bc/member/invite/", access_token, payload)
+
+
+def bc_member_list(access_token: str, bc_id: str, keyword: str = "") -> list[dict]:
+    """GET /bc/member/get/ — members incl. pending invites: user_id,
+    user_email, user_name, user_role, relation_status."""
+    out: list[dict] = []
+    for page in range(1, 41):
+        params: dict = {"bc_id": str(bc_id), "page": page, "page_size": 50}
+        if keyword:
+            params["filtering"] = {"keyword": keyword}
+        data = api_get_retry("/bc/member/get/", access_token, params) or {}
+        batch = data.get("list") or []
+        out.extend(batch)
+        if len(batch) < 50:
+            break
+    return out
+
+
+def bc_asset_assign(access_token: str, bc_id: str, user_id: str, asset_type: str, asset_id: str,
+                    advertiser_role: str = "", tt_account_roles: list[str] | None = None) -> dict:
+    """POST /bc/asset/assign/ — give a BC member (already in the BC) an asset.
+    ADVERTISER needs advertiser_role; TT_ACCOUNT needs tt_account_roles."""
+    payload: dict = {"bc_id": str(bc_id), "user_id": str(user_id),
+                     "asset_type": asset_type, "asset_id": str(asset_id)}
+    if asset_type == "ADVERTISER":
+        payload["advertiser_role"] = advertiser_role or "OPERATOR"
+    if asset_type == "TT_ACCOUNT":
+        payload["tt_account_roles"] = list(tt_account_roles or ["POST"])
+    return api_post("/bc/asset/assign/", access_token, payload)
+
+
 def get_advertiser_info(access_token: str, advertiser_ids: list[str]) -> list[dict]:
     data = api_get_retry("/advertiser/info/", access_token, {"advertiser_ids": advertiser_ids})
     return data.get("list", [])

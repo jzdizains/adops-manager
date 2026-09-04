@@ -37,6 +37,20 @@
 {% endif %}
 </div>
 
+{# ---- delivery pace chip: +N in the last 15 min, dot pulsing when the last 5 min moved ---- #}
+{% macro pace_chip(p, key, money=false) -%}
+  {% if p and p.w[15] and p.w[15][key] is not none %}
+    {% set v15 = p.w[15][key] %}{% set v5 = p.w[5][key] if p.w[5] else 0 %}{% set v60 = p.w[60][key] if p.w[60] else 0 %}
+    <span class="pace {{ 'up' if v15 else 'flat' }}" title="last 5 min: +{{ ('$%.2f'|format(v5)) if money else v5 }} · last 15 min: +{{ ('$%.2f'|format(v15)) if money else v15 }} · last hour: +{{ ('$%.2f'|format(v60)) if money else v60 }}{% if p.since_min < 60 %} · {{ p.since_min }} min of history so far{% endif %}">
+      {% if v5 %}<i class="live"></i>{% endif %}+{{ ('$%.2f'|format(v15)) if money else v15 }}<small>15m</small></span>
+  {% endif %}
+{%- endmacro %}
+{% macro pace_bars(p) -%}
+  {% if p and p.bars %}{% set mx = p.bars|max %}
+    <span class="mbars" title="impressions per 5 min, last hour (oldest → newest)">{% for b in p.bars %}<i style="height:{{ (2 + (b / mx * 10)) if mx else 2 }}px;" class="{{ 'on' if b else '' }}"></i>{% endfor %}</span>
+  {% endif %}
+{%- endmacro %}
+
 {# ---- KPI delta chip macro (only when real prior-period data exists) ---- #}
 {% macro pct_chip(pct, good_up=true) -%}
   {% if deltas.has_prev and pct is not none %}
@@ -218,7 +232,7 @@
             {% if row.shared_n %}<span class="muted" title="This spark/source runs on {{ row.shared_n }} campaigns — revenue & clicks are split by spend share" style="font-size:11px;"> ÷{{ row.shared_n }}</span>{% endif %}
           {% else %}<span class="muted">—</span>{% endif %}
         </td>
-        <td class="num col-money grp-start">${{ "%.2f"|format(row.m.spend) }}</td>
+        <td class="num col-money grp-start">${{ "%.2f"|format(row.m.spend) }}{% if pace.get(r.campaign_id) %}<div class="pl">{{ pace_chip(pace.get(r.campaign_id), 'spend', true) }}</div>{% endif %}</td>
         <td class="num col-money">{% if row.source %}<span style="color:var(--ok);font-weight:600;">${{ "%.2f"|format(row.revenue) }}</span>{% else %}—{% endif %}</td>
         <td class="num col-money {{ 'pos' if row.profit >= 0 else 'neg' }}">{% if row.source %}{{ '−' if row.profit < 0 }}${{ "%.2f"|format(row.profit|abs) }}{% else %}—{% endif %}</td>
         <td class="num col-money grp-end">
@@ -230,8 +244,8 @@
         <td class="num">{% if r.budget %}${{ "%.0f"|format(r.budget) }}{% if r.budget_mode == 'BUDGET_MODE_DAY' %}/d{% endif %}{% else %}—{% endif %}</td>
         <td class="num col-detail">{% if row.source %}{{ "%.0f"|format(row.pb_clicks) }}{% else %}—{% endif %}</td>
         <td class="num col-detail">{% if row.source and row.pb_clicks %}{{ "%.2f"|format(row.cvr) }}%{% else %}—{% endif %}</td>
-        <td class="num col-detail">{{ "{:,}".format(row.m.impressions) }}</td>
-        <td class="num col-detail">{{ "{:,}".format(row.m.clicks) }}</td>
+        <td class="num col-detail">{{ "{:,}".format(row.m.impressions) }}{% if pace.get(r.campaign_id) %}<div class="pl col">{{ pace_chip(pace.get(r.campaign_id), 'impressions') }}{{ pace_bars(pace.get(r.campaign_id)) }}</div>{% endif %}</td>
+        <td class="num col-detail">{{ "{:,}".format(row.m.clicks) }}{% if pace.get(r.campaign_id) %}<div class="pl">{{ pace_chip(pace.get(r.campaign_id), 'clicks') }}</div>{% endif %}</td>
         <td class="num col-detail">{{ "%.2f"|format(row.m.ctr) }}%</td>
         <td class="num col-detail">{% if row.m.clicks %}${{ "%.2f"|format(row.m.cpc) }}{% else %}—{% endif %}</td>
         <td class="num col-detail">{% if row.m.impressions %}${{ "%.2f"|format(row.m.cpm) }}{% else %}—{% endif %}</td>
@@ -255,7 +269,7 @@
     <tfoot>
       <tr style="font-weight:650;">
         <td colspan="4">Totals ({{ rows|length }} campaigns)</td>
-        <td class="num col-money grp-start">${{ "%.2f"|format(totals.spend) }}</td>
+        <td class="num col-money grp-start">${{ "%.2f"|format(totals.spend) }}{% if pace_tot.n %}<div class="pl"><span class="pace {{ 'up' if pace_tot.spend else 'flat' }}" title="all shown active campaigns, last 15 min">+${{ "%.2f"|format(pace_tot.spend) }}<small>15m</small></span></div>{% endif %}</td>
         <td class="num col-money">${{ "%.2f"|format(totals.revenue) }}</td>
         <td class="num col-money {{ 'pos' if totals.profit >= 0 else 'neg' }}">{{ '−' if totals.profit < 0 }}${{ "%.2f"|format(totals.profit|abs) }}</td>
         <td class="num col-money grp-end"><span class="roas"><span class="x {{ 'g' if roas >= 1 else ('r' if roas > 0 else 'n') }}">{% if roas %}{{ "%.2f"|format(roas) }}×{% else %}—{% endif %}</span></span></td>
@@ -263,8 +277,8 @@
         <td></td>
         <td class="num col-detail">{{ "%.0f"|format(totals.pb_clicks) }}</td>
         <td class="num col-detail">{% if totals.pb_clicks %}{{ "%.2f"|format(totals.cvr) }}%{% else %}—{% endif %}</td>
-        <td class="num col-detail">{{ "{:,}".format(totals.impressions) }}</td>
-        <td class="num col-detail">{{ "{:,}".format(totals.clicks) }}</td>
+        <td class="num col-detail">{{ "{:,}".format(totals.impressions) }}{% if pace_tot.n %}<div class="pl"><span class="pace {{ 'up' if pace_tot.impressions else 'flat' }}" title="all shown active campaigns, last 15 min">+{{ pace_tot.impressions }}<small>15m</small></span></div>{% endif %}</td>
+        <td class="num col-detail">{{ "{:,}".format(totals.clicks) }}{% if pace_tot.n %}<div class="pl"><span class="pace {{ 'up' if pace_tot.clicks else 'flat' }}" title="all shown active campaigns, last 15 min">+{{ pace_tot.clicks }}<small>15m</small></span></div>{% endif %}</td>
         <td class="num col-detail">{{ "%.2f"|format(totals.ctr) }}%</td>
         <td class="num col-detail">{% if totals.clicks %}${{ "%.2f"|format(totals.cpc) }}{% else %}—{% endif %}</td>
         <td class="num col-detail">{% if totals.impressions %}${{ "%.2f"|format(totals.cpm) }}{% else %}—{% endif %}</td>
@@ -275,7 +289,7 @@
   </table>
   </div>
   <div class="muted" style="font-size:11px;padding:10px 14px;border-top:1px solid var(--border-soft);">
-    Revenue · PB clicks · CVR · ROAS come from Glitchy postbacks (per source). “÷N” = that source runs on N campaigns, so its revenue and clicks are split between them by spend share; CVR stays source-level. Conv. / CPA are TikTok-pixel numbers. KPI deltas compare the same campaigns to the previous period.
+    Revenue · PB clicks · CVR · ROAS come from Glitchy postbacks (per source). “÷N” = that source runs on N campaigns, so its revenue and clicks are split between them by spend share; CVR stays source-level. Conv. / CPA are TikTok-pixel numbers. KPI deltas compare the same campaigns to the previous period.{% if range_key == 'today' %} <b>+N <small>15m</small></b> = gained in the last 15 minutes (hover for 5 min / 1 h); the pulsing dot means it moved in the last 5 minutes; the tiny bars are impressions per 5 minutes over the last hour — watch them after a bid change.{% endif %}
   </div>
   {% else %}
   <div class="empty">{% if origin == 'tool' %}<div class="empty-title">No campaigns launched by this tool yet</div>Everything you launch appears here automatically. Switch “Show” to “All on TikTok” to see campaigns created elsewhere.<br><a class="btn primary" href="/super-launcher">🚀 Launch your first</a>{% else %}<div class="empty-title">No campaigns cached yet</div>Hit “Sync now” to pull them from every account.{% endif %}</div>

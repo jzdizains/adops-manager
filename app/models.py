@@ -547,3 +547,65 @@ class Appeal(Base):
     last_seen_at = Column(DateTime, nullable=True)        # last scan that still reported the rejection
     gone = Column(Boolean, default=False)                 # a later scan no longer saw this rejection (a new one = new row)
     created_at = Column(DateTime, default=utcnow, index=True)
+
+
+class PartnerSetup(Base):
+    """One 'new partner' run: add a partner BC to the main BC (sharing chosen ad
+    accounts), invite an email into a BC, then — once that member has joined —
+    assign a TikTok account to them. The pixel / TikTok-account share with the
+    PARTNER is website-only (no API), so it is a checklist the operator ticks.
+
+    Step statuses: pending | done | error | skipped | waiting (member hasn't
+    accepted the invite yet — re-checked every slow sweep)."""
+    __tablename__ = "partner_setups"
+
+    id = Column(Integer, primary_key=True)
+    bc_id = Column(String, index=True, default="")          # main BC (owner of pixel + profile)
+    bc_name = Column(String, default="")
+    partner_id = Column(String, index=True, default="")     # the new partner BC
+    partner_name = Column(String, default="")
+    share_advertiser_ids = Column(Text, default="")         # comma list of main-BC ad accounts shared with the partner
+    share_advertiser_role = Column(String, default="OPERATOR")
+    partner_status = Column(String, default="pending")
+    partner_error = Column(Text, default="")
+
+    invite_bc_id = Column(String, default="")               # BC the email is invited into
+    invite_bc_name = Column(String, default="")
+    invite_email = Column(String, default="")
+    invite_role = Column(String, default="STANDARD")        # ADMIN | STANDARD
+    invite_advertiser_ids = Column(Text, default="")        # ad accounts of invite_bc pre-assigned to the member
+    invite_advertiser_role = Column(String, default="OPERATOR")
+    invite_status = Column(String, default="pending")
+    invite_error = Column(Text, default="")
+
+    tt_account_id = Column(String, default="")              # TikTok account (TT_ACCOUNT asset of invite_bc) to assign
+    tt_account_name = Column(String, default="")
+    tt_account_roles = Column(String, default="POST")       # comma list
+    assign_status = Column(String, default="skipped")
+    assign_error = Column(Text, default="")
+    member_user_id = Column(String, default="")             # resolved from /bc/member/get/ once the invite is accepted
+    member_status = Column(String, default="")              # relation_status as TikTok reports it
+
+    pixel_shared = Column(Boolean, default=False)           # checklist: shared in Business Center by hand
+    profile_shared = Column(Boolean, default=False)         # checklist: TikTok account shared by hand
+    note = Column(Text, default="")
+    created_at = Column(DateTime, default=utcnow, index=True)
+    updated_at = Column(DateTime, default=utcnow)
+
+
+class MetricTick(Base):
+    """One row per ACTIVE campaign per sync (~every minute on the fast sweep):
+    the cumulative today-values TikTok reported at that moment. The Campaigns
+    page turns consecutive ticks into pace — impressions / clicks / spend gained
+    in the last 5, 15 and 60 minutes — so a bid change can be judged by whether
+    delivery is actually moving. Pruned after PACE_KEEP_HOURS."""
+    __tablename__ = "metric_ticks"
+
+    id = Column(Integer, primary_key=True)
+    advertiser_id = Column(String, default="")
+    campaign_id = Column(String, index=True, nullable=False)
+    at = Column(DateTime, default=utcnow, index=True)
+    spend = Column(Float, default=0.0)
+    impressions = Column(Integer, default=0)
+    clicks = Column(Integer, default=0)
+    conversions = Column(Integer, default=0)

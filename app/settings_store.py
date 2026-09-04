@@ -70,6 +70,8 @@ DEFAULTS: dict = {
     "events_event_name": "CompleteRegistration",  # TikTok standard web event to fire (fixed mode / fallback)
     "events_currency": "USD",
     "events_test_code": "",        # TikTok test_event_code (Events Manager test tab)
+    "events_page_url": "",         # page.url sent with events (REQUIRED for web events) when the
+                                   #   source has no launch to take the landing URL from
 
     # --- automatic ad-rejection appeals (/adgroup/appeal/) -----------------
     "appeal_auto_enabled": False,  # file an appeal for every newly rejected ad found by the scan

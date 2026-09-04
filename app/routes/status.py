@@ -281,7 +281,21 @@ def status_page(request: Request, db: Session = Depends(get_db)):
             db, start_utc, end_utc, shown_cids, shown_srcs)
         spark = {"spend": _sp, "revenue": _rv}
 
+    # delivery pace (today only — history ticks are cumulative today-values)
+    pace_by_cid: dict = {}
+    if range_key == "today" and rows:
+        from .. import pace as _pace
+        pace_by_cid = _pace.compute(db, {row["r"].campaign_id: row["m"] for row in rows
+                                         if row["r"].operation_status == "ENABLE"})
+    pace_tot = {"impressions": 0, "clicks": 0, "spend": 0.0, "n": 0}
+    for p in pace_by_cid.values():
+        w = p["w"].get(15)
+        if w and w["impressions"] is not None:
+            pace_tot["impressions"] += w["impressions"]; pace_tot["clicks"] += w["clicks"]
+            pace_tot["spend"] += w["spend"]; pace_tot["n"] += 1
+
     return render(request, "status.html", {
+        "pace": pace_by_cid, "pace_tot": pace_tot,
         "deltas": deltas, "spark_json": _json2.dumps(spark),
         "creative_by_cid": creative_by_cid, "spark_by_cid": spark_by_cid,
         "bc_by_aid": bc_by_aid, "source_f": source_f, "source_options": source_options,
