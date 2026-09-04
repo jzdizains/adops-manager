@@ -197,11 +197,13 @@
                   title="{% if r.operation_status == 'ENABLE' %}Active{% elif r.operation_status == 'DISABLE' %}Paused{% else %}{{ r.operation_status or '—' }}{% endif %}"></span>
             <div style="min-width:0;">
               <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:300px;"><a href="/campaigns/{{ r.advertiser_id }}/{{ r.campaign_id }}/edit" style="color:inherit;" title="Open campaign">{{ r.campaign_name[:46] }}</a>{% if r.is_smart_plus %} <span class="pill dim" title="Smart+ campaign — TikTok automates targeting & placements">S+</span>{% endif %}</div>
-              {% if r.secondary_status and r.operation_status != 'DISABLE' %}
-                <div class="muted" style="font-size:10.5px;">{{ r.secondary_status.replace('CAMPAIGN_STATUS_','').replace('_',' ')|lower }}</div>
-              {% elif r.operation_status == 'DISABLE' %}
-                <div style="font-size:10.5px;color:var(--warn);">paused</div>
-              {% endif %}
+              {% set _sec = (r.secondary_status or '').replace('CAMPAIGN_STATUS_','').replace('_',' ')|lower %}
+              <div class="muted" style="font-size:10.5px;white-space:nowrap;">
+                {% if r.launched_at %}<span title="created {{ r.launched_at|local('%Y-%m-%d %H:%M') }} ({{ TZ_NAME }})">created {{ r.launched_at|ago }}</span>{% endif %}
+                {% if r.operation_status == 'DISABLE' %}{% if r.launched_at %} · {% endif %}<span style="color:var(--warn);">paused</span>
+                {% elif _sec and _sec not in ('enable', 'delivery ok') %}{% if r.launched_at %} · {% endif %}<span title="TikTok status">{{ _sec }}</span>
+                {% elif not r.launched_at and _sec %}{{ _sec }}{% endif %}
+              </div>
             </div>
           </div>
         </td>
