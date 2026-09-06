@@ -350,7 +350,28 @@ def pnl(request: Request, db: Session = Depends(get_db)):
 
     recent = (db.query(models.PostbackEvent)
               .order_by(models.PostbackEvent.created_at.desc()).limit(25).all())
+    # does each postback's source join to a launched campaign? (the #1 reason a
+    # conversion "doesn't show" on the Campaigns page is a source that matches nothing)
+    import difflib
+    known: dict[str, models.LaunchLog] = {}
+    for lg in (db.query(models.LaunchLog).filter(models.LaunchLog.ok == True,          # noqa: E712
+                                                 models.LaunchLog.source != "")
+               .order_by(models.LaunchLog.id.desc()).all()):
+        known.setdefault(lg.source, lg)
+    names = {r.campaign_id: r.campaign_name for r in db.query(models.CampaignRecord).all()}
+    match: dict[int, dict] = {}
+    for e in recent:
+        if e.source == UNATTRIBUTED:
+            match[e.id] = {"state": "unattributed"}
+        elif e.source in known:
+            lg = known[e.source]
+            match[e.id] = {"state": "ok", "advertiser_id": lg.advertiser_id, "campaign_id": lg.campaign_id,
+                           "name": names.get(lg.campaign_id) or lg.source}
+        else:
+            close = difflib.get_close_matches(e.source, list(known), n=1, cutoff=0.6)
+            match[e.id] = {"state": "nomatch", "closest": close[0] if close else ""}
     return render(request, "pnl.html", {
+        "match": match,
         "title": "P&L", "range_key": range_key, "start": start or "", "end": end or "",
         "sources": sources, "spark_rows": spark_rows, "totals": totals,
         "recent": recent,

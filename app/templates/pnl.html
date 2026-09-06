@@ -108,14 +108,19 @@
   {% if recent %}
   <div class="table-scroll">
   <table class="data dense">
-    <thead><tr><th>When</th><th>Source</th><th class="num">Revenue</th>
-      <th class="num">Conv</th><th class="num">Clicks</th><th>Txn</th><th>Click id</th><th>→ Pixel</th></tr></thead>
+    <thead><tr><th>When</th><th>Source</th><th>Campaign it counts for</th><th class="num">Revenue</th>
+      <th class="num">Conv</th><th class="num">Clicks</th><th>Txn</th><th>Click id</th><th>→ Pixel</th><th>Raw</th></tr></thead>
     <tbody>
     {% for e in recent %}
       <tr>
         <td style="white-space:nowrap;"><span title="{{ e.created_at|local('%Y-%m-%d %H:%M:%S') }}">{{ e.created_at|ago }}</span>
           <div class="muted" style="font-size:10.5px;">{{ e.created_at|local }}</div></td>
         <td class="mono">{% if e.source == '(unattributed)' %}<span class="pill err" title="The click that reached Glitchy carried no ?source= — see Settings → pass-through script">unattributed</span>{% else %}{{ e.source }}{% endif %}</td>
+        <td style="max-width:260px;">{% set m = match.get(e.id, {}) %}
+          {% if m.state == 'ok' %}<a href="/campaigns/{{ m.advertiser_id }}/{{ m.campaign_id }}/edit" class="pill ok" style="text-decoration:none;" title="Source matches this launched campaign — revenue shows on its Campaigns row">✓ {{ m.name[:34] }}</a>
+          {% elif m.state == 'unattributed' %}<span class="muted" style="font-size:11px;">nothing — Glitchy sent no source</span>
+          {% else %}<span class="pill err" title="No launched campaign carries this source, so the Campaigns page can't attribute it. Usually the campaign was renamed, launched outside this tool, or Glitchy altered the value.">✕ no campaign matches</span>
+            {% if m.closest %}<div class="muted mono" style="font-size:10.5px;margin-top:2px;">closest: {{ m.closest }}</div>{% endif %}{% endif %}</td>
         <td class="num" style="color:var(--ok);font-weight:600;">{{ e.revenue|money }}</td>
         <td class="num">{{ e.conversions }}</td>
         <td class="num">{{ e.clicks }}</td>
@@ -126,6 +131,8 @@
               <span class="pill err" title="{{ e.forward_status }}">error</span>
             {% elif e.forward_status %}<span class="pill dim" title="{{ e.forward_status }}">skipped</span>
             {% else %}<span class="muted" title="Events API forwarding is off (Settings)">—</span>{% endif %}</td>
+        <td>{% if e.raw_query %}<details><summary class="muted" style="cursor:pointer;font-size:11px;">query</summary>
+            <div class="mono" style="font-size:10.5px;word-break:break-all;max-width:420px;color:var(--text-dim);">{{ e.raw_query|replace('&', ' &') }}</div></details>{% else %}—{% endif %}</td>
       </tr>
     {% endfor %}
     </tbody>

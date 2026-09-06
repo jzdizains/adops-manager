@@ -1,20 +1,40 @@
 {% extends "base.html" %}
 {% block content %}
+{# hidden fields so every action lands back on the same BC / campaign filter #}
+{% macro keep() -%}
+<input type="hidden" name="bc" value="{{ bc }}"><input type="hidden" name="camp" value="{{ camp }}">
+{%- endmacro %}
 <div class="page-head">
   <div><h1>Ad appeals</h1>
     <div class="muted">Every ad TikTok's review rejected, the reason TikTok gave, and the appeal — filed automatically through TikTok's appeal API or by hand here.</div></div>
   <div class="actions">
     <a class="btn" href="/settings#appeals" title="Auto-appeal switch, reason text, skip keywords, daily cap">⚙ Appeal settings</a>
-    <form method="post" action="/appeals/scan"><button class="btn" type="submit" title="Re-read every account's ads from TikTok now">🔍 Scan now</button></form>
-    {% if waiting %}<form method="post" action="/appeals/refresh"><button class="btn" type="submit" title="Ask TikTok whether the open appeals were answered">↻ Check answers</button></form>{% endif %}
+    <form method="post" action="/appeals/scan">{{ keep() }}<button class="btn" type="submit" title="Re-read every account's ads from TikTok now">🔍 Scan now</button></form>
+    {% if waiting %}<form method="post" action="/appeals/refresh">{{ keep() }}<button class="btn" type="submit" title="Ask TikTok whether the open appeals were answered">↻ Check answers</button></form>{% endif %}
     {% if open_rows %}
     <form method="post" action="/appeals/file-selected" id="selForm" onsubmit="return confirm('File an appeal for the ' + document.querySelectorAll('.apSel:checked').length + ' ticked ad group(s)? TikTok allows one appeal per rejection — this uses it.');" style="display:flex;gap:6px;align-items:center;">
-      <input type="text" name="reason" placeholder="reason for these (empty = Settings template)" style="width:260px;font-size:12px;padding:6px 8px;">
+      {{ keep() }}
+      <input type="text" name="reason" id="selReason" placeholder="reason for these (empty = Settings template)" style="width:260px;font-size:12px;padding:6px 8px;">
       <button class="btn primary" type="submit" id="selBtn" disabled>Appeal selected (0)</button>
     </form>
     {% endif %}
   </div>
 </div>
+
+<form method="get" action="/appeals" class="ap-filter" id="apFilter">
+  <label>Business Center
+    <select name="bc" id="bcSel" title="Only rejections in ad accounts owned by this Business Center">
+      <option value="" {{ 'selected' if not bc }}>All Business Centers ({{ n_open_all }} open)</option>
+      {% for k, name, n in bc_options %}
+      <option value="{{ k }}" {{ 'selected' if bc == k }}>{{ name }} ({{ n }} open)</option>
+      {% endfor %}
+    </select></label>
+  <label>Campaign name
+    <input type="search" name="camp" id="campQ" value="{{ camp }}" placeholder="contains…" title="Show only campaigns whose name contains this" style="width:220px;"></label>
+  <button class="btn sm" type="submit">Filter</button>
+  {% if filtered %}<a class="btn sm" href="/appeals" title="Show everything">Clear</a>
+  <span class="muted" style="font-size:12px;">showing {{ open_rows|length }} of {{ n_open_all }} open rejection(s)</span>{% endif %}
+</form>
 
 <div class="kpis kpis-5">
   <div class="kpi {{ 'accent' if s.appeal_auto_enabled }}"><div class="lab">Auto-appeal</div>
@@ -30,6 +50,8 @@
 
 {% macro acct(r) -%}
   {{ acct_link(r.advertiser_id, r.advertiser_name, True) }}
+  {% set b = bc_of.get(r.advertiser_id, '') %}
+  <div class="muted clip" style="font-size:10.5px;max-width:170px;" title="Business Center">{{ bc_names.get(b, b) if b else 'no Business Center' }}</div>
 {%- endmacro %}
 {% macro what(r) -%}
   <div style="font-weight:600;" class="clip" title="{{ r.ad_name }}">{{ r.ad_name or ('ad group ' ~ r.adgroup_id) }}</div>
@@ -44,15 +66,29 @@
 <div class="card" style="padding:0;overflow:hidden;">
   <div class="card-header" style="padding:12px 14px;margin:0;border-bottom:1px solid var(--border-soft);">
     <span class="card-title">Needs a decision</span>
-    <span class="card-meta">rejected, no appeal on file · one appeal per rejection, so read the reason first</span></div>
+    <span class="card-meta">rejected, no appeal on file · grouped by campaign name{% if groups %} · {{ groups|length }} campaign(s){% endif %} · one appeal per rejection, so read the reason first</span></div>
   {% if open_rows %}
   <div class="table-scroll">
   <table class="data dense">
     <thead><tr><th style="width:28px;"><input type="checkbox" id="selAll" title="Select all" style="width:auto;"></th><th>Account</th><th>What was rejected</th><th>TikTok's reason</th><th>Why not appealed</th><th class="num">Actions</th></tr></thead>
     <tbody>
-    {% for r in open_rows %}
-      <tr>
-        <td><input type="checkbox" class="apSel" name="ids" value="{{ r.id }}" form="selForm" style="width:auto;" title="Select this ad group"></td>
+    {% for g in groups %}
+      <tr class="ap-grp" data-key="{{ g.key }}">
+        <td><input type="checkbox" class="grpSel" data-key="{{ g.key }}" style="width:auto;" title="Select every ad group in this campaign"></td>
+        <td colspan="4">
+          <span class="ap-grp-name" title="Campaign name — the same campaign launched on {{ g.n_accounts }} account(s)">{{ g.key or '(no campaign name)' }}</span>
+          <span class="muted" style="font-size:11.5px;margin-left:8px;">{{ g.rows|length }} rejected ad group{{ '' if g.rows|length == 1 else 's' }} · {{ g.n_accounts }} account{{ '' if g.n_accounts == 1 else 's' }} · {{ g.bc_label }}{% if g.created %} · <span title="campaign created {{ g.created|local('%Y-%m-%d %H:%M') }} ({{ TZ_NAME }})">created {{ g.created|ago }}</span>{% endif %}</span>
+        </td>
+        <td class="num" style="white-space:nowrap;">
+          <form method="post" action="/appeals/file-campaign" class="grpForm" style="display:inline;" onsubmit="this.reason.value = document.getElementById('selReason').value; return confirm('Appeal all {{ g.rows|length }} rejected ad group(s) of “{{ g.key|e }}” across {{ g.n_accounts }} account(s)? TikTok allows one appeal per rejection — this uses it for every one of them.');">
+            {{ keep() }}<input type="hidden" name="campaign" value="{{ g.key }}"><input type="hidden" name="reason" value="">
+            <button class="btn sm primary" type="submit" title="File an appeal for every rejected ad group in this campaign, on every account shown">Appeal all {{ g.rows|length }}</button>
+          </form>
+        </td>
+      </tr>
+    {% for r in g.rows %}
+      <tr data-grp="{{ g.key }}">
+        <td><input type="checkbox" class="apSel" name="ids" value="{{ r.id }}" form="selForm" data-grp="{{ g.key }}" style="width:auto;" title="Select this ad group"></td>
         <td style="white-space:nowrap;">{{ acct(r) }}</td>
         <td style="max-width:260px;">{{ what(r) }}</td>
         <td style="max-width:360px;">{{ why(r) }}</td>
@@ -66,6 +102,7 @@
           <details style="text-align:left;">
             <summary class="btn sm primary" style="display:inline-block;list-style:none;cursor:pointer;">Appeal…</summary>
             <form method="post" action="/appeals/{{ r.id }}/file" style="margin-top:6px;min-width:280px;">
+              {{ keep() }}
               <textarea name="reason" rows="4" style="width:100%;font-size:12px;" maxlength="512" placeholder="Reason sent to TikTok (empty = the template from Settings)">{{ r.appeal_reason if r.status == 'error' else '' }}</textarea>
               <div style="display:flex;gap:6px;justify-content:flex-end;margin-top:4px;">
                 <button class="btn sm primary" type="submit">File appeal</button>
@@ -73,14 +110,18 @@
             </form>
           </details>
           <form method="post" action="/appeals/{{ r.id }}/dismiss" style="display:inline;margin-top:4px;" onsubmit="return confirm('Dismiss without appealing? Use this when you fixed or deleted the ad yourself.');">
+            {{ keep() }}
             <button class="btn sm" type="submit" title="Handled another way — stop tracking it">Dismiss</button>
           </form>
         </td>
       </tr>
     {% endfor %}
+    {% endfor %}
     </tbody>
   </table>
   </div>
+  {% elif filtered %}
+  <div class="empty"><div class="empty-title">Nothing open here</div>No rejection without an appeal matches this filter{% if n_open_all %} — {{ n_open_all }} open elsewhere, <a href="/appeals">show all</a>{% endif %}.</div>
   {% else %}
   <div class="empty"><div class="empty-title">Nothing waiting on you</div>Every rejection the scan found is either appealed or resolved. Rejections are picked up on each slow sweep and by “Scan now”.</div>
   {% endif %}
@@ -156,16 +197,30 @@
     <b>Reason preview</b> with today's template: <em>“{{ preview }}”</em>
   </div>
 </div>
+<script>
+(function () {
+  // the Business Center picker applies itself; the campaign search waits for Enter / Filter
+  var sel = document.getElementById("bcSel");
+  if (sel) sel.addEventListener("change", function () { document.getElementById("apFilter").submit(); });
+})();
+</script>
 {% if open_rows %}
 <script>
 (function () {
   var boxes = Array.prototype.slice.call(document.querySelectorAll(".apSel")), all = document.getElementById("selAll"), btn = document.getElementById("selBtn");
+  var grps = Array.prototype.slice.call(document.querySelectorAll(".grpSel"));
+  function inGroup(key) { return boxes.filter(function (b) { return b.getAttribute("data-grp") === key; }); }
   function sync() {
     var n = boxes.filter(function (b) { return b.checked; }).length;
     btn.disabled = n === 0; btn.textContent = "Appeal selected (" + n + ")";
     all.checked = n === boxes.length && n > 0; all.indeterminate = n > 0 && n < boxes.length;
+    grps.forEach(function (g) {
+      var mine = inGroup(g.getAttribute("data-key")), k = mine.filter(function (b) { return b.checked; }).length;
+      g.checked = k === mine.length && k > 0; g.indeterminate = k > 0 && k < mine.length;
+    });
   }
   boxes.forEach(function (b) { b.addEventListener("change", sync); });
+  grps.forEach(function (g) { g.addEventListener("change", function () { inGroup(g.getAttribute("data-key")).forEach(function (b) { b.checked = g.checked; }); sync(); }); });
   all.addEventListener("change", function () { boxes.forEach(function (b) { b.checked = all.checked; }); sync(); });
   sync();
 })();

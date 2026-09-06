@@ -673,3 +673,13 @@ table.data.show-detail th.col-detail, table.data.show-detail td.col-detail { dis
 .sn.jr .jr-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; margin: 0 6px 0 5px; animation: pacePulse 1.4s ease-in-out infinite; }
 [data-side="collapsed"] .sn.jr .jr-t { display: none; }
 @media (prefers-reduced-motion: reduce) { .sn.jr .jr-dot { animation: none; } }
+
+/* Appeals: Business Center / campaign filter + campaign group rows */
+.ap-filter { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 14px; margin: 0 0 14px; padding: 10px 14px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.ap-filter label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--text-dim); font-weight: 600; }
+.ap-filter select, .ap-filter input { font-size: 12.5px; padding: 6px 8px; }
+.ap-filter .btn { margin-bottom: 1px; }
+.data tr.ap-grp td { background: var(--surface-2); border-top: 2px solid var(--border); padding-top: 8px; padding-bottom: 8px; }
+.data tr.ap-grp:first-child td { border-top: 0; }
+.ap-grp-name { font-weight: 700; font-size: 13px; }
