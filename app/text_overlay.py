@@ -27,11 +27,12 @@ WEIGHT_KEYS = ("tiktok", "regular", "semibold", "bold")
 WEIGHT_LABELS = {"tiktok": "TikTok caption (default)", "regular": "Regular", "semibold": "SemiBold", "bold": "Bold"}
 
 # The TikTok app's caption font is TikTok Sans (SIL OFL). Measured against a
-# real caption from the app (glyph widths, x-height/cap ratio and stroke at
-# the same scale): optical size 36, width 112, weight 500, a dark outline of
-# ≈0.07em and a 1.2em line pitch. The variable font carries every axis.
+# real caption from the app, side by side at the same x-height (glyph
+# widths, stroke, outline and line pitch): optical size 36, width 116,
+# weight 500, a dark outline of 0.08em and a 1.3em line pitch. The variable
+# font carries every axis.
 TIKTOK_VARIABLE = "TikTokSans-Variable.ttf"
-TIKTOK_OPSZ, TIKTOK_WDTH = 36, 112
+TIKTOK_OPSZ, TIKTOK_WDTH = 36, 116
 TIKTOK_WGHT = {"tiktok": 500, "regular": 400, "semibold": 600, "bold": 700}
 
 FONTS: dict[str, dict] = {
@@ -42,13 +43,13 @@ STYLES = ("plain", "box", "outline")
 ALIGNS = ("left", "center", "right")
 
 # em-relative geometry — mirrored 1:1 by the CSS in the editor
-LINE_HEIGHT = 1.2           # line box = 1.2em (the app's caption line pitch, measured)
+LINE_HEIGHT = 1.3           # line box = 1.3em (the app's caption line pitch, measured: 35px per 27px em)
 BOX_PAD_X = 0.50            # box padding left/right
 BOX_PAD_Y = 0.22            # box padding top/bottom
 BOX_RADIUS = 0.35
 SHADOW_DY = 0.03
 SHADOW_BLUR = 0.06
-STROKE = 0.07               # outward stroke — the app's caption outline (measured)
+STROKE = 0.08               # outward stroke — the app's caption outline (measured against a side-by-side)
 DEFAULT_SIZE = 0.035        # the app's default caption ≈ 3.5% of the image height
 DEFAULT_STYLE = "outline"   # the app's caption look: white text, thin dark outline, no blur
 
