@@ -2,7 +2,7 @@
 {% block content %}
 {% set range_labels = {'today': 'Today', 'yesterday': 'Yesterday', '7d': 'Last 7 days', '30d': 'Last 30 days', 'mtd': 'This month', 'custom': 'Custom'} %}
 {% set origin_labels = {'tool': 'Launched by this tool', 'all': 'All on TikTok'} %}
-{% set state_labels = {'active': 'Active only', 'all': 'All statuses', 'paused': 'Paused only'} %}
+{% set state_labels = {'active': 'Active only', 'blocked': 'On but blocked', 'paused': 'Paused only', 'all': 'All statuses'} %}
 {% set roas = (totals.revenue / totals.spend) if totals.spend else 0 %}
 {% macro sort_link(key, label) -%}
   <a class="th-sort {{ 'on' if sort == key else '' }}"
@@ -201,6 +201,7 @@
               <div class="muted" style="font-size:10.5px;white-space:nowrap;">
                 {% if r.launched_at %}<span title="created {{ r.launched_at|local('%Y-%m-%d %H:%M') }} ({{ TZ_NAME }})">created {{ r.launched_at|ago }}</span>{% endif %}
                 {% if r.operation_status == 'DISABLE' %}{% if r.launched_at %} · {% endif %}<span style="color:var(--warn);">paused</span>
+                {% elif row.blocked %}{% if r.launched_at %} · {% endif %}<span style="color:var(--err);" title="Switched on, but TikTok is not delivering it — hidden from the Active view">blocked: {{ row.blocked }}</span>
                 {% elif _sec and _sec not in ('enable', 'delivery ok') %}{% if r.launched_at %} · {% endif %}<span title="TikTok status">{{ _sec }}</span>
                 {% elif not r.launched_at and _sec %}{{ _sec }}{% endif %}
               </div>

@@ -41,10 +41,38 @@ SORT_KEYS = {
 }
 
 
+# Campaign secondary statuses that mean "switched on but CANNOT deliver"
+# (Enumeration – Campaign Status – Secondary Status): the ad account is
+# punished / failed review / contract pending, or the campaign itself was
+# disapproved / paused by TikTok because its ad groups were rejected.
+BLOCKED_CAMPAIGN_STATUSES = {
+    "ADVERTISER_ACCOUNT_PUNISH", "CAMPAIGN_STATUS_ADVERTISER_ACCOUNT_PUNISH",
+    "CAMPAIGN_STATUS_ADVERTISER_AUDIT_DENY", "CAMPAIGN_STATUS_ADVERTISER_AUDIT",
+    "ADVERTISER_CONTRACT_PENDING", "CAMPAIGN_STATUS_ADVERTISER_CONTRACT_PENDING",
+    "CAMPAIGN_STATUS_REVIEW_DISAPPROVED", "CAMPAIGN_STATUS_AD_UNAVAILABLE",
+}
+# Advertiser statuses (Enumeration – Advertiser Status) under which nothing delivers
+BLOCKED_ACCOUNT_TOKENS = ("PUNISH", "LIMIT", "DISABLE", "CONFIRM_FAIL", "PENDING")
+
+
+def blocked_reason(rec, acct) -> str:
+    """Why a campaign that is switched ON is not actually delivering — '' when it
+    can. Used to keep the Active view to campaigns that really run."""
+    sec = (rec.secondary_status or "").upper()
+    if sec in BLOCKED_CAMPAIGN_STATUSES or "PUNISH" in sec or "AUDIT_DENY" in sec:
+        return sec.replace("CAMPAIGN_STATUS_", "").replace("_", " ").lower()
+    ast = ((acct.status if acct else "") or "").upper()
+    if ast and "ENABLE" not in ast and any(t in ast for t in BLOCKED_ACCOUNT_TOKENS):
+        return "account " + ast.replace("STATUS_", "").replace("_", " ").lower()
+    return ""
+
+
 @router.get("/status")
 def status_page(request: Request, db: Session = Depends(get_db)):
     q = request.query_params.get("q", "").strip().lower()
-    state = request.query_params.get("state", "active")       # active (default) | all | paused
+    state = request.query_params.get("state", "active")       # active (default) | blocked | paused | all
+    if state not in ("active", "blocked", "paused", "all"):
+        state = "active"
     account = request.query_params.get("account", "")          # advertiser_id
     source_f = request.query_params.get("source", "").strip()  # P&L source filter
     origin = request.query_params.get("origin", "tool")        # tool | all
@@ -150,7 +178,10 @@ def status_page(request: Request, db: Session = Depends(get_db)):
         name = (acct.advertiser_name if acct else r.advertiser_id) or r.advertiser_id
         if q and q not in r.campaign_name.lower() and q not in name.lower():
             continue
-        if state == "active" and r.operation_status != "ENABLE":
+        blocked = blocked_reason(r, acct) if r.operation_status == "ENABLE" else ""
+        if state == "active" and (r.operation_status != "ENABLE" or blocked):
+            continue
+        if state == "blocked" and not blocked:
             continue
         if state == "paused" and r.operation_status != "DISABLE":
             continue
@@ -174,7 +205,7 @@ def status_page(request: Request, db: Session = Depends(get_db)):
         src_clicks = int(src_pb.get("clicks", 0))
         src_conv = int(src_pb.get("conversions", 0))
         rows.append({
-            "r": r, "m": m, "account_name": name, "source": src,
+            "r": r, "m": m, "account_name": name, "source": src, "blocked": blocked,
             "shared_n": n if (src and n > 1) else 0,
             "revenue": revenue,
             "pb_clicks": pb_clicks,
