@@ -33,14 +33,36 @@
     <input type="search" name="camp" value="{{ camp }}" placeholder="contains…" style="width:200px;"></label>
   <label>Heatmap metric
     <select name="metric">{% for k, lbl in metrics.items() %}<option value="{{ k }}" {{ 'selected' if metric == k }}>{{ lbl }}</option>{% endfor %}</select></label>
+  <label style="flex-direction:row;align-items:center;gap:6px;padding-bottom:7px;" title="Today's audience rows are partial — TikTok publishes them 10–12 hours late"><input type="checkbox" name="today" value="1" style="width:auto;" {{ 'checked' if with_today }}> include today (partial)</label>
   <button class="btn sm" type="submit">Apply</button>
   {% if filtered %}<a class="btn sm" href="/audience?range={{ rng }}&metric={{ metric }}">Clear</a>{% endif %}
   <span class="muted" style="font-size:12px;">{{ start }} → {{ end }}{% if coverage.rows %} · store: {{ coverage.first }} → {{ coverage.last }}, {{ coverage.accounts }} account(s){% if coverage.synced_at %}, refreshed {{ coverage.synced_at[:16].replace('T', ' ') }} UTC{% endif %}{% endif %}</span>
 </form>
 
+<div class="card scan-card">
+  <div class="card-header"><span class="card-title">Last refresh</span>
+    <span class="card-meta">{% if coverage.job %}{{ coverage.job.title }}{% else %}none yet{% endif %}</span></div>
+  {% set j = coverage.job %}
+  {% if j and j.status in ('queued', 'running') %}
+  <div class="scan-line"><span class="pill warn">{{ j.status }}{% if j.progress %} · {{ j.progress }}{% endif %}</span>
+    <span class="muted">started {{ (j.started_at or j.created_at)|ago }} · every account with a token, up to 9 TikTok calls each — a first fill of all accounts takes a while. Watch it on the <a href="/jobs">Jobs</a> page; this page fills in as accounts complete (reload).</span></div>
+  {% elif j %}
+  <div class="scan-line"><span class="pill {{ 'ok' if j.status == 'done' else 'err' }}">{{ j.status }}</span>
+    <span>{{ j.detail }}</span><span class="muted">· finished {{ j.finished_at|ago if j.finished_at else '—' }}</span></div>
+  {% if coverage.errors %}
+  <details style="margin-top:6px;"><summary class="muted" style="cursor:pointer;font-size:12px;">Accounts TikTok refused ({{ coverage.errors|length }}) — the message for each</summary>
+    <table class="data dense" style="margin-top:6px;"><tbody>
+    {% for e in coverage.errors %}<tr><td style="white-space:nowrap;">{{ acct_link(e.advertiser_id, e.name, True) }}</td><td class="mono" style="font-size:11px;">{{ e.error }}</td></tr>{% endfor %}
+    </tbody></table></details>
+  {% endif %}
+  {% else %}
+  <div class="muted" style="font-size:12.5px;">No refresh has run yet. It starts by itself on the first slow sweep after a deploy (after the issue scan, which takes a few minutes), or press “Refresh from TikTok” now — pick “last 7 days” for a first fill.</div>
+  {% endif %}
+</div>
+
 {% if not has_data %}
 <div class="card"><div class="empty"><div class="empty-title">No audience data stored yet{% if filtered %} for this filter{% endif %}</div>
-  {% if not coverage.rows %}Press “Refresh from TikTok” once (pick “last 7 days” for a first fill). After that it refreshes itself every day.{% else %}Try a wider range or clear the filter.{% endif %}</div></div>
+  {% if not coverage.rows %}{% if coverage.job and coverage.job.status in ('queued', 'running') %}A refresh is {{ coverage.job.status }} — rows appear as each account completes.{% else %}Press “Refresh from TikTok” (pick “last 7 days” for a first fill). After that it refreshes itself on the intervals set in Settings.{% endif %}{% else %}Try a wider range or clear the filter.{% endif %}</div></div>
 {% endif %}
 
 {# ---------- hour × weekday heatmap ---------- #}
@@ -110,7 +132,7 @@
 <div class="card">
   <div class="card-header"><span class="card-title">How this works</span><span class="card-meta">verified against TikTok's reporting guide</span></div>
   <div class="hint" style="font-size:12.5px;line-height:1.6;">
-    Once a day a background job asks TikTok's <span class="mono">/report/integrated/get/</span> for each account: the hourly delivery of today and the last two days (basic report by <span class="mono">stat_time_hour</span>, one day per call), and yesterday's audience report for age × gender, country, state, OS, placement, network, language and device brand — one call per breakdown, skipped for accounts with no delivery that day. TikTok computes audience data 10–12 hours late, so the tables end yesterday and the day before is pulled twice to catch late rows. Rows are stored per campaign per day for 45 days; the filters above only read the store, so they are instant. Conversions are TikTok-attributed (the optimization event), not Glitchy postbacks.
+    Background jobs ask TikTok's <span class="mono">/report/integrated/get/</span> and store the answers per campaign per day (45 days kept); the filters above only read the store, so they are instant. <b>Hour-by-hour delivery</b> (basic report by <span class="mono">stat_time_hour</span>, one day per call) is near real-time on TikTok's side, so today's hours are refreshed every <b>{{ hours_every }} min</b> for accounts with active campaigns. <b>Audience breakdowns</b> (age × gender, country, state, OS, placement, network, language, device brand — one call per breakdown, skipped for accounts with no delivery that day) are computed by TikTok <b>10–12 hours late</b>, so today + yesterday are re-pulled every <b>{{ breakdown_every }} min</b> for active accounts to pick up rows as TikTok publishes them, and a full pull for every account runs once a day. The tables end yesterday unless “include today (partial)” is ticked. Both intervals are on the <a href="/settings#audience">Settings</a> page. Conversions are TikTok-attributed (the optimization event), not Glitchy postbacks.
   </div>
 </div>
 <script>

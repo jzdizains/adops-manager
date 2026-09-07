@@ -78,7 +78,13 @@ DEFAULTS: dict = {
     "appeal_reason": DEFAULT_APPEAL_REASON,  # text sent with each appeal; {ad_name} {campaign_name} {reasons} fill in
     "appeal_skip_keywords": "",    # comma-separated; a rejection whose TikTok reason contains one is NOT auto-appealed
     "appeal_daily_cap": 50,        # max auto-appeals per local day (an account-wide problem must not burn every appeal)
+
+    # --- audience page refresh ------------------------------------------------
+    "audience_hours_every_min": 10,      # today's hour-by-hour delivery (basic report, near real-time): accounts with active campaigns
+    "audience_breakdown_every_min": 60,  # today+yesterday audience breakdowns (TikTok publishes them 10–12 h late): active accounts
 }
+AUDIENCE_HOURS_MIN = 5          # floor: one report call per active account per run
+AUDIENCE_BREAKDOWN_MIN = 15     # floor: ~8 calls per active account per run
 
 
 def get_settings(db: Session) -> dict:
@@ -124,6 +130,8 @@ def save_settings(db: Session, values: dict):
         clean["appeal_reason"] = DEFAULT_APPEAL_REASON
     clean["appeal_reason"] = clean["appeal_reason"][:APPEAL_REASON_MAX]
     clean["appeal_daily_cap"] = max(int(clean.get("appeal_daily_cap") or 0), 1)
+    clean["audience_hours_every_min"] = max(int(clean.get("audience_hours_every_min") or 0), AUDIENCE_HOURS_MIN)
+    clean["audience_breakdown_every_min"] = max(int(clean.get("audience_breakdown_every_min") or 0), AUDIENCE_BREAKDOWN_MIN)
     row = db.query(models.Setting).filter_by(key=KEY).first()
     if not row:
         row = models.Setting(key=KEY)

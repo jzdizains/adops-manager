@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from .. import audience as aud
 from .. import models, timeutil
 from ..database import get_db
+from ..settings_store import get_settings
 from ..templating import render
 
 router = APIRouter()
@@ -48,10 +49,12 @@ def audience_page(request: Request, db: Session = Depends(get_db)):
     bc = qp.get("bc", "").strip()
     account = qp.get("account", "").strip()
     camp = qp.get("camp", "").strip()
+    with_today = qp.get("today", "") == "1"
     today = date.fromisoformat(timeutil.local_date_str())
-    # audience data lags 10–12 h, so the range ends yesterday; the heatmap adds today's hours
-    end = today - timedelta(days=1)
-    start = end - timedelta(days=RANGES[rng] - 1)
+    # audience data lags 10–12 h, so the range ends yesterday unless "include
+    # today (partial)" is ticked; the heatmap always adds today's hours
+    end = today if with_today else today - timedelta(days=1)
+    start = (today - timedelta(days=1)) - timedelta(days=RANGES[rng] - 1)
     s, e = start.isoformat(), end.isoformat()
     ids = _accounts_for(db, bc, account)
     regions = aud.region_names(db)
@@ -72,7 +75,9 @@ def audience_page(request: Request, db: Session = Depends(get_db)):
         "accounts": accounts, "camp": camp, "start": s, "end": e, "today": today.isoformat(),
         "sections": sections, "heat": heat, "coverage": aud.coverage(db),
         "has_data": any(sec["n"] for sec in sections) or heat["max"] > 0,
-        "filtered": bool(bc or account or camp),
+        "filtered": bool(bc or account or camp), "with_today": with_today,
+        "hours_every": int(get_settings(db).get("audience_hours_every_min") or 10),
+        "breakdown_every": int(get_settings(db).get("audience_breakdown_every_min") or 60),
     })
 
 

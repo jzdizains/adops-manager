@@ -160,7 +160,7 @@ def _audience_sync(db: Session, p: dict, job: models.Job) -> dict:
     from . import audience
     days = p.get("days") or None
     r = audience.sync(db, days, should_stop=lambda: jobs.should_stop(db, job),
-                      on_progress=lambda t: jobs.progress(db, job, t))
+                      on_progress=lambda t: jobs.progress(db, job, t), hot_only=bool(p.get("hot_only")))
     if r["stopped"]:
         return {"ok": False, "detail": f"stopped by you after {r['ok'] + r['failed']} of {r['accounts']} account(s) "
                                        f"({r['rows']} rows stored)", "href": "/audience"}

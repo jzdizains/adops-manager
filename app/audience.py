@@ -21,6 +21,7 @@ dimensions / metrics" and "Run a synchronous report"):
 """
 from __future__ import annotations
 
+import json
 import logging
 import time
 from datetime import date, datetime, timedelta, timezone
@@ -160,11 +161,21 @@ def sync_account_day(db: Session, acct: models.AdAccount, day: str, *, hours: bo
     return out
 
 
-def sync(db: Session, days: dict[str, list[str]] | None = None, should_stop=None, on_progress=None) -> dict:
-    """The daily job: every enabled account with a token, for the given days.
-    Returns a summary for the job notification."""
+def hot_accounts(db: Session) -> list[models.AdAccount]:
+    """Enabled accounts with a token that have at least one active campaign —
+    the ones whose numbers can still move today."""
+    active = {r[0] for r in (db.query(models.CampaignRecord.advertiser_id)
+                             .filter(models.CampaignRecord.operation_status == "ENABLE").distinct().all())}
+    return [a for a in queries.enabled_accounts(db) if a.access_token and a.advertiser_id in active]
+
+
+def sync(db: Session, days: dict[str, list[str]] | None = None, should_stop=None, on_progress=None,
+         hot_only: bool = False) -> dict:
+    """The refresh job: every enabled account with a token (or, hot_only, just
+    the accounts with active campaigns) for the given days. Returns a summary
+    for the job notification."""
     days = days or default_days()
-    accounts = [a for a in queries.enabled_accounts(db) if a.access_token]
+    accounts = hot_accounts(db) if hot_only else [a for a in queries.enabled_accounts(db) if a.access_token]
     hour_days, aud_days = list(days.get("hours") or []), list(days.get("audience") or [])
     all_days = sorted(set(hour_days) | set(aud_days), reverse=True)
     stats = {"accounts": len(accounts), "ok": 0, "failed": 0, "rows": 0, "calls": 0, "stopped": False,
@@ -188,9 +199,15 @@ def sync(db: Session, days: dict[str, list[str]] | None = None, should_stop=None
                                             "name": acct.advertiser_name or acct.advertiser_id, "error": r["error"]})
                 break
         stats["failed" if failed else "ok"] += 1
-    refresh_region_names(db, accounts[0] if accounts else None)
-    prune(db)
+    if not hot_only:                      # weekly names + pruning ride on the daily full run
+        refresh_region_names(db, accounts[0] if accounts else None)
+        prune(db)
     queries.set_setting(db, "audience_synced_at", _now().isoformat())
+    queries.set_setting(db, "audience_last_errors", json.dumps(stats["errors"]))
+    if aud_days:
+        queries.set_setting(db, "audience_breakdown_synced_at", _now().isoformat())
+    if hour_days:
+        queries.set_setting(db, "audience_hours_synced_at", _now().isoformat())
     db.commit()
     return stats
 
@@ -354,9 +371,15 @@ def region_names(db: Session) -> dict[str, str]:
 
 
 def coverage(db: Session) -> dict:
-    """What the store holds: date span, rows, accounts, last sync."""
+    """What the store holds: date span, rows, accounts, last sync, the last
+    refresh job (queued / running / finished) and the accounts that failed."""
     lo, hi, n = db.query(func.min(models.AudienceStat.date), func.max(models.AudienceStat.date),
                          func.count(models.AudienceStat.id)).one()
     accts = db.query(func.count(func.distinct(models.AudienceStat.advertiser_id))).scalar() or 0
+    job = db.query(models.Job).filter(models.Job.kind == "audience_sync").order_by(models.Job.id.desc()).first()
+    try:
+        errors = json.loads(queries.get_setting(db, "audience_last_errors", "[]") or "[]")
+    except ValueError:
+        errors = []
     return {"first": lo, "last": hi, "rows": int(n or 0), "accounts": int(accts),
-            "synced_at": queries.get_setting(db, "audience_synced_at", "")}
+            "synced_at": queries.get_setting(db, "audience_synced_at", ""), "job": job, "errors": errors}

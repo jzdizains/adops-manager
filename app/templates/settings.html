@@ -222,6 +222,17 @@
   </div>
 </div>
 
+<div class="card" id="audience">
+  <div class="card-header"><span class="card-title">Audience page refresh</span>
+    <span class="card-meta">how often the <a href="/audience">Audience</a> store is refreshed from TikTok for accounts with active campaigns</span></div>
+  <div class="form-row">
+    <label class="field"><span class="field-label">Hour-by-hour delivery (heatmap) every</span>
+      <input type="number" name="audience_hours_every_min" value="{{ s.audience_hours_every_min }}" min="5" step="1"> <span class="hint">minutes · min 5. Near real-time on TikTok's side; one report call per active account per run.</span></label>
+    <label class="field"><span class="field-label">Audience breakdowns (age, gender, geo, device…) every</span>
+      <input type="number" name="audience_breakdown_every_min" value="{{ s.audience_breakdown_every_min }}" min="15" step="1"> <span class="hint">minutes · min 15. TikTok computes these 10–12 hours late, so pulling faster than hourly mostly returns the same numbers; ~8 calls per active account per run (today + yesterday). The full pull for every account still runs once a day.</span></label>
+  </div>
+</div>
+
 <div class="save-bar">
   <button class="btn primary" type="submit" style="font-size:14px;padding:10px 22px;">Save settings</button>
   <span class="hint" style="margin:0;">Changes apply within one sweep — no redeploy.</span>

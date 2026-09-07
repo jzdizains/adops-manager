@@ -90,7 +90,8 @@ def _loop():
                 partners.poll(db)               # TikTok-account assignments waiting on accepted invites
                 jobs.prune(db)
                 _audience_daily(db)             # once a day: audience breakdowns + hourly heatmap
-            else:
+            _audience_quick(db, settings)       # every N minutes: today's hours / today+yesterday breakdowns, active accounts
+            if not slow:
                 # fast pass: only accounts with something running
                 hot = _accounts_with_active_campaigns(db)
                 if hot:
@@ -118,6 +119,41 @@ def start():
         _started = True
     t = threading.Thread(target=_loop, name="adops-background", daemon=True)
     t.start()
+
+
+def _audience_quick(db, settings: dict) -> None:
+    """Between the daily full pulls, keep the Audience page fresh for accounts
+    with active campaigns: today's hour-by-hour delivery every
+    audience_hours_every_min (near real-time), and today+yesterday breakdowns
+    every audience_breakdown_every_min (TikTok publishes those 10–12 h late,
+    so this mostly catches up late rows). Skipped while a refresh is already
+    queued or running."""
+    from datetime import date, datetime, timedelta
+    from . import jobs, queries, timeutil
+    if not queries.any_access_token(db) or jobs.pending(db, "audience_sync"):
+        return
+    now = timeutil.now_utc().replace(tzinfo=None)
+
+    def due(key: str, every_min: int) -> bool:
+        raw = queries.get_setting(db, key, "")
+        if not raw:
+            return True
+        try:
+            last = datetime.fromisoformat(raw)
+        except ValueError:
+            return True
+        return (now - last).total_seconds() >= every_min * 60
+
+    today = date.fromisoformat(timeutil.local_date_str())
+    y1 = (today - timedelta(days=1)).isoformat()
+    hours_due = due("audience_hours_synced_at", int(settings.get("audience_hours_every_min") or 10))
+    bd_due = due("audience_breakdown_synced_at", int(settings.get("audience_breakdown_every_min") or 60))
+    if not hours_due and not bd_due:
+        return
+    days = {"hours": [today.isoformat()] if hours_due else [], "audience": [today.isoformat(), y1] if bd_due else []}
+    title = ("Refresh audience breakdowns (today + yesterday, active accounts)" if bd_due
+             else "Refresh today's hour-by-hour delivery (active accounts)")
+    jobs.enqueue_once(db, "audience_sync", title, {"days": days, "hot_only": True}, href="/audience")
 
 
 def _audience_daily(db) -> None:
