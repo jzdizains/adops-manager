@@ -81,6 +81,26 @@ def creatives_page(request: Request, db: Session = Depends(get_db)):
     nb_models = [{"id": mid, "label": lbl, "prices": prices}
                  for mid, (lbl, prices) in nanobanana.MODELS.items()]
 
+    # image shelf tags (for the filter chips): original / AI edit / text copy,
+    # plus which carousel (if any) uses the image as a slide
+    import json as _json
+    in_carousel: dict[int, str] = {}
+    for cz in rows:
+        if cz.kind == "carousel":
+            try:
+                for sid in _json.loads(cz.carousel_images or "[]"):
+                    in_carousel.setdefault(int(sid), cz.name)
+            except (ValueError, TypeError):
+                pass
+    img_tags = {}
+    for r in images:
+        tag = "ai" if r.ai_prompt else ("text" if "_txt" in (r.name or "") else "original")
+        img_tags[r.id] = {"tag": tag, "carousel": in_carousel.get(r.id, "")}
+    img_counts = {"all": len(images), "original": sum(1 for t in img_tags.values() if t["tag"] == "original"),
+                  "ai": sum(1 for t in img_tags.values() if t["tag"] == "ai"),
+                  "text": sum(1 for t in img_tags.values() if t["tag"] == "text"),
+                  "carousel": sum(1 for t in img_tags.values() if t["carousel"])}
+
     # image dimensions + the carousel size each will be delivered in (PIL reads
     # just the header here — no pixel decode)
     dims = {}
@@ -117,7 +137,8 @@ def creatives_page(request: Request, db: Session = Depends(get_db)):
         "carousels": carousels, "slide_map": slide_map, "dims": dims,
         "image_pool": [r for r in images if r.status == "available"],
         "browse_account": browse,
-        "rows": videos, "images": images, "accounts": accounts, "available": available,
+        "rows": videos, "images": images, "img_tags": img_tags, "img_counts": img_counts,
+        "accounts": accounts, "available": available,
         "nb_configured": nanobanana.configured(), "nb_models": nb_models,
         "nb_default": nanobanana.DEFAULT_MODEL, "nb_aspects": nanobanana.ASPECTS,
         "nb_models_json": __import__("json").dumps({m["id"]: m["prices"] for m in nb_models}),
@@ -546,6 +567,55 @@ async def update_creative(creative_id: int, request: Request,
         row.name = str(form.get("name")).strip()[:120]
     db.commit()
     return RedirectResponse("/creatives?ok=saved", status_code=303)
+
+
+def _image_delete_block(db: Session, row: models.Creative) -> str:
+    """Why an image can't be deleted ("" = it can)."""
+    if row.status == "used":
+        return "already launched — kept for P&L history"
+    if row.kind == "image":
+        import json as _json
+        for cz in db.query(models.Creative).filter_by(kind="carousel").all():
+            try:
+                if row.id in [int(x) for x in _json.loads(cz.carousel_images or "[]")]:
+                    return f"slide in carousel “{cz.name}”"
+            except (ValueError, TypeError):
+                pass
+    return ""
+
+
+def _delete_row(db: Session, row: models.Creative) -> None:
+    try:
+        if row.file_path:
+            from pathlib import Path
+            Path(row.file_path).unlink(missing_ok=True)
+    except OSError:
+        pass
+    db.query(models.CreativeUpload).filter_by(creative_id=row.id).delete()
+    db.delete(row)
+
+
+@router.post("/creatives/images/bulk-delete")
+async def bulk_delete_images(request: Request, db: Session = Depends(get_db)):
+    """Delete the ticked images; anything in use is skipped and named."""
+    form = await request.form()
+    ids = [int(x) for x in form.getlist("ids") if str(x).isdigit()]
+    done, skipped = 0, []
+    for cid in ids:
+        row = db.get(models.Creative, cid)
+        if not row or row.kind != "image":
+            continue
+        why = _image_delete_block(db, row)
+        if why:
+            skipped.append(f"{row.name}: {why}")
+            continue
+        _delete_row(db, row)
+        done += 1
+    db.commit()
+    q = f"ok={done}+image(s)+deleted" if done else "ok=nothing+deleted"
+    if skipped:
+        q += "&err=kept+" + "+·+".join(skipped)[:300].replace(" ", "+")
+    return RedirectResponse(f"/creatives?{q}#images", status_code=303)
 
 
 @router.post("/creatives/{creative_id}/delete")

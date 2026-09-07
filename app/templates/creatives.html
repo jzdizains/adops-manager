@@ -372,44 +372,68 @@
   </div>
 
   {% if images %}
-  <div class="img-grid" style="margin-top:14px;">
+  <div class="img-tools">
+    <input type="text" id="imgSearch" placeholder="Search name, source or prompt…" style="flex:1;min-width:180px;padding:7px 10px;font-size:12.5px;">
+    <div class="seg" id="imgFilter">
+      <button type="button" data-f="" class="on">All <span class="n">{{ img_counts.all }}</span></button>
+      <button type="button" data-f="original">Originals <span class="n">{{ img_counts.original }}</span></button>
+      <button type="button" data-f="text">With text <span class="n">{{ img_counts.text }}</span></button>
+      <button type="button" data-f="ai">AI edits <span class="n">{{ img_counts.ai }}</span></button>
+      {% if img_counts.carousel %}<button type="button" data-f="carousel">In a carousel <span class="n">{{ img_counts.carousel }}</span></button>{% endif %}
+    </div>
+    <div class="seg" id="imgSize" title="Thumbnail size"><button type="button" data-s="s">Small</button><button type="button" data-s="m" class="on">Medium</button><button type="button" data-s="l">Large</button></div>
+    <label class="img-details-toggle"><input type="checkbox" id="imgDetails" style="width:auto;"> details</label>
+  </div>
+  <form method="post" action="/creatives/images/bulk-delete" id="imgBulk" class="img-bulk" hidden onsubmit="return confirm('Delete the selected images? Images used in a carousel or already launched are kept.');">
+    <span id="imgSelCount">0 selected</span>
+    <button type="button" class="btn sm" id="imgSelAll">Select all shown</button>
+    <button type="button" class="btn sm" id="imgSelNone">Clear</button>
+    <button class="btn sm danger" type="submit">✕ Delete selected</button>
+  </form>
+  <div class="img-grid" id="imgGrid" data-size="m">
     {% for r in images %}
-    <div class="img-card" id="c{{ r.id }}">
+    {% set tg = img_tags.get(r.id, {}) %}
+    <div class="img-card" id="c{{ r.id }}" data-tag="{{ tg.tag }}" data-carousel="{{ '1' if tg.carousel else '' }}"
+         data-search="{{ (r.name or '')|lower }} {{ (r.source or '')|lower }} {{ (r.ai_prompt or '')|lower }}">
       <div class="img-thumb">
+        {% if r.status in ('available', 'used') %}<label class="img-pick" title="Select"><input type="checkbox" form="imgBulk" name="ids" value="{{ r.id }}" class="imgSel"></label>{% endif %}
+        {% if tg.tag == 'ai' %}<span class="img-badge" title="AI edit: {{ r.ai_prompt }}">✨</span>{% elif tg.tag == 'text' %}<span class="img-badge" title="Text copy">T</span>{% endif %}
+        {% if tg.carousel %}<span class="img-badge right" title="Slide in carousel “{{ tg.carousel }}”">🖼</span>{% elif r.status == 'used' %}<span class="img-badge right" title="Launched">used</span>{% endif %}
         {% if r.status == 'processing' %}<div class="img-ph">✨ generating…</div>
         {% elif r.status == 'error' %}<div class="img-ph" style="color:var(--err);" title="{{ r.error }}">✕ failed</div>
         {% elif r.file_path %}<a href="/creatives/{{ r.id }}/file" target="_blank" rel="noopener" title="Open full size"><img src="/creatives/{{ r.id }}/thumb" alt="{{ r.name }}" loading="lazy" decoding="async"></a>
         {% else %}<div class="img-ph">—</div>{% endif %}
-      </div>
-      <div class="img-meta">
-        <form id="if{{ r.id }}" method="post" action="/creatives/{{ r.id }}/update"></form>
-        <input form="if{{ r.id }}" type="text" name="name" value="{{ r.name }}" style="font-size:12px;padding:4px 7px;">
-        <input form="if{{ r.id }}" type="text" name="source" value="{{ r.source }}" placeholder="source" style="font-size:11.5px;padding:4px 7px;margin-top:4px;">
-        {% set dm = dims.get(r.id) %}
-        {% if dm %}<div class="muted mono" style="font-size:10px;margin-top:4px;" title="Source size → size delivered to TikTok ({{ dm.fmt }} carousel format)">{{ dm.w }}×{{ dm.h }}{% if not dm.exact %} → {{ dm.tw }}×{{ dm.th }}{% else %} ✓{% endif %}</div>{% endif %}
-        {% if r.ai_prompt %}<div class="muted" style="font-size:10.5px;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="{{ r.ai_prompt }}">✨ {{ r.ai_prompt[:60] }}</div>
-        <div class="muted mono" style="font-size:10px;">{{ r.ai_model.replace('gemini-','') }} · ${{ "%.3f"|format(r.ai_cost) }}</div>{% endif %}
-        {% if r.status == 'error' %}<div style="font-size:10.5px;color:var(--err);margin-top:3px;overflow-wrap:anywhere;">{{ r.error[:120] }}</div>{% endif %}
-        <div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap;">
-          <button form="if{{ r.id }}" class="btn sm" type="submit">Save</button>
+        <div class="img-actions">
           {% if r.status == 'available' %}
-          <button type="button" class="btn sm txtBtn" data-id="{{ r.id }}" data-name="{{ r.name }}" data-src="/creatives/{{ r.id }}/file" data-back="library" title="Add text in TikTok's caption font">T Add text</button>
-          {% endif %}
-          {% if r.status == 'available' and nb_configured %}
-          <button type="button" class="btn sm aiEditBtn" data-id="{{ r.id }}" data-name="{{ r.name }}" data-src="/creatives/{{ r.id }}/thumb">✨ Edit with AI</button>
+          <button type="button" class="txtBtn" data-id="{{ r.id }}" data-name="{{ r.name }}" data-src="/creatives/{{ r.id }}/file" data-back="library" title="Add text in TikTok's caption font">T</button>
+          {% if nb_configured %}<button type="button" class="aiEditBtn" data-id="{{ r.id }}" data-name="{{ r.name }}" data-src="/creatives/{{ r.id }}/thumb" title="Edit with AI">✨</button>{% endif %}
           {% endif %}
           {% if r.status in ('available', 'error') %}
-          <form method="post" action="/creatives/{{ r.id }}/delete" style="display:inline;" onsubmit="return confirm('Delete this image?');"><button class="btn sm danger" type="submit">✕</button></form>
+          <form method="post" action="/creatives/{{ r.id }}/delete" style="display:inline;" onsubmit="return confirm('Delete this image?');"><button type="submit" class="del" title="Delete">✕</button></form>
           {% endif %}
         </div>
       </div>
+      <div class="img-meta">
+        <form id="if{{ r.id }}" method="post" action="/creatives/{{ r.id }}/update" class="imgMetaForm"></form>
+        <input form="if{{ r.id }}" type="text" name="name" value="{{ r.name }}" class="img-name" title="Name — saves when you leave the field">
+        <div class="img-more">
+          <input form="if{{ r.id }}" type="text" name="source" value="{{ r.source }}" placeholder="source" class="img-src" title="Source — saves when you leave the field">
+          {% set dm = dims.get(r.id) %}
+          {% if dm %}<div class="muted mono" style="font-size:10px;margin-top:3px;" title="Source size → size delivered to TikTok ({{ dm.fmt }} carousel format)">{{ dm.w }}×{{ dm.h }}{% if not dm.exact %} → {{ dm.tw }}×{{ dm.th }}{% else %} ✓{% endif %}</div>{% endif %}
+          {% if r.ai_prompt %}<div class="muted" style="font-size:10.5px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="{{ r.ai_prompt }}">✨ {{ r.ai_prompt[:60] }}</div>
+          <div class="muted mono" style="font-size:10px;">{{ r.ai_model.replace('gemini-','') }} · ${{ "%.3f"|format(r.ai_cost) }}</div>{% endif %}
+        </div>
+        {% if r.status == 'error' %}<div style="font-size:10.5px;color:var(--err);margin-top:3px;overflow-wrap:anywhere;">{{ r.error[:120] }}</div>{% endif %}
+      </div>
     </div>
     {% endfor %}
+    <div class="empty" id="imgEmpty" hidden style="grid-column:1/-1;padding:18px 0;">No images match.</div>
   </div>
+  <div class="img-foot"><span class="muted" id="imgShown"></span><button type="button" class="btn sm" id="imgMore" hidden>Show more</button></div>
   {% else %}
   <div class="empty" style="padding:22px 0;">No images yet — upload some, or generate one from a prompt.</div>
   {% endif %}
-  <div class="hint" style="margin-top:8px;">Images live on their own shelf: the video launcher never picks them. Edits keep the original and add new copies (grouped as a family), each stamped with its prompt, model and list price.</div>
+  <div class="hint" style="margin-top:8px;">Images live on their own shelf: the video launcher never picks them. Name and source save as soon as you leave the field. Text and AI edits keep the original and add a new copy (badged T / ✨). Tick images to delete several at once.</div>
 </div>
 
 {# ---- Text editor modal (shared by Library + Carousels) ---- #}
@@ -520,6 +544,70 @@
   var chk = document.getElementById("freshenChk"), opts = document.getElementById("freshenOpts");
   function syncFreshen() { if (opts) opts.style.display = chk.checked ? "flex" : "none"; }
   if (chk) { chk.addEventListener("change", syncFreshen); syncFreshen(); }
+  // ---- image shelf: search / type filter / size / select / auto-save / paging ----
+  (function () {
+    var grid = document.getElementById("imgGrid"); if (!grid) return;
+    var cards = Array.prototype.slice.call(grid.querySelectorAll(".img-card"));
+    var search = document.getElementById("imgSearch"), filterBtns = Array.prototype.slice.call(document.querySelectorAll("#imgFilter button"));
+    var sizeBtns = Array.prototype.slice.call(document.querySelectorAll("#imgSize button"));
+    var shown = document.getElementById("imgShown"), more = document.getElementById("imgMore"), empty = document.getElementById("imgEmpty");
+    var bulk = document.getElementById("imgBulk"), selCount = document.getElementById("imgSelCount");
+    var PAGE = 48, limit = PAGE, filt = "";
+    try { var sz = localStorage.getItem("adops-img-size"); if (sz) setSize(sz, true); var det = localStorage.getItem("adops-img-details"); if (det === "1") document.getElementById("imgDetails").checked = true; } catch (e) {}
+    function setSize(v, silent) {
+      grid.setAttribute("data-size", v);
+      sizeBtns.forEach(function (b) { b.classList.toggle("on", b.getAttribute("data-s") === v); });
+      if (!silent) { try { localStorage.setItem("adops-img-size", v); } catch (e) {} }
+    }
+    sizeBtns.forEach(function (b) { b.addEventListener("click", function () { setSize(b.getAttribute("data-s")); }); });
+    var details = document.getElementById("imgDetails");
+    function syncDetails() { grid.classList.toggle("details", details.checked); try { localStorage.setItem("adops-img-details", details.checked ? "1" : "0"); } catch (e) {} }
+    details.addEventListener("change", syncDetails); syncDetails();
+    function matches(c) {
+      var q = search.value.trim().toLowerCase();
+      if (q && c.getAttribute("data-search").indexOf(q) < 0) return false;
+      if (filt === "carousel") return c.getAttribute("data-carousel") === "1";
+      return !filt || c.getAttribute("data-tag") === filt;
+    }
+    function apply() {
+      var n = 0, vis = 0;
+      cards.forEach(function (c) {
+        var ok = matches(c);
+        if (ok) { n++; c.hidden = n > limit; if (!c.hidden) vis++; } else c.hidden = true;
+      });
+      empty.hidden = n > 0;
+      more.hidden = n <= limit;
+      more.textContent = "Show " + Math.min(PAGE, n - vis) + " more";
+      shown.textContent = n ? ("Showing " + vis + " of " + n + (n !== cards.length ? " matching" : "") + " image(s)") : "";
+      syncSel();
+    }
+    search.addEventListener("input", function () { limit = PAGE; apply(); });
+    filterBtns.forEach(function (b) { b.addEventListener("click", function () { filterBtns.forEach(function (o) { o.classList.remove("on"); }); b.classList.add("on"); filt = b.getAttribute("data-f"); limit = PAGE; apply(); }); });
+    more.addEventListener("click", function () { limit += PAGE; apply(); });
+    // selection → bulk bar
+    var boxes = Array.prototype.slice.call(grid.querySelectorAll(".imgSel"));
+    function syncSel() {
+      var n = boxes.filter(function (b) { return b.checked; }).length;
+      bulk.hidden = n === 0; selCount.textContent = n + " selected";
+      boxes.forEach(function (b) { b.closest(".img-card").classList.toggle("sel", b.checked); });
+    }
+    boxes.forEach(function (b) { b.addEventListener("change", syncSel); });
+    document.getElementById("imgSelAll").addEventListener("click", function () { boxes.forEach(function (b) { if (!b.closest(".img-card").hidden) b.checked = true; }); syncSel(); });
+    document.getElementById("imgSelNone").addEventListener("click", function () { boxes.forEach(function (b) { b.checked = false; }); syncSel(); });
+    // name / source: save on change without leaving the page
+    grid.querySelectorAll(".img-name, .img-src").forEach(function (inp) {
+      inp.addEventListener("change", function () {
+        var f = document.getElementById(inp.getAttribute("form")), card = inp.closest(".img-card");
+        var fd = new FormData(f);
+        card.classList.add("saving");
+        fetch(f.action, { method: "POST", body: fd, credentials: "same-origin" })
+          .then(function (r) { card.classList.remove("saving"); card.classList.toggle("save-err", !r.ok); if (r.ok) { card.classList.add("saved"); setTimeout(function () { card.classList.remove("saved"); }, 1200); } })
+          .catch(function () { card.classList.remove("saving"); card.classList.add("save-err"); });
+        if (inp.classList.contains("img-name")) card.setAttribute("data-search", (inp.value + " " + (card.querySelector(".img-src").value || "")).toLowerCase() + " " + (card.getAttribute("data-search").split(" ").slice(2).join(" ")));
+      });
+    });
+    apply();
+  })();
   {% if processing and view == 'library' %}
   // While jobs run, poll a tiny JSON endpoint (only when the tab is visible) and
   // reload ONLY when something finished — never a blind reload every 5 seconds.
