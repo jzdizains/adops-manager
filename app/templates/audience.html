@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Audience</h1>
+    <div class="muted">Who the ads reach — by hour, age, gender, country, state, device and placement. From TikTok's audience reports (10–12 h behind) and hourly delivery, refreshed daily and stored here so this page is instant.</div></div>
+  <div class="actions">
+    <form method="post" action="/audience/sync" style="display:flex;gap:6px;align-items:center;">
+      <select name="days" style="font-size:12px;padding:6px 8px;" title="How many past days to (re)pull for every account">
+        <option value="2">last 2 days</option><option value="7">last 7 days</option><option value="14">last 14 days</option><option value="30">last 30 days</option>
+      </select>
+      <button class="btn" type="submit" style="white-space:nowrap;" title="Pull breakdowns from TikTok for every account (background job)">↻ Refresh from TikTok</button>
+    </form>
+  </div>
+</div>
+
+<form method="get" action="/audience" class="ap-filter" id="audFilter">
+  <label>Range
+    <select name="range" title="Full days ending yesterday (audience data lags 10–12 h); the heatmap also includes today">
+      {% for k, n in ranges.items() %}<option value="{{ k }}" {{ 'selected' if rng == k }}>last {{ n }} days</option>{% endfor %}
+    </select></label>
+  <label>Business Center
+    <select name="bc" id="audBc">
+      <option value="">All</option>
+      {% for k, name in bcs %}<option value="{{ k }}" {{ 'selected' if bc == k }}>{{ name }}</option>{% endfor %}
+      <option value="none" {{ 'selected' if bc == 'none' }}>No Business Center</option>
+    </select></label>
+  <label>Account
+    <select name="account">
+      <option value="">All accounts</option>
+      {% for a in accounts %}<option value="{{ a.advertiser_id }}" {{ 'selected' if account == a.advertiser_id }}>{{ a.advertiser_name or a.advertiser_id }}</option>{% endfor %}
+    </select></label>
+  <label>Campaign name
+    <input type="search" name="camp" value="{{ camp }}" placeholder="contains…" style="width:200px;"></label>
+  <label>Heatmap metric
+    <select name="metric">{% for k, lbl in metrics.items() %}<option value="{{ k }}" {{ 'selected' if metric == k }}>{{ lbl }}</option>{% endfor %}</select></label>
+  <button class="btn sm" type="submit">Apply</button>
+  {% if filtered %}<a class="btn sm" href="/audience?range={{ rng }}&metric={{ metric }}">Clear</a>{% endif %}
+  <span class="muted" style="font-size:12px;">{{ start }} → {{ end }}{% if coverage.rows %} · store: {{ coverage.first }} → {{ coverage.last }}, {{ coverage.accounts }} account(s){% if coverage.synced_at %}, refreshed {{ coverage.synced_at[:16].replace('T', ' ') }} UTC{% endif %}{% endif %}</span>
+</form>
+
+{% if not has_data %}
+<div class="card"><div class="empty"><div class="empty-title">No audience data stored yet{% if filtered %} for this filter{% endif %}</div>
+  {% if not coverage.rows %}Press “Refresh from TikTok” once (pick “last 7 days” for a first fill). After that it refreshes itself every day.{% else %}Try a wider range or clear the filter.{% endif %}</div></div>
+{% endif %}
+
+{# ---------- hour × weekday heatmap ---------- #}
+<div class="card">
+  <div class="card-header"><span class="card-title">When it delivers — {{ metrics[metric] }} by hour and weekday</span>
+    <span class="card-meta">{{ heat.days }} day(s) of hourly data · ad-account time zone · darker = more</span></div>
+  {% if heat.max > 0 %}
+  {% macro cell_class(v, mx) -%}{% if v <= 0 %}h0{% else %}{% set r = v / mx %}{% if r < 0.2 %}h1{% elif r < 0.45 %}h2{% elif r < 0.75 %}h3{% else %}h4{% endif %}{% endif %}{%- endmacro %}
+  {% macro fmt(v) -%}{% if metric == 'spend' %}${{ '%.2f'|format(v) }}{% else %}{{ '%d'|format(v) }}{% endif %}{%- endmacro %}
+  <div class="table-scroll">
+  <table class="heat">
+    <thead><tr><th></th>{% for h in range(24) %}<th>{{ h }}</th>{% endfor %}<th class="tot">Day</th></tr></thead>
+    <tbody>
+    {% for w in range(7) %}
+      <tr><th>{{ heat.weekdays[w] }}</th>
+        {% for h in range(24) %}{% set v = heat.grid[w][h] %}<td class="{{ cell_class(v, heat.max) }}" title="{{ heat.weekdays[w] }} {{ '%02d'|format(h) }}:00 — {{ fmt(v) }}"></td>{% endfor %}
+        <td class="tot">{{ fmt(heat.by_day[w]) }}</td></tr>
+    {% endfor %}
+      <tr class="hours"><th>Hour</th>
+        {% for h in range(24) %}{% set v = heat.by_hour[h] %}<td class="{{ cell_class(v, heat.hour_max) }}" title="{{ '%02d'|format(h) }}:00 across the range — {{ fmt(v) }}"></td>{% endfor %}
+        <td class="tot">{{ fmt(heat.by_hour|sum) }}</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="muted" style="font-size:11px;margin-top:6px;">Hover a cell for the value. The bottom row sums every weekday for that hour.
+    {% set best = [] %}{% for h in range(24) %}{% if heat.by_hour[h] == heat.hour_max %}{% set _ = best.append(h) %}{% endif %}{% endfor %}
+    {% if best %}Busiest hour: <b>{{ '%02d'|format(best[0]) }}:00</b> ({{ fmt(heat.hour_max) }}).{% endif %}</div>
+  {% else %}
+  <div class="empty" style="padding:18px 0;">No hourly rows for this range.</div>
+  {% endif %}
+</div>
+
+{# ---------- breakdown tables ---------- #}
+<div class="aud-grid">
+{% for sec in sections %}
+  <div class="card aud-card" id="sec-{{ sec.key }}">
+    <div class="card-header"><span class="card-title">{{ sec.title }}</span>
+      <span class="card-meta">{{ sec.n }} row{{ '' if sec.n == 1 else 's' }}{% if sec.n > 40 %} · top 40 shown{% endif %} · ${{ '%.2f'|format(sec.spend) }}</span></div>
+    {% if sec.rows %}
+    <div class="table-scroll">
+    <table class="data dense aud">
+      <thead><tr><th>{{ sec.title }}</th><th>Share</th><th class="num">Spend</th><th class="num">Impr.</th><th class="num">Clicks</th><th class="num">CTR</th><th class="num">CPC</th><th class="num">Conv.</th><th class="num">CPA</th></tr></thead>
+      <tbody>
+      {% for r in sec.rows %}
+        <tr>
+          <td class="clip" style="max-width:118px;" title="{{ r.label }}{% if r.key != r.label %} ({{ r.key }}){% endif %}">{{ r.label }}</td>
+          <td><div class="share"><div class="share-track"><div class="share-bar" style="width:{{ '%.1f'|format(r.share) }}%;"></div></div><span class="share-n">{{ '%.1f'|format(r.share) }}%</span></div></td>
+          <td class="num">${{ '%.2f'|format(r.spend) }}</td>
+          <td class="num">{{ '{:,}'.format(r.impressions) }}</td>
+          <td class="num">{{ '{:,}'.format(r.clicks) }}</td>
+          <td class="num">{{ '%.2f'|format(r.ctr) }}%</td>
+          <td class="num">{% if r.clicks %}${{ '%.2f'|format(r.cpc) }}{% else %}—{% endif %}</td>
+          <td class="num">{{ r.conversions }}</td>
+          <td class="num">{% if r.conversions %}${{ '%.2f'|format(r.cpa) }}{% else %}—{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% else %}
+    <div class="empty" style="padding:14px 0;font-size:12.5px;">Nothing stored for this range.</div>
+    {% endif %}
+  </div>
+{% endfor %}
+</div>
+
+<div class="card">
+  <div class="card-header"><span class="card-title">How this works</span><span class="card-meta">verified against TikTok's reporting guide</span></div>
+  <div class="hint" style="font-size:12.5px;line-height:1.6;">
+    Once a day a background job asks TikTok's <span class="mono">/report/integrated/get/</span> for each account: the hourly delivery of today and the last two days (basic report by <span class="mono">stat_time_hour</span>, one day per call), and yesterday's audience report for age × gender, country, state, OS, placement, network, language and device brand — one call per breakdown, skipped for accounts with no delivery that day. TikTok computes audience data 10–12 hours late, so the tables end yesterday and the day before is pulled twice to catch late rows. Rows are stored per campaign per day for 45 days; the filters above only read the store, so they are instant. Conversions are TikTok-attributed (the optimization event), not Glitchy postbacks.
+  </div>
+</div>
+<script>
+(function () {
+  var bc = document.getElementById("audBc");
+  if (bc) bc.addEventListener("change", function () { document.getElementById("audFilter").submit(); });
+})();
+</script>
+{% endblock %}

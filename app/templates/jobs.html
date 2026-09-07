@@ -3,11 +3,14 @@
 <div class="page-head">
   <div><h1>Background jobs</h1>
     <div class="muted">Every launch, bid change, appeal, sync and partner step runs here so no page has to wait. Finished ones pop up bottom-right on whatever page you're on.</div></div>
-  <div class="actions"><a class="btn" href="/jobs">↻ Refresh</a></div>
+  <div class="actions">
+    {% if summary.queued %}<form method="post" action="/jobs/cancel-queued" onsubmit="return confirm('Remove all {{ summary.queued }} queued job(s)? Running ones keep going.');"><input type="hidden" name="next" value="/jobs"><button class="btn" type="submit" title="Drop everything still waiting; running jobs are not touched">✕ Clear queue ({{ summary.queued }})</button></form>{% endif %}
+    <a class="btn" href="/jobs">↻ Refresh</a></div>
 </div>
+
 <div class="kpis kpis-4">
   <div class="kpi accent"><div class="lab">Running</div><div class="val">{{ summary.running }}</div><div class="sub">working right now</div></div>
-  <div class="kpi"><div class="lab">Queued</div><div class="val">{{ summary.queued }}</div><div class="sub">start within a second</div></div>
+  <div class="kpi"><div class="lab">Queued</div><div class="val">{{ summary.queued }}</div><div class="sub">two lanes: launches & edits never wait behind a scan</div></div>
   <div class="kpi"><div class="lab">Shown</div><div class="val">{{ rows|length }}</div><div class="sub">most recent, newest first</div></div>
   <div class="kpi"><div class="lab">Kept</div><div class="val">14 d</div><div class="sub">older jobs are pruned</div></div>
 </div>
@@ -15,7 +18,7 @@
   {% if rows %}
   <div class="table-scroll">
   <table class="data dense">
-    <thead><tr><th>When</th><th>Job</th><th>Status</th><th>Result</th><th class="num">Took</th></tr></thead>
+    <thead><tr><th>When</th><th>Job</th><th>Status</th><th>Result</th><th class="num">Took</th><th></th></tr></thead>
     <tbody>
     {% for j in rows %}
       <tr>
@@ -23,9 +26,15 @@
         <td><div style="font-weight:600;">{% if j.href %}<a href="{{ j.href }}" style="color:inherit;">{{ j.title }}</a>{% else %}{{ j.title }}{% endif %}</div>
           <div class="mono muted" style="font-size:10.5px;">{{ j.kind }}</div></td>
         <td>{% if j.status == 'done' %}<span class="pill ok">done</span>{% elif j.status == 'error' %}<span class="pill err">error</span>
-            {% elif j.status == 'running' %}<span class="pill warn">running{% if j.progress %} · {{ j.progress }}{% endif %}</span>{% else %}<span class="pill dim">queued</span>{% endif %}</td>
+            {% elif j.status == 'running' %}<span class="pill warn">{{ 'stopping' if j.cancel_requested else 'running' }}{% if j.progress %} · {{ j.progress }}{% endif %}</span>
+            {% elif j.status == 'cancelled' %}<span class="pill dim" title="Removed from the queue before it started">cancelled</span>
+            {% else %}<span class="pill dim">queued</span> <span class="muted" style="font-size:10.5px;">{{ 'slow lane' if j.kind in slow_kinds else 'fast lane' }}</span>{% endif %}</td>
         <td style="max-width:560px;font-size:12px;">{{ j.detail }}</td>
-        <td class="num muted" style="white-space:nowrap;">{% if j.started_at and j.finished_at %}{{ "%.0f"|format((j.finished_at - j.started_at).total_seconds()) }} s{% else %}—{% endif %}</td>
+        <td class="num muted" style="white-space:nowrap;">{% if j.started_at and j.finished_at %}{{ "%.0f"|format((j.finished_at - j.started_at).total_seconds()) }} s{% elif j.started_at %}<span title="running for">{{ j.started_at|ago }}</span>{% else %}—{% endif %}</td>
+        <td class="num" style="white-space:nowrap;">
+          {% if j.status == 'queued' %}<form method="post" action="/jobs/{{ j.id }}/cancel" style="display:inline;"><input type="hidden" name="next" value="/jobs"><button class="btn sm" type="submit" title="Remove from the queue — it will not run">Remove</button></form>
+          {% elif j.status == 'running' and not j.cancel_requested %}<form method="post" action="/jobs/{{ j.id }}/cancel" style="display:inline;" onsubmit="return confirm('Stop “{{ j.title|e }}”? Long scans stop after the account they are on; a launch in progress finishes the campaign it is creating first.');"><input type="hidden" name="next" value="/jobs"><button class="btn sm" type="submit" title="Ask it to stop at its next checkpoint">Stop</button></form>{% endif %}
+        </td>
       </tr>
     {% endfor %}
     </tbody>

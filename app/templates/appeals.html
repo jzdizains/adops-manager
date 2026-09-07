@@ -48,6 +48,32 @@
   <div class="kpi"><div class="lab">Lost</div><div class="val">{% if summary.lost %}<span class="bad">{{ summary.lost }}</span>{% else %}0{% endif %}</div><div class="sub">rejection upheld · {{ summary.cleared }} cleared without appeal</div></div>
 </div>
 
+<div class="card scan-card">
+  <div class="card-header"><span class="card-title">Last scan</span>
+    <span class="card-meta">{% if last_run %}<span title="{{ last_run.at|local('%Y-%m-%d %H:%M:%S') }} ({{ TZ_NAME }})">{{ last_run.at|ago }}</span> · took {{ last_run.duration_s }} s{% else %}not run yet{% endif %}</span></div>
+  {% if last_run %}
+  <div class="scan-line">
+    <span><b>{{ last_run.ads_read }}</b> ad{{ '' if last_run.ads_read == 1 else 's' }} read across <b>{{ last_run.accounts_ok }}</b> of {{ last_run.accounts_total }} account{{ '' if last_run.accounts_total == 1 else 's' }}</span>
+    <span>· <b class="{{ 'bad' if last_run.rejected_found else '' }}">{{ last_run.rejected_found }}</b> in a rejected status</span>
+    {% if last_run.accounts_failed %}<span>· <span class="pill err">{{ last_run.accounts_failed }} account{{ '' if last_run.accounts_failed == 1 else 's' }} could not be read</span></span>{% endif %}
+    {% if last_run.accounts_total == 0 %}<span>· <span class="pill warn">no account has a TikTok token — connect TikTok first</span></span>{% endif %}
+  </div>
+  {% if run_counts %}
+  <div class="scan-statuses" title="Every ad status TikTok returned in this scan, with counts — rejected ones are highlighted">
+    {% for st, n in run_counts %}{% set bad = bad_tokens|select('in', st)|list %}<span class="pill {{ 'err' if bad else 'dim' }} mono" style="font-size:10.5px;">{{ st }} <b>{{ n }}</b></span> {% endfor %}
+  </div>
+  {% endif %}
+  {% if run_errors %}
+  <details style="margin-top:6px;"><summary class="muted" style="cursor:pointer;font-size:12px;">Accounts that could not be read ({{ run_errors|length }}{% if last_run.accounts_failed > run_errors|length %} of {{ last_run.accounts_failed }}{% endif %}) — TikTok's message for each</summary>
+    <table class="data dense" style="margin-top:6px;"><tbody>
+    {% for e in run_errors %}<tr><td style="white-space:nowrap;">{{ acct_link(e.advertiser_id, e.name, True) }}</td><td class="mono" style="font-size:11px;">{{ e.error }}</td></tr>{% endfor %}
+    </tbody></table></details>
+  {% endif %}
+  {% else %}
+  <div class="muted" style="font-size:12.5px;">Press “Scan now” — the scan reads every ad on every connected account and lists the ones TikTok rejected here.</div>
+  {% endif %}
+</div>
+
 {% macro acct(r) -%}
   {{ acct_link(r.advertiser_id, r.advertiser_name, True) }}
   {% set b = bc_of.get(r.advertiser_id, '') %}

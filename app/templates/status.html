@@ -2,7 +2,7 @@
 {% block content %}
 {% set range_labels = {'today': 'Today', 'yesterday': 'Yesterday', '7d': 'Last 7 days', '30d': 'Last 30 days', 'mtd': 'This month', 'custom': 'Custom'} %}
 {% set origin_labels = {'tool': 'Launched by this tool', 'all': 'All on TikTok'} %}
-{% set state_labels = {'all': 'All statuses', 'active': 'Active only', 'paused': 'Paused only'} %}
+{% set state_labels = {'active': 'Active only', 'all': 'All statuses', 'paused': 'Paused only'} %}
 {% set roas = (totals.revenue / totals.spend) if totals.spend else 0 %}
 {% macro sort_link(key, label) -%}
   <a class="th-sort {{ 'on' if sort == key else '' }}"
@@ -151,7 +151,7 @@
 
     <input type="hidden" name="sort" value="{{ sort }}">
     <button class="btn" type="submit">Apply</button>
-    {% if q or state != 'all' or account or source_f or origin != 'tool' or range_key != 'today' %}<a class="btn sm" href="/status">✕ Clear</a>{% endif %}
+    {% if q or state != 'active' or account or source_f or origin != 'tool' or range_key != 'today' %}<a class="btn sm" href="/status">✕ Clear</a>{% endif %}
     {% if range_errors %}<span class="hint" style="color:var(--warn);">{{ range_errors }} account(s) failed to load range metrics</span>{% endif %}
   </form>
 </div>

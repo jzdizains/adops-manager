@@ -32,6 +32,16 @@ _started = False
 _lock = threading.Lock()
 _current: dict = {}      # job id → job (for progress updates)
 
+# Two lanes, two worker threads: long sweeps over every account (minutes) must
+# never make a launch or a bid change wait behind them.
+SLOW_KINDS = {"issues_scan", "appeals_refresh", "pixels_sync", "pixel_link_all", "audience_sync"}
+LANES = ("fast", "slow")
+CANCELLED = "cancelled"
+
+
+def lane(kind: str) -> str:
+    return "slow" if kind in SLOW_KINDS else "fast"
+
 
 def handler(kind: str):
     def deco(fn):
@@ -46,7 +56,7 @@ def _now() -> datetime:
 
 def enqueue(db: Session, kind: str, title: str, payload: dict | None = None, href: str = "") -> models.Job:
     job = models.Job(kind=kind, title=title[:200], payload=json.dumps(payload or {}, default=str),
-                     href=href or "", status="queued")
+                     href=href or "", status="queued", cancel_requested=False)
     db.add(job)
     db.commit()
     if _inline():
@@ -54,6 +64,70 @@ def enqueue(db: Session, kind: str, title: str, payload: dict | None = None, hre
         return job
     _wake.set()
     return job
+
+
+def pending(db: Session, kind: str) -> models.Job | None:
+    """The queued/running job of this kind, if any — so a button pressed twice
+    doesn't stack the same sweep up behind itself."""
+    return (db.query(models.Job).filter(models.Job.kind == kind, models.Job.status.in_(("queued", "running")))
+            .order_by(models.Job.id).first())
+
+
+def enqueue_once(db: Session, kind: str, title: str, payload: dict | None = None,
+                 href: str = "") -> tuple[models.Job, bool]:
+    """enqueue() unless the same kind is already queued or running.
+    Returns (job, created)."""
+    existing = pending(db, kind)
+    if existing:
+        return existing, False
+    return enqueue(db, kind, title, payload, href), True
+
+
+def cancel(db: Session, job_id: int) -> tuple[bool, str]:
+    """Queued → dropped before it starts. Running → asks the handler to stop
+    at its next checkpoint (long sweeps check between accounts); a handler
+    that can't stop early finishes normally."""
+    job = db.get(models.Job, job_id)
+    if not job:
+        return False, "That job no longer exists."
+    if job.status == "queued":
+        job.status = CANCELLED
+        job.detail = "removed from the queue before it started"
+        job.finished_at = _now()
+        job.seen = True                 # nothing to announce
+        db.commit()
+        return True, f"Removed “{job.title}” from the queue."
+    if job.status == "running":
+        if job.cancel_requested:
+            return True, f"“{job.title}” is already being stopped — it ends at its next checkpoint."
+        job.cancel_requested = True
+        db.commit()
+        return True, f"Stopping “{job.title}” — it ends at its next checkpoint (long scans check after every account)."
+    return False, f"“{job.title}” already finished."
+
+
+def cancel_queued(db: Session) -> int:
+    """Drop everything still waiting (running jobs are left alone)."""
+    n = 0
+    for job in db.query(models.Job).filter(models.Job.status == "queued").all():
+        job.status = CANCELLED
+        job.detail = "removed from the queue before it started"
+        job.finished_at = _now()
+        job.seen = True
+        n += 1
+    db.commit()
+    return n
+
+
+def should_stop(db: Session, job: models.Job | None) -> bool:
+    """Handlers call this at checkpoints; the flag is set from another session."""
+    if job is None:
+        return False
+    try:
+        db.expire(job, ["cancel_requested"])
+        return bool(job.cancel_requested)
+    except Exception:  # noqa: BLE001 — never let a cancel check break a job
+        return False
 
 
 def _inline() -> bool:
@@ -71,6 +145,8 @@ def progress(db: Session, job: models.Job, text: str) -> None:
 
 
 def run_job(db: Session, job: models.Job) -> None:
+    if job.status == CANCELLED:        # cancelled between being picked and started
+        return
     fn = HANDLERS.get(job.kind)
     job.status = "running"
     job.started_at = _now()
@@ -95,12 +171,17 @@ def run_job(db: Session, job: models.Job) -> None:
     db.commit()
 
 
-def run_pending(db: Session, limit: int = 20) -> int:
-    """Run queued jobs oldest-first (used by the worker, and directly by tests)."""
+def run_pending(db: Session, limit: int = 20, which: str | None = None) -> int:
+    """Run queued jobs oldest-first (used by the workers, and directly by tests).
+    which = "fast" / "slow" restricts to that lane; None runs everything."""
     n = 0
     for _ in range(limit):
-        job = (db.query(models.Job).filter(models.Job.status == "queued")
-               .order_by(models.Job.id).first())
+        q = db.query(models.Job).filter(models.Job.status == "queued")
+        if which == "slow":
+            q = q.filter(models.Job.kind.in_(SLOW_KINDS))
+        elif which == "fast":
+            q = q.filter(~models.Job.kind.in_(SLOW_KINDS))
+        job = q.order_by(models.Job.id).first()
         if not job:
             break
         run_job(db, job)
@@ -113,19 +194,20 @@ def prune(db: Session, keep_days: int = 14) -> int:
     return db.query(models.Job).filter(models.Job.created_at < cutoff).delete()
 
 
-def _loop():
+def _loop(which: str):
     from .database import SessionLocal
     while True:
         _wake.wait(timeout=5.0)
-        _wake.clear()
+        # (not cleared here: both lanes wake on the same event and each simply
+        #  finds nothing to do within a few ms; the 5 s timeout covers the rest)
         db = SessionLocal()
         try:
-            # a job left 'running' by a crashed process would block nothing, but mark it so it's visible
-            run_pending(db)
+            run_pending(db, which=which)
         except Exception:  # noqa: BLE001
-            log.exception("jobs worker sweep failed")
+            log.exception("jobs worker (%s) sweep failed", which)
         finally:
             db.close()
+        _wake.clear()
 
 
 def start() -> None:
@@ -134,8 +216,8 @@ def start() -> None:
         if _started:
             return
         _started = True
-    t = threading.Thread(target=_loop, name="adops-jobs", daemon=True)
-    t.start()
+    for which in LANES:
+        threading.Thread(target=_loop, args=(which,), name=f"adops-jobs-{which}", daemon=True).start()
 
 
 def recover(db: Session) -> int:

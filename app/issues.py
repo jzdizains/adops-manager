@@ -16,13 +16,22 @@ fixed problem disappears on the next scan.
 """
 from __future__ import annotations
 
+import json
+import time
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
 from . import models, queries, tiktok_api
 
-BAD_STATUS_TOKENS = ("REJECT", "AUDIT_DENY", "SUSPEND", "PUNISH", "BANNED", "FROZEN")
+# Any secondary status carrying one of these means TikTok rejected / blocked it.
+# PARTIALLY_APPROVED = AD_STATUS_REVIEW_PARTIALLY_APPROVED, "one or more ad
+# creatives have been rejected" (Enumeration – Ad Status – Secondary Status).
+BAD_STATUS_TOKENS = ("REJECT", "AUDIT_DENY", "SUSPEND", "PUNISH", "BANNED", "FROZEN", "PARTIALLY_APPROVED")
+
+# the only ad fields the scan needs — keeps 1,000-row pages small
+AD_SCAN_FIELDS = ["advertiser_id", "campaign_id", "campaign_name", "adgroup_id", "adgroup_name",
+                  "ad_id", "ad_name", "secondary_status", "operation_status", "create_time", "modify_time"]
 
 
 def ads_manager_url(advertiser_id: str) -> str:
@@ -35,8 +44,11 @@ def _status_is_bad(status: str) -> bool:
     return any(tok in s for tok in BAD_STATUS_TOKENS)
 
 
-def scan(db: Session) -> dict:
-    """Full issue sweep. Returns {issues, accounts_scanned}."""
+def scan(db: Session, should_stop=None, on_progress=None) -> dict:
+    """Full issue sweep. Returns {issues, accounts_scanned, ads_read, …, stopped}.
+    should_stop() is polled between accounts (a cancelled background job);
+    on_progress("12 of 286 accounts") keeps the running label fresh."""
+    stopped = False
     token = queries.any_access_token(db)
     accounts = queries.enabled_accounts(db)
     found: list[models.Issue] = []
@@ -105,28 +117,56 @@ def scan(db: Session) -> dict:
                         f"{rec.secondary_status.replace('CAMPAIGN_STATUS_', '').replace('_', ' ').lower()}.",
                 detail=f"secondary_status={rec.secondary_status}"))
 
-    # --- rejected ads (most recent 100 per account, best-effort) --------------
+    # --- rejected ads (EVERY ad of every account) ------------------------------
     # Every rejected ad is handed to the appeals engine, which fetches TikTok's
     # real reasons (/ad/review_info/), files the appeal when auto-appeal is on
     # and tracks the answer — so the issue row can say what was done about it.
+    # What each account returned (or why it failed) is kept as a ScanRun so the
+    # Appeals page can show it.
     rejected_ads: list[dict] = []
     scanned: set[str] = set()
+    run = models.ScanRun(accounts_total=0, accounts_ok=0, accounts_failed=0, ads_read=0, rejected_found=0,
+                         status_counts="{}", errors="[]", duration_s=0.0)
+    status_counts: dict[str, int] = {}
+    errors: list[dict] = []
+    t0 = time.monotonic()
     if token:
-        for acct in accounts:
-            if not acct.access_token:
-                continue
+        with_token = [a for a in accounts if a.access_token]
+        for i, acct in enumerate(with_token, 1):
+            if should_stop and should_stop():
+                stopped = True
+                break
+            if on_progress and (i == 1 or i % 5 == 0 or i == len(with_token)):
+                on_progress(f"{i} of {len(with_token)} accounts")
+            run.accounts_total += 1
             try:
-                data = tiktok_api.list_ads(acct.access_token, acct.advertiser_id)
-            except tiktok_api.TikTokError:
+                ads = tiktok_api.list_all_ads(acct.access_token, acct.advertiser_id, fields=AD_SCAN_FIELDS)
+            except tiktok_api.TikTokError as e:
+                run.accounts_failed += 1
+                if len(errors) < 50:
+                    errors.append({"advertiser_id": acct.advertiser_id,
+                                   "name": acct.advertiser_name or acct.advertiser_id, "error": str(e)[:200]})
                 continue
+            run.accounts_ok += 1
             scanned.add(acct.advertiser_id)
-            for ad in data.get("list", []):
+            for ad in ads:
                 sec = str(ad.get("secondary_status", "") or "")
+                run.ads_read += 1
+                status_counts[sec or "(none)"] = status_counts.get(sec or "(none)", 0) + 1
                 if not _status_is_bad(sec):
                     continue
+                run.rejected_found += 1
                 rejected_ads.append({**ad, "advertiser_id": acct.advertiser_id,
                                      "advertiser_name": names.get(acct.advertiser_id, acct.advertiser_id),
                                      "access_token": acct.access_token})
+    run.status_counts = json.dumps(status_counts, sort_keys=True)
+    run.errors = json.dumps(errors)
+    run.duration_s = round(time.monotonic() - t0, 1)
+    db.add(run)
+    # keep the last 30 runs
+    old = db.query(models.ScanRun).order_by(models.ScanRun.id.desc()).offset(30).all()
+    for o in old:
+        db.delete(o)
     appeal_by_ad: dict = {}
     try:
         from . import appeals
@@ -175,9 +215,17 @@ def scan(db: Session) -> dict:
             detail=log.error_technical[:300]))
 
     # --- rebuild the table ----------------------------------------------------
+    if stopped:
+        # a partial sweep must not wipe issues for the accounts it never reached
+        db.commit()
+        return {"issues": len(found), "accounts_scanned": run.accounts_total, "stopped": True,
+                "ads_read": run.ads_read, "accounts_ok": run.accounts_ok, "accounts_failed": run.accounts_failed,
+                "rejected_found": run.rejected_found}
     db.query(models.Issue).delete()
     for issue in found:
         db.add(issue)
     queries.set_setting(db, "issues_scanned_at", datetime.now(timezone.utc).isoformat())
     db.commit()
-    return {"issues": len(found), "accounts_scanned": len(accounts)}
+    return {"issues": len(found), "accounts_scanned": len(accounts), "stopped": False,
+            "ads_read": run.ads_read, "accounts_ok": run.accounts_ok, "accounts_failed": run.accounts_failed,
+            "rejected_found": run.rejected_found}

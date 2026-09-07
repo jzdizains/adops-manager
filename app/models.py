@@ -9,7 +9,7 @@ Faithful to the clone guide §4. Notable rules:
 from datetime import datetime, timezone
 
 from sqlalchemy import (
-    Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text,
+    Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 
@@ -627,6 +627,67 @@ class Job(Base):
     href = Column(String, default="")                       # where the notification takes you
     progress = Column(String, default="")                   # optional "3 of 12" while running
     seen = Column(Boolean, default=False, index=True)
+    cancel_requested = Column(Boolean, default=False)       # operator asked a running job to stop
     created_at = Column(DateTime, default=utcnow, index=True)
     started_at = Column(DateTime, nullable=True)
     finished_at = Column(DateTime, nullable=True)
+
+
+class ScanRun(Base):
+    """What the last rejected-ads scans actually saw, account by account — so
+    "0 rejected" can be told apart from "the scan never got to look".
+    status_counts / errors are JSON."""
+    __tablename__ = "scan_runs"
+
+    id = Column(Integer, primary_key=True)
+    at = Column(DateTime, default=utcnow, index=True)
+    accounts_total = Column(Integer, default=0)       # enabled accounts with a token
+    accounts_ok = Column(Integer, default=0)          # every ad page read
+    accounts_failed = Column(Integer, default=0)      # a TikTok error on one of the pages
+    ads_read = Column(Integer, default=0)
+    rejected_found = Column(Integer, default=0)       # ads in a rejected status
+    status_counts = Column(Text, default="{}")        # {secondary_status: n} across every ad read
+    errors = Column(Text, default="[]")               # [{advertiser_id, name, error}] (capped)
+    duration_s = Column(Float, default=0.0)
+
+
+class AudienceStat(Base):
+    """One day of a campaign's delivery broken down by one audience dimension
+    (TikTok audience report, 10–12 h latency) or by hour (basic report).
+    dim: age_gender | country | province | platform | placement | ac | language |
+         device_brand | hour.  key: the dimension value(s), '|'-joined for
+         age_gender ("AGE_25_34|MALE"), the hour number for hour ("14")."""
+    __tablename__ = "audience_stats"
+    __table_args__ = (
+        UniqueConstraint("advertiser_id", "campaign_id", "date", "dim", "key", name="uq_audience_stat"),
+        Index("ix_audience_date_dim", "date", "dim"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    advertiser_id = Column(String, index=True, nullable=False)
+    campaign_id = Column(String, index=True, nullable=False)
+    campaign_name = Column(String, default="")
+    date = Column(String, index=True, nullable=False)        # YYYY-MM-DD, ad-account timezone
+    dim = Column(String, nullable=False)
+    key = Column(String, nullable=False)
+    label = Column(String, default="")                       # device brand name etc.
+    spend = Column(Float, default=0.0)
+    impressions = Column(Integer, default=0)
+    clicks = Column(Integer, default=0)
+    conversions = Column(Integer, default=0)
+    reach = Column(Integer, default=0)
+    synced_at = Column(DateTime, default=utcnow)
+
+
+class RegionName(Base):
+    """TikTok location ids → names (/tool/region/), so province_id / dma_id in
+    audience reports read as 'California', not 5332921."""
+    __tablename__ = "region_names"
+
+    id = Column(Integer, primary_key=True)
+    region_id = Column(String, unique=True, index=True, nullable=False)
+    name = Column(String, default="")
+    level = Column(String, default="")
+    parent_id = Column(String, default="")
+    region_code = Column(String, default="")
+    synced_at = Column(DateTime, default=utcnow)

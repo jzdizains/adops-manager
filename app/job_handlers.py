@@ -71,9 +71,18 @@ def _status_sync(db: Session, p: dict, job: models.Job) -> dict:
 @jobs.handler("issues_scan")
 def _issues_scan(db: Session, p: dict, job: models.Job) -> dict:
     from . import issues
-    r = issues.scan(db)
+    r = issues.scan(db, should_stop=lambda: jobs.should_stop(db, job),
+                    on_progress=lambda t: jobs.progress(db, job, t))
+    failed = r.get("accounts_failed", 0)
+    if r.get("stopped"):
+        return {"ok": False, "detail": f"stopped by you after {r.get('accounts_ok', 0)} account(s) "
+                                       f"({r.get('ads_read', 0)} ads read, {r.get('rejected_found', 0)} rejected) — "
+                                       "the rest was not scanned"}
     ads = db.query(models.Issue).filter_by(category="ad").count()
-    return {"ok": True, "detail": f"scanned {r['accounts_scanned']} account(s): {r['issues']} issue(s), {ads} rejected ad(s)"}
+    return {"ok": failed == 0,
+            "detail": f"read {r.get('ads_read', 0)} ad(s) across {r.get('accounts_ok', 0)} account(s): "
+                      f"{ads} rejected, {r['issues']} issue(s) in total"
+                      + (f" — {failed} account(s) could not be read, see the Appeals page" if failed else "")}
 
 
 @jobs.handler("appeals_file")
@@ -144,3 +153,18 @@ def _pixel_link_all(db: Session, p: dict, job: models.Job) -> dict:
         return {"ok": False, "detail": "pixel not found, not BC-owned, or TikTok not connected"}
     ok_count, failed = pixels._link_pixel_to_bc_accounts(db, token, rec.owner_bc_id, rec.pixel_id)
     return {"ok": not failed, "detail": f"linked to {ok_count} account(s)" + (f", failed: {' '.join(failed[:8])}" if failed else ""), "href": "/pixels"}
+
+
+@jobs.handler("audience_sync")
+def _audience_sync(db: Session, p: dict, job: models.Job) -> dict:
+    from . import audience
+    days = p.get("days") or None
+    r = audience.sync(db, days, should_stop=lambda: jobs.should_stop(db, job),
+                      on_progress=lambda t: jobs.progress(db, job, t))
+    if r["stopped"]:
+        return {"ok": False, "detail": f"stopped by you after {r['ok'] + r['failed']} of {r['accounts']} account(s) "
+                                       f"({r['rows']} rows stored)", "href": "/audience"}
+    return {"ok": r["failed"] == 0,
+            "detail": f"{r['rows']} breakdown rows from {r['ok']} account(s) in {r['calls']} calls"
+                      + (f" — {r['failed']} account(s) failed: " + "; ".join(e["name"] + ": " + e["error"][:60] for e in r["errors"][:3]) if r["failed"] else ""),
+            "href": "/audience"}

@@ -5,6 +5,7 @@ page is the operator's view + manual controls: appeal one, appeal all open,
 check TikTok for answers, dismiss a rejection that was fixed another way."""
 from __future__ import annotations
 
+import json
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, Request
@@ -131,8 +132,24 @@ def appeals_page(request: Request, bc: str = "", camp: str = "", db: Session = D
     for g in groups.values():
         g["n_accounts"] = len(g["accounts"])
         g["bc_label"] = ", ".join(sorted(g["bcs"]))
+    # what the last scan actually saw (so "0 open" is explainable)
+    last_run = db.query(models.ScanRun).order_by(models.ScanRun.id.desc()).first()
+    run_counts: list[tuple[str, int]] = []
+    run_errors: list[dict] = []
+    if last_run:
+        try:
+            counts = json.loads(last_run.status_counts or "{}")
+            run_counts = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+        except ValueError:
+            run_counts = []
+        try:
+            run_errors = json.loads(last_run.errors or "[]")
+        except ValueError:
+            run_errors = []
     return render(request, "appeals.html", {
         "title": "Appeals", "s": s, "summary": appeals_mod.summary(db), "created": created,
+        "last_run": last_run, "run_counts": run_counts, "run_errors": run_errors,
+        "bad_tokens": issues_mod.BAD_STATUS_TOKENS,
         "open_rows": open_rows, "waiting": waiting, "history": history, "groups": list(groups.values()),
         "labels": appeals_mod.STATUS_LABELS, "preview": preview,
         "keywords": appeals_mod.skip_keywords(s),
@@ -145,7 +162,10 @@ def appeals_page(request: Request, bc: str = "", camp: str = "", db: Session = D
 def scan_now(bc: str = Form(""), camp: str = Form(""), db: Session = Depends(get_db)):
     """Queue the issue scan (which feeds the appeals engine)."""
     from .. import jobs
-    jobs.enqueue(db, "issues_scan", "Scan every account for rejected ads", {}, href="/appeals")
+    job, created = jobs.enqueue_once(db, "issues_scan", "Scan every account for rejected ads", {}, href="/appeals")
+    if not created:
+        return _back(ok=f"A scan is already {job.status}{' · ' + job.progress if job.progress else ''} — "
+                        "it reads every account, give it a few minutes. You can stop it on the Jobs page.", bc=bc, camp=camp)
     return _back(ok="Scanning in the background — you'll get a notification when it's done.", bc=bc, camp=camp)
 
 
@@ -155,7 +175,9 @@ def refresh_now(bc: str = Form(""), camp: str = Form(""), db: Session = Depends(
     waiting = db.query(models.Appeal).filter(models.Appeal.status == "appealing").count()
     if not waiting:
         return _back(ok="No appeals are waiting on TikTok.", bc=bc, camp=camp)
-    jobs.enqueue(db, "appeals_refresh", f"Check TikTok's answer on {waiting} open appeal(s)", {}, href="/appeals")
+    job, created = jobs.enqueue_once(db, "appeals_refresh", f"Check TikTok's answer on {waiting} open appeal(s)", {}, href="/appeals")
+    if not created:
+        return _back(ok=f"A check is already {job.status} — hold on.", bc=bc, camp=camp)
     return _back(ok="Checking in the background — you'll get a notification.", bc=bc, camp=camp)
 
 

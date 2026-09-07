@@ -785,8 +785,38 @@ def update_ad_landing_url(access_token: str, advertiser_id: str, adgroup_id: str
 # Ad secondary statuses that mean "TikTok's review rejected it" and that the
 # ad-group appeal endpoint covers. Account-level denials (ADVERTISER_AUDIT_DENY)
 # and industry-qualification denials are different processes — not appealable here.
-AD_REJECTED_STATUSES = ("AD_STATUS_AUDIT_DENY",)            # the ad itself failed review → appeal with ad_id
-ADGROUP_REJECTED_STATUSES = ("AD_STATUS_ADGROUP_AUDIT_DENY",)  # the ad group failed review → appeal the ad group
+AD_REJECTED_STATUSES = (
+    "AD_STATUS_AUDIT_DENY",                  # "Review failed" — the ad itself → appeal with ad_id
+    "AD_STATUS_REVIEW_PARTIALLY_APPROVED",   # "One or more ad creatives have been rejected" → appeal with ad_id
+)
+ADGROUP_REJECTED_STATUSES = ("AD_STATUS_ADGROUP_AUDIT_DENY",)  # "Ad group review failed" → appeal the ad group
+
+AD_LIST_PAGE_SIZE = 1000     # /ad/get/ page_size range is 1–1,000 (API reference)
+AD_LIST_MAX_PAGES = 20       # safety cap: 20,000 ads per account per scan
+
+
+def list_all_ads(access_token: str, advertiser_id: str, filtering: dict | None = None,
+                 fields: list[str] | None = None) -> list[dict]:
+    """EVERY (non-deleted) ad of an account: walks /ad/get/ page by page at the
+    maximum page size, retrying rate limits, so a busy account with hundreds of
+    ads doesn't hide older rejections behind page 1. Results are newest-first
+    (TikTok sorts by ad_id descending). Raises TikTokError on a failed page."""
+    out: list[dict] = []
+    page = 1
+    while page <= AD_LIST_MAX_PAGES:
+        params: dict = {"advertiser_id": advertiser_id, "page": page, "page_size": AD_LIST_PAGE_SIZE}
+        if filtering:
+            params["filtering"] = filtering
+        if fields:
+            params["fields"] = fields
+        data = api_get_retry("/ad/get/", access_token, params) or {}
+        out.extend(data.get("list") or [])
+        info = data.get("page_info") or {}
+        total_pages = int(info.get("total_page") or 1)
+        if page >= total_pages or not data.get("list"):
+            break
+        page += 1
+    return out
 
 
 def get_ad_review_info(access_token: str, advertiser_id: str, ad_ids: list[str]) -> dict:
@@ -1021,3 +1051,53 @@ def list_lead_forms(access_token: str, advertiser_id: str, page: int = 1, page_s
         "advertiser_id": advertiser_id, "page": page, "page_size": page_size,
         "business_type": "LEAD_GEN",
     })
+
+
+# ---------------------------------------------------------------------------
+# Audience + hourly reports (Reporting → Audience reports / Basic reports)
+# ---------------------------------------------------------------------------
+
+REPORT_PAGE_SIZE = 1000    # /report/integrated/get/ page_size range 1–1,000
+
+
+def get_report_pages(access_token: str, advertiser_id: str, *, report_type: str, data_level: str,
+                     dimensions: list[str], metrics: list[str], start_date: str, end_date: str,
+                     filtering: list[dict] | None = None, max_pages: int = 20) -> list[dict]:
+    """Every page of a synchronous report (BASIC or AUDIENCE), rate limits
+    retried. Rows are {"dimensions": {...}, "metrics": {...}}."""
+    out: list[dict] = []
+    page = 1
+    while page <= max_pages:
+        params: dict = {
+            "advertiser_id": advertiser_id, "service_type": "AUCTION", "report_type": report_type,
+            "data_level": data_level, "dimensions": dimensions, "metrics": metrics,
+            "start_date": start_date, "end_date": end_date, "page": page, "page_size": REPORT_PAGE_SIZE,
+        }
+        if filtering:
+            params["filtering"] = filtering
+        data = api_get_retry("/report/integrated/get/", access_token, params) or {}
+        rows = data.get("list") or []
+        out.extend(rows)
+        info = data.get("page_info") or {}
+        if page >= int(info.get("total_page") or 1) or not rows:
+            break
+        page += 1
+    return out
+
+
+def get_audience_report(access_token: str, advertiser_id: str, *, dimensions: list[str],
+                        metrics: list[str], start_date: str, end_date: str) -> list[dict]:
+    """report_type=AUDIENCE at campaign level. Rules (API guide): ONE audience
+    dimension (age + gender may be combined) + one ID dimension + optionally
+    one time dimension; device_brand_id takes no time dimension; audience data
+    lags 10–12 h; no lifetime metrics."""
+    return get_report_pages(access_token, advertiser_id, report_type="AUDIENCE", data_level="AUCTION_CAMPAIGN",
+                            dimensions=dimensions, metrics=metrics, start_date=start_date, end_date=end_date)
+
+
+def get_hourly_report(access_token: str, advertiser_id: str, *, metrics: list[str], day: str) -> list[dict]:
+    """report_type=BASIC by campaign × hour for ONE day (stat_time_hour limits
+    the range to a single day)."""
+    return get_report_pages(access_token, advertiser_id, report_type="BASIC", data_level="AUCTION_CAMPAIGN",
+                            dimensions=["campaign_id", "stat_time_hour"], metrics=metrics,
+                            start_date=day, end_date=day)

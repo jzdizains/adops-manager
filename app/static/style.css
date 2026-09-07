@@ -683,3 +683,24 @@ table.data.show-detail th.col-detail, table.data.show-detail td.col-detail { dis
 .data tr.ap-grp td { background: var(--surface-2); border-top: 2px solid var(--border); padding-top: 8px; padding-bottom: 8px; }
 .data tr.ap-grp:first-child td { border-top: 0; }
 .ap-grp-name { font-weight: 700; font-size: 13px; }
+.scan-card .scan-line { display: flex; flex-wrap: wrap; gap: 4px 6px; font-size: 12.5px; align-items: center; }
+.scan-card .scan-statuses { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+
+/* Audience page: hour × weekday heatmap (single-hue ramp --h0…--h4) + share bars */
+.heat { border-collapse: separate; border-spacing: 2px; font-size: 11px; }
+.heat th { color: var(--text-dim); font-weight: 600; text-align: center; padding: 2px 3px; white-space: nowrap; }
+.heat tbody th { text-align: right; padding-right: 6px; }
+.heat td { width: 26px; height: 22px; border-radius: 4px; background: var(--h0); }
+.heat td.h1 { background: var(--h1); } .heat td.h2 { background: var(--h2); } .heat td.h3 { background: var(--h3); } .heat td.h4 { background: var(--h4); }
+.heat td.tot { width: auto; background: transparent; text-align: right; color: var(--text-soft); font-variant-numeric: tabular-nums; padding-left: 8px; white-space: nowrap; }
+.heat tr.hours th, .heat tr.hours td { border-top: 6px solid transparent; }
+.heat td:hover { outline: 2px solid var(--accent-strong); outline-offset: -1px; }
+.aud-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(590px, 1fr)); gap: 14px; }
+.aud-card { min-width: 0; }
+.aud-card .table-scroll { max-height: 420px; overflow: auto; }
+.share { display: flex; align-items: center; gap: 8px; min-width: 104px; }
+.share-track { flex: 1; min-width: 52px; height: 10px; background: var(--h0); border-radius: 4px; overflow: hidden; }
+.share-bar { height: 100%; background: var(--accent); border-radius: 4px; min-width: 2px; }
+.share-n { flex: 0 0 44px; text-align: right; font-size: 11px; color: var(--text-soft); font-variant-numeric: tabular-nums; }
+table.data.aud th, table.data.aud td { padding-left: 5px; padding-right: 5px; }
+table.data.aud thead th:first-child { white-space: nowrap; }

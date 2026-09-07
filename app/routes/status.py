@@ -44,7 +44,7 @@ SORT_KEYS = {
 @router.get("/status")
 def status_page(request: Request, db: Session = Depends(get_db)):
     q = request.query_params.get("q", "").strip().lower()
-    state = request.query_params.get("state", "all")          # all | active | paused
+    state = request.query_params.get("state", "active")       # active (default) | all | paused
     account = request.query_params.get("account", "")          # advertiser_id
     source_f = request.query_params.get("source", "").strip()  # P&L source filter
     origin = request.query_params.get("origin", "tool")        # tool | all

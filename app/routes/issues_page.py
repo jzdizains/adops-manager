@@ -31,5 +31,7 @@ def issues_page(request: Request, db: Session = Depends(get_db)):
 @router.post("/issues/scan")
 def scan_now(db: Session = Depends(get_db)):
     from .. import jobs
-    jobs.enqueue(db, "issues_scan", "Scan every account for issues", {}, href="/monitor?view=issues")
+    job, created = jobs.enqueue_once(db, "issues_scan", "Scan every account for issues", {}, href="/monitor?view=issues")
+    if not created:
+        return RedirectResponse(f"/monitor?view=issues&ok=A+scan+is+already+{job.status}+—+hold+on+(stop+it+on+the+Jobs+page+if+needed).", status_code=303)
     return RedirectResponse("/monitor?view=issues&ok=Scanning+in+the+background+—+you%27ll+get+a+notification.", status_code=303)

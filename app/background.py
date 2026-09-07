@@ -89,6 +89,7 @@ def _loop():
                 issues.scan(db)
                 partners.poll(db)               # TikTok-account assignments waiting on accepted invites
                 jobs.prune(db)
+                _audience_daily(db)             # once a day: audience breakdowns + hourly heatmap
             else:
                 # fast pass: only accounts with something running
                 hot = _accounts_with_active_campaigns(db)
@@ -117,3 +118,17 @@ def start():
         _started = True
     t = threading.Thread(target=_loop, name="adops-background", daemon=True)
     t.start()
+
+
+def _audience_daily(db) -> None:
+    """Queue the audience sync once per local day (slow lane; stoppable on
+    the Jobs page). The store then serves the Audience page instantly."""
+    from . import jobs, queries, timeutil
+    today = timeutil.local_date_str()
+    if queries.get_setting(db, "audience_sync_day", "") == today:
+        return
+    if not queries.any_access_token(db):
+        return
+    jobs.enqueue_once(db, "audience_sync", "Refresh audience breakdowns (daily)", {}, href="/audience")
+    queries.set_setting(db, "audience_sync_day", today)
+    db.commit()

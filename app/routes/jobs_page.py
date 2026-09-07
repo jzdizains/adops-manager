@@ -2,8 +2,10 @@
 the history page."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
-from fastapi.responses import JSONResponse
+from urllib.parse import quote
+
+from fastapi import APIRouter, Depends, Form, Request
+from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from .. import jobs, models
@@ -36,4 +38,22 @@ def jobs_data(db: Session = Depends(get_db)):
 @router.get("/jobs")
 def jobs_page(request: Request, db: Session = Depends(get_db)):
     rows = db.query(models.Job).order_by(models.Job.id.desc()).limit(150).all()
-    return render(request, "jobs.html", {"title": "Background jobs", "rows": rows, "summary": jobs.summary(db)})
+    return render(request, "jobs.html", {"title": "Background jobs", "rows": rows, "summary": jobs.summary(db), "slow_kinds": jobs.SLOW_KINDS})
+
+
+def _safe_next(nxt: str) -> str:
+    return nxt if nxt.startswith("/") and not nxt.startswith("//") else "/jobs"
+
+
+@router.post("/jobs/{job_id}/cancel")
+def cancel_job(job_id: int, next: str = Form("/jobs"), db: Session = Depends(get_db)):
+    """Queued → removed from the queue. Running → asked to stop at its next checkpoint."""
+    ok, msg = jobs.cancel(db, job_id)
+    return RedirectResponse(_safe_next(next) + ("?ok=" if ok else "?err=") + quote(msg), status_code=303)
+
+
+@router.post("/jobs/cancel-queued")
+def cancel_queued(next: str = Form("/jobs"), db: Session = Depends(get_db)):
+    n = jobs.cancel_queued(db)
+    return RedirectResponse(_safe_next(next) + "?ok=" + quote(f"Removed {n} queued job(s)." if n else "The queue was already empty."),
+                            status_code=303)

@@ -118,7 +118,9 @@ def sync_pixels(db: Session = Depends(get_db)):
     from .. import jobs
     if not queries.any_access_token(db):
         return RedirectResponse("/pixels?err=Connect+TikTok+first", status_code=303)
-    jobs.enqueue(db, "pixels_sync", "Sync pixels from every account", {}, href="/pixels")
+    job, created = jobs.enqueue_once(db, "pixels_sync", "Sync pixels from every account", {}, href="/pixels")
+    if not created:
+        return RedirectResponse(f"/pixels?ok=A+sync+is+already+{job.status}+—+hold+on.", status_code=303)
     return RedirectResponse("/pixels?ok=Syncing+in+the+background+—+you%27ll+get+a+notification.", status_code=303)
 
 
