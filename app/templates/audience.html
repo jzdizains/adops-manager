@@ -15,9 +15,11 @@
 
 <form method="get" action="/audience" class="ap-filter" id="audFilter">
   <label>Range
-    <select name="range" title="Full days ending yesterday (audience data lags 10–12 h); the heatmap also includes today">
-      {% for k, n in ranges.items() %}<option value="{{ k }}" {{ 'selected' if rng == k }}>last {{ n }} days</option>{% endfor %}
+    <select name="range" id="audRange" title="Multi-day ranges end yesterday (audience data lags 10–12 h) unless “include today” is ticked; the heatmap always includes today's hours">
+      {% for k, (lbl, n) in ranges.items() %}<option value="{{ k }}" {{ 'selected' if rng == k }}>{{ lbl }}</option>{% endfor %}
     </select></label>
+  <label id="audCustom" {{ '' if rng == 'custom' else 'hidden' }}>From → to
+    <span style="display:flex;gap:4px;"><input type="date" name="start" value="{{ start_q }}" style="font-size:12px;"><input type="date" name="end" value="{{ end_q }}" style="font-size:12px;"></span></label>
   <label>Business Center
     <select name="bc" id="audBc">
       <option value="">All</option>
@@ -33,7 +35,7 @@
     <input type="search" name="camp" value="{{ camp }}" placeholder="contains…" style="width:200px;"></label>
   <label>Heatmap metric
     <select name="metric">{% for k, lbl in metrics.items() %}<option value="{{ k }}" {{ 'selected' if metric == k }}>{{ lbl }}</option>{% endfor %}</select></label>
-  <label style="flex-direction:row;align-items:center;gap:6px;padding-bottom:7px;" title="Today's audience rows are partial — TikTok publishes them 10–12 hours late"><input type="checkbox" name="today" value="1" style="width:auto;" {{ 'checked' if with_today }}> include today (partial)</label>
+  <label id="audTodayBox" style="flex-direction:row;align-items:center;gap:6px;padding-bottom:7px;" title="Today's audience rows are partial — TikTok publishes them 10–12 hours late" {{ 'hidden' if rng in ('today', 'yesterday', 'custom') }}><input type="checkbox" name="today" value="1" style="width:auto;" {{ 'checked' if with_today }}> include today (partial)</label>
   <button class="btn sm" type="submit">Apply</button>
   {% if filtered %}<a class="btn sm" href="/audience?range={{ rng }}&metric={{ metric }}">Clear</a>{% endif %}
   <span class="muted" style="font-size:12px;">{{ start }} → {{ end }}{% if coverage.rows %} · store: {{ coverage.first }} → {{ coverage.last }}, {{ coverage.accounts }} account(s){% if coverage.synced_at %}, refreshed {{ coverage.synced_at[:16].replace('T', ' ') }} UTC{% endif %}{% endif %}</span>
@@ -140,6 +142,13 @@
 (function () {
   var bc = document.getElementById("audBc");
   if (bc) bc.addEventListener("change", function () { document.getElementById("audFilter").submit(); });
+  var rng = document.getElementById("audRange"), custom = document.getElementById("audCustom"), tb = document.getElementById("audTodayBox");
+  function syncRange() {
+    var v = rng.value;
+    custom.hidden = v !== "custom";
+    tb.hidden = (v === "today" || v === "yesterday" || v === "custom");
+  }
+  if (rng) { rng.addEventListener("change", function () { syncRange(); if (rng.value !== "custom") document.getElementById("audFilter").submit(); }); syncRange(); }
 })();
 </script>
 {% endblock %}

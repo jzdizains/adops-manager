@@ -18,7 +18,39 @@ from ..templating import render
 
 router = APIRouter()
 
-RANGES = {"7": 7, "14": 14, "30": 30}
+# range key → (label, days back from yesterday); today/yesterday/custom are special
+RANGES = {"today": ("Today (partial)", 0), "yesterday": ("Yesterday", 1), "3": ("Last 3 days", 3),
+          "7": ("Last 7 days", 7), "14": ("Last 14 days", 14), "30": ("Last 30 days", 30), "custom": ("Custom…", 0)}
+MAX_SPAN = 45     # the store keeps 45 days
+
+
+def _parse_day(v: str) -> date | None:
+    try:
+        return date.fromisoformat((v or "").strip()[:10])
+    except ValueError:
+        return None
+
+
+def resolve_range(rng: str, with_today: bool, today: date, start_q: str = "", end_q: str = "") -> tuple[date, date, bool]:
+    """(start, end, includes_today) for the picker value. Audience data lags
+    10–12 h, so multi-day ranges end yesterday unless 'include today' is on."""
+    if rng == "today":
+        return today, today, True
+    if rng == "yesterday":
+        y = today - timedelta(days=1)
+        return y, y, False
+    if rng == "custom":
+        s_, e_ = _parse_day(start_q), _parse_day(end_q)
+        if not s_ or not e_ or e_ < s_:
+            rng = "7"
+        else:
+            e_ = min(e_, today)
+            s_ = max(s_, e_ - timedelta(days=MAX_SPAN - 1))
+            return s_, e_, e_ >= today
+    n = RANGES.get(rng, RANGES["7"])[1] or 7
+    end = today if with_today else today - timedelta(days=1)
+    start = (today - timedelta(days=1)) - timedelta(days=n - 1)
+    return start, end, with_today
 METRICS = {"spend": "Spend", "impressions": "Impressions", "clicks": "Clicks", "conversions": "Conversions"}
 SECTIONS = [
     ("age_gender", "Age × gender"), ("gender", "Gender"), ("age", "Age"),
@@ -45,16 +77,16 @@ def _accounts_for(db: Session, bc: str, account: str) -> list[str] | None:
 def audience_page(request: Request, db: Session = Depends(get_db)):
     qp = request.query_params
     rng = qp.get("range", "7") if qp.get("range", "7") in RANGES else "7"
+    start_q, end_q = qp.get("start", ""), qp.get("end", "")
     metric = qp.get("metric", "spend") if qp.get("metric", "spend") in METRICS else "spend"
     bc = qp.get("bc", "").strip()
     account = qp.get("account", "").strip()
     camp = qp.get("camp", "").strip()
     with_today = qp.get("today", "") == "1"
     today = date.fromisoformat(timeutil.local_date_str())
-    # audience data lags 10–12 h, so the range ends yesterday unless "include
-    # today (partial)" is ticked; the heatmap always adds today's hours
-    end = today if with_today else today - timedelta(days=1)
-    start = (today - timedelta(days=1)) - timedelta(days=RANGES[rng] - 1)
+    start, end, with_today = resolve_range(rng, with_today, today, start_q, end_q)
+    if rng == "custom" and (start, end) == resolve_range("7", with_today, today)[:2]:
+        rng = "7"           # unparseable custom dates → the default
     s, e = start.isoformat(), end.isoformat()
     ids = _accounts_for(db, bc, account)
     regions = aud.region_names(db)
@@ -63,7 +95,10 @@ def audience_page(request: Request, db: Session = Depends(get_db)):
         rows = aud.breakdown(db, key, s, e, ids, camp, regions)
         sections.append({"key": key, "title": title, "rows": rows[:40], "n": len(rows),
                          "spend": sum(r["spend"] for r in rows)})
-    heat = aud.heatmap(db, s, today.isoformat(), ids, camp, metric)
+    # the heatmap covers the same days; for ranges ending yesterday it still
+    # adds today's hours (they are near real-time, unlike the breakdowns)
+    heat_end = today.isoformat() if rng not in ("yesterday", "custom") or with_today else e
+    heat = aud.heatmap(db, s, heat_end, ids, camp, metric)
     bcs = {b.bc_id: (b.name or b.bc_id) for b in db.query(models.BusinessCenter).all()}
     accounts = db.query(models.AdAccount).filter(models.AdAccount.enabled == True)  # noqa: E712
     accounts = accounts.order_by(models.AdAccount.advertiser_name).all()
@@ -71,6 +106,7 @@ def audience_page(request: Request, db: Session = Depends(get_db)):
         accounts = [a for a in accounts if a.owner_bc_id == bc]
     return render(request, "audience.html", {
         "title": "Audience", "rng": rng, "ranges": RANGES, "metric": metric, "metrics": METRICS,
+        "start_q": start_q if rng == "custom" else s, "end_q": end_q if rng == "custom" else e,
         "bc": bc, "bcs": sorted(bcs.items(), key=lambda kv: kv[1].lower()), "account": account,
         "accounts": accounts, "camp": camp, "start": s, "end": e, "today": today.isoformat(),
         "sections": sections, "heat": heat, "coverage": aud.coverage(db),
