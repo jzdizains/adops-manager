@@ -63,14 +63,15 @@ def login_page(request: Request):
 @router.post("/login")
 def login_submit(request: Request, email: str = Form(""), password: str = Form("")):
     ip = sec.client_ip(request)
+    ua = request.headers.get("user-agent", "")
     email = users.norm_email(email)
     db = _db()
     try:
         if sec.insecure_defaults() and not config.ALLOW_INSECURE_DEFAULTS:
-            sec.record_attempt(db, ip, False, "refused: APP_PASSWORD / SESSION_SECRET not set", email)
+            sec.record_attempt(db, ip, False, "refused: APP_PASSWORD / SESSION_SECRET not set", email, ua=ua)
             return render(request, "login.html", _login_ctx(request, ""))
         if not sec.ip_allowed(ip):
-            sec.record_attempt(db, ip, False, "ip not in ALLOWED_IPS", email)
+            sec.record_attempt(db, ip, False, "ip not in ALLOWED_IPS", email, ua=ua)
             return RedirectResponse(f"{LP}?err=ip", status_code=303)
         if not db.query(models.User).count():
             users.bootstrap(db)
@@ -80,11 +81,11 @@ def login_submit(request: Request, email: str = Form(""), password: str = Form("
             email = config.OWNER_EMAIL.lower()          # local tests post only the password
         wait = sec.locked_for(db, ip, email)
         if wait:
-            sec.record_attempt(db, ip, False, f"locked ({wait}s left)", email)
+            sec.record_attempt(db, ip, False, f"locked ({wait}s left)", email, ua=ua)
             return RedirectResponse(f"{LP}?err=locked", status_code=303)
         user = users.authenticate(db, email, password)
         if not user:
-            sec.record_attempt(db, ip, False, "wrong email or password", email)
+            sec.record_attempt(db, ip, False, "wrong email or password", email, ua=ua)
             time.sleep(sec.FAIL_DELAY_S if not config.TEST_MODE else 0)
             return RedirectResponse(f"{LP}?err=" + ("locked" if sec.locked_for(db, ip, email) else "1"), status_code=303)
         request.session.clear()
@@ -105,7 +106,8 @@ def _finish_login(request: Request, db: Session, user: models.User, ip: str, how
     request.session["fp"] = users.fingerprint(user)
     request.session["at"] = time.time()
     users.touch_login(db, user)
-    sec.record_attempt(db, ip, True, how, user.email)
+    sec.record_attempt(db, ip, True, how, user.email, ua=request.headers.get("user-agent", ""))
+    sec.touch_seen(db, user, ip, request.headers.get("user-agent", ""))
 
 
 def _pending_user(request: Request, db: Session) -> models.User | None:
@@ -146,7 +148,7 @@ def twofa_submit(request: Request, code: str = Form(""), trust: str = Form("")):
         ok_code = sec.totp_ok(user.totp_secret, code)
         ok_recovery = (not ok_code) and len(code.replace("-", "").replace(" ", "")) == 8 and sec.recovery_ok(db, user, code)
         if not (ok_code or ok_recovery):
-            sec.record_attempt(db, ip, False, "wrong 2fa code", user.email)
+            sec.record_attempt(db, ip, False, "wrong 2fa code", user.email, kind="2fa", ua=request.headers.get("user-agent", ""))
             time.sleep(sec.FAIL_DELAY_S if not config.TEST_MODE else 0)
             if sec.locked_for(db, ip, user.email):
                 request.session.clear()

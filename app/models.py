@@ -185,6 +185,9 @@ class User(Base):
     totp_enabled_at = Column(String, default="")
     created_at = Column(DateTime, default=utcnow)
     last_login_at = Column(DateTime, nullable=True)
+    last_seen_at = Column(DateTime, nullable=True)         # last request (updated at most every 5 min)
+    last_ip = Column(String, default="")
+    last_ua = Column(Text, default="")
 
 
 class LoginAttempt(Base):
@@ -196,8 +199,26 @@ class LoginAttempt(Base):
     ip = Column(String, default="", index=True)
     email = Column(String, default="", index=True)
     ok = Column(Boolean, default=False)
+    kind = Column(String, default="login")                 # login | 2fa | probe (an unauthenticated hit on a dashboard URL)
     note = Column(String, default="")
+    path = Column(String, default="")
+    ua = Column(Text, default="")                          # raw User-Agent (device/browser derived at display time)
     at = Column(DateTime, default=utcnow, index=True)
+
+
+class IpInfo(Base):
+    """Cached geolocation for an IP (ipinfo.io), refreshed after 30 days."""
+    __tablename__ = "ip_info"
+
+    id = Column(Integer, primary_key=True)
+    ip = Column(String, unique=True, nullable=False, index=True)
+    city = Column(String, default="")
+    region = Column(String, default="")
+    country = Column(String, default="")
+    org = Column(String, default="")
+    timezone = Column(String, default="")
+    looked_up_at = Column(DateTime, default=utcnow)
+    error = Column(String, default="")
 
 
 class MusicTrack(Base):

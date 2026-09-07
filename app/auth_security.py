@@ -13,6 +13,7 @@ import hashlib
 import hmac
 import ipaddress
 import json
+import re
 import secrets
 import struct
 import time
@@ -78,11 +79,33 @@ def ip_allowed(ip: str) -> bool:
 
 
 # --- attempts + lockout ----------------------------------------------------------
-def record_attempt(db: Session, ip: str, ok: bool, note: str = "", email: str = "") -> None:
-    db.add(models.LoginAttempt(ip=ip, ok=ok, note=note[:120], email=(email or "")[:254]))
-    queries.log(db, f"login {'ok' if ok else 'FAILED'} from {ip}" + (f" as {email}" if email else "") + (f" — {note}" if note else ""),
-                level="info" if ok else "warn", source="auth")
+def record_attempt(db: Session, ip: str, ok: bool, note: str = "", email: str = "", kind: str = "login",
+                   ua: str = "", path: str = "") -> None:
+    db.add(models.LoginAttempt(ip=ip, ok=ok, note=note[:120], email=(email or "")[:254], kind=kind,
+                               ua=(ua or "")[:500], path=(path or "")[:200]))
+    if kind != "probe":
+        queries.log(db, f"login {'ok' if ok else 'FAILED'} from {ip}" + (f" as {email}" if email else "") + (f" — {note}" if note else ""),
+                    level="info" if ok else "warn", source="auth")
     db.commit()
+
+
+PROBE_EVERY_MIN = 10
+
+
+def record_probe(db: Session, ip: str, path: str, ua: str) -> None:
+    """An unauthenticated hit on a dashboard URL — 'who tried to access'.
+    One row per IP per 10 minutes (the row counts repeats) so a scanner
+    can't fill the table."""
+    since = _now() - timedelta(minutes=PROBE_EVERY_MIN)
+    recent = (db.query(models.LoginAttempt).filter(models.LoginAttempt.ip == ip, models.LoginAttempt.kind == "probe",
+                                                   models.LoginAttempt.at >= since).order_by(models.LoginAttempt.at.desc()).first())
+    if recent:
+        m = re.match(r"(\d+) hit", recent.note or "")
+        n = (int(m.group(1)) if m else 1) + 1
+        recent.note = f"{n} hits in {PROBE_EVERY_MIN} min (last: {path[:60]})"
+        db.commit()
+        return
+    record_attempt(db, ip, False, note="1 hit — not logged in", kind="probe", ua=ua, path=path)
 
 
 def _failures(db: Session, col, value) -> int:
@@ -90,7 +113,7 @@ def _failures(db: Session, col, value) -> int:
     last_ok = (db.query(models.LoginAttempt).filter(col == value, models.LoginAttempt.ok == True)  # noqa: E712
                .order_by(models.LoginAttempt.at.desc()).first())
     q = db.query(models.LoginAttempt).filter(col == value, models.LoginAttempt.ok == False,  # noqa: E712
-                                             models.LoginAttempt.at >= since)
+                                             models.LoginAttempt.kind != "probe", models.LoginAttempt.at >= since)
     if last_ok:
         q = q.filter(models.LoginAttempt.at > last_ok.at)
     return q.count()
@@ -104,7 +127,8 @@ def _lock_seconds(db: Session, col, value, n: int) -> int:
     if n < LOCK_AFTER:
         return 0
     mult = 4 if n >= 15 else 2 if n >= 10 else 1
-    last = (db.query(models.LoginAttempt).filter(col == value, models.LoginAttempt.ok == False)  # noqa: E712
+    last = (db.query(models.LoginAttempt).filter(col == value, models.LoginAttempt.ok == False,  # noqa: E712
+                                                 models.LoginAttempt.kind != "probe")
             .order_by(models.LoginAttempt.at.desc()).first())
     until = last.at + timedelta(minutes=LOCK_MIN * mult)
     return max(0, int((until - _now()).total_seconds()))
@@ -248,5 +272,30 @@ def device_trusted(user, request: Request) -> bool:
     return hmac.compare_digest(val, _trust_value(user))
 
 
-def recent_logins(db: Session, limit: int = 12) -> list[models.LoginAttempt]:
-    return (db.query(models.LoginAttempt).order_by(models.LoginAttempt.at.desc()).limit(limit).all())
+def recent_logins(db: Session, limit: int = 12, kinds: tuple[str, ...] | None = None) -> list[models.LoginAttempt]:
+    q = db.query(models.LoginAttempt)
+    if kinds:
+        q = q.filter(models.LoginAttempt.kind.in_(kinds))
+    return q.order_by(models.LoginAttempt.at.desc()).limit(limit).all()
+
+
+def access_log(db: Session, limit: int = 60) -> list[dict]:
+    """Recent attempts + probes, enriched with device and location (a few
+    fresh geo lookups per render; the rest come from the cache)."""
+    from . import geo, ua as ua_mod
+    budget = [geo.MAX_LOOKUPS_PER_RENDER]
+    out = []
+    for a in recent_logins(db, limit):
+        g = geo.lookup(db, a.ip, budget)
+        d = ua_mod.parse(a.ua or "")
+        out.append({"a": a, "device": d, "where": geo.label(g, a.ip), "org": (g.org if g else "") or ""})
+    return out
+
+
+def touch_seen(db: Session, user, ip: str, ua: str) -> None:
+    """Called on requests: keeps last_seen / last_ip / last_ua, at most every 5 min."""
+    now = _now()
+    if user.last_seen_at and (now - user.last_seen_at) < timedelta(minutes=5) and user.last_ip == ip:
+        return
+    user.last_seen_at, user.last_ip, user.last_ua = now, ip[:64], (ua or "")[:500]
+    db.commit()

@@ -27,7 +27,8 @@ TENSORPIX_BASE = os.environ.get("TENSORPIX_BASE", "https://backend.tensorpix.ai"
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "changeme")
 SESSION_SECRET = os.environ.get("SESSION_SECRET", "dev-secret-change-me")
 SECURITY_PIN = os.environ.get("SECURITY_PIN", "")  # empty = PIN gate disabled
-OWNER_EMAIL = os.environ.get("OWNER_EMAIL", "owner@adops.local")   # the first (admin) account, minted from APP_PASSWORD on first start
+OWNER_EMAIL = os.environ.get("OWNER_EMAIL", "owner@adops.local")
+IPINFO_TOKEN = os.environ.get("IPINFO_TOKEN", "")   # optional: ipinfo.io token for IP → location on the access log (works tokenless at a low daily limit)   # the first (admin) account, minted from APP_PASSWORD on first start
 ALLOWED_IPS = os.environ.get("ALLOWED_IPS", "")    # optional: comma-separated IPs/CIDRs allowed to log in ("" = any)
 TEST_MODE = os.environ.get("ADOPS_DISABLE_BG") == "1"   # local tests: plain-http cookies, default password tolerated
 # Login is refused while APP_PASSWORD / SESSION_SECRET are still the placeholders

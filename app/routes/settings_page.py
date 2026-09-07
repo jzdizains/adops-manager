@@ -197,13 +197,26 @@ def _security_ctx(request: Request, db: Session) -> dict:
         "pending_secret": pending, "pending_uri": sec.otpauth_uri(pending, me.email if me else "operator") if pending else "",
         "pending_qr": sec.qr_svg(sec.otpauth_uri(pending, me.email if me else "operator")) if pending else "",
         "new_codes": request.session.pop("totp_new_codes", None),
-        "recent": sec.recent_logins(db), "this_ip": sec.client_ip(request),
+        "recent": sec.recent_logins(db, kinds=("login", "2fa")) if not users.is_owner(me) else [],
+        "access": sec.access_log(db, 80) if users.is_owner(me) else [],
+        "this_ip": sec.client_ip(request), "this_where": _where(db, sec.client_ip(request)),
+        "geo_on": bool(config.IPINFO_TOKEN),
+        "user_where": {u.id: _where(db, u.last_ip) for u in (db.query(models.User).all() if users.is_owner(me) else [])},
+        "ua": __import__("app.ua", fromlist=["parse"]),
         "allowed_ips": config.ALLOWED_IPS, "insecure": sec.insecure_defaults(),
         "session_hours": config.SESSION_MAX_AGE_S // 3600,
         "is_owner": users.is_owner(me), "owner_email": config.OWNER_EMAIL,
         "users": db.query(models.User).order_by(models.User.email).all() if users.is_owner(me) else [],
         "min_password": users.MIN_PASSWORD,
     }
+
+
+def _where(db: Session, ip: str) -> str:
+    from .. import geo
+    try:
+        return geo.label(geo.lookup(db, ip or "", [2]), ip or "")
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 def _me(request: Request, db: Session):

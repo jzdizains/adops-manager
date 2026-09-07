@@ -63,12 +63,13 @@ async def require_login(request: Request, call_next):
             return _not_found()
     public = path.startswith(auth.PUBLIC_PATHS)
     if not public:
+        import time as _time
+        from . import models as _models
+        from .database import SessionLocal as _SL
         sess = request.session
         if sess.get("authed"):
             # a changed password, a deactivated user, "sign out everywhere" or an
             # expired session logs this device out
-            import time as _time
-            from .database import SessionLocal as _SL
             d = _SL()
             try:
                 user = auth.current_user(request, d)
@@ -78,7 +79,23 @@ async def require_login(request: Request, call_next):
                 sess.clear()
                 return RedirectResponse(f"{config.LOGIN_PATH}?err=expired", status_code=303)
             request.state.user = user
+            d = _SL()
+            try:
+                sec.touch_seen(d, d.get(_models.User, user.id), sec.client_ip(request), request.headers.get("user-agent", ""))
+            except Exception:  # noqa: BLE001
+                d.rollback()
+            finally:
+                d.close()
         else:
+            # someone who isn't logged in asked for a dashboard URL — remember who
+            if not path.startswith(("/creatives/", "/static")) or path.count("/") < 3:
+                d = _SL()
+                try:
+                    sec.record_probe(d, sec.client_ip(request), path, request.headers.get("user-agent", ""))
+                except Exception:  # noqa: BLE001
+                    d.rollback()
+                finally:
+                    d.close()
             if hidden:
                 return _not_found()          # don't even hint that there is something to log in to
             return RedirectResponse(f"/login?next={path}", status_code=303)

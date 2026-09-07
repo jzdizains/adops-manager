@@ -285,8 +285,9 @@
       <div class="hint" style="margin-top:12px;">Also active: wrong logins are slowed down, and an IP or an email is locked out after 5 failures (15 min, longer if it keeps trying); pages are never cached by the browser.{% if sec.allowed_ips %} Logins are restricted to <code>{{ sec.allowed_ips }}</code> (ALLOWED_IPS).{% else %} To restrict logins to your own network, set <code>ALLOWED_IPS</code> — your current IP is <code>{{ sec.this_ip }}</code>.{% endif %}</div>
     </div>
     <div>
-      <div class="field-label">Recent login attempts <span class="muted">(you are {{ sec.this_ip }})</span></div>
-      {% if sec.recent %}
+      <div class="field-label">Recent login attempts <span class="muted">(you are {{ sec.this_ip }}{% if sec.this_where %} · {{ sec.this_where }}{% endif %})</span></div>
+      {% if sec.is_owner %}<div class="muted" style="font-size:12px;margin-top:6px;">See the <a href="#access">Access log</a> below for every login, failure and probe with location and device.</div>
+      {% elif sec.recent %}
       <table class="data" style="margin-top:6px;font-size:11.5px;"><thead><tr><th>When (UTC)</th><th>Who / IP</th><th>Result</th></tr></thead><tbody>
         {% for a in sec.recent %}<tr><td class="mono">{{ a.at.strftime('%b %d %H:%M') }}</td><td><div>{{ a.email or "—" }}</div><div class="mono muted">{{ a.ip }}</div></td><td>{% if a.ok %}<span class="pill ok">ok</span>{% else %}<span class="pill err">failed</span>{% endif %} <span class="muted">{{ a.note }}</span></td></tr>{% endfor %}
       </tbody></table>
@@ -300,7 +301,7 @@
   <div class="card-header"><span class="card-title">👥 Users</span>
     <span class="card-meta">only these emails can log in · only the owner ({{ sec.owner_email }}, set by OWNER_EMAIL) sees this card</span></div>
   <table class="data" style="font-size:12.5px;">
-    <thead><tr><th>Email</th><th>Role</th><th>2FA</th><th>Last login (UTC)</th><th class="num">Actions</th></tr></thead>
+    <thead><tr><th>Email</th><th>Role</th><th>2FA</th><th>Last login (UTC)</th><th>Last seen</th><th class="num">Actions</th></tr></thead>
     <tbody>
     {% for u in sec.users %}
       <tr {% if not u.active %}style="opacity:.55;"{% endif %}>
@@ -308,6 +309,7 @@
         <td>{% if u.email == sec.owner_email|lower %}<span class="pill dim">owner</span>{% else %}<span class="muted">member</span>{% endif %}</td>
         <td>{% if u.totp_secret %}<span class="pill ok">on</span>{% else %}<span class="pill warn">off</span>{% endif %}</td>
         <td class="mono muted">{{ u.last_login_at.strftime('%b %d %H:%M') if u.last_login_at else "never" }}</td>
+        <td style="font-size:11.5px;">{% if u.last_seen_at %}<div class="mono">{{ u.last_seen_at.strftime('%b %d %H:%M') }} UTC</div><div class="muted">{{ u.last_ip }}{% if sec.user_where.get(u.id) %} · {{ sec.user_where[u.id] }}{% endif %}</div><div class="muted">{{ sec.ua.parse(u.last_ua or "").summary }}</div>{% else %}<span class="muted">—</span>{% endif %}</td>
         <td class="num" style="white-space:nowrap;">
           {% if u.id != sec.me.id %}
           <details style="display:inline-block;text-align:left;"><summary class="btn sm" style="display:inline-flex;list-style:none;cursor:pointer;">Manage ▾</summary>
@@ -332,6 +334,45 @@
   </form>
   <div class="hint" style="margin-top:6px;">Tell them the email and temporary password out of band; they must choose their own password at first login and can turn on 2FA in their own account card. Members use everything else in the app but never see this card. Nobody outside this list can log in.</div>
 </div>
+
+<div class="card" id="access" style="margin-top:14px;">
+  <div class="card-header"><span class="card-title">🕵️ Access log</span>
+    <span class="card-meta">every login, failed attempt and unauthenticated probe of a dashboard URL · IP → location via ipinfo.io{% if not sec.geo_on %} (set <code>IPINFO_TOKEN</code> for a higher lookup limit){% endif %}</span></div>
+  <div class="seg" id="accFilter" style="margin-bottom:8px;">
+    <button type="button" data-f="" class="on">All</button>
+    <button type="button" data-f="ok">Logins</button>
+    <button type="button" data-f="fail">Failed</button>
+    <button type="button" data-f="probe">Probes</button>
+  </div>
+  {% if sec.access %}
+  <div style="overflow-x:auto;">
+  <table class="data" style="font-size:11.5px;" id="accTable">
+    <thead><tr><th>When (UTC)</th><th>Who</th><th>IP · location · network</th><th>Device</th><th>What</th></tr></thead>
+    <tbody>
+    {% for row in sec.access %}{% set a = row.a %}
+      <tr data-k="{{ 'ok' if a.ok else ('probe' if a.kind == 'probe' else 'fail') }}">
+        <td class="mono" style="white-space:nowrap;">{{ a.at.strftime('%b %d %H:%M:%S') }}</td>
+        <td>{{ a.email or "—" }}</td>
+        <td><div class="mono">{{ a.ip }}{% if a.ip == sec.this_ip %} <span class="muted">(you)</span>{% endif %}</div>{% if row.where %}<div class="muted">{{ row.where }}</div>{% endif %}{% if row.org %}<div class="muted" style="font-size:10.5px;">{{ row.org }}</div>{% endif %}</td>
+        <td title="{{ a.ua }}">{{ row.device.summary or "—" }}{% if row.device.device %} <span class="muted">· {{ row.device.device }}</span>{% endif %}</td>
+        <td>{% if a.ok %}<span class="pill ok">logged in</span>{% elif a.kind == 'probe' %}<span class="pill dim">probe</span>{% else %}<span class="pill err">failed{% if a.kind == '2fa' %} 2FA{% endif %}</span>{% endif %} <span class="muted">{{ a.note }}{% if a.path %} <span class="mono">{{ a.path }}</span>{% endif %}</span></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}<div class="muted" style="font-size:12px;">Nothing recorded yet.</div>{% endif %}
+  <div class="hint" style="margin-top:8px;">A <b>probe</b> is a request for a dashboard page by someone not logged in (one row per IP per 10 minutes, with a hit count). Location comes from the IP and is approximate — mobile networks often resolve to the carrier's city. Entries are kept for 30 days.</div>
+</div>
+<script>
+  (function () {
+    var btns = document.querySelectorAll("#accFilter button"), rows = document.querySelectorAll("#accTable tbody tr");
+    btns.forEach(function (b) { b.addEventListener("click", function () {
+      btns.forEach(function (o) { o.classList.remove("on"); }); b.classList.add("on");
+      var f = b.getAttribute("data-f"); rows.forEach(function (r) { r.hidden = !!f && r.getAttribute("data-k") !== f; });
+    }); });
+  })();
+</script>
 {% endif %}
 
 <div class="card" id="font" style="margin-top:14px;">
