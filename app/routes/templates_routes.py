@@ -81,6 +81,7 @@ def parse_form(form) -> dict:
         "smart_creative_texts": int(val("smart_creative_texts") or 5),
         "spark_code_id": int(val("spark_code_id")) if val("spark_code_id") else None,
         "carousel_id": int(val("carousel_id")) if val("carousel_id") else None,   # pinned carousel (None = next unused)
+        "video_creative_id": int(val("video_creative_id")) if val("video_creative_id") else None,   # pinned library video (None = next unused)
         "ad_text": val("ad_text"),
         "call_to_action": val("call_to_action", "LEARN_MORE"),
         "display_card_id": int(val("display_card_id")) if str(val("display_card_id")).isdigit() else None,   # Display Card add-on (None = off)
@@ -139,6 +140,9 @@ def _form_ctx(db: Session) -> dict:
                     .order_by(models.PixelRecord.pixel_name).all(),
         "carousels": db.query(models.Creative).filter_by(kind="carousel")
                        .order_by(models.Creative.status, models.Creative.name).all(),
+        "videos": db.query(models.Creative).filter(models.Creative.kind == "video",
+                                                   models.Creative.status.in_(("available", "used")))
+                    .order_by(models.Creative.status, models.Creative.name).all(),
         "sparks": db.query(models.SparkCode).filter_by(status="active")
                     .order_by(models.SparkCode.name).all(),
         # pages/forms deduped BY NAME with per-name account counts — the preset

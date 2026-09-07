@@ -212,11 +212,18 @@ def synthesize(template: models.Template, overrides: dict[str, Any] | None = Non
     # a preset can PIN a specific carousel (else: next unused). A pinned carousel is
     # meant to run on every account the preset launches to, so it's reusable.
     fields["carousel_id"] = int(s.get("carousel_id") or 0) or None
+    # …or a specific library VIDEO (same idea: runs on every account, so reusable;
+    # ignored under Smart Creative, which needs several videos)
+    fields["video_creative_id"] = int(s.get("video_creative_id") or 0) or None
     if overrides:
         fields.update({k: v for k, v in overrides.items() if v not in (None, "")})
-    if (fields.get("creative_source") == "carousel" and fields.get("carousel_id")
-            and not (overrides or {}).get("creative_id") and not (overrides or {}).get("creative_source")):
+    launcher_picked = (overrides or {}).get("creative_id") or (overrides or {}).get("creative_source")
+    if fields.get("creative_source") == "carousel" and fields.get("carousel_id") and not launcher_picked:
         fields["creative_id"] = fields["carousel_id"]
+        fields["allow_creative_reuse"] = True
+    elif (fields.get("creative_source") == "library" and fields.get("video_creative_id")
+            and not fields.get("smart_creative") and not launcher_picked):
+        fields["creative_id"] = fields["video_creative_id"]
         fields["allow_creative_reuse"] = True
     return fields
 

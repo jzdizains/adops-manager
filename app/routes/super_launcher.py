@@ -130,9 +130,21 @@ def account_picker_context(db: Session, accounts: list) -> dict:
 def preset_facts(presets) -> dict:
     """Plain-English facts per preset for the launchers' preview panel."""
     out = {}
+    from ..database import SessionLocal
+    pinned_names: dict[int, str] = {}
+    ids = {int(launch_mod.synthesize(p).get("creative_id") or 0) for p in presets}
+    ids.discard(0)
+    if ids:
+        db = SessionLocal()
+        try:
+            pinned_names = {c.id: c.name for c in db.query(models.Creative).filter(models.Creative.id.in_(ids)).all()}
+        finally:
+            db.close()
     for p in presets:
         f = launch_mod.synthesize(p)
+        pinned = pinned_names.get(int(f.get("creative_id") or 0), "")
         out[p.id] = {
+            "pinned": pinned,
             "objective": dict(launch_mod.OBJECTIVE_OPTIONS).get(p.objective_type, p.objective_type),
             "destination": launch_mod.destination_label(f), "budget": f.get("adgroup_budget") or "",
             "budget_mode": p.campaign_budget_mode or "ABO", "campaign_budget": p.campaign_budget or 0,

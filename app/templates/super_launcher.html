@@ -152,7 +152,7 @@
     preview.hidden = false;
     var set = function (k, v) { var el = preview.querySelector('[data-pp="' + k + '"]'); if (el) el.textContent = v; };
     set("objective", p.objective); set("destination", p.destination);
-    set("creative", CREATIVE_LABELS[p.creative] || p.creative);
+    set("creative", (CREATIVE_LABELS[p.creative] || p.creative) + (p.pinned ? " — pinned: " + p.pinned : ""));
     set("budget", p.budget_mode === "CBO" && p.campaign_budget ? "$" + p.campaign_budget + "/day (CBO)" : (p.budget ? "$" + p.budget + "/day per ad group" : "—"));
     set("cta", p.cta === "AUTO" ? "Auto (TikTok picks)" : (p.cta || "—").replace(/_/g, " ").toLowerCase());
     set("duplicates", p.duplicates + (p.smart_plus ? " · Smart+" : ""));

@@ -311,6 +311,14 @@
           <option value="carousel" {{ 'selected' if blob.get('creative_source') == 'carousel' }}>Creative library — next unused carousel (images + music)</option>
         </select>
         <span class="hint" id="libraryHint" style="display:none;">Each launch consumes ONE unused creative from the <a href="/creatives">library</a> (unless Smart Creative is on).</span>
+        <label class="field" id="videoPick" style="display:none;margin-top:8px;"><span class="field-label">Which video</span>
+          <select name="video_creative_id">
+            <option value="">Next unused — automatic (each launch consumes one)</option>
+            {% for v in videos %}
+              <option value="{{ v.id }}" {{ 'selected' if blob.get('video_creative_id') == v.id }}>{{ v.name }}{% if v.status != 'available' %} (launched — reusable){% endif %}</option>
+            {% endfor %}
+          </select>
+          <span class="hint">Pin one video and this preset puts it on <b>every</b> account it launches to (each account uploads its own copy). Leave on automatic to use a fresh video per launch. Manage videos on the <a href="/creatives">Creatives</a> page.</span></label>
         <label class="field" id="carouselPick" style="display:none;margin-top:8px;"><span class="field-label">Which carousel</span>
           <select name="carousel_id">
             <option value="">Next unused — automatic (each launch consumes one)</option>
@@ -456,6 +464,7 @@
     var lib = csSel.value === "library", car = csSel.value === "carousel";
     sparkField.style.display = (lib || car) ? "none" : "";
     document.getElementById("carouselPick").style.display = car ? "" : "none";
+    document.getElementById("videoPick").style.display = (lib && !smartCreativeChk.checked) ? "" : "none";
     libraryHint.style.display = (lib || car) ? "" : "none";
     poolModes.style.display = (lib || car) ? "" : "none";
     // Smart Creative toggle only applies to the (video) library source — TikTok
@@ -484,8 +493,13 @@
     if (!f) { dcMsg.textContent = "Pick an image file first."; return; }
     var fd = new FormData(); fd.append("file", f); fd.append("name", document.getElementById("displayCardName").value);
     dcMsg.textContent = "Uploading…"; this.disabled = true; var btn = this;
-    fetch("/display-cards/upload", { method: "POST", body: fd, headers: { "Accept": "application/json" } })
-      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+    fetch("/display-cards/upload", { method: "POST", body: fd, headers: { "Accept": "application/json" }, credentials: "same-origin" })
+      .then(function (r) {
+        return r.text().then(function (t) {
+          var j; try { j = JSON.parse(t); } catch (e) { j = { error: "Unexpected reply from the server (HTTP " + r.status + (r.redirected ? ", redirected — are you still logged in?" : "") + ")." }; }
+          return { ok: r.ok && !r.redirected, j: j };
+        });
+      })
       .then(function (res) {
         btn.disabled = false;
         if (!res.ok) { dcMsg.textContent = res.j.error || "Upload failed."; return; }
