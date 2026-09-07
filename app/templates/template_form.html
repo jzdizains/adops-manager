@@ -8,7 +8,7 @@
 
 <nav class="section-nav" aria-label="Sections">
   <a href="#campaign">Campaign</a><a href="#location">Destination</a><a href="#placements">Placements</a><a href="#targeting">Targeting</a>
-  <a href="#budget">Budget</a><a href="#bidding">Bidding</a><a href="#advanced">Advanced</a><a href="#ad">Ad &amp; creative</a>
+  <a href="#budget">Budget</a><a href="#bidding">Bidding</a><a href="#advanced">Advanced</a><a href="#ad">Ad &amp; creative</a><a href="#addons">Add-ons</a>
 </nav>
 <form method="post" action="/presets/save">
   {% if t %}<input type="hidden" name="preset_id" value="{{ t.id }}">{% endif %}
@@ -365,6 +365,32 @@
     </div>
   </div>
 
+  <div class="card" id="addons">
+    <div class="card-header"><span class="card-title">Interactive add-ons</span>
+      <span class="card-meta">display card</span></div>
+    <div class="form-row-3">
+      <label class="field"><span class="field-label">Display card <span class="muted">(interactive add-on)</span></span>
+        <select name="display_card_id" id="displayCardSel">
+          <option value="">None</option>
+          {% for dc in display_cards %}
+            <option value="{{ dc.id }}" {{ 'selected' if blob.get('display_card_id') == dc.id }}>{{ dc.name }}</option>
+          {% endfor %}
+        </select>
+        <span class="hint">An image card that pops up in the video and works as a second click-through. Uploaded once here; each account gets its own copy at launch. Video ads on TikTok placement only (not carousels).</span></label>
+      <div class="dc-block"><span class="field-label">Preview</span>
+        <img id="displayCardPrev" alt="" class="dc-prev">
+        <span class="muted" id="displayCardNone" style="font-size:12px;">No card selected.</span>
+        <form method="post" id="displayCardDel" action="" style="display:none;margin-top:8px;">
+          <button class="btn sm" type="submit" onclick="return confirm('Remove this display card from the app? Cards already created in TikTok accounts stay there.');">Remove card</button></form></div>
+      <div class="dc-block"><span class="field-label">Upload a new card</span>
+        <input type="file" id="displayCardFile" accept=".png,.jpg,.jpeg,.webp">
+        <input type="text" id="displayCardName" placeholder="Name (optional)">
+        <button class="btn sm" type="button" id="displayCardUp">Upload &amp; select</button>
+        <span class="hint">TikTok wants exactly 750 × 421 px (PNG/JPG); other sizes are scaled and centre-cropped to fit. The picture is the card; the button text comes from the CTA above.</span>
+        <span class="hint" id="displayCardMsg"></span></div>
+    </div>
+  </div>
+
   <div class="save-bar">
     <button class="btn primary" type="submit" style="font-size:14px;padding:10px 22px;">Save preset</button>
     <a class="btn" href="/presets">Cancel</a>
@@ -439,6 +465,35 @@
   csSel.addEventListener("change", syncCreative);
   smartCreativeChk.addEventListener("change", syncCreative);
   syncCreative();
+
+  // Display card: preview of the picked card + inline upload (fetch → JSON) that selects the new card
+  var dcSel = document.getElementById("displayCardSel"), dcPrev = document.getElementById("displayCardPrev"),
+      dcNone = document.getElementById("displayCardNone"), dcDel = document.getElementById("displayCardDel"),
+      dcMsg = document.getElementById("displayCardMsg");
+  function syncCard() {
+    var id = dcSel.value;
+    dcPrev.style.display = id ? "block" : "none"; dcNone.style.display = id ? "none" : "";
+    dcDel.style.display = id ? "" : "none";
+    if (id) { dcPrev.src = "/display-cards/" + id + "/image"; dcDel.action = "/display-cards/" + id + "/delete?next=" + encodeURIComponent(location.pathname); }
+  }
+  dcSel.addEventListener("change", syncCard); syncCard();
+  document.getElementById("displayCardUp").addEventListener("click", function () {
+    var f = document.getElementById("displayCardFile").files[0];
+    if (!f) { dcMsg.textContent = "Pick an image file first."; return; }
+    var fd = new FormData(); fd.append("file", f); fd.append("name", document.getElementById("displayCardName").value);
+    dcMsg.textContent = "Uploading…"; this.disabled = true; var btn = this;
+    fetch("/display-cards/upload", { method: "POST", body: fd, headers: { "Accept": "application/json" } })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (res) {
+        btn.disabled = false;
+        if (!res.ok) { dcMsg.textContent = res.j.error || "Upload failed."; return; }
+        var o = document.createElement("option"); o.value = res.j.id; o.textContent = res.j.name; o.selected = true;
+        dcSel.appendChild(o); syncCard();
+        dcMsg.textContent = res.j.message + " Save the preset to keep it selected.";
+        document.getElementById("displayCardFile").value = ""; document.getElementById("displayCardName").value = "";
+      })
+      .catch(function () { btn.disabled = false; dcMsg.textContent = "Upload failed — check the connection and try again."; });
+  });
 
   var modeSel = document.getElementById("budgetMode"), cbo = document.getElementById("cboBudgetField");
   function syncMode() { cbo.style.display = modeSel.value === "ABO" ? "none" : ""; }

@@ -83,6 +83,7 @@ def parse_form(form) -> dict:
         "carousel_id": int(val("carousel_id")) if val("carousel_id") else None,   # pinned carousel (None = next unused)
         "ad_text": val("ad_text"),
         "call_to_action": val("call_to_action", "LEARN_MORE"),
+        "display_card_id": int(val("display_card_id")) if str(val("display_card_id")).isdigit() else None,   # Display Card add-on (None = off)
         # auto-pick policy: which accounts qualify when the launcher picks for you
         "account_policy": val("account_policy", "new_only"),   # new_only | reuse
         # -- full Ads-Manager surface ------------------------------------------
@@ -144,6 +145,7 @@ def _form_ctx(db: Session) -> dict:
         # stores the name; launches resolve each account's own copy
         "instant_pages": _assets_by_name(db.query(models.InstantPage).all()),
         "lead_forms": _assets_by_name(db.query(models.LeadForm).all()),
+        "display_cards": db.query(models.DisplayCard).order_by(models.DisplayCard.name).all(),
     }
 
 

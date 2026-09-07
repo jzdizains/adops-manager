@@ -613,6 +613,23 @@ def recommend_ctas(access_token: str, advertiser_id: str, objective_type: str,
     return out
 
 
+DISPLAY_CARD_SIZE = (750, 421)     # doc "Cards → Display Card": the image must be 750 × 421 px
+
+
+def create_display_card_portfolio(access_token: str, advertiser_id: str, image_id: str) -> str:
+    """Display Card (doc "Cards → Display Card" / "Create a portfolio"):
+    creative_portfolio_type CARD, card_type IMAGE, the 750×421 image's id.
+    Returns creative_portfolio_id — ads pass it as card_id (manual ads) or
+    interactive_add_on_list[{card_id}] (Upgraded Smart+)."""
+    data = api_post("/creative/portfolio/create/", access_token, {
+        "advertiser_id": advertiser_id, "creative_portfolio_type": "CARD",
+        "portfolio_content": [{"card_type": "IMAGE", "image_id": image_id}]})
+    pid = str((data or {}).get("creative_portfolio_id") or "")
+    if not pid:
+        raise TikTokError("APP", "Display Card portfolio created but TikTok returned no id")
+    return pid
+
+
 def create_cta_portfolio(access_token: str, advertiser_id: str, assets: list[dict]) -> str:
     """Dynamic CTA portfolio (doc "CTA recommendations → Dynamic CTAs", step 2):
     POST /creative/portfolio/create/ with creative_portfolio_type=CTA and one

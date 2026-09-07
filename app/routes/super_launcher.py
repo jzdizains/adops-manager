@@ -76,7 +76,21 @@ def page(request: Request, db: Session = Depends(get_db)):
     for p in presets:
         fields = launch_mod.synthesize(p)
         dest_labels[p.id] = launch_mod.destination_label(fields)
-    # per-account facts for the picker: BC, fresh/used/active, cooldown, balance
+    picker = account_picker_context(db, accounts)
+    preset_info = preset_facts(presets)
+    return render(request, "super_launcher.html", {
+        "accounts": accounts, "presets": presets, "sparks": sparks,
+        **picker, "preset_info_json": json.dumps(preset_info),
+        "creatives_available": creatives_available, "carousels_available": carousels_available,
+        "dest_labels_json": json.dumps(dest_labels),
+        "title": "Super Launcher",
+    })
+
+
+def account_picker_context(db: Session, accounts: list) -> dict:
+    """What the account picker (shared by the Super Launcher and Create
+    Campaign) needs per account: BC grouping, fresh/used/live/cooling/blocked
+    state with the block reason, per-BC status, and state counts."""
     from .. import rules as rules_mod
     bcs = {b.bc_id: b for b in db.query(models.BusinessCenter).all()}
     with_campaigns = {r[0] for r in db.query(models.CampaignRecord.advertiser_id).distinct()}
@@ -110,15 +124,7 @@ def page(request: Request, db: Session = Depends(get_db)):
         if bc is not None:
             bc_status[bc_name] = bc_block(bc)
     counts = {k: sum(1 for v in info.values() if v["state"] == k) for k in ("fresh", "used", "active", "cooldown", "blocked")}
-    preset_info = preset_facts(presets)
-    return render(request, "super_launcher.html", {
-        "accounts": accounts, "presets": presets, "sparks": sparks,
-        "groups": groups, "info": info, "counts": counts, "preset_info_json": json.dumps(preset_info),
-        "bc_status": bc_status,
-        "creatives_available": creatives_available, "carousels_available": carousels_available,
-        "dest_labels_json": json.dumps(dest_labels),
-        "title": "Super Launcher",
-    })
+    return {"groups": groups, "info": info, "counts": counts, "bc_status": bc_status}
 
 
 def preset_facts(presets) -> dict:

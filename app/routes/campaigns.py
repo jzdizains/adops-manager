@@ -666,6 +666,8 @@ def build_ad_payload(fields: dict, adgroup_id: str, spark_ref: dict | None,
         creative["page_id"] = fields["lead_form_id"]
     elif fields.get("landing_page_url"):
         creative["landing_page_url"] = fields["landing_page_url"]
+    if fields.get("_display_card_portfolio_id") and creative["ad_format"] != "CAROUSEL_ADS":
+        creative["card_id"] = fields["_display_card_portfolio_id"]     # Display Card (doc "Cards")
     return {"adgroup_id": adgroup_id, "creatives": [creative]}
 
 
@@ -779,6 +781,9 @@ def build_spc_ad_payload(fields: dict, adgroup_id: str, spark_ref: dict,
         payload["ad_text_list"] = [{"ad_text": fields["ad_text"]}]
     if fields.get("landing_page_url"):
         payload["landing_page_url_list"] = [{"landing_page_url": fields["landing_page_url"]}]
+    if fields.get("_display_card_portfolio_id"):
+        # doc "Create an Upgraded Smart+ Ad": interactive_add_on_list[{card_id}] (0–1 entries)
+        payload["interactive_add_on_list"] = [{"card_id": fields["_display_card_portfolio_id"]}]
     return payload
 
 
@@ -983,6 +988,8 @@ def build_smart_creative_ad_payload(fields: dict, adgroup_id: str, identity: dic
             c["identity_authorized_bc_id"] = identity["identity_authorized_bc_id"]
         if cover_image_id:
             c["image_ids"] = [cover_image_id]
+        if fields.get("_display_card_portfolio_id"):
+            c["card_id"] = fields["_display_card_portfolio_id"]
         creatives.append(c)
     return {"adgroup_id": adgroup_id, "creative_material_mode": "SMART_CREATIVE",
             "creatives": creatives}
@@ -1148,6 +1155,16 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                 fields["_cta_portfolio_id"] = pid
             else:
                 fields["call_to_action"] = "LEARN_MORE"     # graceful fallback (see resolve_cta_portfolio)
+
+        # Display Card add-on: this account's copy (image upload + CARD portfolio,
+        # cached) — resolved before anything is created so a failure is clean
+        if fields.get("display_card_id") and not use_carousel:
+            from .. import display_cards as DC
+            card = db.get(models.DisplayCard, int(fields["display_card_id"]))
+            if not card:
+                raise ConfigError("The preset's display card no longer exists — pick another one in the preset.")
+            fields = dict(fields)
+            fields["_display_card_portfolio_id"] = DC.resolve_for_account(db, acct, card)
 
         # carousel: reserve the next unused carousel (or the one picked), upload
         # every slide into THIS account, resolve the identity — before creating anything
@@ -1736,11 +1753,10 @@ def launch_form(request: Request, db: Session = Depends(get_db)):
                  .order_by(models.Creative.name).all())
     carousels = (db.query(models.Creative).filter_by(status="available", kind="carousel")
                  .order_by(models.Creative.name).all())
-    from .super_launcher import preset_facts
-    bcs = {b.bc_id: b.name for b in db.query(models.BusinessCenter).all()}
+    from .super_launcher import account_picker_context, preset_facts
     return render(request, "campaign_launch.html", {
         "templates": templates, "accounts": accounts, "sparks": sparks,
-        "creatives": creatives, "carousels": carousels, "bcs": bcs,
+        "creatives": creatives, "carousels": carousels, **account_picker_context(db, accounts),
         "preset_info_json": json.dumps(preset_facts(templates)),
         "err": request.query_params.get("err", ""),
         "title": "Create Campaign",

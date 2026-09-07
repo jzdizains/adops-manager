@@ -276,6 +276,10 @@ input:focus, select:focus, textarea:focus {
 textarea { font-family: var(--font-mono); font-size: 12px; min-height: 120px; }
 .hint { font-size: 12px; color: var(--text-dim); margin-top: 3px; }
 
+.dc-block { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-bottom: 12px; }
+.dc-block .field-label { display: block; font-size: 12px; font-weight: 600; color: var(--text-soft); }
+.dc-block .hint { display: block; margin: 0; }
+.dc-prev { display: none; width: 100%; max-width: 260px; aspect-ratio: 750 / 421; object-fit: cover; border-radius: 8px; border: 1px solid var(--border); background: var(--panel-hover); }
 .form-row { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0 16px; }
 .form-row-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0 16px; }
 @media (max-width: 700px) { .form-row, .form-row-3 { grid-template-columns: 1fr; } }

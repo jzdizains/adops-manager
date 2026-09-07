@@ -165,6 +165,33 @@ class CreativeUpload(Base):
     created_at = Column(DateTime, default=utcnow)
 
 
+class DisplayCard(Base):
+    """A Display Card image (TikTok's 750×421 in-feed image card). Uploaded once
+    here; each ad account gets its own image upload + CARD portfolio (below)."""
+    __tablename__ = "display_cards"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String, default="")
+    file_name = Column(String, default="")
+    file_path = Column(Text, default="")
+    md5 = Column(String, default="")
+    created_at = Column(DateTime, default=utcnow)
+
+
+class DisplayCardUpload(Base):
+    """Cache: the image_id + Display Card portfolio id a card got in one ad
+    account, so a launch never re-uploads or re-creates it."""
+    __tablename__ = "display_card_uploads"
+
+    id = Column(Integer, primary_key=True)
+    card_id = Column(Integer, ForeignKey("display_cards.id"), index=True)
+    advertiser_id = Column(String, index=True)
+    image_id = Column(String, default="")
+    portfolio_id = Column(String, default="")
+    upload_md5 = Column(String, default="")
+    created_at = Column(DateTime, default=utcnow)
+
+
 class AdText(Base):
     """Ad-text pool — each text is consumed by exactly ONE launch so every
     campaign can carry unique copy."""
