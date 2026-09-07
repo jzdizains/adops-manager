@@ -18,6 +18,7 @@ Spec (all positions/sizes are fractions of the image, so they're resolution-inde
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
@@ -57,6 +58,102 @@ SHADOW_BLUR = 0.06
 STROKE = 0.07               # outward stroke — the app's caption outline (fitted from pixel profiles)
 DEFAULT_SIZE = 0.035        # the app's default caption ≈ 3.5% of the image height
 DEFAULT_STYLE = "outline"   # the app's caption look: white text, thin dark outline, no blur
+
+# Emoji: TikTok Sans has no emoji glyphs (and Pillow has no font fallback), so
+# emoji runs are drawn with Noto Color Emoji (SIL OFL) — a bitmap colour font
+# with one 109px strike, rendered there and scaled to the caption size. Emoji
+# get no outline/shadow, like the app.
+EMOJI_FONT = "NotoColorEmoji.ttf"
+EMOJI_STRIKE = 109
+EMOJI_RE = re.compile(
+    "(?:"
+    "[\U0001F1E6-\U0001F1FF]{2}"                                   # flags (regional indicator pairs)
+    "|[0-9#*]\uFE0F?\u20E3"                                          # keycaps
+    "|(?:[\u00A9\u00AE\u203C\u2049\u2122\u2139\u2194-\u2199\u21A9\u21AA\u231A\u231B\u2328\u23CF"
+    "\u23E9-\u23F3\u23F8-\u23FA\u24C2\u25AA\u25AB\u25B6\u25C0\u25FB-\u25FE\u2600-\u27BF\u2934\u2935"
+    "\u2B05-\u2B07\u2B1B\u2B1C\u2B50\u2B55\u3030\u303D\u3297\u3299\U0001F000-\U0001FAFF]"
+    "(?:[\U0001F3FB-\U0001F3FF]|\uFE0F|\uFE0E)?"                     # skin tone / presentation selector
+    "(?:\U000E0020-\U000E007F)*"                                     # tag sequences (subdivision flags)
+    "(?:\u200D[\u2600-\u27BF\U0001F000-\U0001FAFF](?:[\U0001F3FB-\U0001F3FF]|\uFE0F)?)*)"   # ZWJ sequences
+    ")")
+_emoji_font: ImageFont.FreeTypeFont | None = None
+_emoji_cache: dict[str, Image.Image] = {}
+
+
+def emoji_font() -> ImageFont.FreeTypeFont | None:
+    global _emoji_font
+    if _emoji_font is None:
+        try:
+            _emoji_font = ImageFont.truetype(str(FONT_DIR / EMOJI_FONT), EMOJI_STRIKE)
+        except OSError:
+            _emoji_font = False  # type: ignore[assignment]
+    return _emoji_font or None
+
+
+def emoji_bitmap(seq: str) -> Image.Image | None:
+    """The emoji sequence rendered at the font's native strike, cropped to its
+    ink (RGBA), or None when the font has no glyph for it."""
+    if seq in _emoji_cache:
+        return _emoji_cache[seq]
+    f = emoji_font()
+    out = None
+    if f is not None:
+        try:
+            w = int(f.getlength(seq)) + 8
+            im = Image.new("RGBA", (max(w, 8), EMOJI_STRIKE + 40), (0, 0, 0, 0))
+            ImageDraw.Draw(im).text((4, 4), seq, font=f, embedded_color=True)
+            box = im.getbbox()
+            # a "missing glyph" box renders as a thin outline; real emoji ink is dense
+            if box and (box[2] - box[0]) > 10:
+                out = im.crop(box)
+        except (OSError, ValueError):
+            out = None
+    _emoji_cache[seq] = out
+    return out
+
+
+def segments(line: str) -> list[tuple[str, str]]:
+    """Split a line into ("text", run) / ("emoji", sequence) pieces."""
+    out: list[tuple[str, str]] = []
+    pos = 0
+    for m in EMOJI_RE.finditer(line):
+        if m.start() > pos:
+            out.append(("text", line[pos:m.start()]))
+        if emoji_bitmap(m.group(0)) is not None:
+            out.append(("emoji", m.group(0)))
+        else:
+            out.append(("text", m.group(0)))       # no colour glyph → let the text font try
+        pos = m.end()
+    if pos < len(line):
+        out.append(("text", line[pos:]))
+    # merge adjacent text runs (a non-emoji match next to text)
+    merged: list[tuple[str, str]] = []
+    for kind, val in out:
+        if merged and kind == "text" and merged[-1][0] == "text":
+            merged[-1] = ("text", merged[-1][1] + val)
+        else:
+            merged.append((kind, val))
+    return merged
+
+
+def _emoji_size(px: int) -> float:
+    return px / EMOJI_STRIKE          # the strike is drawn for a 109px em → scale to ours
+
+
+def measure_line(line: str, font: ImageFont.FreeTypeFont, px: int) -> float:
+    """Advance width of a line: text by the font, emoji by their bitmaps."""
+    total = 0.0
+    k = _emoji_size(px)
+    for kind, val in segments(line):
+        if kind == "text":
+            total += font.getlength(val)
+        else:
+            bm = emoji_bitmap(val)
+            total += (bm.width * k if bm else 0) + px * EMOJI_GAP
+    return total
+
+
+EMOJI_GAP = 0.06            # breathing room after an emoji (em)
 
 
 def custom_font_dir() -> Path:
@@ -188,6 +285,34 @@ def _stroke_text(draw, pos, text, font, fill, width: float) -> None:
         draw.text(pos, text, font=font, fill=fill, stroke_width=max(1, int(round(width))), stroke_fill=(0, 0, 0, 255))
 
 
+def _draw_line(draw, layer: Image.Image, pos, line: str, font: ImageFont.FreeTypeFont, px: int,
+               fill, stroke: float, emoji: bool) -> None:
+    """One line: text runs with the caption font (outlined when stroke > 0),
+    emoji runs as colour bitmaps scaled to the em and sat on the baseline."""
+    x, y = pos
+    ascent, _descent = font.getmetrics()
+    k = _emoji_size(px)
+    for kind, val in segments(line):
+        if kind == "text":
+            if stroke:
+                _stroke_text(draw, (x, y), val, font, fill, stroke)
+            else:
+                draw.text((x, y), val, font=font, fill=fill)
+            x += font.getlength(val)
+            continue
+        bm = emoji_bitmap(val)
+        if bm is None:
+            continue
+        w, h = max(1, round(bm.width * k)), max(1, round(bm.height * k))
+        if emoji:
+            glyph = bm.resize((w, h), Image.LANCZOS)
+            # the strike's ink sits roughly on the baseline with the same
+            # ascent as the text: align its bottom with the baseline + a bit
+            ey = int(round(y + ascent - h + px * 0.12))
+            layer.alpha_composite(glyph, (int(round(x)), max(0, ey)))
+        x += w + px * EMOJI_GAP
+
+
 def render(image_path: str, spec: dict, max_width: int | None = None, quality: int = 92) -> bytes:
     """Return the image with the text baked in at native resolution (PNG for
     PNG sources, JPEG otherwise). max_width: also downscale the RESULT for a
@@ -201,8 +326,8 @@ def render(image_path: str, spec: dict, max_width: int | None = None, quality: i
     px = max(8, int(round(s["size"] * H)))
     font = load_font(s["font"], s["weight"], px, tiktok_opsz(px, W))
     line_h = int(round(px * LINE_HEIGHT))
-    # per-line widths (advance widths, like the browser's inline boxes)
-    widths = [int(round(font.getlength(ln))) if ln else 0 for ln in s["lines"]]
+    # per-line widths (advance widths, like the browser's inline boxes; emoji by bitmap)
+    widths = [int(round(measure_line(ln, font, px))) if ln else 0 for ln in s["lines"]]
     block_w, block_h = max(widths) if widths else 0, line_h * len(s["lines"])
     cx, cy = s["x"] * W, s["y"] * H
     top = cy - block_h / 2
@@ -237,18 +362,16 @@ def render(image_path: str, spec: dict, max_width: int | None = None, quality: i
         shadow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
         sd = ImageDraw.Draw(shadow)
         for i, ln in enumerate(s["lines"]):
-            sd.text((line_x(i), top + i * line_h + glyph_off + px * SHADOW_DY), ln,
-                    font=font, fill=(0, 0, 0, 150))
+            _draw_line(sd, shadow, (line_x(i), top + i * line_h + glyph_off + px * SHADOW_DY), ln,
+                       font, px, (0, 0, 0, 150), stroke=0, emoji=False)
         shadow = shadow.filter(ImageFilter.GaussianBlur(px * SHADOW_BLUR))
         layer = Image.alpha_composite(layer, shadow)
         draw = ImageDraw.Draw(layer)
 
     for i, ln in enumerate(s["lines"]):
         pos = (line_x(i), top + i * line_h + glyph_off)
-        if s["style"] == "outline":
-            _stroke_text(draw, pos, ln, font, text_rgb + (255,), px * STROKE)
-        else:
-            draw.text(pos, ln, font=font, fill=text_rgb + (255,))
+        _draw_line(draw, layer, pos, ln, font, px, text_rgb + (255,),
+                   stroke=(px * STROKE if s["style"] == "outline" else 0), emoji=True)
 
     out = Image.alpha_composite(base, layer)
     buf = io.BytesIO()
