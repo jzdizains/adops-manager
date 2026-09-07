@@ -77,6 +77,8 @@ def login_submit(request: Request, email: str = Form(""), password: str = Form("
             users.bootstrap(db)
             if not db.query(models.User).count():
                 return RedirectResponse(f"{LP}?err=nouser", status_code=303)
+        if not users.by_email(db, config.OWNER_EMAIL):
+            users.ensure_owner(db)        # OWNER_EMAIL changed since the first start → rename / create
         if not email and config.TEST_MODE:
             email = config.OWNER_EMAIL.lower()          # local tests post only the password
         wait = sec.locked_for(db, ip, email)

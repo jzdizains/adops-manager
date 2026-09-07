@@ -28,6 +28,7 @@ APP_PASSWORD = os.environ.get("APP_PASSWORD", "changeme")
 SESSION_SECRET = os.environ.get("SESSION_SECRET", "dev-secret-change-me")
 SECURITY_PIN = os.environ.get("SECURITY_PIN", "")  # empty = PIN gate disabled
 OWNER_EMAIL = os.environ.get("OWNER_EMAIL", "owner@adops.local")
+RESET_OWNER_PASSWORD = os.environ.get("RESET_OWNER_PASSWORD", "") == "1"   # lockout escape hatch: owner's password := APP_PASSWORD at next start
 IPINFO_TOKEN = os.environ.get("IPINFO_TOKEN", "")   # optional: ipinfo.io token for IP → location on the access log (works tokenless at a low daily limit)   # the first (admin) account, minted from APP_PASSWORD on first start
 ALLOWED_IPS = os.environ.get("ALLOWED_IPS", "")    # optional: comma-separated IPs/CIDRs allowed to log in ("" = any)
 TEST_MODE = os.environ.get("ADOPS_DISABLE_BG") == "1"   # local tests: plain-http cookies, default password tolerated

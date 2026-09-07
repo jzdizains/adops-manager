@@ -120,6 +120,51 @@ def authenticate(db: Session, email: str, password: str) -> models.User | None:
     return None
 
 
+DEFAULT_OWNER = "owner@adops.local"
+
+
+def ensure_owner(db: Session) -> str:
+    """Every start: make sure the OWNER_EMAIL account exists and is usable.
+    - exists → (optionally) reset its password to APP_PASSWORD when the
+      RESET_OWNER_PASSWORD env var is "1" (the lockout escape hatch), and
+      make sure it's active;
+    - only the placeholder owner (owner@adops.local, minted before
+      OWNER_EMAIL was set) exists → rename it, keeping password + 2FA;
+    - no owner at all → create it from APP_PASSWORD.
+    Returns a short description of what happened ('' = nothing)."""
+    want = norm_email(config.OWNER_EMAIL) or DEFAULT_OWNER
+    u = by_email(db, want)
+    if u:
+        changed = []
+        if not u.active:
+            u.active = True
+            changed.append("reactivated")
+        if config.RESET_OWNER_PASSWORD and config.APP_PASSWORD != "changeme":
+            u.password_hash = hash_password(config.APP_PASSWORD)
+            u.session_version = (u.session_version or 0) + 1
+            u.must_change_password = False
+            changed.append("password reset to APP_PASSWORD (remove RESET_OWNER_PASSWORD now)")
+        if changed:
+            db.commit()
+            queries.log(db, f"owner {u.email}: " + ", ".join(changed), level="warn", source="auth")
+        return ", ".join(changed)
+    placeholder = by_email(db, DEFAULT_OWNER) if want != DEFAULT_OWNER else None
+    if placeholder:
+        old = placeholder.email
+        placeholder.email = want
+        placeholder.active = True
+        db.commit()
+        queries.log(db, f"owner account renamed {old} → {want} (OWNER_EMAIL set after first start)", source="auth")
+        return f"renamed {old} → {want}"
+    if config.APP_PASSWORD == "changeme" and not config.ALLOW_INSECURE_DEFAULTS:
+        return ""
+    u = models.User(email=want, password_hash=hash_password(config.APP_PASSWORD), is_admin=True, active=True)
+    db.add(u)
+    db.commit()
+    queries.log(db, f"owner account created from APP_PASSWORD: {want}", source="auth")
+    return f"created {want}"
+
+
 def bootstrap(db: Session) -> models.User | None:
     """First run: no users → the env APP_PASSWORD becomes the owner account
     (OWNER_EMAIL, admin). A global 2FA secret from the pre-accounts build

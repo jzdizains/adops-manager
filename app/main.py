@@ -170,6 +170,7 @@ try:
     _d = _BootSL()
     try:
         _users.bootstrap(_d)
+        _users.ensure_owner(_d)      # OWNER_EMAIL set later / renamed / locked out → still an owner you can log in as
     finally:
         _d.close()
 except Exception:  # noqa: BLE001 — never keep the app from starting
