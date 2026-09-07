@@ -3,6 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <link rel="icon" href="data:,">
   <title>Log in</title>
   <link rel="stylesheet" href="/static/style.css?v={{ STATIC_V }}">
   <link rel="stylesheet" href="/static/topnav.css?v={{ STATIC_V }}">
@@ -14,16 +16,23 @@
 <body>
 <div class="login-wrap">
   <div class="card login-card">
-    <h1 style="margin-bottom:4px;">Welcome back</h1>
-    <p class="muted" style="margin-top:0;">Enter your password to open the dashboard.</p>
-    {% if error %}<div class="flash err">Wrong password — try again.</div>{% endif %}
-    <form method="post" action="/login">
+    <h1 style="margin-bottom:4px;">Log in</h1>
+    {% if insecure %}
+    <div class="flash err">Login is disabled until <code>APP_PASSWORD</code> and <code>SESSION_SECRET</code> are set as environment variables on the server (Render → Environment). The placeholders would let anyone in.</div>
+    {% else %}
+    {% if error %}<div class="flash err">{{ error }}</div>{% endif %}
+    <form method="post" action="{{ login_path }}" autocomplete="off">
+      <label class="field">
+        <span class="field-label">Email</span>
+        <input type="email" name="email" value="{{ email }}" autofocus autocomplete="username" required>
+      </label>
       <label class="field">
         <span class="field-label">Password</span>
-        <input type="password" name="password" autofocus autocomplete="current-password">
+        <input type="password" name="password" autocomplete="current-password" required>
       </label>
-      <button class="btn primary" type="submit" style="width:100%;justify-content:center;">Log in</button>
+      <button class="btn primary" type="submit" style="width:100%;justify-content:center;">Continue</button>
     </form>
+    {% endif %}
   </div>
 </div>
 </body>

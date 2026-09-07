@@ -22,15 +22,79 @@ app.mount("/static", StaticFiles(directory=str(Path(__file__).resolve().parent /
           name="static")
 
 
+SECURITY_HEADERS = {
+    # nothing on this app should ever be framed, sniffed, or indexed
+    "X-Frame-Options": "DENY",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "same-origin",
+    "X-Robots-Tag": "noindex, nofollow",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+    # scripts/styles are our own (inline included); images/media may come from TikTok's CDNs
+    "Content-Security-Policy": ("default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
+                                "img-src 'self' data: blob: https:; media-src 'self' blob: https:; font-src 'self' data:; "
+                                "connect-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'self'; object-src 'none'"),
+}
+
+
+POSTBACK_ONLY_PATHS = ("/postback", "/health", "/t/escape", "/static")
+
+
+def _not_found():
+    from fastapi.responses import PlainTextResponse
+    return PlainTextResponse("Not found", status_code=404)
+
+
 @app.middleware("http")
 async def require_login(request: Request, call_next):
+    from . import auth_security as sec
+    host = (request.headers.get("host") or "").split(":")[0].lower()
     path = request.url.path
-    if not path.startswith(auth.PUBLIC_PATHS) and not request.session.get("authed"):
-        return RedirectResponse(f"/login?next={path}", status_code=303)
+    # a dedicated postback hostname never serves the dashboard (nor its login page)
+    if config.POSTBACK_HOST and host == config.POSTBACK_HOST and not path.startswith(POSTBACK_ONLY_PATHS):
+        return _not_found()
+    hidden = config.LOGIN_PATH != "/login"
+    if hidden:
+        # the real login lives at the secret path; the well-known one is a 404
+        if path == config.LOGIN_PATH or path.startswith(config.LOGIN_PATH + "/"):
+            request.scope["path"] = "/login" + path[len(config.LOGIN_PATH):]
+            request.scope["raw_path"] = request.scope["path"].encode()
+            path = request.scope["path"]
+        elif path == "/login" or path.startswith("/login/"):
+            return _not_found()
+    public = path.startswith(auth.PUBLIC_PATHS)
+    if not public:
+        sess = request.session
+        if sess.get("authed"):
+            # a changed password, a deactivated user, "sign out everywhere" or an
+            # expired session logs this device out
+            import time as _time
+            from .database import SessionLocal as _SL
+            d = _SL()
+            try:
+                user = auth.current_user(request, d)
+            finally:
+                d.close()
+            if user is None or _time.time() - float(sess.get("at") or 0) > config.SESSION_MAX_AGE_S:
+                sess.clear()
+                return RedirectResponse(f"{config.LOGIN_PATH}?err=expired", status_code=303)
+            request.state.user = user
+        else:
+            if hidden:
+                return _not_found()          # don't even hint that there is something to log in to
+            return RedirectResponse(f"/login?next={path}", status_code=303)
     try:
-        return await call_next(request)
+        resp = await call_next(request)
     except Exception as exc:  # noqa: BLE001 — turn a bare "Internal Server Error" into something actionable
-        return _error_page(request, exc)
+        resp = _error_page(request, exc)
+    for k, v in SECURITY_HEADERS.items():
+        resp.headers.setdefault(k, v)
+    if request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https":
+        resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    if not path.startswith("/static") and "text/html" in (resp.headers.get("content-type") or ""):
+        # logged-in pages must never come back from the browser cache after logout / on a shared machine
+        resp.headers["Cache-Control"] = "no-store, max-age=0"
+        resp.headers["Pragma"] = "no-cache"
+    return resp
 
 
 def _error_page(request: Request, exc: BaseException):
@@ -75,12 +139,24 @@ def _error_page(request: Request, exc: BaseException):
 # Added AFTER the login middleware so SessionMiddleware sits OUTERMOST and has
 # populated request.session before the login check runs (Starlette ordering).
 app.add_middleware(SessionMiddleware, secret_key=config.SESSION_SECRET,
-                   session_cookie="adops_session", max_age=14 * 24 * 3600)
+                   session_cookie="adops_session", max_age=config.SESSION_MAX_AGE_S,
+                   same_site="lax", https_only=not config.TEST_MODE)   # cookie: HttpOnly (always), Secure on https
 
 
 # Create tables / run light migrations at import time — robust under uvicorn,
 # TestClient, and one-off scripts alike.
 init_db()
+# first start: turn APP_PASSWORD into the owner account (see users.bootstrap)
+try:
+    from . import users as _users
+    from .database import SessionLocal as _BootSL
+    _d = _BootSL()
+    try:
+        _users.bootstrap(_d)
+    finally:
+        _d.close()
+except Exception:  # noqa: BLE001 — never keep the app from starting
+    pass
 
 # Background worker: balance sync + low-balance alerts + metric refresh.
 background.start()

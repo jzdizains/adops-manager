@@ -89,6 +89,7 @@ def _loop():
                 issues.scan(db)
                 partners.poll(db)               # TikTok-account assignments waiting on accepted invites
                 jobs.prune(db)
+                _prune_logins(db)
                 _audience_daily(db)             # once a day: audience breakdowns + hourly heatmap
                 _music_monthly(db)              # TikTok's Audio Library cache, refreshed monthly (doc's advice)
             _audience_quick(db, settings)       # every N minutes: today's hours / today+yesterday breakdowns, active accounts
@@ -155,6 +156,14 @@ def _audience_quick(db, settings: dict) -> None:
     title = ("Refresh audience breakdowns (today + yesterday, active accounts)" if bd_due
              else "Refresh today's hour-by-hour delivery (active accounts)")
     jobs.enqueue_once(db, "audience_sync", title, {"days": days, "hot_only": True}, href="/audience")
+
+
+def _prune_logins(db) -> None:
+    from . import auth_security
+    try:
+        auth_security.prune_attempts(db)
+    except Exception:  # noqa: BLE001
+        db.rollback()
 
 
 def _music_monthly(db) -> None:

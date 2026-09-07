@@ -168,6 +168,38 @@ class CreativeUpload(Base):
     created_at = Column(DateTime, default=utcnow)
 
 
+class User(Base):
+    """A person who can log in: email + PBKDF2 password, admin flag (manages
+    users), per-user 2FA. session_version bumps sign the user out everywhere."""
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True)
+    email = Column(String, unique=True, nullable=False, index=True)
+    password_hash = Column(String, nullable=False)
+    is_admin = Column(Boolean, default=False)
+    active = Column(Boolean, default=True)
+    must_change_password = Column(Boolean, default=False)
+    session_version = Column(Integer, default=0)
+    totp_secret = Column(String, default="")
+    totp_recovery = Column(Text, default="[]")
+    totp_enabled_at = Column(String, default="")
+    created_at = Column(DateTime, default=utcnow)
+    last_login_at = Column(DateTime, nullable=True)
+
+
+class LoginAttempt(Base):
+    """Every login attempt (IP, outcome) — drives the per-IP lockout and the
+    'recent logins' list on the Security settings; pruned after 30 days."""
+    __tablename__ = "login_attempts"
+
+    id = Column(Integer, primary_key=True)
+    ip = Column(String, default="", index=True)
+    email = Column(String, default="", index=True)
+    ok = Column(Boolean, default=False)
+    note = Column(String, default="")
+    at = Column(DateTime, default=utcnow, index=True)
+
+
 class MusicTrack(Base):
     """Cached copy of TikTok's Audio Library (Commercial Music Library +
     uploads) so the carousel builder can browse/search ALL of it locally.

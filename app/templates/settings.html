@@ -239,6 +239,101 @@
 </div>
 </form>
 
+<div class="card" id="security" style="margin-top:14px;">
+  <div class="card-header"><span class="card-title">🔒 Your account &amp; login security</span>
+    <span class="card-meta">{{ sec.me.email if sec.me }}{% if sec.is_owner %} · owner{% endif %} · lockout after 5 wrong tries · sessions expire after {{ sec.session_hours }} h</span></div>
+  {% if sec.insecure %}<div class="flash err">APP_PASSWORD / SESSION_SECRET are still the placeholders — set both as environment variables on the server.</div>{% endif %}
+  {% if sec.me and sec.me.must_change_password %}<div class="flash err">Your password was set by an admin — choose your own now.</div>{% endif %}
+  <div class="form-row-3" style="gap:16px;">
+    <div>
+      <div class="field-label">Change password</div>
+      <form method="post" action="/settings/password" autocomplete="off" style="display:grid;gap:6px;margin-top:6px;">
+        <input type="password" name="current" placeholder="current password" autocomplete="current-password" required>
+        <input type="password" name="new" placeholder="new password ({{ sec.min_password }}+ characters)" autocomplete="new-password" minlength="{{ sec.min_password }}" required>
+        <input type="password" name="confirm" placeholder="repeat new password" autocomplete="new-password" required>
+        <button class="btn sm" type="submit">Change password</button>
+      </form>
+      <div class="hint">Changing it signs out every other device.</div>
+    </div>
+    <div>
+      <div class="field-label">Two-factor authentication (authenticator app)</div>
+      {% if sec.new_codes %}
+      <div class="flash ok" style="margin-top:8px;"><b>Recovery codes — shown once.</b> Store them somewhere safe (password manager). Each works once if you lose the phone.
+        <div class="mono" style="margin-top:8px;display:grid;grid-template-columns:1fr 1fr;gap:4px 16px;font-size:13px;">{% for c in sec.new_codes %}<span>{{ c }}</span>{% endfor %}</div></div>
+      {% endif %}
+      {% if sec.enabled %}
+      <div style="margin-top:6px;"><span class="pill ok">On</span> <span class="muted" style="font-size:12px;">since {{ sec.enabled_at[:16].replace('T', ' ') }} UTC · {{ sec.recovery_left }} recovery code(s) left</span></div>
+      <details style="margin-top:10px;"><summary class="muted" style="cursor:pointer;font-size:12.5px;">Turn off (needs your password and a current code)</summary>
+        <form method="post" action="/settings/2fa/disable" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;" autocomplete="off">
+          <input type="password" name="password" placeholder="password" style="width:150px;" autocomplete="current-password">
+          <input type="text" name="code" placeholder="code" inputmode="numeric" style="width:110px;">
+          <button class="btn danger sm" type="submit" onclick="return confirm('Turn two-factor authentication off?');">Turn off 2FA</button>
+        </form></details>
+      {% elif sec.pending_secret %}
+      <div class="hint" style="margin-top:6px;">1. In Google Authenticator, 1Password, Authy or similar, add an account{% if sec.pending_qr %} by scanning this code{% else %} by <b>entering the setup key manually</b>{% endif %}. 2. Type the 6-digit code it shows to confirm.</div>
+      {% if sec.pending_qr %}<div style="margin:10px 0;background:#fff;padding:8px;border-radius:8px;width:max-content;">{{ sec.pending_qr|safe }}</div>{% endif %}
+      <div style="margin-top:8px;font-size:12px;">Setup key: <code style="user-select:all;letter-spacing:.08em;">{{ sec.pending_secret }}</code> <span class="muted">(time-based, 6 digits, 30 s)</span></div>
+      <form method="post" action="/settings/2fa/confirm" style="display:flex;gap:6px;margin-top:10px;" autocomplete="off">
+        <input type="text" name="code" placeholder="6-digit code" inputmode="numeric" autocomplete="one-time-code" style="width:140px;" required>
+        <button class="btn primary sm" type="submit">Confirm &amp; turn on</button>
+        <button class="btn sm" type="submit" formaction="/settings/2fa/cancel">Cancel</button>
+      </form>
+      {% else %}
+      <div style="margin-top:6px;"><span class="pill warn">Off</span> <span class="muted" style="font-size:12px;">a password alone is one leak away from full access</span></div>
+      <form method="post" action="/settings/2fa/start" style="margin-top:10px;"><button class="btn primary sm" type="submit">Set up 2FA</button></form>
+      {% endif %}
+      <div class="hint" style="margin-top:12px;">Also active: wrong logins are slowed down, and an IP or an email is locked out after 5 failures (15 min, longer if it keeps trying); pages are never cached by the browser.{% if sec.allowed_ips %} Logins are restricted to <code>{{ sec.allowed_ips }}</code> (ALLOWED_IPS).{% else %} To restrict logins to your own network, set <code>ALLOWED_IPS</code> — your current IP is <code>{{ sec.this_ip }}</code>.{% endif %}</div>
+    </div>
+    <div>
+      <div class="field-label">Recent login attempts <span class="muted">(you are {{ sec.this_ip }})</span></div>
+      {% if sec.recent %}
+      <table class="data" style="margin-top:6px;font-size:11.5px;"><thead><tr><th>When (UTC)</th><th>Who / IP</th><th>Result</th></tr></thead><tbody>
+        {% for a in sec.recent %}<tr><td class="mono">{{ a.at.strftime('%b %d %H:%M') }}</td><td><div>{{ a.email or "—" }}</div><div class="mono muted">{{ a.ip }}</div></td><td>{% if a.ok %}<span class="pill ok">ok</span>{% else %}<span class="pill err">failed</span>{% endif %} <span class="muted">{{ a.note }}</span></td></tr>{% endfor %}
+      </tbody></table>
+      {% else %}<div class="muted" style="font-size:12px;margin-top:6px;">No attempts recorded yet.</div>{% endif %}
+    </div>
+  </div>
+</div>
+
+{% if sec.is_owner %}
+<div class="card" id="users" style="margin-top:14px;">
+  <div class="card-header"><span class="card-title">👥 Users</span>
+    <span class="card-meta">only these emails can log in · only the owner ({{ sec.owner_email }}, set by OWNER_EMAIL) sees this card</span></div>
+  <table class="data" style="font-size:12.5px;">
+    <thead><tr><th>Email</th><th>Role</th><th>2FA</th><th>Last login (UTC)</th><th class="num">Actions</th></tr></thead>
+    <tbody>
+    {% for u in sec.users %}
+      <tr {% if not u.active %}style="opacity:.55;"{% endif %}>
+        <td>{{ u.email }}{% if u.id == sec.me.id %} <span class="muted">(you)</span>{% endif %}{% if not u.active %} <span class="pill err">deactivated</span>{% endif %}{% if u.must_change_password %} <span class="pill warn" title="Must pick their own password at next login">temp password</span>{% endif %}</td>
+        <td>{% if u.email == sec.owner_email|lower %}<span class="pill dim">owner</span>{% else %}<span class="muted">member</span>{% endif %}</td>
+        <td>{% if u.totp_secret %}<span class="pill ok">on</span>{% else %}<span class="pill warn">off</span>{% endif %}</td>
+        <td class="mono muted">{{ u.last_login_at.strftime('%b %d %H:%M') if u.last_login_at else "never" }}</td>
+        <td class="num" style="white-space:nowrap;">
+          {% if u.id != sec.me.id %}
+          <details style="display:inline-block;text-align:left;"><summary class="btn sm" style="display:inline-flex;list-style:none;cursor:pointer;">Manage ▾</summary>
+            <div style="position:absolute;right:0;z-index:5;background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:10px;box-shadow:var(--shadow);display:grid;gap:6px;min-width:260px;margin-top:4px;">
+              <form method="post" action="/settings/users/{{ u.id }}/password" style="display:flex;gap:6px;" autocomplete="off">
+                <input type="password" name="password" placeholder="new password ({{ sec.min_password }}+)" minlength="{{ sec.min_password }}" required style="font-size:12px;">
+                <button class="btn sm" type="submit">Set</button></form>
+              <form method="post" action="/settings/users/{{ u.id }}/toggle"><button class="btn sm" type="submit" style="width:100%;">{{ 'Reactivate' if not u.active else 'Deactivate (signs them out)' }}</button></form>
+              {% if u.totp_secret %}<form method="post" action="/settings/users/{{ u.id }}/2fa-reset"><button class="btn sm" type="submit" style="width:100%;" onclick="return confirm('Clear 2FA for {{ u.email }}? They log in with the password only until they set it up again.');">Reset 2FA (lost phone)</button></form>{% endif %}
+              <form method="post" action="/settings/users/{{ u.id }}/delete"><button class="btn sm danger" type="submit" style="width:100%;" onclick="return confirm('Delete {{ u.email }}? This cannot be undone.');">Delete user</button></form>
+            </div></details>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <form method="post" action="/settings/users/create" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:12px;" autocomplete="off">
+    <input type="email" name="email" placeholder="new user's email" required style="width:240px;">
+    <input type="password" name="password" placeholder="temporary password ({{ sec.min_password }}+ characters)" minlength="{{ sec.min_password }}" required style="width:260px;" autocomplete="new-password">
+    <button class="btn primary sm" type="submit">Add user</button>
+  </form>
+  <div class="hint" style="margin-top:6px;">Tell them the email and temporary password out of band; they must choose their own password at first login and can turn on 2FA in their own account card. Members use everything else in the app but never see this card. Nobody outside this list can log in.</div>
+</div>
+{% endif %}
+
 <div class="card" id="font" style="margin-top:14px;">
   <div class="card-header"><span class="card-title">Caption font for “Add text”</span>
     <span class="card-meta">built in: TikTok Sans with the app's caption settings, measured from a real TikTok caption</span></div>

@@ -27,6 +27,21 @@ TENSORPIX_BASE = os.environ.get("TENSORPIX_BASE", "https://backend.tensorpix.ai"
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "changeme")
 SESSION_SECRET = os.environ.get("SESSION_SECRET", "dev-secret-change-me")
 SECURITY_PIN = os.environ.get("SECURITY_PIN", "")  # empty = PIN gate disabled
+OWNER_EMAIL = os.environ.get("OWNER_EMAIL", "owner@adops.local")   # the first (admin) account, minted from APP_PASSWORD on first start
+ALLOWED_IPS = os.environ.get("ALLOWED_IPS", "")    # optional: comma-separated IPs/CIDRs allowed to log in ("" = any)
+TEST_MODE = os.environ.get("ADOPS_DISABLE_BG") == "1"   # local tests: plain-http cookies, default password tolerated
+# Login is refused while APP_PASSWORD / SESSION_SECRET are still the placeholders
+# (a deployed app with "changeme" is open to anyone). Tests run with TEST_MODE.
+ALLOW_INSECURE_DEFAULTS = TEST_MODE or os.environ.get("ALLOW_INSECURE_DEFAULTS") == "1"
+SESSION_MAX_AGE_S = int(os.environ.get("SESSION_HOURS", "72")) * 3600     # re-login every 3 days by default
+# Hide the front door: with LOGIN_PATH set (e.g. "/door-7f3k2"), the login page lives ONLY there,
+# /login and every other unauthenticated URL answer 404 — a visitor who only knows the domain
+# (say, from a postback URL) sees nothing. POSTBACK_HOST: a second hostname pointed at this
+# service that serves ONLY /postback (+ /health) — the dashboard is not reachable through it.
+LOGIN_PATH = os.environ.get("LOGIN_PATH", "/login").strip() or "/login"
+if not LOGIN_PATH.startswith("/"):
+    LOGIN_PATH = "/" + LOGIN_PATH
+POSTBACK_HOST = os.environ.get("POSTBACK_HOST", "").strip().lower().split(":")[0]
 
 # --- Storage (MOUNT A DISK IN PROD — §9.8) ----------------------------------
 DATA_DIR = Path(os.environ.get("DATA_DIR", str(Path(__file__).resolve().parent.parent / "data")))

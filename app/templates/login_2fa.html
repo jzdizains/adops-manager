@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <link rel="icon" href="data:,">
+  <title>Verification code</title>
+  <link rel="stylesheet" href="/static/style.css?v={{ STATIC_V }}">
+  <link rel="stylesheet" href="/static/topnav.css?v={{ STATIC_V }}">
+  <style>
+    .login-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+    .login-card { width: 350px; padding: 28px; }
+    .code { font-family: var(--font-mono); font-size: 22px; letter-spacing: .25em; text-align: center; }
+  </style>
+</head>
+<body>
+<div class="login-wrap">
+  <div class="card login-card">
+    <h1 style="margin-bottom:4px;">Verification code</h1>
+    <p class="muted" style="margin-top:0;">Open your authenticator app and enter the 6-digit code.</p>
+    {% if error %}<div class="flash err">That code didn't work.</div>{% endif %}
+    <form method="post" action="{{ login_path }}/2fa" autocomplete="off">
+      <label class="field">
+        <input type="text" name="code" class="code" inputmode="numeric" autocomplete="one-time-code" autofocus required maxlength="9" placeholder="000000">
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text-soft);margin-bottom:12px;cursor:pointer;">
+        <input type="checkbox" name="trust" value="1" style="width:auto;"> Don't ask again on this browser for 30 days
+      </label>
+      <button class="btn primary" type="submit" style="width:100%;justify-content:center;">Log in</button>
+    </form>
+    <p class="hint" style="margin-top:12px;">Lost the phone? Enter one of your recovery codes (xxxx-xxxx) instead — each works once.</p>
+    <p class="hint"><a href="/logout">Cancel</a></p>
+  </div>
+</div>
+</body>
+</html>
