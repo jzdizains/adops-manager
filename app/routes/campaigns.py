@@ -5,6 +5,7 @@ ladders, spark identity resolution (§9.2–9.4) and pixel wiring (§9.7).
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Form, Request
@@ -133,7 +134,9 @@ def _account_identities(acct: models.AdAccount) -> list[dict]:
     return identities
 
 
-def _identity_lists_item(acct: models.AdAccount, identity: dict, item_id: str) -> bool:
+def _identity_lists_item(acct: models.AdAccount, identity: dict, item_id: str) -> dict | None:
+    """The post's item_info if this identity lists it among its ad-authorized
+    posts, else None."""
     try:
         data = tiktok_api.list_tt_videos(
             acct.access_token, acct.advertiser_id,
@@ -142,10 +145,71 @@ def _identity_lists_item(acct: models.AdAccount, identity: dict, item_id: str) -
         for item in data.get("list", []):
             info = item.get("item_info", item)
             if str(info.get("item_id", "")) == str(item_id):
-                return True
+                return info if isinstance(info, dict) else {}
     except tiktok_api.TikTokError:
         pass
-    return False
+    return None
+
+
+def item_media_type(data) -> str:
+    """'VIDEO' / 'CAROUSEL' from any TikTok post-info shape (item_info.item_type,
+    a top-level item_type, or the first list item), '' when it isn't stated.
+    A spark code's stored media_type is only what someone picked in a form —
+    TikTok's own item_type decides the ad format (a video post sent as
+    CAROUSEL_ADS fails with 'Only photo posts can be delivered as carousel ads')."""
+    if not isinstance(data, dict):
+        return ""
+    nodes = [data]
+    for key in ("item_info", "video_info", "data"):
+        if isinstance(data.get(key), dict):
+            nodes.append(data[key])
+    for key in ("list", "item_list", "video_list"):
+        v = data.get(key)
+        if isinstance(v, list) and v and isinstance(v[0], dict):
+            nodes.append(v[0].get("item_info", v[0]) if isinstance(v[0].get("item_info", v[0]), dict) else v[0])
+    for node in nodes:
+        t = str(node.get("item_type") or node.get("media_type") or node.get("post_type") or "").upper()
+        if not t:
+            continue
+        if "CAROUSEL" in t or "PHOTO" in t or "IMAGE" in t:
+            return "CAROUSEL"
+        if "VIDEO" in t:
+            return "VIDEO"
+    return ""
+
+
+def reconcile_media_type(db: Session, spark: models.SparkCode | None, spark_ref: dict | None) -> bool:
+    """TikTok's item_type beats the form value: correct the spark code when
+    they disagree (so Spark Codes shows the truth and every later launch
+    sends the right ad_format). Returns True when it changed something."""
+    if not spark or not spark_ref or not spark_ref.get("item_type"):
+        return False
+    real = spark_ref["item_type"]
+    if (spark.media_type or "VIDEO") == real:
+        return False
+    spark.media_type = real
+    db.commit()
+    return True
+
+
+_TYPE_COMPLAINT = re.compile(r"only photo posts can be delivered as carousel|only video|not a video|"
+                             r"video posts? can|photo post|is a carousel|carousel post", re.I)
+
+
+def format_flip_for(e: "tiktok_api.TikTokError", ad_format: str) -> str:
+    """When /ad/create/ rejects a spark ad because the post's real type
+    doesn't match ad_format, the ad_format to retry with; '' otherwise."""
+    if str(e.code) != "40002" or not _TYPE_COMPLAINT.search(e.message or ""):
+        return ""
+    return "SINGLE_VIDEO" if ad_format == "CAROUSEL_ADS" else "CAROUSEL_ADS"
+
+
+def spark_ad_format(spark_ref: dict | None, spark: models.SparkCode | None) -> str:
+    """CAROUSEL_ADS / SINGLE_VIDEO — TikTok's item_type (resolved at launch)
+    wins over the spark code's stored media_type."""
+    resolved = (spark_ref or {}).get("item_type") or ""
+    kind = resolved or ((spark.media_type or "VIDEO") if spark else "VIDEO")
+    return "CAROUSEL_ADS" if kind == "CAROUSEL" else "SINGLE_VIDEO"
 
 
 def resolve_spark(db: Session, acct: models.AdAccount, spark: models.SparkCode) -> dict:
@@ -169,10 +233,10 @@ def resolve_spark(db: Session, acct: models.AdAccount, spark: models.SparkCode) 
         f"{i.get('identity_type', '?')}·…{str(i.get('identity_id', ''))[-4:]}"
         for i in identities) or "NONE"))
 
-    def _ref(ident: dict, item_id: str) -> dict:
+    def _ref(ident: dict, item_id: str, item_type: str = "") -> dict:
         itype = ident.get("identity_type", "TT_USER")
         ref = {"identity_id": ident["identity_id"], "identity_type": itype,
-               "item_id": str(item_id)}
+               "item_id": str(item_id), "item_type": item_type or ""}
         bc = _bc_id_for(acct, itype)
         if bc:
             ref["identity_authorized_bc_id"] = bc
@@ -198,13 +262,14 @@ def resolve_spark(db: Session, acct: models.AdAccount, spark: models.SparkCode) 
         for item in posts:
             info = item.get("item_info", item)
             if spark.code and info.get("auth_code") == spark.code:
-                return _ref(ident, info.get("item_id", ""))
+                return _ref(ident, info.get("item_id", ""), item_media_type(info))
 
     # 2) known item_id (auto-grabbed sparks) → any identity that LISTS it
     if spark.tiktok_item_id:
         for ident in identities:
-            if _identity_lists_item(acct, ident, spark.tiktok_item_id):
-                return _ref(ident, spark.tiktok_item_id)
+            info = _identity_lists_item(acct, ident, spark.tiktok_item_id)
+            if info is not None:
+                return _ref(ident, spark.tiktok_item_id, item_media_type(info))
 
     # 3) authorize the pasted code on this advertiser, then VERIFY ownership (§9.3)
     def _authz_item_id(data: dict) -> str:
@@ -259,19 +324,20 @@ def resolve_spark(db: Session, acct: models.AdAccount, spark: models.SparkCode) 
                                     i.get("identity_type", ""), 2)):
                 itype = ident.get("identity_type", "TT_USER")
                 try:
-                    tiktok_api.identity_video_info(
+                    vinfo = tiktok_api.identity_video_info(
                         acct.access_token, acct.advertiser_id,
                         ident["identity_id"], itype, item_id,
                         identity_authorized_bc_id=_bc_id_for(acct, itype))
                     diag.append(f"probe {itype}: OWNS item {item_id}")
-                    return _remember(_ref(ident, item_id))
+                    return _remember(_ref(ident, item_id, item_media_type(vinfo)))
                 except tiktok_api.TikTokError as e:
                     probed.append(f"{itype}:{e.code}")
             diag.append("probes: " + (", ".join(probed) or "none"))
             # legacy list-based verification as a last check
             for ident in identities:
-                if _identity_lists_item(acct, ident, item_id):
-                    return _remember(_ref(ident, item_id))
+                info = _identity_lists_item(acct, ident, item_id)
+                if info is not None:
+                    return _remember(_ref(ident, item_id, item_media_type(info)))
 
         # 3d) re-list posts (they appear only AFTER authorize) and match the code
         relisted: list[tuple[dict, dict]] = []   # (identity, item_info)
@@ -291,10 +357,10 @@ def resolve_spark(db: Session, acct: models.AdAccount, spark: models.SparkCode) 
         for ident, info in relisted:
             if info.get("auth_code") == spark.code or (
                     item_id and str(info.get("item_id", "")) == item_id):
-                return _remember(_ref(ident, info.get("item_id", "")))
+                return _remember(_ref(ident, info.get("item_id", ""), item_media_type(info)))
         if len(relisted) == 1:   # single unambiguous arrival
             ident, info = relisted[0]
-            return _remember(_ref(ident, info.get("item_id", "")))
+            return _remember(_ref(ident, info.get("item_id", ""), item_media_type(info)))
     else:
         diag.append("spark has no pasted code (and no known item_id matched)")
 
@@ -581,7 +647,7 @@ def build_ad_payload(fields: dict, adgroup_id: str, spark_ref: dict | None,
                      spark: models.SparkCode | None) -> dict:
     creative: dict = {
         "ad_name": f"{fields['template_name']} ad"[:512],
-        "ad_format": ("CAROUSEL_ADS" if (spark and spark.media_type == "CAROUSEL") else "SINGLE_VIDEO"),
+        "ad_format": spark_ad_format(spark_ref, spark),
         "ad_text": fields["ad_text"] or " ",
         **_cta(fields),
     }
@@ -693,7 +759,7 @@ def build_spc_adgroup_payload(fields: dict, campaign_id: str, spark_ref: dict | 
 
 def build_spc_ad_payload(fields: dict, adgroup_id: str, spark_ref: dict,
                          spark: models.SparkCode | None) -> dict:
-    ad_format = "CAROUSEL_ADS" if (spark and spark.media_type == "CAROUSEL") else "SINGLE_VIDEO"
+    ad_format = spark_ad_format(spark_ref, spark)
     payload: dict = {
         "adgroup_id": adgroup_id,
         "ad_name": f"{fields['template_name']} smart+ ad"[:512],
@@ -1043,6 +1109,7 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
             spark = db.get(models.SparkCode, int(fields["spark_code_id"]))
             if spark:
                 spark_ref = resolve_spark(db, acct, spark)
+                reconcile_media_type(db, spark, spark_ref)
 
         # ---- source wiring (P&L join key — must reach Glitchy on every launch) ---
         settings = get_settings(db)
@@ -1407,7 +1474,18 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                             or fields.get("lead_form_id"):
                         ad_payload = _uniq(build_ad_payload(fields, adgroup_id, spark_ref, spark))
                         if spark_ref:
-                            tiktok_api.create_spark_ad(acct.access_token, acct.advertiser_id, ad_payload)
+                            try:
+                                tiktok_api.create_spark_ad(acct.access_token, acct.advertiser_id, ad_payload)
+                            except tiktok_api.TikTokError as e:
+                                flipped = format_flip_for(e, ad_payload["creatives"][0].get("ad_format", ""))
+                                if not flipped:
+                                    raise
+                                # TikTok says the post is the other kind — send it that way
+                                # and correct the spark code so the next launch is right first time
+                                spark_ref["item_type"] = "CAROUSEL" if flipped == "CAROUSEL_ADS" else "VIDEO"
+                                reconcile_media_type(db, spark, spark_ref)
+                                ad_payload = {**ad_payload, "creatives": [{**ad_payload["creatives"][0], "ad_format": flipped}]}
+                                tiktok_api.create_spark_ad(acct.access_token, acct.advertiser_id, ad_payload)
                         else:
                             tiktok_api.create_ad(acct.access_token, acct.advertiser_id, ad_payload)
                         ad_created = True

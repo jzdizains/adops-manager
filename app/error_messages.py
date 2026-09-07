@@ -38,6 +38,14 @@ _PERMISSION_HINTS = re.compile(r"permission|not authorized|no access|无权限",
 
 # 40002 messages with a KNOWN cause — matched on TikTok's wording, checked in order
 _MESSAGE_HINTS: list[tuple[re.Pattern, str, str]] = [
+    (re.compile(r"only photo posts can be delivered as carousel", re.I),
+     "This spark post is a VIDEO, but the ad was sent as a carousel.",
+     "The spark code was marked as a carousel (photo post). The launcher now reads the post's real "
+     "type from TikTok, fixes the spark code and retries as a video ad — use Retry failed on this batch."),
+    (re.compile(r"(only video|not a video|video posts? can|photo post|carousel)", re.I),
+     "The spark post's type (video vs photo carousel) doesn't match the ad format sent.",
+     "The launcher now reads the post's real type from TikTok at launch and corrects the spark code — "
+     "use Retry failed on this batch."),
     (re.compile(r"image size is not supported", re.I),
      "TikTok rejected a carousel slide's pixel size.",
      "Carousel slides must be exactly 720×1280, 640×640 or 1200×628. The launcher now sends a "
