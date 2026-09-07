@@ -29,7 +29,6 @@ schema_additions: dict[str, dict[str, str]] = {
     # example: "templates": {"campaign_name_pattern": "TEXT DEFAULT ''"},
     "templates": {"campaign_name_pattern": "TEXT DEFAULT ''"},
     "jobs": {"cancel_requested": "BOOLEAN DEFAULT 0"},
-    "creatives": {"text_spec": "TEXT DEFAULT ''", "text_parent_id": "INTEGER"},
     "ad_accounts": {"balance": "REAL DEFAULT 0", "enabled": "BOOLEAN DEFAULT 1",
                     "error_count": "INTEGER DEFAULT 0", "cooldown_until": "DATETIME"},
     "spark_codes": {"use_count": "INTEGER DEFAULT 0", "source": "TEXT DEFAULT ''"},
@@ -81,6 +80,9 @@ schema_additions: dict[str, dict[str, str]] = {
         "music_id": "TEXT DEFAULT ''",
         "music_name": "TEXT DEFAULT ''",
         "music_author": "TEXT DEFAULT ''",
+        # text tool: editable text copies
+        "text_spec": "TEXT DEFAULT ''",
+        "text_parent_id": "INTEGER",
     },
     "creative_uploads": {
         "image_id": "TEXT DEFAULT ''",
@@ -105,11 +107,45 @@ def init_db():
 
     # Light migration: add any missing columns on existing tables.
     insp = inspect(engine)
+    tables = set(insp.get_table_names())
     with engine.begin() as conn:
         for table, cols in schema_additions.items():
-            if table not in insp.get_table_names():
+            if table not in tables:
                 continue
             existing = {c["name"] for c in insp.get_columns(table)}
             for col, sqltype in cols.items():
                 if col not in existing:
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {sqltype}"))
+        # Safety net: every column a model declares must exist on the live table,
+        # listed above or not (a duplicate dict key once silently dropped an entry
+        # and took the Campaigns page down with "no such column").
+        for table_obj in Base.metadata.sorted_tables:
+            if table_obj.name not in tables:
+                continue
+            existing = {c["name"] for c in insp.get_columns(table_obj.name)}
+            for column in table_obj.columns:
+                if column.name in existing:
+                    continue
+                sqltype = column.type.compile(dialect=engine.dialect)
+                default = ""
+                if column.default is not None and getattr(column.default, "is_scalar", False):
+                    v = column.default.arg
+                    default = " DEFAULT " + ("1" if v is True else "0" if v is False else repr(v) if isinstance(v, str) else str(v))
+                conn.execute(text(f"ALTER TABLE {table_obj.name} ADD COLUMN {column.name} {sqltype}{default}"))
+
+
+def missing_columns() -> dict[str, list[str]]:
+    """{table: [column, …]} that the models declare but the live DB lacks — a
+    check for tests and the Settings page ({} means the schema is complete)."""
+    from . import models  # noqa: F401
+    insp = inspect(engine)
+    tables = set(insp.get_table_names())
+    out: dict[str, list[str]] = {}
+    for table_obj in Base.metadata.sorted_tables:
+        if table_obj.name not in tables:
+            continue
+        existing = {c["name"] for c in insp.get_columns(table_obj.name)}
+        gone = [c.name for c in table_obj.columns if c.name not in existing]
+        if gone:
+            out[table_obj.name] = gone
+    return out

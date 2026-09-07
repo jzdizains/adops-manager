@@ -331,7 +331,7 @@
             <div style="font-size:11px;"><a href="/creatives?view=performance">📈 performance →</a></div>
           {% else %}—{% endif %}
         </td>
-        <td class="num">{{ "%.1f"|format(r.size_bytes / 1048576) }} MB</td>
+        <td class="num">{{ "%.1f"|format((r.size_bytes or 0) / 1048576) }} MB</td>
         <td class="num" style="white-space:nowrap;">
           <button form="cf{{ r.id }}" class="btn sm" type="submit">Save</button>
           {% if r.status in ('available', 'error') %}

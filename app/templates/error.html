@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Something broke on this page</h1>
+    <div class="muted">The rest of the app keeps working — this page hit an error while building. It has been written to the app log.</div></div>
+  <div class="actions"><a class="btn" href="{{ path }}">↻ Try again</a><a class="btn" href="/">Home</a></div>
+</div>
+<div class="card">
+  {% if summary %}
+  <div style="font-weight:650;font-size:14px;margin-bottom:4px;">{{ summary }}</div>
+  {% if where %}<div class="muted mono" style="font-size:12px;">{{ where }}</div>{% endif %}
+  <details style="margin-top:12px;"><summary class="muted" style="cursor:pointer;font-size:12.5px;">Technical details (copy and paste these when reporting the problem)</summary>
+    <pre id="errTail" style="font-size:11px;white-space:pre-wrap;overflow-wrap:anywhere;background:var(--panel-hover);padding:10px;border-radius:8px;margin-top:8px;">{{ path }}
+{{ tail }}</pre>
+    <button class="btn sm" type="button" onclick="navigator.clipboard && navigator.clipboard.writeText(document.getElementById('errTail').textContent).then(function(){ this.textContent='Copied'; }.bind(this));">Copy details</button>
+  </details>
+  {% else %}
+  <div class="muted">Log in to see the technical details.</div>
+  {% endif %}
+</div>
+{% endblock %}

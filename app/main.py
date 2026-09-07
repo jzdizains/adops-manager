@@ -27,7 +27,49 @@ async def require_login(request: Request, call_next):
     path = request.url.path
     if not path.startswith(auth.PUBLIC_PATHS) and not request.session.get("authed"):
         return RedirectResponse(f"/login?next={path}", status_code=303)
-    return await call_next(request)
+    try:
+        return await call_next(request)
+    except Exception as exc:  # noqa: BLE001 — turn a bare "Internal Server Error" into something actionable
+        return _error_page(request, exc)
+
+
+def _error_page(request: Request, exc: BaseException):
+    """A readable error page (logged-in users see the failing line and the
+    traceback tail so they can paste it to whoever fixes it) + an AppLog row.
+    Render's default gives nothing but the words 'Internal Server Error'."""
+    import traceback as _tb
+
+    from fastapi.responses import HTMLResponse
+    from .database import SessionLocal
+    from . import queries
+    from .templating import render
+    frames = _tb.extract_tb(exc.__traceback__)
+    ours = [f for f in frames if "/app/" in (f.filename or "").replace("\\", "/")] or frames
+    where = ours[-1] if ours else None
+    tail = "".join(_tb.format_exception(type(exc), exc, exc.__traceback__)[-12:])
+    summary = f"{type(exc).__name__}: {str(exc)[:300]}"
+    try:
+        d = SessionLocal()
+        try:
+            queries.log(d, f"{request.method} {request.url.path}: {summary}"
+                        + (f" @ {where.filename.rsplit('/', 1)[-1]}:{where.lineno} {where.name}()" if where else ""),
+                        level="error", source="http")
+            d.commit()
+        finally:
+            d.close()
+    except Exception:  # noqa: BLE001
+        pass
+    authed = bool(request.session.get("authed")) if "session" in request.scope else False
+    try:
+        resp = render(request, "error.html", {
+            "title": "Something broke", "path": request.url.path, "summary": summary if authed else "",
+            "where": (f"{where.filename.rsplit('/', 1)[-1]} line {where.lineno} in {where.name}()" if (where and authed) else ""),
+            "tail": tail if authed else "", "active": "",
+        })
+        resp.status_code = 500
+        return resp
+    except Exception:  # noqa: BLE001 — even the error page failed: plain text, still with the summary
+        return HTMLResponse(f"<pre>Something broke on {request.url.path}\n{summary if authed else ''}</pre>", status_code=500)
 
 
 # Added AFTER the login middleware so SessionMiddleware sits OUTERMOST and has
