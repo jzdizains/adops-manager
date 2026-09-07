@@ -2,40 +2,46 @@
 {% block content %}
 <div class="page-head">
   <div><h1>Instant Pages</h1>
-    <div class="muted">Per-account TikTok native pages; cloning rides the cookie web path.</div></div>
+    <div class="muted">Each page belongs to one ad account. Presets pick a page by <b>name</b> — a launch uses the launching account's own page with that name, so give the same page the same name in every account.</div></div>
   <div class="actions">
     <form method="post" action="/instant-pages/sync"><button class="btn primary" type="submit">⇄ Sync from accounts</button></form>
   </div>
 </div>
 
-
 <div class="card">
   {% if pages %}
   <table class="data">
-    <thead><tr><th>Name</th><th>Page ID</th><th>Owner account</th><th>Status</th><th class="num">Clone to…</th></tr></thead>
+    <thead><tr><th>Name</th><th>Page ID</th><th>Owner account</th><th>Status</th><th>Accounts with this name</th><th class="num">Clone to…</th></tr></thead>
     <tbody>
     {% for p in pages %}
       <tr>
-        <td>{% if p.preview_url %}<a href="{{ p.preview_url }}" target="_blank">{{ p.name or p.page_id }}</a>{% else %}{{ p.name or p.page_id }}{% endif %}</td>
+        <td>{% if p.preview_url %}<a href="{{ p.preview_url }}" target="_blank" rel="noopener">{{ p.name or p.page_id }}</a>{% else %}{{ p.name or p.page_id }}{% endif %}</td>
         <td class="mono">{{ p.page_id }}</td>
         <td class="muted">{{ names.get(p.owner_advertiser_id, p.owner_advertiser_id) }}</td>
-        <td>{{ p.status or "—" }}</td>
+        <td><span class="pill {{ 'ok' if p.status == 'PUBLISHED' else 'dim' }}">{{ status_labels.get(p.status, p.status or "—") }}</span></td>
+        <td class="muted">{{ copies.get(p.name, 0) }} of {{ accounts|length }}</td>
         <td class="num">
-          <form method="post" action="/instant-pages/clone" style="display:flex;gap:6px;justify-content:flex-end;">
+          {% if accounts|length > 1 %}
+          <form method="post" action="/instant-pages/clone" style="display:flex;gap:6px;justify-content:flex-end;align-items:center;">
             <input type="hidden" name="page_id" value="{{ p.page_id }}">
             <input type="hidden" name="from_advertiser_id" value="{{ p.owner_advertiser_id }}">
-            <select name="to_advertiser_id" style="width:auto;font-size:12px;padding:4px 8px;">
+            <select name="to_advertiser_id" style="width:auto;font-size:12px;padding:4px 8px;" {{ 'disabled' if not web_ready }}>
               {% for a in accounts %}{% if a.advertiser_id != p.owner_advertiser_id %}
                 <option value="{{ a.advertiser_id }}">{{ a.advertiser_name or a.advertiser_id }}</option>
               {% endif %}{% endfor %}
             </select>
-            <button class="btn sm" type="submit">⧉ Clone</button>
+            <button class="btn sm" type="submit" {{ 'disabled' if not web_ready }} title="{{ 'Copies the page through the TikTok web session (undocumented by TikTok — may stop working).' if web_ready else 'Needs the ads.tiktok.com cookies from the TikTok Cookies page.' }}">⧉ Clone</button>
           </form>
+          {% endif %}
         </td>
       </tr>
     {% endfor %}
     </tbody>
   </table>
-  {% else %}<div class="empty"><div class="empty-title">No instant pages yet</div>Hit “Sync from accounts” to pull the pages your ad accounts already have.</div>{% endif %}
+  <div class="hint" style="margin-top:10px;">
+    “Sync” reads every enabled account's custom Instant Pages (drafts included; drafts have no preview link and can't run in ads until published).
+    {% if not web_ready %}Cloning to another account isn't offered by TikTok's API; the Clone button uses the TikTok web session and is off until cookies are saved on the <a href="/cookies">TikTok Cookies</a> page.{% else %}Cloning to another account isn't offered by TikTok's API — the Clone button goes through the TikTok web session and may stop working without notice; the safe path is to build the page in the other account with the same name.{% endif %}
+  </div>
+  {% else %}<div class="empty"><div class="empty-title">No instant pages yet</div>Hit “Sync from accounts” to read the custom Instant Pages your ad accounts have. If an account's sync fails, the reason is shown at the top.</div>{% endif %}
 </div>
 {% endblock %}

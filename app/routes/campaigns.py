@@ -422,10 +422,10 @@ def resolve_page_asset(db: Session, acct: models.AdAccount, kind: str, name: str
     # live re-check for this one account (asset may have just been shared)
     try:
         if kind == "instant_page":
-            data = tiktok_api.list_instant_pages(acct.access_token, acct.advertiser_id)
+            items = tiktok_api.list_all_instant_pages(acct.access_token, acct.advertiser_id)
         else:
-            data = tiktok_api.list_lead_forms(acct.access_token, acct.advertiser_id)
-        for item in data.get("list", []):
+            items = tiktok_api.list_all_lead_forms(acct.access_token, acct.advertiser_id)
+        for item in items:
             item_id = str(item.get("page_id", item.get("form_id", "")))
             item_name = item.get("title", item.get("name", "")) or ""
             if not item_id:
@@ -445,14 +445,16 @@ def resolve_page_asset(db: Session, acct: models.AdAccount, kind: str, name: str
                        model.name == name).first())
         if row:
             return getattr(row, id_attr)
-    except tiktok_api.TikTokError:
-        pass
+    except tiktok_api.TikTokError as e:
+        raise AssetResolveError(
+            f"Couldn't read the {'instant pages' if kind == 'instant_page' else 'lead forms'} of account "
+            f"{acct.advertiser_name or acct.advertiser_id} from TikTok: {e}")
 
     label = "instant page" if kind == "instant_page" else "lead form"
     raise AssetResolveError(
         f"Account {acct.advertiser_name or acct.advertiser_id} has no {label} named "
-        f"“{name}”. Share it to this account in TikTok (or clone it on the "
-        f"{'Instant Pages' if kind == 'instant_page' else 'Lead Forms'} page), then relaunch.")
+        f"“{name}”. Pages belong to one ad account: create one with exactly this name in that "
+        f"account (Ads Manager → Assets → Instant Page), then relaunch.")
 
 
 # ---------------------------------------------------------------------------

@@ -1038,19 +1038,53 @@ def list_pixels(access_token: str, advertiser_id: str, code: str | None = None) 
         page += 1
 
 
+# /page/get/ (docs "Get the Page ID"): pages belong to ONE ad account
+# (advertiser_id) — there is no Marketing-API call that shares or copies a
+# page to another account. business_types: LEAD_GEN (Instant Form),
+# TIKTOK_INSTANT_PAGE (custom Instant Page), STORE_FRONT, APP_PROFILE_PAGE,
+# SHOP_ADS_PLP, SHOP_ADS_PDP, POP_UP_FORM. page_size 1–100; status EDITED
+# (draft) | PUBLISHED (ready); preview_url is empty for drafts.
+INSTANT_PAGE_TYPES = ["TIKTOK_INSTANT_PAGE"]
+PAGE_LIST_PAGE_SIZE = 100
+
+
+def list_pages(access_token: str, advertiser_id: str, business_types: list[str], page: int = 1,
+               page_size: int = PAGE_LIST_PAGE_SIZE) -> dict:
+    return api_get_retry("/page/get/", access_token, {
+        "advertiser_id": advertiser_id, "page": page, "page_size": page_size,
+        "business_types": business_types,
+    })
+
+
+def list_all_pages(access_token: str, advertiser_id: str, business_types: list[str], max_pages: int = 20) -> list[dict]:
+    """Every page of /page/get/ for one account (page_info.total_page)."""
+    out: list[dict] = []
+    page = 1
+    while page <= max_pages:
+        data = list_pages(access_token, advertiser_id, business_types, page=page)
+        out.extend(data.get("list") or [])
+        info = data.get("page_info") or {}
+        if page >= int(info.get("total_page") or 1):
+            break
+        page += 1
+    return out
+
+
 def list_instant_pages(access_token: str, advertiser_id: str, page: int = 1,
-                       page_size: int = 100, business_type: str = "LANDING_PAGE") -> dict:
-    return api_get("/page/get/", access_token, {
-        "advertiser_id": advertiser_id, "page": page, "page_size": page_size,
-        "business_type": business_type,
-    })
+                       page_size: int = PAGE_LIST_PAGE_SIZE) -> dict:
+    return list_pages(access_token, advertiser_id, INSTANT_PAGE_TYPES, page, page_size)
 
 
-def list_lead_forms(access_token: str, advertiser_id: str, page: int = 1, page_size: int = 100) -> dict:
-    return api_get("/page/get/", access_token, {
-        "advertiser_id": advertiser_id, "page": page, "page_size": page_size,
-        "business_type": "LEAD_GEN",
-    })
+def list_all_instant_pages(access_token: str, advertiser_id: str) -> list[dict]:
+    return list_all_pages(access_token, advertiser_id, INSTANT_PAGE_TYPES)
+
+
+def list_lead_forms(access_token: str, advertiser_id: str, page: int = 1, page_size: int = PAGE_LIST_PAGE_SIZE) -> dict:
+    return list_pages(access_token, advertiser_id, ["LEAD_GEN"], page, page_size)
+
+
+def list_all_lead_forms(access_token: str, advertiser_id: str) -> list[dict]:
+    return list_all_pages(access_token, advertiser_id, ["LEAD_GEN"])
 
 
 # ---------------------------------------------------------------------------

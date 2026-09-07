@@ -29,7 +29,7 @@ def sync(db: Session = Depends(get_db)):
     for acct in queries.enabled_accounts(db):
         items = []
         try:
-            items = tiktok_api.list_lead_forms(acct.access_token, acct.advertiser_id).get("list", [])
+            items = tiktok_api.list_all_lead_forms(acct.access_token, acct.advertiser_id)
         except tiktok_api.TikTokError:
             try:  # web fallback (§5)
                 items = spark_web_api.web_list_lead_forms(acct.advertiser_id).get("data", {}).get("list", [])
