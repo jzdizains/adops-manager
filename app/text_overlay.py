@@ -29,7 +29,7 @@ WEIGHT_LABELS = {"tiktok": "TikTok caption (default)", "regular": "Regular", "se
 # The TikTok app's caption font is TikTok Sans (SIL OFL). Measured against a
 # real caption from the app, side by side at the same x-height (glyph
 # widths, stroke, outline and line pitch): optical size 36, width 116,
-# weight 470, a dark outline of 0.10em and a 1.3em line pitch. The variable
+# weight 470, a dark outline of 0.065em and a 1.3em line pitch. The variable
 # font carries every axis.
 TIKTOK_VARIABLE = "TikTokSans-Variable.ttf"
 TIKTOK_OPSZ, TIKTOK_WDTH = 36, 116
@@ -49,7 +49,7 @@ BOX_PAD_Y = 0.22            # box padding top/bottom
 BOX_RADIUS = 0.35
 SHADOW_DY = 0.03
 SHADOW_BLUR = 0.06
-STROKE = 0.10               # outward stroke — the app's caption outline (calibrated on a deployed side-by-side)
+STROKE = 0.065              # outward stroke — the app's caption outline (pixel profiles: 2px ring vs our 3px at 0.10em)
 DEFAULT_SIZE = 0.035        # the app's default caption ≈ 3.5% of the image height
 DEFAULT_STYLE = "outline"   # the app's caption look: white text, thin dark outline, no blur
 

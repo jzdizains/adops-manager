@@ -44,4 +44,4 @@ BC_LOW_BALANCE_THRESHOLD = float(os.environ.get("BC_LOW_BALANCE_THRESHOLD", "50"
 
 # --- Misc --------------------------------------------------------------------
 APP_NAME = "AdOps Manager"
-STATIC_VERSION = "32"  # bump to cache-bust CSS/JS (§9.9)
+STATIC_VERSION = "33"  # bump to cache-bust CSS/JS (§9.9)
