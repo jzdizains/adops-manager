@@ -1,4 +1,4 @@
-"""Text on images, rendered with TikTok's own typeface (TikTok Sans, OFL).
+"""Text on images, rendered with the typeface TikTok's app uses for captions.
 
 The editor in the browser positions/sizes the text over a scaled preview using
 the SAME font files (served from /static/fonts) and the SAME em-relative
@@ -23,19 +23,105 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 FONT_DIR = Path(__file__).resolve().parent / "static" / "fonts"
-WEIGHTS = {"regular": "TikTokSans-Regular.ttf", "semibold": "TikTokSans-SemiBold.ttf",
-           "bold": "TikTokSans-Bold.ttf"}
+WEIGHT_KEYS = ("tiktok", "regular", "semibold", "bold")
+WEIGHT_LABELS = {"tiktok": "TikTok caption (default)", "regular": "Regular", "semibold": "SemiBold", "bold": "Bold"}
+
+# The TikTok app's caption font is TikTok Sans (SIL OFL). Measured against a
+# real caption from the app (glyph widths, x-height/cap ratio and stroke at
+# the same scale): optical size 36, width 112, weight 500, a dark outline of
+# ≈0.07em and a 1.2em line pitch. The variable font carries every axis.
+TIKTOK_VARIABLE = "TikTokSans-Variable.ttf"
+TIKTOK_OPSZ, TIKTOK_WDTH = 36, 112
+TIKTOK_WGHT = {"tiktok": 500, "regular": 400, "semibold": 600, "bold": 700}
+
+FONTS: dict[str, dict] = {
+    "tiktok_sans": {"label": "TikTok Sans — the app's caption font (measured match)", "css": "TikTok Sans Var"},
+    "classic": {"label": "Custom font (your upload in Settings)", "css": "AdOps Classic", "custom": True},
+}
 STYLES = ("plain", "box", "outline")
 ALIGNS = ("left", "center", "right")
 
 # em-relative geometry — mirrored 1:1 by the CSS in the editor
-LINE_HEIGHT = 1.15          # line box = 1.15em
+LINE_HEIGHT = 1.2           # line box = 1.2em (the app's caption line pitch, measured)
 BOX_PAD_X = 0.50            # box padding left/right
 BOX_PAD_Y = 0.22            # box padding top/bottom
 BOX_RADIUS = 0.35
 SHADOW_DY = 0.03
 SHADOW_BLUR = 0.06
-STROKE = 0.08
+STROKE = 0.07               # outward stroke — the app's caption outline (measured)
+DEFAULT_SIZE = 0.035        # the app's default caption ≈ 3.5% of the image height
+DEFAULT_STYLE = "outline"   # the app's caption look: white text, thin dark outline, no blur
+
+
+def custom_font_dir() -> Path:
+    from . import config
+    return Path(config.DATA_DIR) / "fonts"
+
+
+def custom_font_path(weight: str) -> Path | None:
+    """The uploaded custom file for a weight (ttf or otf), if any."""
+    d = custom_font_dir()
+    for ext in ("ttf", "otf"):
+        p = d / f"classic-{weight}.{ext}"
+        if p.exists():
+            return p
+    return None
+
+
+def custom_font_status() -> dict[str, bool]:
+    return {w: custom_font_path(w) is not None for w in ("regular", "semibold", "bold")}
+
+
+def font_bytes_ok(data: bytes) -> bool:
+    """True when Pillow can load these bytes as a font."""
+    import io
+    try:
+        ImageFont.truetype(io.BytesIO(data), 20)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def available_fonts() -> list[dict]:
+    """For the editor: [{key, label, css, ready}] — the custom slot is ready
+    only once a file is uploaded."""
+    out = []
+    for key, f in FONTS.items():
+        ready = any(custom_font_status().values()) if f.get("custom") else True
+        out.append({"key": key, "label": f["label"], "css": f["css"], "ready": ready})
+    return out
+
+
+def default_font() -> str:
+    return "tiktok_sans"
+
+
+def tiktok_axes(weight: str) -> list:
+    """[opsz, wdth, wght, slnt] for the variable font."""
+    return [TIKTOK_OPSZ, TIKTOK_WDTH, TIKTOK_WGHT.get(weight, 500), 0]
+
+
+def font_file(font: str, weight: str) -> Path:
+    """The file behind (font, weight): the variable TikTok Sans, or the
+    uploaded custom file (partial sets fall back to the nearest weight, and
+    a missing custom set falls back to TikTok Sans)."""
+    if font == "classic":
+        w = "semibold" if weight == "tiktok" else weight
+        order = {"regular": ("regular", "semibold", "bold"), "semibold": ("semibold", "bold", "regular"),
+                 "bold": ("bold", "semibold", "regular")}[w]
+        for cand in order:
+            p = custom_font_path(cand)
+            if p:
+                return p
+    return FONT_DIR / TIKTOK_VARIABLE
+
+
+def load_font(font: str, weight: str, px: int) -> ImageFont.FreeTypeFont:
+    path = font_file(font, weight)
+    f = ImageFont.truetype(str(path), px)
+    if path.name == TIKTOK_VARIABLE:
+        f.set_variation_by_axes(tiktok_axes(weight))
+    return f
 
 
 def clean(spec: dict) -> dict:
@@ -50,14 +136,16 @@ def clean(spec: dict) -> dict:
             return min(max(float(spec.get(key, default)), lo), hi)
         except (TypeError, ValueError):
             return default
-    weight = str(spec.get("weight") or "semibold").lower()
-    style = str(spec.get("style") or "plain").lower()
+    weight = str(spec.get("weight") or "tiktok").lower()
+    font = str(spec.get("font") or default_font()).lower()
+    style = str(spec.get("style") or DEFAULT_STYLE).lower()
     align = str(spec.get("align") or "center").lower()
     return {
         "lines": lines, "x": f("x", 0.0, 1.0, 0.5), "y": f("y", 0.0, 1.0, 0.5),
-        "size": f("size", 0.02, 0.25, 0.06),
-        "weight": weight if weight in WEIGHTS else "semibold",
-        "style": style if style in STYLES else "plain",
+        "size": f("size", 0.02, 0.25, DEFAULT_SIZE),
+        "weight": weight if weight in WEIGHT_KEYS else "tiktok",
+        "font": font if font in FONTS else default_font(),
+        "style": style if style in STYLES else DEFAULT_STYLE,
         "align": align if align in ALIGNS else "center",
         "color": _hex(spec.get("color"), "#ffffff"),
         "box_color": _hex(spec.get("box_color"), "#000000"),
@@ -83,7 +171,7 @@ def render(image_path: str, spec: dict) -> bytes:
         base = im.convert("RGBA")
     W, H = base.size
     px = max(8, int(round(s["size"] * H)))
-    font = ImageFont.truetype(str(FONT_DIR / WEIGHTS[s["weight"]]), px)
+    font = load_font(s["font"], s["weight"], px)
     line_h = int(round(px * LINE_HEIGHT))
     # per-line widths (advance widths, like the browser's inline boxes)
     widths = [int(round(font.getlength(ln))) if ln else 0 for ln in s["lines"]]

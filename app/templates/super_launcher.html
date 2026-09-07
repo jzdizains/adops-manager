@@ -33,13 +33,14 @@
         <button type="button" data-f="fresh">Fresh <span class="n">{{ counts.fresh }}</span></button>
         <button type="button" data-f="used">Used <span class="n">{{ counts.used }}</span></button>
         <button type="button" data-f="active">Live <span class="n">{{ counts.active }}</span></button>
-        {% if counts.cooldown or counts.blocked %}<button type="button" data-f="cooldown">Cooling <span class="n">{{ counts.cooldown + counts.blocked }}</span></button>{% endif %}
+        {% if counts.cooldown %}<button type="button" data-f="cooldown">Cooling <span class="n">{{ counts.cooldown }}</span></button>{% endif %}
+        {% if counts.blocked %}<button type="button" data-f="blocked" title="Suspended accounts, punished Business Centers, account-level TikTok blocks — cannot launch">Blocked <span class="n">{{ counts.blocked }}</span></button>{% endif %}
       </div>
     </div>
     <div class="bc-tags" id="slBcTags" title="Click a Business Center to show only its accounts — several can be on at once. Your choice is remembered on this browser.">
       <span class="bc-tags-lab">BC</span>
       {% for bc_name, members in groups.items() %}
-      <button type="button" class="bc-tag" data-bc="{{ bc_name }}">{{ bc_name }} <span class="n">{{ members|length }}</span></button>
+      <button type="button" class="bc-tag {{ 'bad' if bc_status.get(bc_name) }}" data-bc="{{ bc_name }}" title="{% if bc_status.get(bc_name) %}This Business Center is {{ bc_status[bc_name] }} — its accounts cannot launch{% endif %}">{{ bc_name }}{% if bc_status.get(bc_name) %} <span class="bc-bad">{{ bc_status[bc_name] }}</span>{% endif %} <span class="n">{{ members|length }}</span></button>
       {% endfor %}
       <button type="button" class="bc-tag clear" id="slBcClear" hidden>✕ all BCs</button>
     </div>
@@ -49,7 +50,7 @@
         <div class="sl-group-head">
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
             <input type="checkbox" class="sl-group-all" style="width:auto;" title="Select every shown account in this Business Center">
-            <span>{{ bc_name }}</span></label>
+            <span>{{ bc_name }}</span>{% if bc_status.get(bc_name) %} <span class="pill err" title="TikTok status of this Business Center">BC {{ bc_status[bc_name] }}</span>{% endif %}</label>
           <span class="muted" style="font-size:11px;"><span class="sl-group-n">{{ members|length }}</span> account(s)</span>
         </div>
         {% for a in members %}
@@ -57,7 +58,8 @@
         <label class="sl-row" data-state="{{ st }}" data-bc="{{ bc_name }}" data-search="{{ (a.advertiser_name or '')|lower }} {{ a.advertiser_id }} {{ bc_name|lower }}">
           <input type="checkbox" name="advertiser_ids" value="{{ a.advertiser_id }}" class="sl-acct" style="width:auto;" {{ 'disabled' if st == 'blocked' }}>
           <span class="sl-name">{{ a.advertiser_name or a.advertiser_id }}</span>
-          <span class="pill {{ {'fresh':'ok','used':'dim','active':'warn','cooldown':'err','blocked':'err'}[st] }}" title="{{ {'fresh':'Never launched — best for a first campaign','used':'Has campaigns, none active','active':'Has an active campaign right now','cooldown':'Cooling down after launch failures','blocked':'TikTok status is not ENABLE — cannot launch'}[st] }}">{{ {'fresh':'fresh','used':'used','active':'live','cooldown':'cooling','blocked':'blocked'}[st] }}</span>
+          <span class="pill {{ {'fresh':'ok','used':'dim','active':'warn','cooldown':'err','blocked':'err'}[st] }}" title="{{ {'fresh':'Never launched — best for a first campaign','used':'Has campaigns, none active','active':'Has an active campaign right now','cooldown':'Cooling down after launch failures','blocked':'Cannot launch: ' ~ info[a.advertiser_id].reason}[st] }}">{{ {'fresh':'fresh','used':'used','active':'live','cooldown':'cooling','blocked':'blocked'}[st] }}</span>
+          {% if st == 'blocked' %}<span class="muted" style="font-size:10.5px;">{{ info[a.advertiser_id].reason }}</span>{% endif %}
           <span class="mono muted" style="font-size:11px;">{{ a.advertiser_id }}</span>
         </label>
         {% endfor %}
@@ -210,7 +212,7 @@
     var q = (search ? search.value : "").trim().toLowerCase(), n = 0, anyBc = bcActiveList().length > 0;
     rows.forEach(function (r) {
       var st = r.getAttribute("data-state");
-      var okState = !filterState || st === filterState || (filterState === "cooldown" && st === "blocked");
+      var okState = !filterState || st === filterState;
       var okText = !q || r.getAttribute("data-search").indexOf(q) >= 0;
       var okBc = !anyBc || !!activeBcs[r.getAttribute("data-bc")];
       r.hidden = !(okState && okText && okBc);

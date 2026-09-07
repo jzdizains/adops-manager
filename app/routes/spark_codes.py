@@ -7,8 +7,12 @@ creator. Hand-entered codes leave tiktok_item_id empty.
 """
 from __future__ import annotations
 
+import re
+from urllib.parse import quote
+
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .. import models, queries, tiktok_api
@@ -61,6 +65,141 @@ def add_code(name: str = Form(""), code: str = Form(...), media_type: str = Form
                             group_id=group.id if group else None))
     db.commit()
     return RedirectResponse("/spark-codes?ok=added", status_code=303)
+
+
+# ---------------------------------------------------------------------------
+# bulk add: one code per line (paste) or a CSV/TSV file
+# ---------------------------------------------------------------------------
+
+_CODE_RE = re.compile(r"^#?[A-Za-z0-9_\-+/=]{12,}$")     # spark auth codes: long token, often '#…=' or 'CT7Q…'
+_URL_RE = re.compile(r"^https?://", re.I)
+_MEDIA = {"VIDEO": "VIDEO", "V": "VIDEO", "CAROUSEL": "CAROUSEL", "C": "CAROUSEL", "PHOTO": "CAROUSEL",
+          "PHOTOS": "CAROUSEL", "SLIDES": "CAROUSEL", "SLIDE": "CAROUSEL", "IMAGE": "CAROUSEL", "IMAGES": "CAROUSEL"}
+_HEADERS = {"name", "code", "auth_code", "spark", "spark_code", "media_type", "type", "url", "post_url",
+            "tiktok_post_url", "source", "group", "creator", "group_name"}
+
+
+def _split_line(line: str) -> list[str]:
+    """Cells separated by | ; tab or comma (whichever the line uses)."""
+    for sep in ("\t", "|", ";"):
+        if sep in line:
+            return [c.strip() for c in line.split(sep)]
+    if "," in line:
+        return [c.strip() for c in line.split(",")]
+    return [line.strip()]
+
+
+def parse_bulk_line(line: str, default_media: str = "VIDEO") -> dict | None:
+    """One line → {name, code, media_type, tiktok_post_url, source, group_name}
+    or None when no code can be found. Cells may come in any order: the
+    auth code is the long token (or the one starting with '#'), a URL is the
+    post URL, VIDEO/CAROUSEL (or photo/slides) is the type, an '@handle' is
+    the creator, the first other cell is the name, the next is the source."""
+    cells = [c for c in _split_line(line) if c]
+    if not cells:
+        return None
+    out = {"name": "", "code": "", "media_type": default_media, "tiktok_post_url": "", "source": "", "group_name": ""}
+    rest: list[str] = []
+    for c in cells:
+        u = c.upper()
+        if not out["tiktok_post_url"] and _URL_RE.match(c):
+            out["tiktok_post_url"] = c
+        elif u in _MEDIA:
+            out["media_type"] = _MEDIA[u]
+        elif not out["group_name"] and c.startswith("@") and len(c) > 1:
+            out["group_name"] = c.lstrip("@")
+        elif not out["code"] and (c.startswith("#") or (_CODE_RE.match(c) and " " not in c and len(c) >= 16)):
+            out["code"] = c
+        else:
+            rest.append(c)
+    if not out["code"]:
+        # a lone long token without '#' but with no spaces still counts
+        for c in list(rest):
+            if _CODE_RE.match(c) and len(c) >= 12:
+                out["code"] = c
+                rest.remove(c)
+                break
+    if not out["code"]:
+        return None
+    if rest:
+        out["name"] = rest[0][:120]
+    if len(rest) > 1:
+        out["source"] = rest[1][:120]
+    if "/photo/" in out["tiktok_post_url"] and "media_type" not in [x.upper() for x in cells if x.upper() in _MEDIA]:
+        out["media_type"] = "CAROUSEL"      # TikTok photo-post URLs are carousels
+    return out
+
+
+def parse_bulk(text: str, default_media: str = "VIDEO") -> tuple[list[dict], list[str]]:
+    """Every non-empty line; a header line (name, code, …) is skipped.
+    Returns (rows, unreadable_lines)."""
+    rows, bad = [], []
+    for raw in (text or "").splitlines():
+        line = raw.strip().lstrip("\ufeff")
+        if not line:
+            continue
+        cells = {c.strip().lower() for c in _split_line(line)}
+        if cells and cells <= _HEADERS:
+            continue              # CSV header
+        parsed = parse_bulk_line(line, default_media)
+        if parsed:
+            rows.append(parsed)
+        else:
+            bad.append(line[:80])
+    return rows, bad
+
+
+@router.post("/spark-codes/bulk")
+async def add_bulk(request: Request, db: Session = Depends(get_db)):
+    form = await request.form()
+    text = str(form.get("lines") or "")
+    upload = form.get("file")
+    if upload is not None and getattr(upload, "filename", ""):
+        try:
+            text += "\n" + (await upload.read()).decode("utf-8-sig", errors="replace")
+        except Exception:  # noqa: BLE001
+            return RedirectResponse("/spark-codes?err=" + quote("Could not read that file — paste the lines instead."), status_code=303)
+    default_media = "CAROUSEL" if str(form.get("media_type") or "").upper() == "CAROUSEL" else "VIDEO"
+    default_group = str(form.get("group_name") or "").strip().lstrip("@")
+    default_source = str(form.get("source") or "").strip()
+    rows, bad = parse_bulk(text, default_media)
+    if not rows:
+        return RedirectResponse("/spark-codes?err=" + quote(
+            "No codes found. One per line — the auth code alone, or  name | code | video/carousel | post URL | source."), status_code=303)
+    existing = {c.code for c in db.query(models.SparkCode.code).all()}
+    groups: dict[str, models.SparkCodeGroup] = {}
+
+    def group_for(name: str):
+        if not name:
+            return None
+        g = groups.get(name.lower())
+        if not g:
+            g = db.query(models.SparkCodeGroup).filter(func.lower(models.SparkCodeGroup.name) == name.lower()).first()
+            if not g:
+                g = models.SparkCodeGroup(name=name)
+                db.add(g)
+                db.flush()
+            groups[name.lower()] = g
+        return g
+
+    added, dupes, seen = 0, 0, set()
+    for r in rows:
+        if r["code"] in existing or r["code"] in seen:
+            dupes += 1
+            continue
+        seen.add(r["code"])
+        g = group_for(r["group_name"] or default_group)
+        db.add(models.SparkCode(name=r["name"] or r["code"][:12], code=r["code"], media_type=r["media_type"],
+                                tiktok_post_url=r["tiktok_post_url"], source=r["source"] or default_source,
+                                group_id=g.id if g else None))
+        added += 1
+    db.commit()
+    msg = f"added {added} spark code(s)"
+    if dupes:
+        msg += f", {dupes} already existed"
+    if bad:
+        msg += f", {len(bad)} line(s) had no code (" + "; ".join(bad[:3]) + ("…" if len(bad) > 3 else "") + ")"
+    return RedirectResponse(("/spark-codes?ok=" if added else "/spark-codes?err=") + quote(msg), status_code=303)
 
 
 @router.post("/spark-codes/{code_id}/source")

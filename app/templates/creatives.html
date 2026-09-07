@@ -392,7 +392,7 @@
         <div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap;">
           <button form="if{{ r.id }}" class="btn sm" type="submit">Save</button>
           {% if r.status == 'available' %}
-          <button type="button" class="btn sm txtBtn" data-id="{{ r.id }}" data-name="{{ r.name }}" data-src="/creatives/{{ r.id }}/file" data-back="library" title="Add text (TikTok Sans)">T Add text</button>
+          <button type="button" class="btn sm txtBtn" data-id="{{ r.id }}" data-name="{{ r.name }}" data-src="/creatives/{{ r.id }}/file" data-back="library" title="Add text in TikTok's caption font">T Add text</button>
           {% endif %}
           {% if r.status == 'available' and nb_configured %}
           <button type="button" class="btn sm aiEditBtn" data-id="{{ r.id }}" data-name="{{ r.name }}" data-src="/creatives/{{ r.id }}/thumb">✨ Edit with AI</button>
@@ -425,14 +425,17 @@
       </div>
       <div class="txt-controls">
         <label class="field"><span class="field-label">Text <span class="muted">(Enter = new line)</span></span>
-          <textarea name="text" id="txtText" required rows="3" placeholder="Your headline" style="font-family:'TikTok Sans',var(--font-sans);font-size:14px;min-height:70px;"></textarea></label>
+          <textarea name="text" id="txtText" required rows="3" placeholder="Your headline" style="font-size:14px;min-height:70px;"></textarea></label>
         <label class="field"><span class="field-label">Size <span class="mono muted" id="txtSizeLbl"></span></span>
-          <input type="range" id="txtSize" min="2" max="25" step="0.5" value="6" style="width:100%;padding:0;border:none;box-shadow:none;"></label>
+          <input type="range" id="txtSize" min="2" max="25" step="0.5" value="3.5" style="width:100%;padding:0;border:none;box-shadow:none;"></label>
+        <label class="field"><span class="field-label">Font</span>
+          <select id="txtFont" name="font">{% for f in fonts %}<option value="{{ f.key }}" data-css="{{ f.css }}" {{ 'selected' if f.key == default_font }} {{ 'disabled' if not f.ready }}>{{ f.label }}{% if not f.ready %} — upload it in Settings{% endif %}</option>{% endfor %}</select>
+          <span class="hint">TikTok Sans with the app's own caption settings (optical size 36, width 112, weight 500, thin outline, 1.2 line spacing — all measured from a real caption). Another typeface can be uploaded in <a href="/settings#font">Settings</a>.</span></label>
         <div class="form-row-3">
           <label class="field"><span class="field-label">Weight</span>
-            <select id="txtWeight" name="weight"><option value="regular">Regular</option><option value="semibold" selected>SemiBold</option><option value="bold">Bold</option></select></label>
+            <select id="txtWeight" name="weight"><option value="tiktok" selected>TikTok caption</option><option value="regular">Regular</option><option value="semibold">SemiBold</option><option value="bold">Bold</option></select></label>
           <label class="field"><span class="field-label">Style</span>
-            <select id="txtStyle" name="style"><option value="plain">Plain + shadow</option><option value="box">Box (highlight)</option><option value="outline">Outline</option></select></label>
+            <select id="txtStyle" name="style"><option value="outline" selected>Outline (TikTok Classic)</option><option value="plain">Plain + shadow</option><option value="box">Box (highlight)</option></select></label>
           <label class="field"><span class="field-label">Align</span>
             <select id="txtAlign" name="align"><option value="center" selected>Center</option><option value="left">Left</option><option value="right">Right</option></select></label>
         </div>
@@ -449,7 +452,7 @@
         <input type="hidden" name="x" id="txtX" value="0.5"><input type="hidden" name="y" id="txtY" value="0.5">
         <input type="hidden" name="size" id="txtSizeVal" value="0.06"><input type="hidden" name="back" id="txtBack" value="library">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;">
-          <span class="muted" style="font-size:11.5px;">Rendered with TikTok Sans at the image's full resolution. The original is kept; a new copy is added to the shelf.</span>
+          <span class="muted" style="font-size:11.5px;">Baked at the image's full resolution with the font chosen above. The original is kept; a new copy is added to the shelf.</span>
           <button class="btn primary" type="submit">Save as new image</button>
         </div>
       </div>
@@ -556,16 +559,20 @@
     sizes();
   }
   document.querySelectorAll(".ai-form").forEach(wireAi);
-  // ---- text editor: drag to move, scroll/slider to resize, live preview in TikTok Sans ----
+  // ---- text editor: drag to move, scroll/slider to resize, live preview in the chosen caption font ----
   (function () {
     var modal = document.getElementById("txtModal"); if (!modal) return;
     var form = document.getElementById("txtForm"), stage = document.getElementById("txtStage"), img = document.getElementById("txtImg"),
         ov = document.getElementById("txtOverlay"), ta = document.getElementById("txtText"), size = document.getElementById("txtSize");
-    var st = { x: 0.5, y: 0.5, size: 0.06 };
+    var st = { x: 0.5, y: 0.5, size: 0.035 };
     function esc(t) { var d = document.createElement("div"); d.textContent = t; return d.innerHTML; }
     function paint() {
       var W = img.clientWidth, H = img.clientHeight, px = st.size * H;
-      ov.className = "txt-overlay " + document.getElementById("txtStyle").value + " " + document.getElementById("txtWeight").value;
+      var fsel = document.getElementById("txtFont"), fopt = fsel.options[fsel.selectedIndex];
+      ov.className = "txt-overlay " + document.getElementById("txtStyle").value + " " + document.getElementById("txtWeight").value + " f-" + fsel.value;
+      var fam = fopt ? fopt.getAttribute("data-css") : "TikTok Sans Var";
+      ov.style.fontFamily = "'" + fam + "', sans-serif";
+      ta.style.fontFamily = ov.style.fontFamily;
       ov.style.fontSize = px + "px"; ov.style.color = document.getElementById("txtColor").value;
       ov.style.textAlign = document.getElementById("txtAlign").value;
       ov.style.setProperty("--box", document.getElementById("txtBox").value);
@@ -578,7 +585,7 @@
       document.getElementById("txtBoxField").style.visibility = document.getElementById("txtStyle").value === "box" ? "visible" : "hidden";
     }
     ["input", "change"].forEach(function (ev) {
-      ["txtText", "txtWeight", "txtStyle", "txtAlign", "txtColor", "txtBox"].forEach(function (id) { document.getElementById(id).addEventListener(ev, paint); });
+      ["txtText", "txtFont", "txtWeight", "txtStyle", "txtAlign", "txtColor", "txtBox"].forEach(function (id) { document.getElementById(id).addEventListener(ev, paint); });
     });
     size.addEventListener("input", function () { st.size = Number(size.value) / 100; paint(); });
     modal.querySelectorAll("[data-pos]").forEach(function (b) { b.addEventListener("click", function () { var p = b.dataset.pos.split(","); st.x = +p[0]; st.y = +p[1]; paint(); }); });
@@ -598,7 +605,7 @@
       b.addEventListener("click", function () {
         form.action = "/creatives/" + b.dataset.id + "/text";
         document.getElementById("txtName").textContent = b.dataset.name; document.getElementById("txtBack").value = b.dataset.back || "library";
-        st = { x: 0.5, y: 0.5, size: 0.06 }; size.value = 6; ta.value = "";
+        st = { x: 0.5, y: 0.5, size: 0.035 }; size.value = 3.5; ta.value = "";
         img.onload = paint; img.src = b.dataset.src; modal.style.display = "flex"; ta.focus();
       });
     });

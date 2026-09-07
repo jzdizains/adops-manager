@@ -18,6 +18,48 @@ from . import launch as launch_mod
 router = APIRouter()
 
 
+# Business Center statuses (Enumeration – Business Center Status): REVIEWING,
+# DENY, ENABLE, PUNISH — plus our own ACCESS_LOST when the login no longer sees it.
+BC_OK = ("", "ENABLE")
+# campaign secondary statuses that say the ACCOUNT is blocked (the campaign
+# sync sees these within minutes, long before the advertiser status catches up)
+ACCOUNT_BLOCK_CAMPAIGN_STATUSES = ("ADVERTISER_ACCOUNT_PUNISH", "CAMPAIGN_STATUS_ADVERTISER_ACCOUNT_PUNISH",
+                                   "CAMPAIGN_STATUS_ADVERTISER_AUDIT_DENY", "ADVERTISER_CONTRACT_PENDING",
+                                   "CAMPAIGN_STATUS_ADVERTISER_CONTRACT_PENDING")
+
+
+def bc_block(bc) -> str:
+    """'' when the Business Center can run ads, else its status in words."""
+    st = ((bc.status if bc else "") or "").upper()
+    if st in BC_OK:
+        return ""
+    return {"PUNISH": "punished", "DENY": "rejected", "REVIEWING": "in review",
+            "ACCESS_LOST": "access lost"}.get(st, st.lower())
+
+
+def account_level_blocks(db: Session) -> dict[str, str]:
+    """advertiser_id → campaign secondary status that means the account itself
+    is punished / denied, from the campaign cache."""
+    out: dict[str, str] = {}
+    for adv, sec in (db.query(models.CampaignRecord.advertiser_id, models.CampaignRecord.secondary_status)
+                     .filter(models.CampaignRecord.secondary_status.in_(ACCOUNT_BLOCK_CAMPAIGN_STATUSES)).distinct()):
+        out[adv] = sec
+    return out
+
+
+def block_reason(a, bc, punished: dict[str, str]) -> str:
+    """Why this account cannot be launched to right now — '' when it can."""
+    if a.status and "ENABLE" not in a.status.upper():
+        return "account " + a.status.replace("STATUS_", "").replace("_", " ").lower()
+    b = bc_block(bc)
+    if b:
+        return f"Business Center {b}"
+    sec = punished.get(a.advertiser_id)
+    if sec:
+        return sec.replace("CAMPAIGN_STATUS_", "").replace("_", " ").lower()
+    return ""
+
+
 @router.get("/super-launcher")
 def page(request: Request, db: Session = Depends(get_db)):
     accounts = (db.query(models.AdAccount).filter(models.AdAccount.enabled == True)  # noqa: E712
@@ -42,13 +84,15 @@ def page(request: Request, db: Session = Depends(get_db)):
                                   .filter(models.CampaignRecord.operation_status == "ENABLE").distinct())}
     ever_launched = {r[0] for r in (db.query(models.LaunchLog.advertiser_id)
                                     .filter(models.LaunchLog.ok == True).distinct())}  # noqa: E712
+    punished = account_level_blocks(db)
     info = {}
     groups: dict[str, list] = {}
+    bc_status: dict[str, str] = {}
     for a in accounts:
         aid = a.advertiser_id
-        bad = bool(a.status and "ENABLE" not in a.status.upper())
+        reason = block_reason(a, bcs.get(a.owner_bc_id or ""), punished)
         cool = rules_mod.in_cooldown(a)
-        if bad:
+        if reason:
             state = "blocked"
         elif cool:
             state = "cooldown"
@@ -58,14 +102,19 @@ def page(request: Request, db: Session = Depends(get_db)):
             state = "used"
         else:
             state = "fresh"
-        info[aid] = {"state": state, "balance": getattr(a, "balance", None), "bc": a.owner_bc_id or ""}
+        info[aid] = {"state": state, "balance": getattr(a, "balance", None), "bc": a.owner_bc_id or "",
+                     "reason": reason}
         bc = bcs.get(a.owner_bc_id or "")
-        groups.setdefault(bc.name if bc else "No Business Center", []).append(a)
+        bc_name = bc.name if bc else "No Business Center"
+        groups.setdefault(bc_name, []).append(a)
+        if bc is not None:
+            bc_status[bc_name] = bc_block(bc)
     counts = {k: sum(1 for v in info.values() if v["state"] == k) for k in ("fresh", "used", "active", "cooldown", "blocked")}
     preset_info = preset_facts(presets)
     return render(request, "super_launcher.html", {
         "accounts": accounts, "presets": presets, "sparks": sparks,
         "groups": groups, "info": info, "counts": counts, "preset_info_json": json.dumps(preset_info),
+        "bc_status": bc_status,
         "creatives_available": creatives_available, "carousels_available": carousels_available,
         "dest_labels_json": json.dumps(dest_labels),
         "title": "Super Launcher",
@@ -106,10 +155,12 @@ def eligible_accounts(db: Session, policy: str, limit: int) -> list[models.AdAcc
     ever_launched = {r[0] for r in (db.query(models.LaunchLog.advertiser_id)
                                     .filter(models.LaunchLog.ok == True).distinct())}  # noqa: E712
     from .. import rules as rules_mod
+    bcs = {b.bc_id: b for b in db.query(models.BusinessCenter).all()}
+    punished = account_level_blocks(db)
     picked = []
     for a in accounts:
-        if a.status and "ENABLE" not in a.status.upper():
-            continue  # suspended/errored accounts never auto-picked
+        if block_reason(a, bcs.get(a.owner_bc_id or ""), punished):
+            continue  # suspended account / punished BC / account-level campaign block: never auto-picked
         if rules_mod.in_cooldown(a):
             continue  # lifecycle cooldown after repeated launch failures
         if policy == "new_only":

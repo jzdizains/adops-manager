@@ -2,11 +2,13 @@
 one sweep (no redeploy needed)."""
 from __future__ import annotations
 
+from urllib.parse import quote
+
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse, Response
 from sqlalchemy.orm import Session
 
-from .. import config
+from .. import config, text_overlay
 from ..database import get_db
 from ..settings_store import get_settings, save_settings
 from ..templating import render
@@ -36,7 +38,60 @@ def settings_page(request: Request, db: Session = Depends(get_db)):
         "tz": config.BUSINESS_TZ,
         "rss_mb": background.rss_mb(),
         "web_events": STANDARD_WEB_EVENTS, "fire_max": FIRE_MAX,
+        "classic_font": text_overlay.custom_font_status(),
     })
+
+
+@router.post("/settings/font")
+async def upload_font(request: Request):
+    """Store an optional custom typeface for the text-on-image tool: one
+    .ttf/.otf per weight; missing weights fall back to the nearest uploaded one."""
+    form = await request.form()
+    saved, bad = [], []
+    d = text_overlay.custom_font_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    for weight in text_overlay.WEIGHT_KEYS:
+        up = form.get(f"font_{weight}")
+        if up is None or not getattr(up, "filename", ""):
+            continue
+        data = await up.read()
+        ext = up.filename.rsplit(".", 1)[-1].lower() if "." in up.filename else ""
+        ok = ext in ("ttf", "otf") and len(data) > 1000 and text_overlay.font_bytes_ok(data)
+        if not ok:
+            bad.append(f"{weight}: {up.filename} is not a readable TTF/OTF")
+            continue
+        for old in ("ttf", "otf"):
+            try:
+                (d / f"classic-{weight}.{old}").unlink()
+            except FileNotFoundError:
+                pass
+        (d / f"classic-{weight}.{ext}").write_bytes(data)
+        saved.append(weight)
+    if form.get("remove") == "1":
+        for weight in text_overlay.WEIGHT_KEYS:
+            for ext in ("ttf", "otf"):
+                try:
+                    (d / f"classic-{weight}.{ext}").unlink()
+                except FileNotFoundError:
+                    pass
+        return RedirectResponse("/settings?ok=" + quote("Custom font files removed — the text tool uses TikTok Sans.") + "#font", status_code=303)
+    if not saved and not bad:
+        return RedirectResponse("/settings?err=" + quote("Pick at least one font file.") + "#font", status_code=303)
+    msg = (f"Saved {', '.join(saved)} — “Custom font” is now available in the text tool." if saved else "") \
+        + ((" " if saved else "") + "; ".join(bad) if bad else "")
+    return RedirectResponse(("/settings?ok=" if saved else "/settings?err=") + quote(msg) + "#font", status_code=303)
+
+
+@router.get("/fonts/classic/{weight}")
+def classic_font_file(weight: str):
+    """Serve the uploaded Classic file so the browser preview matches the bake."""
+    if weight not in text_overlay.WEIGHT_KEYS:
+        return Response(status_code=404)
+    p = text_overlay.font_file("classic", weight)
+    if not p.exists() or "classic-" not in p.name:
+        return Response(status_code=404)
+    return FileResponse(str(p), media_type="font/otf" if p.suffix == ".otf" else "font/ttf",
+                        headers={"Cache-Control": "no-cache"})
 
 
 @router.post("/settings/save")

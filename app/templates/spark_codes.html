@@ -41,6 +41,33 @@
   </form>
 </div>
 
+<div class="card" id="bulk">
+  <div class="card-header"><span class="card-title">Add many at once</span>
+    <span class="card-meta">paste one code per line, or upload a CSV / TSV — codes already in the list are skipped</span></div>
+  <form method="post" action="/spark-codes/bulk" enctype="multipart/form-data">
+    <label class="field"><span class="field-label">Codes — one per line</span>
+      <textarea name="lines" rows="6" class="mono" style="font-size:12px;" placeholder="#HEO5xA4whgKls1Q8rJOuNp7p2KGP…
+hook v3 | #ohMN6mHyMnI2RNpwXy0GiyzUxeRG… | video | https://www.tiktok.com/@creator/video/123 | src-hook-v3
+Slides1, #SD93QJYXLZVH3jCUI09AWIYt2CfB…, carousel"></textarea>
+      <span class="hint">Just the auth code works. Add more in any order, separated by <span class="mono">|</span>, tab, comma or semicolon: a name, <span class="mono">video</span> / <span class="mono">carousel</span> (photo posts are carousels), the TikTok post URL, a source, and <span class="mono">@creator</span> to file it under that creator. A first line like <span class="mono">name,code,type,url,source</span> is treated as a header.</span></label>
+    <div class="form-row-3">
+      <label class="field"><span class="field-label">…or a file</span>
+        <input type="file" name="file" accept=".csv,.tsv,.txt"></label>
+      <label class="field"><span class="field-label">Type when a line doesn't say</span>
+        <select name="media_type"><option value="VIDEO">Video</option><option value="CAROUSEL">Carousel</option></select>
+        <span class="hint">The launcher checks the post's real type with TikTok anyway and corrects this.</span></label>
+      <label class="field"><span class="field-label">Creator / group for all (optional)</span>
+        <input type="text" name="group_name" placeholder="@creatorhandle">
+        <span class="hint">A line's own <span class="mono">@creator</span> wins over this.</span></label>
+    </div>
+    <div class="form-row-3">
+      <label class="field"><span class="field-label">Source for all (optional)</span>
+        <input type="text" name="source" placeholder="e.g. src-batch-sept"></label>
+    </div>
+    <button class="btn primary" type="submit">＋ Add all</button>
+  </form>
+</div>
+
 {% macro code_row(c) %}
   <tr>
     <td>

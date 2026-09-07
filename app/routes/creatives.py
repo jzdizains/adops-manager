@@ -111,7 +111,9 @@ def creatives_page(request: Request, db: Session = Depends(get_db)):
             slide_map[cz.id] = []
     browse = _browse_account(db)
 
+    from .. import text_overlay
     return render(request, "creatives.html", {
+        "fonts": text_overlay.available_fonts(), "default_font": text_overlay.default_font(),
         "carousels": carousels, "slide_map": slide_map, "dims": dims,
         "image_pool": [r for r in images if r.status == "available"],
         "browse_account": browse,

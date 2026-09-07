@@ -239,6 +239,24 @@
 </div>
 </form>
 
+<div class="card" id="font" style="margin-top:14px;">
+  <div class="card-header"><span class="card-title">Caption font for “Add text”</span>
+    <span class="card-meta">built in: TikTok Sans with the app's caption settings, measured from a real TikTok caption</span></div>
+  <div class="hint" style="margin-bottom:10px;">The text tool already renders TikTok Sans exactly as the TikTok app does (optical size 36, width 112, weight 500, thin dark outline, 1.2 line spacing). Upload .ttf/.otf files here only if you want a <b>different</b> typeface available in the tool as “Custom font”; a missing weight falls back to the nearest one you uploaded.
+    {% if classic_font.semibold or classic_font.regular or classic_font.bold %}<br><span class="good">Uploaded:</span> {% for w, ok in classic_font.items() %}<span class="pill {{ 'ok' if ok else 'dim' }}">{{ w }}</span> {% endfor %}{% else %}<br><span class="pill dim">no custom font uploaded</span>{% endif %}</div>
+  <form method="post" action="/settings/font" enctype="multipart/form-data">
+    <div class="form-row-3">
+      <label class="field"><span class="field-label">SemiBold</span><input type="file" name="font_semibold" accept=".ttf,.otf"></label>
+      <label class="field"><span class="field-label">Regular (optional)</span><input type="file" name="font_regular" accept=".ttf,.otf"></label>
+      <label class="field"><span class="field-label">Bold (optional)</span><input type="file" name="font_bold" accept=".ttf,.otf"></label>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;">
+      <button class="btn primary" type="submit">Upload font files</button>
+      {% if classic_font.semibold or classic_font.regular or classic_font.bold %}<button class="btn" type="submit" name="remove" value="1" onclick="return confirm('Remove the uploaded custom font files?');">Remove</button>{% endif %}
+    </div>
+  </form>
+</div>
+
 <div class="card" id="test" style="margin-top:14px;">
   <div class="card-header"><span class="card-title">Fire events at the pixel</span>
     <span class="card-meta">the same /event/track/ call a real postback makes — nothing is stored, P&amp;L stays clean</span></div>
