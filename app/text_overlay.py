@@ -8,7 +8,7 @@ Spec (all positions/sizes are fractions of the image, so they're resolution-inde
   text       the lines (\\n separated)
   x, y       centre of the text block, 0..1 of width / height
   size       line font size as a fraction of image HEIGHT (0.02..0.25)
-  weight     regular | semibold | bold
+  weight     tiktok (the app's caption weight) | regular | semibold | bold
   color      text colour (#rrggbb)
   style      plain   -> text with a soft shadow (TikTok's default look)
              box     -> per-line rounded background ("highlight" sticker)
@@ -26,14 +26,19 @@ FONT_DIR = Path(__file__).resolve().parent / "static" / "fonts"
 WEIGHT_KEYS = ("tiktok", "regular", "semibold", "bold")
 WEIGHT_LABELS = {"tiktok": "TikTok caption (default)", "regular": "Regular", "semibold": "SemiBold", "bold": "Bold"}
 
-# The TikTok app's caption font is TikTok Sans (SIL OFL). Measured against a
-# real caption from the app, side by side at the same x-height (glyph
-# widths, stroke, outline and line pitch): optical size 36, width 116,
-# weight 470, a dark outline of 0.065em and a 1.3em line pitch. The variable
-# font carries every axis.
+# The TikTok app's caption font is TikTok Sans (SIL OFL), at the font's
+# default width, weight 550 (between Medium and SemiBold), with a dark
+# outline of 0.07em and a 1.2em line pitch — fitted against a real app
+# caption rendered through this pipeline (glyph widths, x-height, stem and
+# outline thickness, line pitch all within a few percent).
+# iOS picks the optical-size axis from the point size automatically, so the
+# bake does the same: opsz = the em in phone points (see render()).
 TIKTOK_VARIABLE = "TikTokSans-Variable.ttf"
-TIKTOK_OPSZ, TIKTOK_WDTH = 36, 116
-TIKTOK_WGHT = {"tiktok": 470, "regular": 400, "semibold": 600, "bold": 700}
+TIKTOK_WDTH = 100
+TIKTOK_OPSZ = 24                      # fallback when the size isn't known (≈ a 24pt caption)
+TIKTOK_OPSZ_RANGE = (12, 36)          # the axis range in the font
+PHONE_POINTS_WIDE = 430               # an iPhone canvas is 430pt (Pro Max) / 393pt wide; TikTok's text is laid out in points
+TIKTOK_WGHT = {"tiktok": 550, "regular": 400, "semibold": 600, "bold": 700}
 
 FONTS: dict[str, dict] = {
     "tiktok_sans": {"label": "TikTok Sans — the app's caption font (measured match)", "css": "TikTok Sans Var"},
@@ -43,13 +48,13 @@ STYLES = ("plain", "box", "outline")
 ALIGNS = ("left", "center", "right")
 
 # em-relative geometry — mirrored 1:1 by the CSS in the editor
-LINE_HEIGHT = 1.3           # line box = 1.3em (the app's caption line pitch, measured: 35px per 27px em)
+LINE_HEIGHT = 1.2           # line box = 1.2em (the app's caption line pitch: 35px per 29px em, measured)
 BOX_PAD_X = 0.50            # box padding left/right
 BOX_PAD_Y = 0.22            # box padding top/bottom
 BOX_RADIUS = 0.35
 SHADOW_DY = 0.03
 SHADOW_BLUR = 0.06
-STROKE = 0.065              # outward stroke — the app's caption outline (pixel profiles: 2px ring vs our 3px at 0.10em)
+STROKE = 0.07               # outward stroke — the app's caption outline (fitted from pixel profiles)
 DEFAULT_SIZE = 0.035        # the app's default caption ≈ 3.5% of the image height
 DEFAULT_STYLE = "outline"   # the app's caption look: white text, thin dark outline, no blur
 
@@ -97,9 +102,19 @@ def default_font() -> str:
     return "tiktok_sans"
 
 
-def tiktok_axes(weight: str) -> list:
+def tiktok_opsz(px: float, image_width: int) -> int:
+    """The optical size iOS would apply: the em measured in phone points
+    (an image as wide as the phone screen → px / (W / 430pt)), clamped to
+    the font's 12–36 axis."""
+    if not px or not image_width:
+        return TIKTOK_OPSZ
+    lo, hi = TIKTOK_OPSZ_RANGE
+    return int(round(min(hi, max(lo, px * PHONE_POINTS_WIDE / image_width))))
+
+
+def tiktok_axes(weight: str, opsz: int | None = None) -> list:
     """[opsz, wdth, wght, slnt] for the variable font."""
-    return [TIKTOK_OPSZ, TIKTOK_WDTH, TIKTOK_WGHT.get(weight, 500), 0]
+    return [opsz if opsz is not None else TIKTOK_OPSZ, TIKTOK_WDTH, TIKTOK_WGHT.get(weight, 550), 0]
 
 
 def font_file(font: str, weight: str) -> Path:
@@ -117,11 +132,11 @@ def font_file(font: str, weight: str) -> Path:
     return FONT_DIR / TIKTOK_VARIABLE
 
 
-def load_font(font: str, weight: str, px: int) -> ImageFont.FreeTypeFont:
+def load_font(font: str, weight: str, px: int, opsz: int | None = None) -> ImageFont.FreeTypeFont:
     path = font_file(font, weight)
     f = ImageFont.truetype(str(path), px)
     if path.name == TIKTOK_VARIABLE:
-        f.set_variation_by_axes(tiktok_axes(weight))
+        f.set_variation_by_axes(tiktok_axes(weight, opsz))
     return f
 
 
@@ -184,7 +199,7 @@ def render(image_path: str, spec: dict, max_width: int | None = None, quality: i
         base = im.convert("RGBA")
     W, H = base.size
     px = max(8, int(round(s["size"] * H)))
-    font = load_font(s["font"], s["weight"], px)
+    font = load_font(s["font"], s["weight"], px, tiktok_opsz(px, W))
     line_h = int(round(px * LINE_HEIGHT))
     # per-line widths (advance widths, like the browser's inline boxes)
     widths = [int(round(font.getlength(ln))) if ln else 0 for ln in s["lines"]]
@@ -196,7 +211,7 @@ def render(image_path: str, spec: dict, max_width: int | None = None, quality: i
     layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     draw = ImageDraw.Draw(layer)
     text_rgb = _rgb(s["color"])
-    # vertical centring of glyphs inside a 1.15em line box, like CSS line-height
+    # vertical centring of glyphs inside the line box, like CSS line-height
     ascent, descent = font.getmetrics()
     glyph_off = (line_h - (ascent + descent)) / 2
 
