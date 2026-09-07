@@ -380,8 +380,8 @@
       <div class="dc-block"><span class="field-label">Preview</span>
         <img id="displayCardPrev" alt="" class="dc-prev">
         <span class="muted" id="displayCardNone" style="font-size:12px;">No card selected.</span>
-        <form method="post" id="displayCardDel" action="" style="display:none;margin-top:8px;">
-          <button class="btn sm" type="submit" onclick="return confirm('Remove this display card from the app? Cards already created in TikTok accounts stay there.');">Remove card</button></form></div>
+        <button class="btn sm" type="submit" id="displayCardDel" form="displayCardDelForm" style="display:none;margin-top:8px;"
+                onclick="return confirm('Remove this display card from the app? Cards already created in TikTok accounts stay there.');">Remove card</button></div>
       <div class="dc-block"><span class="field-label">Upload a new card</span>
         <input type="file" id="displayCardFile" accept=".png,.jpg,.jpeg,.webp">
         <input type="text" id="displayCardName" placeholder="Name (optional)">
@@ -397,6 +397,8 @@
     <span class="hint" style="margin:0;">Presets are reusable — launches never change them.</span>
   </div>
 </form>
+{# the delete form can't sit inside the preset form (browsers drop a nested <form>, which broke the page script) — the button targets it via form="…" #}
+<form method="post" id="displayCardDelForm" action="" hidden></form>
 {% endblock %}
 
 {% block scripts %}
@@ -474,7 +476,7 @@
     var id = dcSel.value;
     dcPrev.style.display = id ? "block" : "none"; dcNone.style.display = id ? "none" : "";
     dcDel.style.display = id ? "" : "none";
-    if (id) { dcPrev.src = "/display-cards/" + id + "/image"; dcDel.action = "/display-cards/" + id + "/delete?next=" + encodeURIComponent(location.pathname); }
+    if (id) { dcPrev.src = "/display-cards/" + id + "/image"; document.getElementById("displayCardDelForm").action = "/display-cards/" + id + "/delete?next=" + encodeURIComponent(location.pathname); }
   }
   dcSel.addEventListener("change", syncCard); syncCard();
   document.getElementById("displayCardUp").addEventListener("click", function () {
