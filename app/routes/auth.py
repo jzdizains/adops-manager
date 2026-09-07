@@ -91,12 +91,18 @@ def login_submit(request: Request, email: str = Form(""), password: str = Form("
             time.sleep(sec.FAIL_DELAY_S if not config.TEST_MODE else 0)
             return RedirectResponse(f"{LP}?err=" + ("locked" if sec.locked_for(db, ip, email) else "1"), status_code=303)
         request.session.clear()
-        if sec.totp_enabled(user) and not sec.device_trusted(user, request):
+        if sec.totp_enabled(user):
+            if sec.trusted_devices_allowed(db) and sec.device_trusted(user, request):
+                _finish_login(request, db, user, ip, "password + trusted device")
+                return RedirectResponse("/settings#security" if user.must_change_password else "/", status_code=303)
             request.session["pre_2fa"] = user.id
             request.session["pre_2fa_at"] = time.time()
             return RedirectResponse(f"{LP}/2fa", status_code=303)
-        _finish_login(request, db, user, ip, "password" + (" + trusted device" if sec.totp_enabled(user) else ""))
-        return RedirectResponse("/settings#security" if user.must_change_password else "/", status_code=303)
+        # 2FA is mandatory: a user without it is logged in but can only reach the setup page
+        _finish_login(request, db, user, ip, "password (2FA not set up yet)")
+        if not config.REQUIRE_2FA:      # local test harness only
+            return RedirectResponse("/settings#security" if user.must_change_password else "/", status_code=303)
+        return RedirectResponse(f"{LP}/2fa/setup", status_code=303)
     finally:
         db.close()
 
@@ -131,7 +137,13 @@ def twofa_page(request: Request):
             return RedirectResponse(f"{LP}?err=expired", status_code=303)
     finally:
         db.close()
-    return render(request, "login_2fa.html", {"title": "Verification code", "error": request.query_params.get("err", ""), "login_path": LP})
+    db = _db()
+    try:
+        allow_trust = sec.trusted_devices_allowed(db)
+    finally:
+        db.close()
+    return render(request, "login_2fa.html", {"title": "Verification code", "error": request.query_params.get("err", ""),
+                                              "login_path": LP, "allow_trust": allow_trust})
 
 
 @router.post("/login/2fa")
@@ -158,10 +170,51 @@ def twofa_submit(request: Request, code: str = Form(""), trust: str = Form("")):
             return RedirectResponse(f"{LP}/2fa?err=1", status_code=303)
         _finish_login(request, db, user, ip, "password + " + ("recovery code" if ok_recovery else "authenticator"))
         resp = RedirectResponse("/settings#security" if user.must_change_password else "/", status_code=303)
-        if trust == "1" and ok_code:
+        if trust == "1" and ok_code and sec.trusted_devices_allowed(db):
             resp.set_cookie(sec.TRUST_COOKIE, sec.trust_token(user), max_age=sec.TRUST_DAYS * 86400,
                             httponly=True, samesite="lax", secure=not config.TEST_MODE)
         return resp
+    finally:
+        db.close()
+
+
+# ---- mandatory 2FA enrolment (reached right after the password, before anything else) ----
+@router.get("/login/2fa/setup")
+def twofa_setup_page(request: Request):
+    db = _db()
+    try:
+        me = current_user(request, db)
+        if not me:
+            return RedirectResponse(f"{LP}?err=expired", status_code=303)
+        codes = request.session.pop("totp_new_codes", None)
+        if codes:
+            return render(request, "login_2fa_setup.html", {"title": "Recovery codes", "login_path": LP, "codes": codes, "email": me.email})
+        if sec.totp_enabled(me):
+            return RedirectResponse("/", status_code=303)
+        secret = request.session.get("totp_setup") or sec.new_secret()
+        request.session["totp_setup"] = secret
+        uri = sec.otpauth_uri(secret, me.email)
+        return render(request, "login_2fa_setup.html", {"title": "Set up two-factor authentication", "login_path": LP,
+                                                        "secret": secret, "qr": sec.qr_svg(uri), "email": me.email,
+                                                        "error": request.query_params.get("err", "")})
+    finally:
+        db.close()
+
+
+@router.post("/login/2fa/setup")
+def twofa_setup_submit(request: Request, code: str = Form("")):
+    db = _db()
+    try:
+        me = current_user(request, db)
+        secret = request.session.get("totp_setup") or ""
+        if not me or not secret:
+            return RedirectResponse(f"{LP}/2fa/setup", status_code=303)
+        if not sec.totp_ok(secret, code):
+            return RedirectResponse(f"{LP}/2fa/setup?err=1", status_code=303)
+        codes = sec.enable_totp(db, me, secret)
+        request.session.pop("totp_setup", None)
+        request.session["totp_new_codes"] = codes
+        return RedirectResponse(f"{LP}/2fa/setup", status_code=303)
     finally:
         db.close()
 

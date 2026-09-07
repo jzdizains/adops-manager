@@ -10,6 +10,7 @@ templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent / "tem
 templates.env.globals.update({
     "APP_NAME": config.APP_NAME,
     "STATIC_V": config.STATIC_VERSION,
+    "login_path": config.LOGIN_PATH,
     "TZ_NAME": config.BUSINESS_TZ,
     # Ads Manager deep link for one ad account (verified aadvid format) — every
     # account name/id shown in a table links here, in a new tab.

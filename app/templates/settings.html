@@ -263,11 +263,11 @@
       {% endif %}
       {% if sec.enabled %}
       <div style="margin-top:6px;"><span class="pill ok">On</span> <span class="muted" style="font-size:12px;">since {{ sec.enabled_at[:16].replace('T', ' ') }} UTC · {{ sec.recovery_left }} recovery code(s) left</span></div>
-      <details style="margin-top:10px;"><summary class="muted" style="cursor:pointer;font-size:12.5px;">Turn off (needs your password and a current code)</summary>
+      <details style="margin-top:10px;"><summary class="muted" style="cursor:pointer;font-size:12.5px;">Reset — e.g. new phone (needs your password and a current code; you'll set it up again at once, 2FA is required)</summary>
         <form method="post" action="/settings/2fa/disable" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;" autocomplete="off">
           <input type="password" name="password" placeholder="password" style="width:150px;" autocomplete="current-password">
           <input type="text" name="code" placeholder="code" inputmode="numeric" style="width:110px;">
-          <button class="btn danger sm" type="submit" onclick="return confirm('Turn two-factor authentication off?');">Turn off 2FA</button>
+          <button class="btn danger sm" type="submit" onclick="return confirm('Reset two-factor authentication? You will be asked to set it up again immediately.');">Reset 2FA</button>
         </form></details>
       {% elif sec.pending_secret %}
       <div class="hint" style="margin-top:6px;">1. In Google Authenticator, 1Password, Authy or similar, add an account{% if sec.pending_qr %} by scanning this code{% else %} by <b>entering the setup key manually</b>{% endif %}. 2. Type the 6-digit code it shows to confirm.</div>
@@ -279,8 +279,15 @@
         <button class="btn sm" type="submit" formaction="/settings/2fa/cancel">Cancel</button>
       </form>
       {% else %}
-      <div style="margin-top:6px;"><span class="pill warn">Off</span> <span class="muted" style="font-size:12px;">a password alone is one leak away from full access</span></div>
-      <form method="post" action="/settings/2fa/start" style="margin-top:10px;"><button class="btn primary sm" type="submit">Set up 2FA</button></form>
+      <div style="margin-top:6px;"><span class="pill warn">Not set up</span> <span class="muted" style="font-size:12px;">2FA is required — you'll be asked to set it up at your next page load</span></div>
+      <a class="btn primary sm" href="{{ login_path }}/2fa/setup" style="margin-top:10px;">Set up 2FA now</a>
+      {% endif %}
+      {% if sec.is_owner %}
+      <form method="post" action="/settings/security/trust" style="margin-top:14px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12.5px;">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" name="allow" value="1" style="width:auto;" {{ 'checked' if sec.allow_trust }}> Let a browser skip the code for 30 days after a successful login</label>
+        <button class="btn sm" type="submit">Save</button>
+      </form>
+      <div class="hint">Off = the authenticator code is asked at every login, for everyone. This switch is owner-only.</div>
       {% endif %}
       <div class="hint" style="margin-top:12px;">Also active: wrong logins are slowed down, and an IP or an email is locked out after 5 failures (15 min, longer if it keeps trying); pages are never cached by the browser.{% if sec.allowed_ips %} Logins are restricted to <code>{{ sec.allowed_ips }}</code> (ALLOWED_IPS).{% else %} To restrict logins to your own network, set <code>ALLOWED_IPS</code> — your current IP is <code>{{ sec.this_ip }}</code>.{% endif %}</div>
     </div>

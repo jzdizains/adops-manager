@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <link rel="icon" href="data:,">
+  <title>{{ title }}</title>
+  <link rel="stylesheet" href="/static/style.css?v={{ STATIC_V }}">
+  <link rel="stylesheet" href="/static/topnav.css?v={{ STATIC_V }}">
+  <style>
+    .login-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+    .login-card { width: 420px; max-width: 100%; padding: 28px; }
+    .code { font-family: var(--font-mono); font-size: 22px; letter-spacing: .25em; text-align: center; }
+    .codes { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 18px; font-family: var(--font-mono); font-size: 14px; margin: 10px 0; }
+  </style>
+</head>
+<body>
+<div class="login-wrap">
+  <div class="card login-card">
+    {% if codes %}
+    <h1 style="margin-bottom:4px;">Save your recovery codes</h1>
+    <p class="muted" style="margin-top:0;">Two-factor authentication is on for {{ email }}. These codes are shown <b>once</b>. Each one logs you in a single time if you lose your phone — keep them in a password manager.</p>
+    <div class="codes">{% for c in codes %}<span>{{ c }}</span>{% endfor %}</div>
+    <a class="btn primary" href="/" style="width:100%;justify-content:center;">I've saved them — open the dashboard</a>
+    {% else %}
+    <h1 style="margin-bottom:4px;">Set up two-factor authentication</h1>
+    <p class="muted" style="margin-top:0;">Every account on this dashboard needs an authenticator app. This takes a minute and is asked once.</p>
+    {% if error %}<div class="flash err">That code didn't match — check the phone's clock and try the next code.</div>{% endif %}
+    <ol style="padding-left:18px;font-size:13px;line-height:1.5;">
+      <li>Open Google Authenticator, 1Password, Authy or any authenticator app.</li>
+      <li>{% if qr %}Scan this code, or add{% else %}Add{% endif %} an account by <b>entering the setup key</b> below (time-based, 6 digits).</li>
+      <li>Type the 6-digit code the app shows.</li>
+    </ol>
+    {% if qr %}<div style="margin:10px 0;background:#fff;padding:8px;border-radius:8px;width:max-content;">{{ qr|safe }}</div>{% endif %}
+    <div style="font-size:12.5px;margin-bottom:12px;">Setup key for <b>{{ email }}</b>:<br><code style="user-select:all;letter-spacing:.08em;font-size:13px;">{{ secret }}</code></div>
+    <form method="post" action="{{ login_path }}/2fa/setup" autocomplete="off">
+      <label class="field"><input type="text" name="code" class="code" inputmode="numeric" autocomplete="one-time-code" autofocus required maxlength="7" placeholder="000000"></label>
+      <button class="btn primary" type="submit" style="width:100%;justify-content:center;">Turn on and continue</button>
+    </form>
+    <p class="hint" style="margin-top:12px;"><a href="/logout">Log out instead</a></p>
+    {% endif %}
+  </div>
+</div>
+</body>
+</html>

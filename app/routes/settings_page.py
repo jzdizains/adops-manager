@@ -206,6 +206,7 @@ def _security_ctx(request: Request, db: Session) -> dict:
         "allowed_ips": config.ALLOWED_IPS, "insecure": sec.insecure_defaults(),
         "session_hours": config.SESSION_MAX_AGE_S // 3600,
         "is_owner": users.is_owner(me), "owner_email": config.OWNER_EMAIL,
+        "allow_trust": sec.trusted_devices_allowed(db),
         "users": db.query(models.User).order_by(models.User.email).all() if users.is_owner(me) else [],
         "min_password": users.MIN_PASSWORD,
     }
@@ -217,6 +218,9 @@ def _where(db: Session, ip: str) -> str:
         return geo.label(geo.lookup(db, ip or "", [2]), ip or "")
     except Exception:  # noqa: BLE001
         return ""
+
+
+NOT_OWNER = "Only the owner account ({}) can manage users."
 
 
 def _me(request: Request, db: Session):
@@ -293,13 +297,25 @@ def change_password(request: Request, current: str = Form(""), new: str = Form("
     return _back(ok="Password changed. Every other device has been signed out.")
 
 
+@router.post("/settings/security/trust")
+def security_trust(request: Request, allow: str = Form(""), db: Session = Depends(get_db)):
+    """Owner switch: may browsers skip the 2FA code for 30 days?"""
+    from .. import auth_security as sec
+    me = _me(request, db)
+    if not users.is_owner(me):
+        return _back(err=NOT_OWNER.format(config.OWNER_EMAIL))
+    queries.set_setting(db, sec.TRUST_SETTING, "1" if allow == "1" else "0")
+    queries.log(db, f"trusted devices {'allowed' if allow == '1' else 'disabled'} by {me.email}", source="auth")
+    return _back(ok="Saved — " + ("browsers may now skip the code for 30 days after a successful login." if allow == "1"
+                                  else "the authenticator code is asked at every login."))
+
+
 # ---- users (the OWNER_EMAIL account only) ------------------------------------------------
 def _admin(request: Request, db: Session):
     me = _me(request, db)
     return me if users.is_owner(me) else None
 
 
-NOT_OWNER = "Only the owner account ({}) can manage users."
 
 
 @router.post("/settings/users/create")

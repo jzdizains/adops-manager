@@ -79,6 +79,9 @@ async def require_login(request: Request, call_next):
                 sess.clear()
                 return RedirectResponse(f"{config.LOGIN_PATH}?err=expired", status_code=303)
             request.state.user = user
+            # 2FA is mandatory: until it's set up, only the setup page (and logout) is reachable
+            if config.REQUIRE_2FA and not user.totp_secret and not (path.startswith("/login/2fa/setup") or path == "/logout"):
+                return RedirectResponse(f"{config.LOGIN_PATH}/2fa/setup", status_code=303)
             d = _SL()
             try:
                 sec.touch_seen(d, d.get(_models.User, user.id), sec.client_ip(request), request.headers.get("user-agent", ""))

@@ -24,9 +24,9 @@
       <label class="field">
         <input type="text" name="code" class="code" inputmode="numeric" autocomplete="one-time-code" autofocus required maxlength="9" placeholder="000000">
       </label>
-      <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text-soft);margin-bottom:12px;cursor:pointer;">
+      {% if allow_trust %}<label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text-soft);margin-bottom:12px;cursor:pointer;">
         <input type="checkbox" name="trust" value="1" style="width:auto;"> Don't ask again on this browser for 30 days
-      </label>
+      </label>{% endif %}
       <button class="btn primary" type="submit" style="width:100%;justify-content:center;">Log in</button>
     </form>
     <p class="hint" style="margin-top:12px;">Lost the phone? Enter one of your recovery codes (xxxx-xxxx) instead — each works once.</p>

@@ -181,16 +181,15 @@ def otpauth_uri(secret_b32: str, account: str = "operator") -> str:
 
 
 def qr_svg(text: str) -> str:
-    """QR code as inline SVG when the optional `qrcode` package is installed,
-    else '' (the setup key is always shown for manual entry)."""
+    """QR code as inline SVG (vendored python-qrcode, SVG path factory).
+    '' only if generation fails — the setup key is always shown as well."""
     try:
-        import qrcode
-        import qrcode.image.svg as _svg
-    except Exception:  # noqa: BLE001
-        return ""
-    try:
-        img = qrcode.make(text, image_factory=_svg.SvgPathImage, box_size=6, border=2)
-        return img.to_string(encoding="unicode") if hasattr(img, "to_string") else ""
+        from .vendor import qrcode as _qr
+        from .vendor.qrcode.image import svg as _svg
+        img = _qr.make(text, image_factory=_svg.SvgPathImage, box_size=6, border=2)
+        s = img.to_string(encoding="unicode")
+        # size it for the page: a fixed 200×200 CSS box, path scales with the viewBox
+        return re.sub(r'width="[^"]+" height="[^"]+"', 'width="200" height="200"', s, count=1)
     except Exception:  # noqa: BLE001
         return ""
 
@@ -270,6 +269,15 @@ def device_trusted(user, request: Request) -> bool:
     except BadSignature:
         return False
     return hmac.compare_digest(val, _trust_value(user))
+
+
+TRUST_SETTING = "allow_trusted_devices"
+
+
+def trusted_devices_allowed(db: Session) -> bool:
+    """Owner switch: may a browser skip the code for 30 days? Off by default —
+    the code is asked at every login."""
+    return queries.get_setting(db, TRUST_SETTING, "0") == "1"
 
 
 def recent_logins(db: Session, limit: int = 12, kinds: tuple[str, ...] | None = None) -> list[models.LoginAttempt]:

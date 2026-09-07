@@ -35,7 +35,10 @@ TEST_MODE = os.environ.get("ADOPS_DISABLE_BG") == "1"   # local tests: plain-htt
 # Login is refused while APP_PASSWORD / SESSION_SECRET are still the placeholders
 # (a deployed app with "changeme" is open to anyone). Tests run with TEST_MODE.
 ALLOW_INSECURE_DEFAULTS = TEST_MODE or os.environ.get("ALLOW_INSECURE_DEFAULTS") == "1"
-SESSION_MAX_AGE_S = int(os.environ.get("SESSION_HOURS", "72")) * 3600     # re-login every 3 days by default
+SESSION_MAX_AGE_S = int(os.environ.get("SESSION_HOURS", "24")) * 3600     # every session ends after 24 h — log in (with the code) again
+# 2FA is mandatory for every account (setup forced right after the first password login, the code
+# asked at every login). Only the local test harness may switch it off; production never can.
+REQUIRE_2FA = (not TEST_MODE) or os.environ.get("ADOPS_REQUIRE_2FA") == "1"
 # Hide the front door: with LOGIN_PATH set (e.g. "/door-7f3k2"), the login page lives ONLY there,
 # /login and every other unauthenticated URL answer 404 — a visitor who only knows the domain
 # (say, from a postback URL) sees nothing. POSTBACK_HOST: a second hostname pointed at this
