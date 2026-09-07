@@ -205,40 +205,50 @@ def processing_status(db: Session = Depends(get_db)):
 # ============================================================================
 # IMAGES: upload + AI editing / generation (Gemini "Nano Banana")
 # ============================================================================
+async def _save_image_upload(db: Session, f: UploadFile, source_prefix: str) -> str:
+    """Store one uploaded image on the image shelf. Returns "" on success or the
+    reason it was skipped (bad type / size / duplicate / disk problem)."""
+    fname = _safe_name(f.filename)
+    ext = ("." + fname.rsplit(".", 1)[-1].lower()) if "." in fname else ""
+    if ext not in ALLOWED_IMAGE:
+        return f"{fname}: not a supported image type (png/jpg/webp)"
+    data = await f.read(MAX_IMAGE_BYTES + 1)
+    if not data or len(data) > MAX_IMAGE_BYTES:
+        return f"{fname}: {'over 25MB' if data else 'empty file'}"
+    md5 = hashlib.md5(data).hexdigest()
+    if db.query(models.Creative).filter_by(md5=md5).first():
+        return f"{fname}: duplicate"
+    row = models.Creative(name=fname, file_name=fname, md5=md5, source_md5=md5,
+                          size_bytes=len(data), kind="image")
+    db.add(row)
+    db.flush()
+    path = CREATIVES_DIR / f"{row.id}_{fname}"
+    try:
+        with open(path, "wb") as out:
+            out.write(data)
+    except OSError as e:
+        db.rollback()
+        return f"{fname}: couldn't write to the data disk ({e.strerror or e})"
+    row.file_path = str(path)
+    if source_prefix:
+        row.source = f"{source_prefix}_{row.id}"
+    db.commit()
+    return ""
+
+
 @router.post("/creatives/upload-images")
 async def upload_images(request: Request, db: Session = Depends(get_db)):
-    import os as _os
     form = await request.form()
     files = [v for v in form.getlist("files") if isinstance(v, UploadFile)]
     source_prefix = str(form.get("source_prefix") or "").strip()
     CREATIVES_DIR.mkdir(parents=True, exist_ok=True)
     saved, skipped = 0, []
     for f in files:
-        fname = _safe_name(f.filename)
-        ext = ("." + fname.rsplit(".", 1)[-1].lower()) if "." in fname else ""
-        if ext not in ALLOWED_IMAGE:
-            skipped.append(f"{fname}: not a supported image type (png/jpg/webp)")
-            continue
-        data = await f.read(MAX_IMAGE_BYTES + 1)
-        if not data or len(data) > MAX_IMAGE_BYTES:
-            skipped.append(f"{fname}: {'over 25MB' if data else 'empty file'}")
-            continue
-        md5 = hashlib.md5(data).hexdigest()
-        if db.query(models.Creative).filter_by(md5=md5).first():
-            skipped.append(f"{fname}: duplicate")
-            continue
-        row = models.Creative(name=fname, file_name=fname, md5=md5, source_md5=md5,
-                              size_bytes=len(data), kind="image")
-        db.add(row)
-        db.flush()
-        path = CREATIVES_DIR / f"{row.id}_{fname}"
-        with open(path, "wb") as out:
-            out.write(data)
-        row.file_path = str(path)
-        if source_prefix:
-            row.source = f"{source_prefix}_{row.id}"
-        db.commit()
-        saved += 1
+        why = await _save_image_upload(db, f, source_prefix)
+        if why:
+            skipped.append(why)
+        else:
+            saved += 1
     q = f"ok={saved}+image(s)+uploaded" if saved else "ok=nothing+uploaded"
     if skipped:
         q += "&err=" + "+·+".join(skipped)[:300].replace(" ", "+")
@@ -403,12 +413,21 @@ async def upload_creatives(request: Request, db: Session = Depends(get_db)):
             "use+Uniquify+alone.", status_code=303)
 
     CREATIVES_DIR.mkdir(parents=True, exist_ok=True)
-    saved, queued, skipped = 0, 0, []
+    saved, queued, images, skipped = 0, 0, 0, []
     for f in files:
         fname = _safe_name(f.filename)
         ext = ("." + fname.rsplit(".", 1)[-1].lower()) if "." in fname else ""
+        if ext in ALLOWED_IMAGE:
+            # images dropped into the main uploader go straight to the image shelf
+            # (variations / TensorPix are video-only)
+            why = await _save_image_upload(db, f, source_prefix)
+            if why:
+                skipped.append(why)
+            else:
+                images += 1
+            continue
         if ext not in ALLOWED_VIDEO:
-            skipped.append(f"{fname}: not a supported video type")
+            skipped.append(f"{fname}: not a video (mp4/mov/webm) or image (png/jpg/webp)")
             continue
         # stream to a temp file in 1MB chunks — NEVER the whole video in memory
         # (a single large read once blew the server's memory limit)
@@ -498,13 +517,15 @@ async def upload_creatives(request: Request, db: Session = Depends(get_db)):
 
     parts = []
     if saved:
-        parts.append(f"{saved} uploaded")
+        parts.append(f"{saved} video(s) uploaded")
     if queued:
         parts.append(f"{queued} sent to TensorPix (appear as they finish)")
-    q = "ok=" + ("+".join(parts).replace(" ", "+") or "nothing+to+do")
+    if images:
+        parts.append(f"{images} image(s) added to the image shelf below")
+    q = "ok=" + (", ".join(parts).replace(" ", "+") or "nothing+to+do")
     if skipped:
         q += "&err=" + "+·+".join(skipped)[:300].replace(" ", "+")
-    return RedirectResponse(f"/creatives?{q}", status_code=303)
+    return RedirectResponse(f"/creatives?{q}" + ("#images" if images and not saved and not queued else ""), status_code=303)
 
 
 @router.post("/creatives/{creative_id}/update")

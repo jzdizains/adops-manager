@@ -8,6 +8,7 @@
   </div>
   <div class="actions">
     <a class="btn {{ 'primary' if view == 'library' }}" href="/creatives">Library</a>
+    <a class="btn" href="/creatives#images" title="Jump to the image shelf (upload, edit, add text)">🖼 Images{% if images %} <span class="mono">{{ images|length }}</span>{% endif %}</a>
     <a class="btn {{ 'primary' if view == 'carousels' }}" href="/creatives?view=carousels">🖼 Carousels{% if carousels %} <span class="mono">{{ carousels|length }}</span>{% endif %}</a>
     <a class="btn {{ 'primary' if view == 'performance' }}" href="/creatives?view=performance">📈 Performance</a>
   </div>
@@ -222,11 +223,11 @@
 {% else %}
 {# ============================== LIBRARY ============================== #}
 <div class="card" style="margin-bottom:14px;">
-  <div class="card-header"><span class="card-title">Upload videos</span>
-    <span class="card-meta">mp4 · mov · webm — up to 500MB each</span></div>
+  <div class="card-header"><span class="card-title">Upload videos &amp; images</span>
+    <span class="card-meta">videos: mp4 · mov · webm up to 500MB — images: png · jpg · webp up to 25MB (they land on the <a href="#images">image shelf</a>)</span></div>
   <form method="post" action="/creatives/upload" enctype="multipart/form-data"
         style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-    <input type="file" name="files" accept="video/*" multiple required style="width:auto;">
+    <input type="file" name="files" accept="video/*,image/png,image/jpeg,image/webp" multiple required style="width:auto;">
     <input type="text" name="source_prefix" placeholder="source prefix (optional, e.g. offerA)"
            style="width:230px;">
     <button class="btn primary" type="submit">⬆ Upload</button>
