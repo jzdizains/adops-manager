@@ -168,3 +168,16 @@ def _audience_sync(db: Session, p: dict, job: models.Job) -> dict:
             "detail": f"{r['rows']} breakdown rows from {r['ok']} account(s) in {r['calls']} calls"
                       + (f" — {r['failed']} account(s) failed: " + "; ".join(e["name"] + ": " + e["error"][:60] for e in r["errors"][:3]) if r["failed"] else ""),
             "href": "/audience"}
+
+
+@jobs.handler("music_sync")
+def _music_sync(db: Session, p: dict, job: models.Job) -> dict:
+    from . import music_library
+    r = music_library.sync(db, should_stop=lambda: jobs.should_stop(db, job),
+                           on_progress=lambda t: jobs.progress(db, job, t))
+    detail = f"{r['carousel_ok']} of {r['tracks']} library tracks usable in carousels ({r['pages']} page(s) read)"
+    if r["stopped"]:
+        return {"ok": False, "detail": "stopped by you — " + detail, "href": "/creatives?view=carousels"}
+    if r["errors"]:
+        detail += " — " + "; ".join(e[:80] for e in r["errors"][:2])
+    return {"ok": not r["errors"], "detail": detail, "href": "/creatives?view=carousels"}

@@ -11,12 +11,14 @@ import hashlib
 import re
 from datetime import datetime, timezone
 
+from urllib.parse import quote
+
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import FileResponse, RedirectResponse, Response
 from starlette.datastructures import UploadFile
 from sqlalchemy.orm import Session
 
-from .. import config, models
+from .. import config, models, queries
 from ..database import get_db
 from ..templating import render
 
@@ -94,8 +96,15 @@ def creatives_page(request: Request, db: Session = Depends(get_db)):
                 pass
     img_tags = {}
     for r in images:
-        tag = "ai" if r.ai_prompt else ("text" if "_txt" in (r.name or "") else "original")
+        if r.ai_model:
+            tag = "ai"
+        elif r.text_spec or "_txt" in (r.name or "") or (r.ai_prompt or "").startswith("text:"):
+            tag = "text"
+        else:
+            tag = "original"
         img_tags[r.id] = {"tag": tag, "carousel": in_carousel.get(r.id, "")}
+    have_file = {r.id for r in images if r.file_path}
+    editable_text = {r.id: r.text_parent_id for r in images if r.text_spec and r.text_parent_id in have_file}
     img_counts = {"all": len(images), "original": sum(1 for t in img_tags.values() if t["tag"] == "original"),
                   "ai": sum(1 for t in img_tags.values() if t["tag"] == "ai"),
                   "text": sum(1 for t in img_tags.values() if t["tag"] == "text"),
@@ -137,7 +146,7 @@ def creatives_page(request: Request, db: Session = Depends(get_db)):
         "carousels": carousels, "slide_map": slide_map, "dims": dims,
         "image_pool": [r for r in images if r.status == "available"],
         "browse_account": browse,
-        "rows": videos, "images": images, "img_tags": img_tags, "img_counts": img_counts,
+        "rows": videos, "images": images, "img_tags": img_tags, "img_counts": img_counts, "editable_text": editable_text,
         "accounts": accounts, "available": available,
         "nb_configured": nanobanana.configured(), "nb_models": nb_models,
         "nb_default": nanobanana.DEFAULT_MODEL, "nb_aspects": nanobanana.ASPECTS,
@@ -683,31 +692,49 @@ async def add_text(creative_id: int, request: Request, db: Session = Depends(get
     row = db.get(models.Creative, creative_id)
     if not row or row.kind != "image" or not row.file_path:
         return RedirectResponse("/creatives?err=pick+an+image", status_code=303)
+    import json as _json
     form = await request.form()
     back = "/creatives?view=carousels" if form.get("back") == "carousels" else "/creatives"
+    sep = "&" if "?" in back else "?"
     try:
+        spec = text_overlay.clean(dict(form))
         png = text_overlay.render(row.file_path, dict(form))
     except ValueError as e:
-        return RedirectResponse(f"{back}&err={str(e).replace(' ', '+')}" if "?" in back else f"{back}?err={str(e).replace(' ', '+')}", status_code=303)
+        return RedirectResponse(f"{back}{sep}err={quote(str(e))}", status_code=303)
     except OSError as e:
-        return RedirectResponse(f"{back}{'&' if '?' in back else '?'}err=couldn't+read+the+image:+{str(e)[:80].replace(' ', '+')}", status_code=303)
-    base = (row.name or "image").rsplit(".", 1)[0]
+        msg = "couldn't read the image: " + str(e)[:80]
+        return RedirectResponse(f"{back}{sep}err={quote(msg)}", status_code=303)
+    recipe = _json.dumps({**spec, "text": "\n".join(spec["lines"])}, ensure_ascii=False)
     ext = ".jpg" if row.file_path.lower().endswith((".jpg", ".jpeg")) else ".png"
+    CREATIVES_DIR.mkdir(parents=True, exist_ok=True)
+    # editing an existing text copy: overwrite it in place (same card, same name)
+    replace_id = str(request.query_params.get("replace") or "")
+    if replace_id.isdigit():
+        copy = db.get(models.Creative, int(replace_id))
+        if not copy or copy.kind != "image" or copy.text_parent_id != row.id:
+            return RedirectResponse(f"{back}{sep}err={quote('That text copy no longer exists — saved nothing.')}", status_code=303)
+        if copy.status == "used":
+            return RedirectResponse(f"{back}{sep}err={quote(f'“{copy.name}” has already launched — its file is kept as is. Save the edit as a new copy instead.')}", status_code=303)
+        path = CREATIVES_DIR / f"{copy.id}_{copy.file_name or copy.name}"
+        path.write_bytes(png)
+        copy.file_path, copy.md5, copy.size_bytes = str(path), hashlib.md5(png).hexdigest(), len(png)
+        copy.text_spec, copy.ai_prompt = recipe, f"text: {spec['lines'][0][:200]}"
+        db.commit()      # thumbnails are keyed by md5, so the card refreshes by itself
+        return RedirectResponse(f"{back}{sep}ok={quote(f'Updated the text on “{copy.name}”')}#c{copy.id}", status_code=303)
+    base = (row.name or "image").rsplit(".", 1)[0]
     n = db.query(models.Creative).filter(models.Creative.name.like(f"{base}_txt%")).count() + 1
     fname = _safe_name(f"{base}_txt{n}{ext}")
     new = models.Creative(name=fname, file_name=fname, kind="image", status="available",
                           md5=hashlib.md5(png).hexdigest(), size_bytes=len(png),
                           source_md5=row.source_md5 or row.md5, source=row.source,
-                          ai_prompt=f"text: {str(form.get('text') or '')[:200]}")
+                          ai_prompt=f"text: {spec['lines'][0][:200]}", text_spec=recipe, text_parent_id=row.id)
     db.add(new)
     db.flush()
-    CREATIVES_DIR.mkdir(parents=True, exist_ok=True)
     path = CREATIVES_DIR / f"{new.id}_{fname}"
     path.write_bytes(png)
     new.file_path = str(path)
     db.commit()
-    sep = "&" if "?" in back else "?"
-    return RedirectResponse(f"{back}{sep}ok=Saved+“{fname}”+with+your+text#c{new.id}", status_code=303)
+    return RedirectResponse(f"{back}{sep}ok={quote(f'Saved “{fname}” with your text')}#c{new.id}", status_code=303)
 
 
 # ============================================================================
@@ -753,6 +780,38 @@ async def carousel_save(request: Request, db: Session = Depends(get_db)):
                             status_code=303)
 
 
+@router.get("/creatives/music/library")
+def music_library_browse(request: Request, db: Session = Depends(get_db)):
+    """JSON: browse the cached Audio Library (carousel-usable tracks only) —
+    q, style, page, size, sort=name|duration. Stale preview urls are refreshed."""
+    from .. import music_library as ML
+    qp = request.query_params
+    try:
+        page = max(1, int(qp.get("page") or 1))
+    except ValueError:
+        page = 1
+    res = ML.browse(db, q=qp.get("q", ""), style=qp.get("style", ""), page=page,
+                    size=60, sort=qp.get("sort", "name"))
+    ML.fresh_urls(db, res["rows"])
+    at = ML.synced_at(db)
+    return {"ok": True, "musics": [ML.as_json(r) for r in res["rows"]], "total": res["total"],
+            "page": res["page"], "pages": res["pages"], "styles": ML.styles(db),
+            "synced_at": at.isoformat(timespec="minutes") if at else "",
+            "status": queries.get_setting(db, ML.SETTING_STATUS, ""),
+            "syncing": bool(__import__("app.jobs", fromlist=["pending"]).pending(db, "music_sync"))}
+
+
+@router.post("/creatives/music/sync")
+def music_library_sync(db: Session = Depends(get_db)):
+    from .. import jobs
+    if not _browse_account(db):
+        return RedirectResponse("/creatives?view=carousels&err=" + quote("Connect TikTok first — the music library is read through an ad account."), status_code=303)
+    job, created = jobs.enqueue_once(db, "music_sync", "Refresh TikTok music library", {}, href="/creatives?view=carousels")
+    msg = ("Refreshing the music library in the background — every page of TikTok's Audio Library, then a carousel check per 100 tracks. Watch it on the Jobs page."
+           if created else f"A library refresh is already {job.status}" + (f" · {job.progress}" if job.progress else "") + ".")
+    return RedirectResponse("/creatives?view=carousels&ok=" + quote(msg), status_code=303)
+
+
 @router.get("/creatives/music/search")
 def music_search(request: Request, db: Session = Depends(get_db)):
     """JSON for the soundtrack picker. mode = keyword | recommend | uploads | liked | history.
@@ -771,8 +830,12 @@ def music_search(request: Request, db: Session = Depends(get_db)):
         if mode == "keyword":
             if not q:
                 return {"ok": True, "musics": []}
+            try:
+                kpage = max(1, int(request.query_params.get("page") or 1))
+            except ValueError:
+                kpage = 1
             data = tiktok_api.get_music(acct.access_token, acct.advertiser_id, "SEARCH_BY_KEYWORD",
-                                        keyword=q, page_size=60)
+                                        keyword=q, page=kpage, page_size=200)
         elif mode == "recommend":
             ids = [int(x) for x in request.query_params.get("images", "").replace(",", " ").split() if x.isdigit()]
             imgs = {c.id: c for c in db.query(models.Creative).filter(models.Creative.id.in_(ids)).all()} if ids else {}
@@ -806,5 +869,6 @@ def music_search(request: Request, db: Session = Depends(get_db)):
             "style": m.get("style") or "", "sources": m.get("sources") or [],
             "liked": bool(m.get("liked")), "copyright": m.get("copyright") or "",
         })
+    info = data.get("page_info") or {}
     return {"ok": True, "musics": musics, "account": acct.advertiser_name or acct.advertiser_id,
-            "total": (data.get("page_info") or {}).get("total_number", len(musics))}
+            "total": info.get("total_number", len(musics)), "page": info.get("page", 1), "pages": info.get("total_page", 1)}

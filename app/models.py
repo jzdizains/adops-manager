@@ -130,6 +130,9 @@ class Creative(Base):
     music_author = Column(String, default="")
     # --- AI image editing (Gemini / "Nano Banana") ----------------------------
     ai_prompt = Column(Text, default="")                   # prompt that produced this image
+    # --- text tool: a text copy remembers its recipe so the text can be edited later ---
+    text_spec = Column(Text, default="")                   # JSON of the text_overlay spec used
+    text_parent_id = Column(Integer, nullable=True)        # the untexted source image
     ai_model = Column(String, default="")                  # gemini model id used
     ai_cost = Column(Float, default=0.0)                   # list price per generated image (USD)
     # --- variation processing (TensorPix): each reads as a new video ----------
@@ -163,6 +166,29 @@ class CreativeUpload(Base):
     #   a cached image row whose md5 differs — or is empty (uploaded before the
     #   carousel-size delivery copies existed) — is stale and gets re-uploaded
     created_at = Column(DateTime, default=utcnow)
+
+
+class MusicTrack(Base):
+    """Cached copy of TikTok's Audio Library (Commercial Music Library +
+    uploads) so the carousel builder can browse/search ALL of it locally.
+    carousel_ok = confirmed usable in Carousel Ads (SEARCH_BY_MUSIC_ID in the
+    CAROUSEL_ADS scene returned it). Preview urls expire after 12 h."""
+    __tablename__ = "music_tracks"
+
+    id = Column(Integer, primary_key=True)
+    music_id = Column(String, unique=True, nullable=False, index=True)
+    name = Column(String, default="")
+    author = Column(String, default="")
+    style = Column(String, default="", index=True)
+    duration = Column(Float, default=0.0)
+    cover_url = Column(Text, default="")
+    url = Column(Text, default="")
+    url_at = Column(DateTime, nullable=True)
+    copyright = Column(String, default="")
+    sources = Column(String, default="")                   # "SYSTEM" | "USER"
+    carousel_ok = Column(Boolean, default=False, index=True)
+    liked = Column(Boolean, default=False)
+    synced_at = Column(DateTime, default=utcnow)
 
 
 class DisplayCard(Base):

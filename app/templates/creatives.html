@@ -165,15 +165,22 @@
         <div class="hint" style="color:var(--err);">No connected ad account — connect TikTok to browse the music library.</div>
         {% else %}
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">
-          <input type="text" id="czQ" placeholder="Search the Commercial Music Library…" style="flex:1;min-width:180px;">
-          <button type="button" class="btn" id="czSearch">Search</button>
+          <input type="text" id="czQ" placeholder="Search the whole library (name or artist)…" style="flex:1;min-width:180px;">
+          <select id="czStyle" style="width:auto;font-size:12px;" title="Genre / style"><option value="">All styles</option></select>
+          <button type="button" class="btn" id="czSearch">Browse</button>
           <button type="button" class="btn" id="czRecommend" title="TikTok recommends music for the slides you picked">✨ For my slides</button>
+          <button type="button" class="btn sm" data-mode="keyword" title="Ask TikTok's own fuzzy search (200 per page)">TikTok search</button>
           <button type="button" class="btn sm" data-mode="uploads">My uploads</button>
           <button type="button" class="btn sm" data-mode="liked">Liked</button>
           <button type="button" class="btn sm" data-mode="history">Recent</button>
         </div>
         <div id="czMusicStatus" class="muted" style="font-size:12px;margin-bottom:6px;"></div>
         <div class="cz-music" id="czMusic"></div>
+        <div style="display:flex;gap:8px;align-items:center;justify-content:space-between;margin-top:6px;font-size:11.5px;" class="muted">
+          <span id="czLibInfo">Library: loading…</span>
+          <span style="display:flex;gap:6px;align-items:center;"><button type="button" class="btn sm" id="czMore" hidden>More</button>
+          <form method="post" action="/creatives/music/sync" style="display:inline;"><button type="submit" class="btn sm" title="Re-read every page of TikTok's Audio Library and re-check which tracks Carousel Ads accept (runs in the background)">↻ Refresh library</button></form></span>
+        </div>
         <div id="czPicked" class="cz-picked" style="display:none;"></div>
         <audio id="czAudio" preload="none"></audio>
         {% endif %}
@@ -404,6 +411,9 @@
         {% elif r.file_path %}<a href="/creatives/{{ r.id }}/file" target="_blank" rel="noopener" title="Open full size"><img src="/creatives/{{ r.id }}/thumb" alt="{{ r.name }}" loading="lazy" decoding="async"></a>
         {% else %}<div class="img-ph">—</div>{% endif %}
         <div class="img-actions">
+          {% if r.status == 'available' and editable_text.get(r.id) %}
+          <button type="button" class="txtBtn edit" data-id="{{ editable_text[r.id] }}" data-replace="{{ r.id }}" data-name="{{ r.name }}" data-src="/creatives/{{ editable_text[r.id] }}/file" data-back="library" data-spec="{{ r.text_spec }}" title="Edit the text on this copy (re-renders from the original)">✎</button>
+          {% endif %}
           {% if r.status == 'available' %}
           <button type="button" class="txtBtn" data-id="{{ r.id }}" data-name="{{ r.name }}" data-src="/creatives/{{ r.id }}/file" data-back="library" title="Add text in TikTok's caption font">T</button>
           {% if nb_configured %}<button type="button" class="aiEditBtn" data-id="{{ r.id }}" data-name="{{ r.name }}" data-src="/creatives/{{ r.id }}/thumb" title="Edit with AI">✨</button>{% endif %}
@@ -433,7 +443,7 @@
   {% else %}
   <div class="empty" style="padding:22px 0;">No images yet — upload some, or generate one from a prompt.</div>
   {% endif %}
-  <div class="hint" style="margin-top:8px;">Images live on their own shelf: the video launcher never picks them. Name and source save as soon as you leave the field. Text and AI edits keep the original and add a new copy (badged T / ✨). Tick images to delete several at once.</div>
+  <div class="hint" style="margin-top:8px;">Images live on their own shelf: the video launcher never picks them. Name and source save as soon as you leave the field. Text and AI edits keep the original and add a new copy (badged T / ✨); the ✎ on a text copy reopens the editor with its text so you can change it. Tick images to delete several at once.</div>
 </div>
 
 {# ---- Text editor modal (shared by Library + Carousels) ---- #}
@@ -477,7 +487,7 @@
         </div>
         <input type="hidden" name="x" id="txtX" value="0.5"><input type="hidden" name="y" id="txtY" value="0.5">
         <input type="hidden" name="size" id="txtSizeVal" value="0.06"><input type="hidden" name="back" id="txtBack" value="library">
-        <button class="btn primary txt-save" type="submit" title="Saved at full resolution as a new copy; the original stays on the shelf.">Save as new image</button>
+        <button class="btn primary txt-save" type="submit" id="txtSaveBtn" title="Saved at full resolution; the original stays on the shelf.">Save as new image</button>
       </div>
     </div>
   </form>
@@ -725,13 +735,24 @@
     // wheel over the text = resize
     stage.addEventListener("wheel", function (e) { e.preventDefault(); st.size = Math.min(0.25, Math.max(0.02, st.size * (e.deltaY < 0 ? 1.06 : 0.94))); size.value = (st.size * 100).toFixed(1); paint(); }, { passive: false });
     window.addEventListener("resize", function () { if (modal.style.display !== "none") paint(); });
+    function setSel(id, v) { var el = document.getElementById(id); if (v && Array.prototype.some.call(el.options, function (o) { return o.value === v && !o.disabled; })) el.value = v; }
     document.querySelectorAll(".txtBtn").forEach(function (b) {
       b.addEventListener("click", function () {
-        form.action = "/creatives/" + b.dataset.id + "/text";
-        document.getElementById("txtName").textContent = b.dataset.name; document.getElementById("txtBack").value = b.dataset.back || "library";
+        var editing = !!b.dataset.replace, spec = null;
+        if (editing) { try { spec = JSON.parse(b.dataset.spec || "null"); } catch (e) { spec = null; } }
+        form.action = "/creatives/" + b.dataset.id + "/text" + (editing ? "?replace=" + b.dataset.replace : "");
+        document.getElementById("txtName").textContent = (editing ? "Editing the text on " : "") + b.dataset.name; document.getElementById("txtBack").value = b.dataset.back || "library";
+        document.getElementById("txtSaveBtn").textContent = editing ? "Save changes to this image" : "Save as new image";
         st = { x: 0.5, y: 0.5, size: 0.035 }; size.value = 3.5; ta.value = "";
+        setSel("txtWeight", "tiktok"); setSel("txtStyle", "outline"); setSel("txtAlign", "center"); document.getElementById("txtColor").value = "#ffffff"; document.getElementById("txtBox").value = "#000000";
+        if (spec) {
+          st = { x: Number(spec.x) || 0.5, y: Number(spec.y) || 0.5, size: Number(spec.size) || 0.035 }; size.value = (st.size * 100).toFixed(1);
+          ta.value = spec.text || (spec.lines || []).join("\n");
+          setSel("txtFont", spec.font); setSel("txtWeight", spec.weight); setSel("txtStyle", spec.style); setSel("txtAlign", spec.align);
+          if (spec.color) document.getElementById("txtColor").value = spec.color; if (spec.box_color) document.getElementById("txtBox").value = spec.box_color;
+        }
         if (previewUrl) { URL.revokeObjectURL(previewUrl); previewUrl = null; }
-        origSrc = b.dataset.src; img.onload = function () { img.onload = null; paint(); }; img.src = origSrc; modal.style.display = "flex"; ta.focus();
+        origSrc = b.dataset.src; img.onload = function () { img.onload = null; paint(); if (spec) requestPreview(0); }; img.src = origSrc; modal.style.display = "flex"; ta.focus();
       });
     });
     document.getElementById("txtClose").addEventListener("click", function () { modal.style.display = "none"; });
@@ -802,21 +823,36 @@
       document.getElementById("czMusicId").value = music.music_id; document.getElementById("czMusicName").value = music.name || ""; document.getElementById("czMusicAuthor").value = music.author || "";
       document.getElementById("czUnpick").addEventListener("click", function () { music = null; showPicked(); render(); });
     }
-    function search(mode) {
-      var url = "/creatives/music/search?mode=" + mode;
+    var moreBtn = document.getElementById("czMore"), libInfo = document.getElementById("czLibInfo"), styleSel = document.getElementById("czStyle");
+    var cur = { mode: "library", page: 1, pages: 1, items: [] };
+    function fmtAgo(iso) { if (!iso) return "never"; var d = (Date.now() - new Date(iso).getTime()) / 864e5; return d < 1 ? "today" : Math.round(d) + " day(s) ago"; }
+    function search(mode, page) {
+      page = page || 1;
+      var url = mode === "library" ? "/creatives/music/library?page=" + page + "&q=" + encodeURIComponent(document.getElementById("czQ").value.trim()) + "&style=" + encodeURIComponent(styleSel.value)
+                                   : "/creatives/music/search?mode=" + mode + "&page=" + page;
       if (mode === "keyword") url += "&q=" + encodeURIComponent(document.getElementById("czQ").value.trim());
       if (mode === "recommend") { if (picked.length < 2) { status.textContent = "Pick at least 2 slides first."; return; } url += "&images=" + picked.join(","); }
-      status.textContent = mode === "recommend" ? "Uploading slides to TikTok and asking for recommendations…" : "Searching…"; list.innerHTML = "";
+      status.textContent = mode === "recommend" ? "Uploading slides to TikTok and asking for recommendations…" : "Searching…";
+      if (page === 1) { list.innerHTML = ""; cur = { mode: mode, page: 1, pages: 1, items: [] }; }
       fetch(url).then(function (r) { return r.json(); }).then(function (d) {
-        if (!d.ok) { status.textContent = d.error || "Search failed"; return; }
-        status.textContent = d.musics.length ? d.musics.length + " track(s)" + (d.total && d.total > d.musics.length ? " of " + d.total : "") : "No music found — try another word.";
-        list.innerHTML = d.musics.map(function (m, i) {
+        if (!d.ok) { status.textContent = d.error || "Search failed"; moreBtn.hidden = true; return; }
+        cur.page = d.page || page; cur.pages = d.pages || 1; var offset = cur.items.length; cur.items = cur.items.concat(d.musics);
+        moreBtn.hidden = !(cur.pages > cur.page && (mode === "library" || mode === "keyword"));
+        if (mode === "library") {
+          if (d.styles && styleSel.options.length <= 1) d.styles.forEach(function (st) { var o = document.createElement("option"); o.value = st[0]; o.textContent = st[0] + " (" + st[1] + ")"; styleSel.appendChild(o); });
+          libInfo.textContent = d.total === 0 && !d.synced_at ? (d.syncing ? "Library is being downloaded from TikTok right now — check the Jobs page." : "Library not downloaded yet — hit Refresh library once (it runs in the background).")
+                                : "Library: " + (d.status || d.total + " tracks") + " · synced " + fmtAgo(d.synced_at) + (d.syncing ? " · refreshing now" : "");
+        }
+        status.textContent = cur.items.length ? (cur.items.length + " track(s)" + (d.total && d.total > cur.items.length ? " of " + d.total : "")) : (mode === "library" ? "No tracks match." : "No music found — try another word.");
+        var html = d.musics.map(function (m, j) { var i = offset + j;
           return '<div class="cz-track" data-i="' + i + '">' + (m.cover_url ? '<img src="' + esc(m.cover_url) + '" alt="">' : '<span class="cz-cover">♪</span>') +
             '<div style="min-width:0;flex:1;"><div class="cz-tname">' + esc(m.name) + '</div><div class="muted" style="font-size:10.5px;">' + esc(m.author || m.style || "") + (m.duration ? ' · ' + fmtDur(m.duration) : '') + (m.sources && m.sources.indexOf("USER") >= 0 ? ' · uploaded' : '') + '</div></div>' +
             (m.url ? '<button type="button" class="btn sm" data-play="1" title="Preview">▶</button>' : '') + '<button type="button" class="btn sm primary" data-pick="1">Use</button></div>';
         }).join("");
-        list.querySelectorAll(".cz-track").forEach(function (row) {
-          var m = d.musics[Number(row.dataset.i)];
+        var frag = document.createElement("div"); frag.innerHTML = html;
+        var newRows = Array.prototype.slice.call(frag.children); newRows.forEach(function (r) { list.appendChild(r); });
+        newRows.forEach(function (row) {
+          var m = cur.items[Number(row.dataset.i)];
           var pb = row.querySelector("[data-play]");
           if (pb) pb.addEventListener("click", function () {
             if (audio.src === m.url && !audio.paused) { audio.pause(); pb.textContent = "▶"; return; }
@@ -828,11 +864,13 @@
       }).catch(function () { status.textContent = "Search failed — check the connection."; });
     }
     audio.addEventListener("ended", function () { list.querySelectorAll("[data-play]").forEach(function (x) { x.textContent = "▶"; }); });
-    document.getElementById("czSearch").addEventListener("click", function () { search("keyword"); });
-    document.getElementById("czQ").addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); search("keyword"); } });
+    document.getElementById("czSearch").addEventListener("click", function () { search("library"); });
+    styleSel.addEventListener("change", function () { search("library"); });
+    document.getElementById("czQ").addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); search("library"); } });
     document.getElementById("czRecommend").addEventListener("click", function () { search("recommend"); });
+    moreBtn.addEventListener("click", function () { search(cur.mode, cur.page + 1); });
     document.querySelectorAll("[data-mode]").forEach(function (b) { b.addEventListener("click", function () { search(b.dataset.mode); }); });
-    render();
+    render(); search("library");
   }
 
   // ---- performance: side player driven by the leaderboard ----

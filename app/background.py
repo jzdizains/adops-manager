@@ -90,6 +90,7 @@ def _loop():
                 partners.poll(db)               # TikTok-account assignments waiting on accepted invites
                 jobs.prune(db)
                 _audience_daily(db)             # once a day: audience breakdowns + hourly heatmap
+                _music_monthly(db)              # TikTok's Audio Library cache, refreshed monthly (doc's advice)
             _audience_quick(db, settings)       # every N minutes: today's hours / today+yesterday breakdowns, active accounts
             if not slow:
                 # fast pass: only accounts with something running
@@ -154,6 +155,16 @@ def _audience_quick(db, settings: dict) -> None:
     title = ("Refresh audience breakdowns (today + yesterday, active accounts)" if bd_due
              else "Refresh today's hour-by-hour delivery (active accounts)")
     jobs.enqueue_once(db, "audience_sync", title, {"days": days, "hot_only": True}, href="/audience")
+
+
+def _music_monthly(db) -> None:
+    """Queue the Audio Library sync when it has never run or is >30 days old."""
+    from . import jobs, music_library, queries
+    if not music_library.due(db) or not queries.any_access_token(db):
+        return
+    if jobs.pending(db, "music_sync"):
+        return
+    jobs.enqueue_once(db, "music_sync", "Refresh TikTok music library (monthly)", {}, href="/creatives?view=carousels")
 
 
 def _audience_daily(db) -> None:

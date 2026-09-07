@@ -586,6 +586,35 @@ def get_music(access_token: str, advertiser_id: str, search_type: str,
     return data if isinstance(data, dict) else {"musics": []}
 
 
+MUSIC_LIBRARY_PAGE_SIZE = 1000   # CREATIVE_ASSET listing: page_size 1–1,000, page×page_size ≤ 100,000
+MUSIC_ID_BATCH = 100             # SEARCH_BY_MUSIC_ID: music_ids max 100 (no paging)
+
+
+def list_music_library(access_token: str, advertiser_id: str, page: int = 1,
+                       page_size: int = MUSIC_LIBRARY_PAGE_SIZE, sources: list[str] | None = None) -> dict:
+    """The whole Audio Library (doc "Get the music list", music_scene
+    CREATIVE_ASSET — no search_type): paged, filterable by sources
+    (SYSTEM = TikTok's Commercial Music Library, USER = uploads). TikTok
+    says to cache it and refresh monthly."""
+    params: dict = {"advertiser_id": advertiser_id, "music_scene": "CREATIVE_ASSET",
+                    "page": max(1, page), "page_size": max(1, min(page_size, MUSIC_LIBRARY_PAGE_SIZE))}
+    if sources:
+        params["filtering"] = {"sources": list(sources)}
+    data = api_get_retry("/file/music/get/", access_token, params)
+    return data if isinstance(data, dict) else {"musics": [], "page_info": {}}
+
+
+def carousel_music_by_ids(access_token: str, advertiser_id: str, music_ids: list[str]) -> list[dict]:
+    """SEARCH_BY_MUSIC_ID in the CAROUSEL_ADS scene: only music usable in
+    Carousel Ads comes back (fresh 12-h preview url, author, cover, liked)."""
+    out: list[dict] = []
+    ids = [str(i) for i in music_ids if i]
+    for i in range(0, len(ids), MUSIC_ID_BATCH):
+        data = get_music(access_token, advertiser_id, "SEARCH_BY_MUSIC_ID", music_ids=ids[i:i + MUSIC_ID_BATCH])
+        out.extend(data.get("musics") or [])
+    return out
+
+
 def recommend_ctas(access_token: str, advertiser_id: str, objective_type: str,
                    promotion_type: str, landing_page_url: str = "", ad_texts: list[str] | None = None,
                    optimization_goal: str = "", region_codes: list[str] | None = None,
