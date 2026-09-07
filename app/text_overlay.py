@@ -173,8 +173,11 @@ def _stroke_text(draw, pos, text, font, fill, width: float) -> None:
         draw.text(pos, text, font=font, fill=fill, stroke_width=max(1, int(round(width))), stroke_fill=(0, 0, 0, 255))
 
 
-def render(image_path: str, spec: dict) -> bytes:
-    """Return PNG bytes of the image with the text baked in at native resolution."""
+def render(image_path: str, spec: dict, max_width: int | None = None, quality: int = 92) -> bytes:
+    """Return the image with the text baked in at native resolution (PNG for
+    PNG sources, JPEG otherwise). max_width: also downscale the RESULT for a
+    preview — the text is still rendered at native size first, so the preview
+    shows exactly what the saved file will look like."""
     import io
     s = clean(spec)
     with Image.open(image_path) as im:
@@ -234,9 +237,13 @@ def render(image_path: str, spec: dict) -> bytes:
 
     out = Image.alpha_composite(base, layer)
     buf = io.BytesIO()
+    if max_width and out.width > max_width:
+        out = out.resize((max_width, max(1, round(out.height * max_width / out.width))), Image.LANCZOS)
+        out.convert("RGB").save(buf, "JPEG", quality=quality)
+        return buf.getvalue()
     # keep the original format's strengths: PNG for PNG sources, JPEG otherwise
     if str(image_path).lower().endswith((".jpg", ".jpeg")):
-        out.convert("RGB").save(buf, "JPEG", quality=92)
+        out.convert("RGB").save(buf, "JPEG", quality=quality)
     else:
         out.save(buf, "PNG", optimize=True)
     return buf.getvalue()

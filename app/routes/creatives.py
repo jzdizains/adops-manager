@@ -12,7 +12,7 @@ import re
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse, Response
 from starlette.datastructures import UploadFile
 from sqlalchemy.orm import Session
 
@@ -560,6 +560,28 @@ def delete_creative(creative_id: int, db: Session = Depends(get_db)):
 # ============================================================================
 # TEXT ON IMAGES — TikTok Sans, baked server-side at native resolution
 # ============================================================================
+@router.post("/creatives/{creative_id}/text/preview")
+async def text_preview(creative_id: int, request: Request, db: Session = Depends(get_db)):
+    """The SAME renderer as the save, downscaled for the editor stage — so
+    the preview is the file, not a CSS approximation of it."""
+    from .. import text_overlay
+    row = db.get(models.Creative, creative_id)
+    if not row or row.kind != "image" or not row.file_path:
+        return Response(status_code=404)
+    form = await request.form()
+    try:
+        max_w = max(120, min(int(form.get("max_w") or 600), 1600))
+    except ValueError:
+        max_w = 600
+    try:
+        data = text_overlay.render(row.file_path, dict(form), max_width=max_w, quality=82)
+    except ValueError:
+        return Response(status_code=422)
+    except OSError:
+        return Response(status_code=404)
+    return Response(data, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
 @router.post("/creatives/{creative_id}/text")
 async def add_text(creative_id: int, request: Request, db: Session = Depends(get_db)):
     from .. import text_overlay

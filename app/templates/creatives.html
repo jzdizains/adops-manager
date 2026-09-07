@@ -452,7 +452,7 @@
         <input type="hidden" name="x" id="txtX" value="0.5"><input type="hidden" name="y" id="txtY" value="0.5">
         <input type="hidden" name="size" id="txtSizeVal" value="0.06"><input type="hidden" name="back" id="txtBack" value="library">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;">
-          <span class="muted" style="font-size:11.5px;">Baked at the image's full resolution with the font chosen above. The original is kept; a new copy is added to the shelf.</span>
+          <span class="muted" style="font-size:11.5px;">The preview is the real render (it refreshes a moment after you stop typing or dragging). Saved at full resolution; the original is kept and a new copy is added to the shelf.</span>
           <button class="btn primary" type="submit">Save as new image</button>
         </div>
       </div>
@@ -565,8 +565,33 @@
     var form = document.getElementById("txtForm"), stage = document.getElementById("txtStage"), img = document.getElementById("txtImg"),
         ov = document.getElementById("txtOverlay"), ta = document.getElementById("txtText"), size = document.getElementById("txtSize");
     var st = { x: 0.5, y: 0.5, size: 0.035 };
+    // The CSS overlay is only a live guide while you type or drag. The stage
+    // then swaps in a SERVER render (the same code that saves the file), so
+    // what you see is the real result — browsers draw outlines and weights
+    // differently from the renderer.
+    var origSrc = "", previewTimer = null, previewSeq = 0, previewUrl = null, previewBusy = false, previewDirty = false;
+    function showOverlay() { ov.style.display = ""; }
+    function requestPreview(delay) {
+      clearTimeout(previewTimer);
+      previewTimer = setTimeout(fetchPreview, delay == null ? 350 : delay);
+    }
+    function fetchPreview() {
+      if (!form.action || !ta.value.trim()) { if (previewUrl) { URL.revokeObjectURL(previewUrl); previewUrl = null; } img.src = origSrc; showOverlay(); return; }
+      if (previewBusy) { previewDirty = true; return; }
+      previewBusy = true; previewDirty = false;
+      var seq = ++previewSeq, fd = new FormData(form); fd.set("max_w", String(Math.max(320, Math.round(stage.clientWidth * (window.devicePixelRatio || 1)))));
+      fetch(form.action + "/preview", { method: "POST", body: fd, credentials: "same-origin" }).then(function (r) { return r.ok ? r.blob() : null; }).then(function (blob) {
+        previewBusy = false;
+        if (seq !== previewSeq || !blob) { if (previewDirty) requestPreview(0); return; }
+        var url = URL.createObjectURL(blob);
+        img.onload = function () { if (previewUrl) URL.revokeObjectURL(previewUrl); previewUrl = url; ov.style.display = "none"; img.onload = null; };
+        img.src = url;
+        if (previewDirty) requestPreview(0);
+      }).catch(function () { previewBusy = false; showOverlay(); });
+    }
     function esc(t) { var d = document.createElement("div"); d.textContent = t; return d.innerHTML; }
     function paint() {
+      showOverlay(); requestPreview();
       var W = img.clientWidth, H = img.clientHeight, px = st.size * H;
       var fsel = document.getElementById("txtFont"), fopt = fsel.options[fsel.selectedIndex];
       ov.className = "txt-overlay " + document.getElementById("txtStyle").value + " " + document.getElementById("txtWeight").value + " f-" + fsel.value;
@@ -592,12 +617,18 @@
     // drag
     var drag = null;
     ov.addEventListener("pointerdown", function (e) { drag = { sx: e.clientX, sy: e.clientY, x: st.x, y: st.y }; ov.setPointerCapture(e.pointerId); e.preventDefault(); });
+    // while the server preview is shown the overlay is hidden — a press anywhere on the stage picks the text up again
+    stage.addEventListener("pointerdown", function (e) {
+      if (ov.style.display !== "none" || e.target === ov) return;
+      showOverlay(); if (previewUrl) { img.src = origSrc; }
+      drag = { sx: e.clientX, sy: e.clientY, x: st.x, y: st.y }; ov.setPointerCapture(e.pointerId); e.preventDefault();
+    });
     ov.addEventListener("pointermove", function (e) {
       if (!drag) return;
       var W = img.clientWidth, H = img.clientHeight;
       st.x = Math.min(1, Math.max(0, drag.x + (e.clientX - drag.sx) / W)); st.y = Math.min(1, Math.max(0, drag.y + (e.clientY - drag.sy) / H)); paint();
     });
-    ov.addEventListener("pointerup", function () { drag = null; }); ov.addEventListener("pointercancel", function () { drag = null; });
+    ov.addEventListener("pointerup", function () { drag = null; requestPreview(0); }); ov.addEventListener("pointercancel", function () { drag = null; });
     // wheel over the text = resize
     stage.addEventListener("wheel", function (e) { e.preventDefault(); st.size = Math.min(0.25, Math.max(0.02, st.size * (e.deltaY < 0 ? 1.06 : 0.94))); size.value = (st.size * 100).toFixed(1); paint(); }, { passive: false });
     window.addEventListener("resize", function () { if (modal.style.display !== "none") paint(); });
@@ -606,7 +637,8 @@
         form.action = "/creatives/" + b.dataset.id + "/text";
         document.getElementById("txtName").textContent = b.dataset.name; document.getElementById("txtBack").value = b.dataset.back || "library";
         st = { x: 0.5, y: 0.5, size: 0.035 }; size.value = 3.5; ta.value = "";
-        img.onload = paint; img.src = b.dataset.src; modal.style.display = "flex"; ta.focus();
+        if (previewUrl) { URL.revokeObjectURL(previewUrl); previewUrl = null; }
+        origSrc = b.dataset.src; img.onload = function () { img.onload = null; paint(); }; img.src = origSrc; modal.style.display = "flex"; ta.focus();
       });
     });
     document.getElementById("txtClose").addEventListener("click", function () { modal.style.display = "none"; });
