@@ -89,17 +89,19 @@ def appeals_page(request: Request, bc: str = "", camp: str = "", db: Session = D
     bc_of, bc_names = _bc_of_accounts(db)
     rows = db.query(models.Appeal).order_by(models.Appeal.created_at.desc()).limit(500).all()
     all_open = [r for r in rows if r.status in OPEN_STATUSES]
-    # BC picker: every BC that has an open rejection, with its count (before the filter)
+    # BC picker: EVERY Business Center the login sees (0 open included), each
+    # with its open-rejection count before the filter; "No Business Center"
+    # only when some ad account isn't listed under a BC.
     bc_counts: dict[str, int] = {}
     for r in all_open:
         k = bc_of.get(r.advertiser_id, "") or NO_BC
         bc_counts[k] = bc_counts.get(k, 0) + 1
-    bc_options = sorted(((k, bc_names.get(k, k) if k != NO_BC else "No Business Center", n)
-                         for k, n in bc_counts.items()), key=lambda t: (t[0] == NO_BC, t[1].lower()))
+    bc_options = sorted(((k, name, bc_counts.get(k, 0)) for k, name in bc_names.items()),
+                        key=lambda t: t[1].lower())
+    if any(not v for v in bc_of.values()) or NO_BC in bc_counts:
+        bc_options.append((NO_BC, "No Business Center", bc_counts.get(NO_BC, 0)))
     if bc and bc != NO_BC and bc not in bc_names:
         bc = ""            # stale link to a BC that is gone → show everything
-    if bc and bc not in bc_counts:     # chosen BC has nothing open right now — keep it selectable
-        bc_options.append((bc, bc_names.get(bc, bc) if bc != NO_BC else "No Business Center", 0))
     vis = [r for r in rows if _passes(r, bc, camp, bc_of)]
     open_rows = [r for r in vis if r.status in OPEN_STATUSES]
     waiting = [r for r in vis if r.status == "appealing"]
