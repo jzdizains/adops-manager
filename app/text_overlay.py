@@ -29,11 +29,11 @@ WEIGHT_LABELS = {"tiktok": "TikTok caption (default)", "regular": "Regular", "se
 # The TikTok app's caption font is TikTok Sans (SIL OFL). Measured against a
 # real caption from the app, side by side at the same x-height (glyph
 # widths, stroke, outline and line pitch): optical size 36, width 116,
-# weight 500, a dark outline of 0.08em and a 1.3em line pitch. The variable
+# weight 470, a dark outline of 0.10em and a 1.3em line pitch. The variable
 # font carries every axis.
 TIKTOK_VARIABLE = "TikTokSans-Variable.ttf"
 TIKTOK_OPSZ, TIKTOK_WDTH = 36, 116
-TIKTOK_WGHT = {"tiktok": 500, "regular": 400, "semibold": 600, "bold": 700}
+TIKTOK_WGHT = {"tiktok": 470, "regular": 400, "semibold": 600, "bold": 700}
 
 FONTS: dict[str, dict] = {
     "tiktok_sans": {"label": "TikTok Sans — the app's caption font (measured match)", "css": "TikTok Sans Var"},
@@ -49,7 +49,7 @@ BOX_PAD_Y = 0.22            # box padding top/bottom
 BOX_RADIUS = 0.35
 SHADOW_DY = 0.03
 SHADOW_BLUR = 0.06
-STROKE = 0.08               # outward stroke — the app's caption outline (measured against a side-by-side)
+STROKE = 0.10               # outward stroke — the app's caption outline (calibrated on a deployed side-by-side)
 DEFAULT_SIZE = 0.035        # the app's default caption ≈ 3.5% of the image height
 DEFAULT_STYLE = "outline"   # the app's caption look: white text, thin dark outline, no blur
 
@@ -164,6 +164,15 @@ def _rgb(h: str) -> tuple[int, int, int]:
     return int(h[1:3], 16), int(h[3:5], 16), int(h[5:7], 16)
 
 
+def _stroke_text(draw, pos, text, font, fill, width: float) -> None:
+    """Outlined text with a fractional stroke width where Pillow supports it
+    (12+), else the nearest whole pixel — the same call either way."""
+    try:
+        draw.text(pos, text, font=font, fill=fill, stroke_width=max(1.0, width), stroke_fill=(0, 0, 0, 255))
+    except TypeError:
+        draw.text(pos, text, font=font, fill=fill, stroke_width=max(1, int(round(width))), stroke_fill=(0, 0, 0, 255))
+
+
 def render(image_path: str, spec: dict) -> bytes:
     """Return PNG bytes of the image with the text baked in at native resolution."""
     import io
@@ -219,8 +228,7 @@ def render(image_path: str, spec: dict) -> bytes:
     for i, ln in enumerate(s["lines"]):
         pos = (line_x(i), top + i * line_h + glyph_off)
         if s["style"] == "outline":
-            draw.text(pos, ln, font=font, fill=text_rgb + (255,),
-                      stroke_width=max(1, int(round(px * STROKE))), stroke_fill=(0, 0, 0, 255))
+            _stroke_text(draw, pos, ln, font, text_rgb + (255,), px * STROKE)
         else:
             draw.text(pos, ln, font=font, fill=text_rgb + (255,))
 
