@@ -575,10 +575,14 @@ async def text_preview(creative_id: int, request: Request, db: Session = Depends
         max_w = 600
     try:
         data = text_overlay.render(row.file_path, dict(form), max_width=max_w, quality=82)
-    except ValueError:
-        return Response(status_code=422)
-    except OSError:
-        return Response(status_code=404)
+    except ValueError as e:
+        return Response(str(e), status_code=422, media_type="text/plain")
+    except OSError as e:
+        return Response(f"image unreadable: {e}", status_code=404, media_type="text/plain")
+    except Exception as e:  # noqa: BLE001 — the editor shows this instead of silently falling back
+        import logging
+        logging.getLogger("adops.creatives").exception("text preview failed")
+        return Response(f"{type(e).__name__}: {str(e)[:200]}", status_code=500, media_type="text/plain")
     return Response(data, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 

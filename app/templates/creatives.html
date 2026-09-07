@@ -422,6 +422,7 @@
       <div class="txt-stage" id="txtStage">
         <img id="txtImg" src="" alt="" draggable="false">
         <div id="txtOverlay" class="txt-overlay plain" title="Drag to move"></div>
+        <span id="txtPrevState" class="pill dim" style="position:absolute;left:8px;top:8px;font-size:10.5px;" title="Whether the stage shows the real (server) render or the browser's approximation">browser guide</span>
       </div>
       <div class="txt-controls">
         <label class="field"><span class="field-label">Text <span class="muted">(Enter = new line)</span></span>
@@ -570,7 +571,9 @@
     // what you see is the real result — browsers draw outlines and weights
     // differently from the renderer.
     var origSrc = "", previewTimer = null, previewSeq = 0, previewUrl = null, previewBusy = false, previewDirty = false;
-    function showOverlay() { ov.style.display = ""; }
+    var stateEl = document.getElementById("txtPrevState");
+    function setState(kind, text) { stateEl.className = "pill " + kind; stateEl.textContent = text; }
+    function showOverlay() { ov.style.display = ""; setState("dim", "browser guide"); }
     function requestPreview(delay) {
       clearTimeout(previewTimer);
       previewTimer = setTimeout(fetchPreview, delay == null ? 350 : delay);
@@ -580,14 +583,18 @@
       if (previewBusy) { previewDirty = true; return; }
       previewBusy = true; previewDirty = false;
       var seq = ++previewSeq, fd = new FormData(form); fd.set("max_w", String(Math.max(320, Math.round(stage.clientWidth * (window.devicePixelRatio || 1)))));
-      fetch(form.action + "/preview", { method: "POST", body: fd, credentials: "same-origin" }).then(function (r) { return r.ok ? r.blob() : null; }).then(function (blob) {
+      setState("warn", "rendering…");
+      fetch(form.action + "/preview", { method: "POST", body: fd, credentials: "same-origin" }).then(function (r) {
+        if (r.ok) return r.blob();
+        return r.text().then(function (t) { throw new Error("server " + r.status + (t ? ": " + t.slice(0, 160) : "")); });
+      }).then(function (blob) {
         previewBusy = false;
         if (seq !== previewSeq || !blob) { if (previewDirty) requestPreview(0); return; }
         var url = URL.createObjectURL(blob);
-        img.onload = function () { if (previewUrl) URL.revokeObjectURL(previewUrl); previewUrl = url; ov.style.display = "none"; img.onload = null; };
+        img.onload = function () { if (previewUrl) URL.revokeObjectURL(previewUrl); previewUrl = url; ov.style.display = "none"; img.onload = null; setState("ok", "real render"); };
         img.src = url;
         if (previewDirty) requestPreview(0);
-      }).catch(function () { previewBusy = false; showOverlay(); });
+      }).catch(function (e) { previewBusy = false; showOverlay(); setState("err", "render failed — " + (e && e.message ? e.message : "network")); });
     }
     function esc(t) { var d = document.createElement("div"); d.textContent = t; return d.innerHTML; }
     function paint() {
