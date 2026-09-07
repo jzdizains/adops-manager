@@ -199,8 +199,10 @@ def sync(db: Session, days: dict[str, list[str]] | None = None, should_stop=None
                                             "name": acct.advertiser_name or acct.advertiser_id, "error": r["error"]})
                 break
         stats["failed" if failed else "ok"] += 1
-    if not hot_only:                      # weekly names + pruning ride on the daily full run
-        refresh_region_names(db, accounts[0] if accounts else None)
+    have_names = db.query(func.count(models.RegionName.id)).scalar() or 0
+    if not hot_only or not have_names:    # weekly names + pruning ride on the daily full run (names: also when empty)
+        refresh_region_names(db, accounts[0] if accounts else None, candidates=accounts[1:3])
+    if not hot_only:
         prune(db)
     queries.set_setting(db, "audience_synced_at", _now().isoformat())
     queries.set_setting(db, "audience_last_errors", json.dumps(stats["errors"]))
@@ -217,17 +219,77 @@ def prune(db: Session, keep_days: int = KEEP_DAYS) -> int:
     return db.query(models.AudienceStat).filter(models.AudienceStat.date < cutoff).delete()
 
 
-def refresh_region_names(db: Session, acct: models.AdAccount | None, force: bool = False) -> int:
-    """/tool/region/ once a week → RegionName, so province ids get names."""
-    if not acct:
+# Built-in names for the location ids TikTok uses (GeoNames scheme — the same
+# ids /tool/region/ returns, e.g. 6252001 = United States). Verified against
+# geonames.org. /tool/region/ results override these when available.
+GEONAMES_REGIONS: dict[str, str] = {
+    # United States
+    "4829764": "Alabama", "5879092": "Alaska", "5551752": "Arizona", "4099753": "Arkansas", "5332921": "California",
+    "5417618": "Colorado", "4831725": "Connecticut", "4142224": "Delaware", "4138106": "District of Columbia",
+    "4155751": "Florida", "4197000": "Georgia", "5855797": "Hawaii", "5596512": "Idaho", "4896861": "Illinois",
+    "4921868": "Indiana", "4862182": "Iowa", "4273857": "Kansas", "6254925": "Kentucky", "4331987": "Louisiana",
+    "4971068": "Maine", "4361885": "Maryland", "6254926": "Massachusetts", "5001836": "Michigan", "5037779": "Minnesota",
+    "4436296": "Mississippi", "4398678": "Missouri", "5667009": "Montana", "5073708": "Nebraska", "5509151": "Nevada",
+    "5090174": "New Hampshire", "5101760": "New Jersey", "5481136": "New Mexico", "5128638": "New York",
+    "4482348": "North Carolina", "5690763": "North Dakota", "5165418": "Ohio", "4544379": "Oklahoma", "5744337": "Oregon",
+    "6254927": "Pennsylvania", "5224323": "Rhode Island", "4597040": "South Carolina", "5769223": "South Dakota",
+    "4662168": "Tennessee", "4736286": "Texas", "5549030": "Utah", "5242283": "Vermont", "6254928": "Virginia",
+    "5815135": "Washington", "4826850": "West Virginia", "5279468": "Wisconsin", "5843591": "Wyoming",
+    # Canada
+    "5883102": "Alberta", "5909050": "British Columbia", "6065171": "Manitoba", "6087430": "New Brunswick",
+    "6354959": "Newfoundland and Labrador", "6091530": "Nova Scotia", "6091069": "Northwest Territories",
+    "6091732": "Nunavut", "6093943": "Ontario", "6113358": "Prince Edward Island", "6115047": "Quebec",
+    "6141242": "Saskatchewan", "6185811": "Yukon",
+    # United Kingdom
+    "6269131": "England", "2641364": "Northern Ireland", "2638360": "Scotland", "2634895": "Wales",
+    # countries seen as province_id parents
+    "6252001": "United States", "6251999": "Canada", "2635167": "United Kingdom",
+}
+
+COUNTRY_NAMES: dict[str, str] = {
+    "US": "United States", "CA": "Canada", "GB": "United Kingdom", "AU": "Australia", "NZ": "New Zealand",
+    "IE": "Ireland", "DE": "Germany", "FR": "France", "ES": "Spain", "IT": "Italy", "NL": "Netherlands",
+    "BE": "Belgium", "SE": "Sweden", "NO": "Norway", "DK": "Denmark", "FI": "Finland", "PL": "Poland",
+    "AT": "Austria", "CH": "Switzerland", "PT": "Portugal", "MX": "Mexico", "BR": "Brazil", "AR": "Argentina",
+    "CL": "Chile", "CO": "Colombia", "JP": "Japan", "KR": "South Korea", "SG": "Singapore", "MY": "Malaysia",
+    "PH": "Philippines", "ID": "Indonesia", "TH": "Thailand", "VN": "Vietnam", "IN": "India", "AE": "United Arab Emirates",
+    "SA": "Saudi Arabia", "IL": "Israel", "TR": "Türkiye", "ZA": "South Africa", "EG": "Egypt", "NG": "Nigeria",
+    "LV": "Latvia", "LT": "Lithuania", "EE": "Estonia", "CZ": "Czechia", "RO": "Romania", "HU": "Hungary", "GR": "Greece",
+}
+
+
+def refresh_region_names(db: Session, acct: models.AdAccount | None, force: bool = False,
+                         candidates: list[models.AdAccount] | None = None) -> int:
+    """/tool/region/ once a week → RegionName, so province ids get names.
+    Tries up to three accounts (the endpoint is per-advertiser and some
+    accounts refuse it); the outcome is kept in a setting for the page."""
+    tried = [a for a in ([acct] + list(candidates or [])) if a][:3]
+    if not tried:
         return 0
     newest = db.query(func.max(models.RegionName.synced_at)).scalar()
-    if newest and not force and (_now() - newest) < timedelta(days=REGION_REFRESH_DAYS):
+    have = db.query(func.count(models.RegionName.id)).scalar() or 0
+    if newest and have and not force and (_now() - newest) < timedelta(days=REGION_REFRESH_DAYS):
         return 0
-    try:
-        raw = tiktok_api.list_regions(acct.access_token, acct.advertiser_id, placements=["PLACEMENT_TIKTOK"])
-    except tiktok_api.TikTokError as e:
-        log.warning("region list failed: %s", e)
+    raw = None
+    last_err = ""
+    seen_ids: set[str] = set()
+    for a in tried:
+        if a.advertiser_id in seen_ids:
+            continue
+        seen_ids.add(a.advertiser_id)
+        try:
+            raw = tiktok_api.list_regions(a.access_token, a.advertiser_id, placements=["PLACEMENT_TIKTOK"],
+                                          objective_type="TRAFFIC")
+            if raw:
+                break
+            last_err = f"account {a.advertiser_name or a.advertiser_id}: empty region list"
+        except tiktok_api.TikTokError as e:
+            last_err = f"account {a.advertiser_name or a.advertiser_id}: {e}"
+            log.warning("region list failed: %s", e)
+    if not raw:
+        queries.set_setting(db, "audience_regions_status", f"/tool/region/ gave no names — {last_err or 'no account to ask'}; "
+                            f"built-in names cover {len(GEONAMES_REGIONS)} US/CA/UK regions")
+        db.commit()
         return 0
     n = 0
     now = _now()
@@ -247,6 +309,7 @@ def refresh_region_names(db: Session, acct: models.AdAccount | None, force: bool
         row.region_code = str(item.get("region_code") or "")[:20]
         row.synced_at = now
         n += 1
+    queries.set_setting(db, "audience_regions_status", f"{n} location names from /tool/region/ ({now.isoformat()[:16]} UTC)")
     db.commit()
     return n
 
@@ -273,7 +336,9 @@ def _human(dim: str, key: str, label: str, regions: dict[str, str]) -> str:
             return "Unknown"
         return regions.get(key, key)
     if dim == "country":
-        return key if key not in ("", "None") else "Unknown"
+        if key in ("", "None"):
+            return "Unknown"
+        return f"{COUNTRY_NAMES[key]} ({key})" if key in COUNTRY_NAMES else key
     if dim == "device_brand":
         return label or key or "Unknown"
     if dim == "platform":
@@ -367,7 +432,11 @@ def heatmap(db: Session, start: str, end: str, advertiser_ids: list[str] | None 
 
 
 def region_names(db: Session) -> dict[str, str]:
-    return {r.region_id: r.name for r in db.query(models.RegionName.region_id, models.RegionName.name).all() if r.name}
+    """id → name: the built-in GeoNames table, overridden by whatever
+    /tool/region/ returned."""
+    out = dict(GEONAMES_REGIONS)
+    out.update({r.region_id: r.name for r in db.query(models.RegionName.region_id, models.RegionName.name).all() if r.name})
+    return out
 
 
 def coverage(db: Session) -> dict:
@@ -382,4 +451,5 @@ def coverage(db: Session) -> dict:
     except ValueError:
         errors = []
     return {"first": lo, "last": hi, "rows": int(n or 0), "accounts": int(accts),
-            "synced_at": queries.get_setting(db, "audience_synced_at", ""), "job": job, "errors": errors}
+            "synced_at": queries.get_setting(db, "audience_synced_at", ""), "job": job, "errors": errors,
+            "regions": queries.get_setting(db, "audience_regions_status", "")}

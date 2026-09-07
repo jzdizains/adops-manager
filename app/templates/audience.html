@@ -58,6 +58,7 @@
   {% else %}
   <div class="muted" style="font-size:12.5px;">No refresh has run yet. It starts by itself on the first slow sweep after a deploy (after the issue scan, which takes a few minutes), or press “Refresh from TikTok” now — pick “last 7 days” for a first fill.</div>
   {% endif %}
+  {% if coverage.regions %}<div class="muted" style="font-size:11px;margin-top:6px;">Location names: {{ coverage.regions }}</div>{% endif %}
 </div>
 
 {% if not has_data %}
