@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from .. import config, models, queries
 from ..database import get_db
+from ..settings_store import get_settings
 from ..templating import render
 
 router = APIRouter()
@@ -185,6 +186,7 @@ def creatives_page(request: Request, db: Session = Depends(get_db)):
         "carousels": carousels, "slide_map": slide_map, "dims": dims,
         "image_pool": [r for r in images if r.status == "available"],
         "browse_account": browse,
+        "source_mode": get_settings(db).get("source_mode", "campaign"),
         "rows": videos, "images": images, "img_tags": img_tags, "img_counts": img_counts, "editable_text": editable_text,
         "accounts": accounts, "available": available,
         "nb_configured": nanobanana.configured(), "nb_models": nb_models,

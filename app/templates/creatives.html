@@ -8,7 +8,7 @@
     <div class="muted" style="font-size:12.5px;">{{ n_fresh }} fresh · {{ n_videos - n_fresh }} launched{% if processing %} · {{ processing }} enhancing…{% endif %} · {{ images|length }} images · {{ carousels|length }} carousels{% if archived_rows %} · {{ archived_rows|length }} archived{% endif %}</div></div>
   <div class="actions">
     <button type="button" class="btn" id="uploadBtn">⬆ Upload</button>
-    <a class="btn primary" href="/creatives?view=carousels#czBuilder">+ New carousel</a>
+    {% if view == 'carousels' %}<button type="button" class="btn primary" id="czNew">+ New carousel</button>{% else %}<a class="btn primary" href="/creatives?view=carousels&new=1">+ New carousel</a>{% endif %}
   </div>
 </div>
 <div class="seg" style="margin-bottom:12px;">
@@ -53,65 +53,101 @@
 
 {% elif view == 'carousels' %}
 {# ============================== CAROUSELS ============================== #}
-<div class="card" id="czBuilder">
-  <div class="card-header"><span class="card-title">Build a carousel</span>
-    <span class="card-meta">2–35 slides from your image shelf, in order (first = cover) · one TikTok soundtrack (required)</span></div>
+{# The builder lives hidden here and is moved into a pop-up (UI.modal) by "+ New carousel" — three steps: slides → soundtrack → name & save #}
+<div id="czBuilder" hidden>
   {% if not image_pool %}
-  <div class="empty" style="padding:22px 0;">No available images yet — upload or generate some on the <a href="/creatives#images">Library</a> first.</div>
+  <div class="empty" style="padding:22px 0;">No available images yet — upload or generate some on the <a href="/creatives?view=images">Images</a> tab first.</div>
   {% else %}
-  <form method="post" action="/creatives/carousel/save" id="czForm">
-    <div class="form-row" style="grid-template-columns:1.2fr 1fr;gap:16px;">
-      <div>
-        <div class="field-label" style="margin-bottom:6px;">1 · Pick slides <span class="muted" id="czCount">(0 selected)</span></div>
-        <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;"><div class="search-wrap" style="max-width:220px;"><input type="text" id="czPoolQ" placeholder="Filter images…"></div><span class="muted" style="font-size:11.5px;">{{ image_pool|length }} images · click to add, click again to remove · numbers show the slide order</span></div>
-        <div class="cz-pool" id="czPool">
-          {% for r in image_pool %}
-          <span class="cz-tile" data-name="{{ r.name|lower }}">
-            <button type="button" class="cz-img" data-id="{{ r.id }}" title="{{ r.name }}">
-              <img src="/creatives/{{ r.id }}/thumb" alt="" loading="lazy" decoding="async"><span class="cz-badge"></span>
-            </button>
-            <button type="button" class="cz-t txtBtn" data-id="{{ r.id }}" data-name="{{ r.name }}" data-src="/creatives/{{ r.id }}/file" data-back="carousels" title="Add text to this image">T</button>
-            <span class="cz-name">{{ r.name }}</span>
-          </span>
-          {% endfor %}
-        </div>
-        <div class="field-label" style="margin:12px 0 6px;">Slide order <span class="muted">(click a slide to move it: ← → ✕)</span></div>
-        <div class="cz-strip" id="czStrip"><span class="muted" style="font-size:12px;">Nothing selected yet.</span></div>
-      </div>
-      <div>
-        <div class="field-label" style="margin-bottom:6px;">2 · Soundtrack <span class="muted">from TikTok{% if browse_account %} · via {{ browse_account.advertiser_name or browse_account.advertiser_id }}{% endif %}</span></div>
-        {% if not browse_account %}
-        <div class="hint" style="color:var(--err);">No connected ad account — connect TikTok to browse the music library.</div>
-        {% else %}
-        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">
-          <input type="text" id="czQ" placeholder="Search the whole library (name or artist)…" style="flex:1;min-width:180px;">
-          <select id="czStyle" style="width:auto;font-size:12px;" title="Genre / style"><option value="">All styles</option></select>
-          <button type="button" class="btn" id="czSearch">Browse</button>
-          <button type="button" class="btn" id="czRecommend" title="TikTok recommends music for the slides you picked">✨ For my slides</button>
-          <button type="button" class="btn sm" data-mode="keyword" title="Ask TikTok's own fuzzy search (200 per page)">TikTok search</button>
-          <button type="button" class="btn sm" data-mode="uploads">My uploads</button>
-          <button type="button" class="btn sm" data-mode="liked">Liked</button>
-          <button type="button" class="btn sm" data-mode="history">Recent</button>
-        </div>
-        <div id="czMusicStatus" class="muted" style="font-size:12px;margin-bottom:6px;"></div>
-        <div class="cz-music" id="czMusic"></div>
-        <div style="display:flex;gap:8px;align-items:center;justify-content:space-between;margin-top:6px;font-size:11.5px;" class="muted">
-          <span id="czLibInfo">Library: loading…</span>
-          <span style="display:flex;gap:6px;align-items:center;"><button type="button" class="btn sm" id="czMore" hidden>More</button>
-<button type="submit" form="czSyncForm" class="btn sm" title="Re-read every page of TikTok's Audio Library and re-check which tracks Carousel Ads accept (runs in the background)">↻ Refresh library</button></span>
-        </div>
-        <div id="czPicked" class="cz-picked" style="display:none;"></div>
-        <audio id="czAudio" preload="none"></audio>
-        {% endif %}
-      </div>
+  <form method="post" action="/creatives/carousel/save" id="czForm" novalidate>
+    <div class="cz-steps" id="czSteps">
+      <button type="button" class="on" data-step="1"><span class="pf-no">1</span>Slides<span class="cz-step-sub" id="czSub1">none picked</span></button>
+      <button type="button" data-step="2"><span class="pf-no">2</span>Soundtrack<span class="cz-step-sub" id="czSub2">not chosen</span></button>
+      <button type="button" data-step="3"><span class="pf-no">3</span>Name &amp; save<span class="cz-step-sub" id="czSub3"></span></button>
     </div>
-    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px;border-top:1px solid var(--border-soft);padding-top:12px;">
-      <input type="text" name="name" placeholder="Carousel name" required style="width:240px;">
-      <input type="text" name="source" placeholder="source (static mode only)" style="width:190px;">
-      <input type="hidden" name="image_ids" id="czIds"><input type="hidden" name="music_id" id="czMusicId">
-      <input type="hidden" name="music_name" id="czMusicName"><input type="hidden" name="music_author" id="czMusicAuthor">
-      <button class="btn primary" type="submit" id="czSave" disabled>Save carousel</button>
-      <span class="hint">Caption + CTA come from the preset at launch (TikTok allows one for the whole carousel). Slides are delivered in TikTok's carousel sizes automatically — 720×1280 vertical, 640×640 square, 1200×628 horizontal — so design at 9:16, 1:1 or 1.91:1 to avoid any cropping.</span>
+
+    {# ---- step 1: slides ---- #}
+    <section class="cz-step" data-step="1">
+      <div class="cz-step-head">
+        <div><b>Pick 2–35 images</b> <span class="muted">· click to add, click again to remove · the first one is the cover</span></div>
+        <span class="muted" id="czCount">(0 selected)</span>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;"><div class="search-wrap" style="max-width:240px;"><input type="text" id="czPoolQ" placeholder="Filter {{ image_pool|length }} images…"></div><span class="muted" style="font-size:11.5px;">Hover an image and press <b>T</b> to add text to it first.</span></div>
+      <div class="cz-pool" id="czPool">
+        {% for r in image_pool %}
+        <span class="cz-tile" data-name="{{ r.name|lower }}">
+          <button type="button" class="cz-img" data-id="{{ r.id }}" title="{{ r.name }}">
+            <img src="/creatives/{{ r.id }}/thumb" alt="" loading="lazy" decoding="async"><span class="cz-badge"></span>
+          </button>
+          <button type="button" class="cz-t txtBtn" data-id="{{ r.id }}" data-name="{{ r.name }}" data-src="/creatives/{{ r.id }}/file" data-back="carousels" title="Add text to this image">T</button>
+          <span class="cz-name">{{ r.name }}</span>
+        </span>
+        {% endfor %}
+      </div>
+      <div class="field-label" style="margin:12px 0 6px;">Slide order <span class="muted">· ← → to move, ✕ to remove</span></div>
+      <div class="cz-strip" id="czStrip"><span class="muted" style="font-size:12px;">Nothing selected yet.</span></div>
+    </section>
+
+    {# ---- step 2: soundtrack ---- #}
+    <section class="cz-step" data-step="2" hidden>
+      {% if not browse_account %}
+      <div class="hint" style="color:var(--err);">No connected ad account — connect TikTok to browse the music library.</div>
+      {% else %}
+      <div id="czPicked" class="cz-picked" style="display:none;"></div>
+      <div class="cz-step-head">
+        <div><b>Choose one TikTok soundtrack</b> <span class="muted">· required by TikTok for carousel ads{% if browse_account %} · browsing as {{ browse_account.advertiser_name or browse_account.advertiser_id }}{% endif %}</span></div>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">
+        <div class="search-wrap" style="flex:1;min-width:200px;"><input type="text" id="czQ" placeholder="Search by track or artist…"></div>
+        <select id="czStyle" style="width:auto;font-size:12px;" title="Genre / style"><option value="">All styles</option></select>
+        <button type="button" class="btn" id="czSearch">Search</button>
+        <button type="button" class="btn" id="czRecommend" title="TikTok recommends music for the slides you picked">✨ Suggest for my slides</button>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">
+        <span class="seg" id="czModes"><button type="button" class="on" data-mode="library">Library</button><button type="button" data-mode="keyword" title="TikTok's own fuzzy search (200 per page)">TikTok search</button><button type="button" data-mode="uploads">My uploads</button><button type="button" data-mode="liked">Liked</button><button type="button" data-mode="history">Recent</button></span>
+        <span id="czMusicStatus" class="muted" style="font-size:12px;"></span>
+      </div>
+      <div class="cz-music" id="czMusic"></div>
+      <div style="display:flex;gap:8px;align-items:center;justify-content:space-between;margin-top:6px;font-size:11.5px;" class="muted">
+        <span id="czLibInfo">Library: loading…</span>
+        <span style="display:flex;gap:6px;align-items:center;"><button type="button" class="btn sm" id="czMore" hidden>More</button>
+<button type="submit" form="czSyncForm" class="btn sm ghost" title="Re-read every page of TikTok's Audio Library and re-check which tracks Carousel Ads accept (runs in the background)">↻ Refresh library</button></span>
+      </div>
+      <audio id="czAudio" preload="none"></audio>
+      {% endif %}
+    </section>
+
+    {# ---- step 3: name & save ---- #}
+    <section class="cz-step" data-step="3" hidden>
+      <div class="cz-review">
+        <div>
+          <div class="field-label">Slides <span class="muted" id="czRevCount"></span></div>
+          <div class="cz-strip cz-strip-ro" id="czReview"></div>
+          <div class="field-label" style="margin-top:10px;">Soundtrack</div>
+          <div id="czRevMusic" class="cz-picked" style="margin:0;"></div>
+        </div>
+        <div>
+          <label class="field-label" for="czName">Carousel name</label>
+          <input type="text" name="name" id="czName" placeholder="e.g. summer_offer_v1" required autocomplete="off">
+          <div class="hint" style="margin-top:4px;">Shown in the library and on Results — pick something you'll recognise.</div>
+          {% if source_mode == 'static' %}
+          <label class="field-label" for="czSource" style="margin-top:12px;">Source <span class="muted">· static mode</span></label>
+          <input type="text" name="source" id="czSource" placeholder="e.g. offerA" autocomplete="off">
+          <div class="hint" style="margin-top:4px;">Your postbacks report this source, so revenue lands on this carousel.</div>
+          {% else %}
+          <input type="hidden" name="source" value="">
+          {% endif %}
+          <div class="hint" style="margin-top:14px;">Caption + CTA come from the preset at launch (TikTok allows one for the whole carousel). Slides are delivered in TikTok's carousel sizes automatically — 720×1280, 640×640 or 1200×628 — so design at 9:16, 1:1 or 1.91:1 to avoid cropping.</div>
+        </div>
+      </div>
+    </section>
+
+    <input type="hidden" name="image_ids" id="czIds"><input type="hidden" name="music_id" id="czMusicId">
+    <input type="hidden" name="music_name" id="czMusicName"><input type="hidden" name="music_author" id="czMusicAuthor">
+    <div class="cz-foot">
+      <button type="button" class="btn" id="czBack" hidden>← Back</button>
+      <span class="muted" id="czFootHint" style="font-size:12px;"></span>
+      <button type="button" class="btn primary" id="czNext" disabled>Next: soundtrack →</button>
+      <button type="submit" class="btn primary" id="czSave" disabled hidden>Save carousel</button>
     </div>
   </form>
   {# a nested <form> would silently end the builder form (the browser closes it) — the sync form lives outside and its button targets it via form="…" #}
@@ -134,7 +170,7 @@
         <td>{% if cz.status == 'available' %}<span class="pill ok">Available</span>{% else %}<span class="pill dim">Launched</span>{% endif %}</td>
         <td class="muted" style="font-size:12px;">
           {% if cz.used_campaign_id %}
-            <a href="/campaigns/{{ cz.used_advertiser_id }}/{{ cz.used_campaign_id }}/edit" style="color:inherit;font-weight:600;">{{ (camp.campaign_name if camp else cz.used_campaign_id)[:30] }}</a>
+            <a href="/campaigns/?state=all&q={{ (camp.campaign_name if camp else cz.used_campaign_id)|urlencode }}" style="color:inherit;font-weight:600;">{{ (camp.campaign_name if camp else cz.used_campaign_id)[:30] }}</a>
             <div style="font-size:11px;">{{ accounts.get(cz.used_advertiser_id, cz.used_advertiser_id)[:26] }}</div>
           {% else %}—{% endif %}
         </td>
@@ -144,7 +180,7 @@
     </tbody>
   </table>
   {% else %}
-  <div class="empty"><div class="empty-title">No carousels yet</div>Pick 2–35 slides above, choose a soundtrack, and save — the launchers pick the next unused one automatically.</div>
+  <div class="empty"><div class="empty-title">No carousels yet</div>Hit <b>+ New carousel</b>, pick 2–35 slides, choose a soundtrack and save — the launchers pick the next unused one automatically.</div>
   {% endif %}
 </div>
 
@@ -152,63 +188,60 @@
 {% if view in ('library', 'archive') %}
 {# ============================== LIBRARY ============================== #}
 <div id="uploadBox" hidden>
-<div class="card" style="margin-bottom:0;box-shadow:none;background:transparent;padding:0;">
-  <div class="card-header"><span class="card-title">Upload videos &amp; images</span>
-    <span class="card-meta">videos: mp4 · mov · webm up to 500MB — images: png · jpg · webp up to 25MB (they land on the <a href="#images">image shelf</a>)</span></div>
-  <form method="post" action="/creatives/upload" enctype="multipart/form-data"
-        style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-    <input type="file" name="files" accept="video/*,image/png,image/jpeg,image/webp" multiple required style="width:auto;">
-    <input type="text" name="source_prefix" placeholder="source prefix (optional, e.g. offerA)"
-           style="width:230px;">
-    <button class="btn primary" type="submit">⬆ Upload</button>
-    <span class="hint" style="flex-basis:100%;">Source prefix only matters in <b>static</b> source mode (Settings). In the default <b>campaign-name</b> mode every launch is attributed by its campaign name automatically.</span>
+<div>
+  <form method="post" action="/creatives/upload" enctype="multipart/form-data" id="upForm" novalidate>
+    <div class="cz-steps" id="upSteps">
+      <button type="button" class="on" data-step="1"><span class="pf-no">1</span>Files<span class="cz-step-sub" id="upSub1">none chosen</span></button>
+      <button type="button" data-step="2"><span class="pf-no">2</span>Variations<span class="cz-step-sub" id="upSub2"></span></button>
+    </div>
 
-    <div style="flex-basis:100%;border-top:1px solid var(--border);margin:6px 0 2px;"></div>
-    <label style="display:flex;align-items:center;gap:8px;font-weight:600;font-size:13px;
-                  color:var(--text-soft);cursor:pointer;">
-      <input type="checkbox" name="freshen" id="freshenChk" value="1" checked style="width:auto;">
-      ✨ Create variations — turn each upload into N distinct copies, each a new video to TikTok
-    </label>
+    <section class="cz-step" data-step="1">
+      <label class="up-drop" id="upDrop">
+        <input type="file" name="files" id="upFiles" accept="video/*,image/png,image/jpeg,image/webp" multiple required>
+        <span class="up-drop-in"><b>Drop videos or images here</b> — or click to choose<span class="muted">videos: mp4 · mov · webm up to 500 MB · images: png · jpg · webp up to 25 MB (they land on the Images tab)</span></span>
+      </label>
+      <div id="upList" class="up-list" hidden></div>
+      {% if source_mode == 'static' %}
+      <label class="field" style="margin-top:12px;"><span class="field-label">Source prefix <span class="muted">· static source mode</span></span>
+        <input type="text" name="source_prefix" placeholder="e.g. offerA" style="max-width:260px;">
+        <span class="hint">Your postbacks report this source, so revenue lands on these creatives.</span></label>
+      {% endif %}
+    </section>
 
-    <span id="freshenOpts" style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start;">
-      <label class="field" style="margin:0;"><span class="field-label">Variations per file</span>
-        <input type="number" name="variants" value="1" min="1" max="30" style="width:80px;">
-        <span class="hint">1 upload → N distinct copies.</span></label>
-
-      <div style="border-left:2px solid var(--accent-soft);padding-left:12px;">
-        <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-soft);cursor:pointer;">
-          <input type="checkbox" name="uniquify" value="1" checked style="width:auto;"> <b>Uniquify</b> — slowdown + slight colour + audio shift
-        </label>
-        <label class="field" style="margin:4px 0 0;"><span class="field-label">Strength</span>
-          <select name="intensity" style="width:auto;">
-            <option value="light">Light</option>
-            <option value="medium" selected>Medium</option>
-            <option value="strong">Strong</option>
-          </select></label>
-        <span class="hint" style="max-width:260px;display:block;">Shifts the video AND audio fingerprint so TikTok reads each copy as unique. Near-lossless — no crop or mirror, your on-screen text stays put.</span>
+    <section class="cz-step" data-step="2" hidden>
+      <label class="sw"><input type="checkbox" name="freshen" id="freshenChk" value="1" checked><span class="tog"></span><span><b>✨ Create variations</b><span class="muted" style="display:block;font-size:11.5px;">Turn each upload into N distinct copies — TikTok reads every copy as a new video. Images are never altered.</span></span></label>
+      <div id="freshenOpts" style="margin-top:14px;">
+        <div class="form-row-3">
+          <label class="field"><span class="field-label">Variations per file</span>
+            <input type="number" name="variants" id="upVariants" value="1" min="1" max="30" style="width:90px;">
+            <span class="hint" style="display:block;">1 upload → N distinct copies (max 30).</span></label>
+          <div class="field"><span class="field-label">Uniquify</span>
+            <label class="sw"><input type="checkbox" name="uniquify" id="upUniq" value="1" checked><span class="tog"></span><span>Shift the video + audio fingerprint<span class="muted" style="display:block;font-size:11.5px;">Slowdown, slight colour and audio shift — near-lossless, no crop or mirror, your on-screen text stays put.</span></span></label>
+            <label class="field" style="margin:8px 0 0;"><span class="field-label">Strength</span>
+              <select name="intensity" style="width:auto;"><option value="light">Light</option><option value="medium" selected>Medium</option><option value="strong">Strong</option></select></label></div>
+          <div class="field"><span class="field-label">AI enhance <span class="muted">· TensorPix, optional</span></span>
+            {% if tp_configured %}
+            <select name="model_ids" id="upModels" multiple size="4" style="width:100%;">
+              {% for m in tp_models %}<option value="{{ m.id }}">{{ m.name }}{% if m.task %} · {{ m.task }}{% endif %}</option>{% endfor %}
+            </select>
+            <span class="hint" style="display:block;">A quality pass on top of Uniquify (Decompressor is a clean default). Costs TensorPix credits.</span>
+            {% else %}
+            <span class="hint" style="display:block;color:var(--text-dim);">Not connected — add <code>TENSORPIX_API_KEY</code> to enable. Uniquify works without it.</span>
+            {% endif %}
+            {% if tp_error %}<span class="hint" style="display:block;color:var(--err);">⚠ {{ tp_error }}</span>{% endif %}</div>
+        </div>
+        <div class="hint" style="margin-top:8px;">Variations render in the background and appear in the library as they finish. Uniquify or AI enhance — at least one must be on.</div>
       </div>
+    </section>
 
-      <div style="border-left:2px solid var(--accent-soft);padding-left:12px;">
-        <span class="field-label">AI enhance (TensorPix — optional)</span>
-        {% if tp_configured %}
-        <select name="model_ids" multiple size="4" style="width:auto;min-width:220px;">
-          {% for m in tp_models %}
-            <option value="{{ m.id }}">{{ m.name }}{% if m.task %} · {{ m.task }}{% endif %}</option>
-          {% endfor %}
-        </select>
-        <span class="hint" style="max-width:260px;display:block;">Optional quality pass on top of Uniquify (Decompressor is a clean default). Costs TensorPix credits.</span>
-        {% else %}
-        <span class="hint" style="max-width:240px;display:block;color:var(--text-dim);">Not connected — add <code>TENSORPIX_API_KEY</code> to enable. Uniquify works without it.</span>
-        {% endif %}
-        {% if tp_error %}<span class="hint" style="color:var(--err);">⚠ {{ tp_error }}</span>{% endif %}
-      </div>
-    </span>
-    <span class="hint" style="flex-basis:100%;">
-      Variations run asynchronously and appear as they finish. <b>Uniquify</b> is what makes each copy read as unique to TikTok (video + audio fingerprint); <b>AI enhance</b> is an optional quality bump. Use either or both — at least one is required.
-    </span>
+    <div class="cz-foot">
+      <button type="button" class="btn" id="upBack" hidden>← Back</button>
+      <span class="muted" id="upHint" style="font-size:12px;"></span>
+      <button type="button" class="btn primary" id="upNext" disabled>Next: variations →</button>
+      <button type="submit" class="btn primary" id="upGo" hidden>⬆ Upload</button>
+    </div>
   </form>
 </div>
-
 </div>
 {% set grid_rows = archived_rows if view == 'archive' else lib_videos %}
 {% if view == 'library' %}
@@ -249,28 +282,37 @@
 <div class="card" id="images" style="margin-top:14px;">
   <div class="card-header"><span class="card-title">🖼 Images</span>
     <span class="card-meta">{{ images|length }} image(s) · png · jpg · webp — edit or generate with AI (Nano Banana)</span></div>
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;">
+  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:4px;">
     <form method="post" action="/creatives/upload-images" enctype="multipart/form-data" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
       <input type="file" name="files" accept="image/png,image/jpeg,image/webp" multiple required style="width:auto;">
-      <input type="text" name="source_prefix" placeholder="source prefix (optional)" style="width:170px;">
+      {% if source_mode == 'static' %}<input type="text" name="source_prefix" placeholder="source prefix" style="width:150px;" title="Static source mode: postbacks report this source">{% endif %}
       <button class="btn primary" type="submit">⬆ Upload images</button>
     </form>
-    <div>
-      {% if nb_configured %}
-      <form method="post" action="/creatives/ai-generate" class="ai-form" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-        <input type="text" name="prompt" placeholder="Generate a new image from a prompt…" required style="flex:1;min-width:220px;">
-        <input type="text" name="name" placeholder="name" style="width:110px;">
-        <select name="model" class="ai-model" style="width:auto;">{% for m in nb_models %}<option value="{{ m.id }}" {{ 'selected' if m.id == nb_default }}>{{ m.label }}</option>{% endfor %}</select>
-        <select name="size" class="ai-size" style="width:auto;"></select>
-        <select name="aspect" style="width:auto;"><option value="">Aspect: auto</option>{% for a in nb_aspects %}<option value="{{ a }}">{{ a }}</option>{% endfor %}</select>
-        <input type="number" name="variants" class="ai-variants" value="1" min="1" max="8" style="width:64px;" title="how many">
-        <button class="btn" type="submit">✨ Generate <span class="ai-cost mono muted" style="font-size:11px;"></span></button>
-      </form>
-      {% else %}
-      <div class="hint">AI image editing is off — add <code>GEMINI_API_KEY</code> as an environment variable (Google AI Studio key) to enable “Edit with AI” and “Generate”.</div>
-      {% endif %}
-    </div>
+    {% if nb_configured %}
+    <button type="button" class="btn" id="genBtn" style="margin-left:auto;">✨ Generate with AI…</button>
+    {% else %}
+    <span class="hint" style="margin-left:auto;">AI image editing is off — add <code>GEMINI_API_KEY</code> as an environment variable (Google AI Studio key) to enable “Edit with AI” and “Generate”.</span>
+    {% endif %}
   </div>
+  {% if nb_configured %}
+  <div id="genBox" hidden>
+    <form method="post" action="/creatives/ai-generate" class="ai-form" id="genForm">
+      <label class="field"><span class="field-label">Describe the image</span>
+        <textarea name="prompt" required placeholder="e.g. A bright kitchen counter with a glass of iced matcha, morning light, product photo style, vertical 9:16" style="min-height:96px;font-family:var(--font-sans);font-size:13px;"></textarea></label>
+      <div class="form-row-3">
+        <label class="field"><span class="field-label">Name <span class="muted">(optional)</span></span><input type="text" name="name" placeholder="matcha_kitchen"></label>
+        <label class="field"><span class="field-label">Model</span><select name="model" class="ai-model">{% for m in nb_models %}<option value="{{ m.id }}" {{ 'selected' if m.id == nb_default }}>{{ m.label }}</option>{% endfor %}</select></label>
+        <label class="field"><span class="field-label">Resolution</span><select name="size" class="ai-size"></select></label>
+      </div>
+      <div class="form-row-3">
+        <label class="field"><span class="field-label">Aspect</span><select name="aspect"><option value="">Auto</option>{% for a in nb_aspects %}<option value="{{ a }}">{{ a }}</option>{% endfor %}</select></label>
+        <label class="field"><span class="field-label">How many</span><input type="number" name="variants" class="ai-variants" value="1" min="1" max="8"></label>
+        <div class="field"><span class="field-label">Estimated cost</span><div style="padding:8px 0;"><b class="ai-cost mono"></b> <span class="muted" style="font-size:11.5px;">Google list price</span></div></div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:4px;"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary" type="submit">✨ Generate</button></div>
+    </form>
+  </div>
+  {% endif %}
 
   {% if images %}
   <div class="img-tools">
@@ -446,10 +488,50 @@
   });
   document.addEventListener("click", function () { document.querySelectorAll("[data-fsel].open").forEach(function (o) { o.classList.remove("open"); }); });
 
-  // ---- library: hide variation options when the toggle is off ----
-  var chk = document.getElementById("freshenChk"), opts = document.getElementById("freshenOpts");
-  function syncFreshen() { if (opts) opts.style.display = chk.checked ? "flex" : "none"; }
-  if (chk) { chk.addEventListener("change", syncFreshen); syncFreshen(); }
+  // ---- generate-with-AI pop-up ----
+  var genBtn = document.getElementById("genBtn"), genBox = document.getElementById("genBox");
+  if (genBtn && genBox) genBtn.addEventListener("click", function () {
+    var node = genBox.firstElementChild; genBox.hidden = false;
+    UI.modal({ title: "✨ Generate an image", body: node, onClose: function () { genBox.appendChild(node); genBox.hidden = true; } });
+  });
+
+  // ---- upload pop-up: 2 steps (files → variations) ----
+  var upForm = document.getElementById("upForm");
+  if (upForm) {
+    var chk = document.getElementById("freshenChk"), opts = document.getElementById("freshenOpts"), files = document.getElementById("upFiles"), upList = document.getElementById("upList");
+    var upNext = document.getElementById("upNext"), upBack = document.getElementById("upBack"), upGo = document.getElementById("upGo"), upHint = document.getElementById("upHint"), upStep = 1;
+    function fmtMb(b) { return b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.round(b / 1024) + " KB"; }
+    function upSummary() {
+      var n = files.files.length, nv = 0, nb = 0; for (var i = 0; i < n; i++) { nb += files.files[i].size; if (/^video\//.test(files.files[i].type)) nv++; }
+      var v = parseInt(document.getElementById("upVariants").value, 10) || 1, models = document.getElementById("upModels"), nm = models ? models.selectedOptions.length : 0;
+      var uniq = document.getElementById("upUniq").checked;
+      document.getElementById("upSub1").textContent = n ? n + " file" + (n === 1 ? "" : "s") + " · " + fmtMb(nb) : "none chosen";
+      document.getElementById("upSub2").textContent = chk.checked ? v + " per file · " + (uniq ? "uniquify" : "") + (uniq && nm ? " + " : "") + (nm ? nm + " AI model" + (nm === 1 ? "" : "s") : "") : "off";
+      opts.hidden = !chk.checked;
+      var bad = chk.checked && !uniq && !nm && nv > 0;
+      upHint.textContent = upStep === 1 ? (n ? n + " file" + (n === 1 ? "" : "s") + " ready" : "Choose at least one file") : (bad ? "Turn on Uniquify or pick an AI model (or switch variations off)" : (chk.checked && nv ? nv * v + " video" + (nv * v === 1 ? "" : "s") + " will land in the library" : n + " file" + (n === 1 ? "" : "s") + " as-is"));
+      upNext.disabled = !n; upGo.disabled = !n || bad;
+    }
+    function upShow(n) {
+      upStep = n; document.querySelectorAll("#upForm .cz-step").forEach(function (s) { s.hidden = Number(s.dataset.step) !== n; });
+      document.querySelectorAll("#upSteps button").forEach(function (b) { var k = Number(b.dataset.step); b.classList.toggle("on", k === n); b.classList.toggle("done", k === 1 && files.files.length > 0); });
+      upBack.hidden = n === 1; upNext.hidden = n === 2; upGo.hidden = n !== 2; upSummary();
+    }
+    files.addEventListener("change", function () {
+      var n = files.files.length; upList.hidden = !n;
+      upList.innerHTML = Array.prototype.slice.call(files.files).slice(0, 40).map(function (f) { return '<div class="up-row"><span class="up-kind">' + (/^video\//.test(f.type) ? "🎬" : "🖼") + '</span><span class="up-name">' + UI.esc(f.name) + '</span><span class="muted mono">' + fmtMb(f.size) + '</span></div>'; }).join("") + (n > 40 ? '<div class="muted" style="padding:4px 8px;">+ ' + (n - 40) + ' more</div>' : "");
+      upShow(1);
+    });
+    var drop = document.getElementById("upDrop");
+    ["dragenter", "dragover"].forEach(function (ev) { drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.add("over"); }); });
+    ["dragleave", "drop"].forEach(function (ev) { drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.remove("over"); }); });
+    drop.addEventListener("drop", function (e) { if (e.dataTransfer && e.dataTransfer.files.length) { files.files = e.dataTransfer.files; files.dispatchEvent(new Event("change")); } });
+    document.getElementById("upSteps").addEventListener("click", function (e) { var b = e.target.closest("button[data-step]"); if (!b) return; if (Number(b.dataset.step) === 2 && !files.files.length) { adopsToast && adopsToast("err", "Choose at least one file first."); return; } upShow(Number(b.dataset.step)); });
+    upNext.addEventListener("click", function () { upShow(2); }); upBack.addEventListener("click", function () { upShow(1); });
+    ["change", "input"].forEach(function (ev) { upForm.addEventListener(ev, upSummary); });
+    upForm.addEventListener("submit", function (e) { upSummary(); if (upGo.disabled) { e.preventDefault(); upShow(files.files.length ? 2 : 1); return; } upGo.disabled = true; upGo.textContent = "Uploading…"; });
+    upShow(1);
+  }
   // ---- image shelf: search / type filter / size / select / auto-save / paging ----
   (function () {
     var grid = document.getElementById("imgGrid"); if (!grid) return;
@@ -680,10 +762,9 @@
   modal.addEventListener("click", function (e) { if (e.target === modal) closeModal(); });
   document.addEventListener("keydown", function (e) { if (e.key === "Escape" && modal.style.display === "flex") closeModal(); });
 
-  // ---- carousel builder ----
-  var czForm = document.getElementById("czForm");
-  if (czForm) {
-    var picked = [], music = null;
+  // ---- carousel builder (3-step pop-up) ----
+  var czBox = document.getElementById("czBuilder"), czForm = document.getElementById("czForm"), czNewBtn = document.getElementById("czNew");
+  if (czBox) {
     document.addEventListener("click", function (e) {
       var b = e.target.closest(".cz-del"); if (!b) return;
       var d = b.dataset, launched = d.status !== "available";
@@ -696,9 +777,50 @@
         });
       });
     });
+    // the builder markup is rendered hidden and moved into a pop-up; closing puts it back (state survives reopen)
+    var czOpen = null, czStarted = false;
+    function openBuilder() {
+      if (czOpen) return;
+      var kids = Array.prototype.slice.call(czBox.children);
+      var holder = document.createElement("div"); kids.forEach(function (k) { holder.appendChild(k); });
+      czOpen = UI.modal({ title: "New carousel", body: holder, wide: true, sticky: true, onClose: function () {
+        Array.prototype.slice.call(holder.children).forEach(function (k) { czBox.appendChild(k); }); czOpen = null;
+        var a = document.getElementById("czAudio"); if (a) a.pause();
+      } });
+      czOpen.el.classList.add("cz-modal");
+      startMusic();
+    }
+    if (czNewBtn) czNewBtn.addEventListener("click", openBuilder);
+    if (/[?&]new=1/.test(location.search) || location.hash === "#czBuilder") { openBuilder(); if (history.replaceState) history.replaceState(null, "", "/creatives?view=carousels"); }
+    if (czForm) {
+    var picked = [], music = null, step = 1;
     var pool = document.querySelectorAll(".cz-img"), strip = document.getElementById("czStrip");
     var poolQ = document.getElementById("czPoolQ");
     if (poolQ) poolQ.addEventListener("input", function () { var q = this.value.trim().toLowerCase(); document.querySelectorAll("#czPool .cz-tile").forEach(function (t) { t.hidden = !!q && t.dataset.name.indexOf(q) < 0; }); });
+    var stepsBar = document.getElementById("czSteps"), nextBtn = document.getElementById("czNext"), backBtn = document.getElementById("czBack"), saveBtn = document.getElementById("czSave"), footHint = document.getElementById("czFootHint");
+    var hasMusicUI = !!document.getElementById("czMusic");
+    function slidesOk() { return picked.length >= 2 && picked.length <= 35; }
+    function goStep(n) {
+      if (n === 2 && !slidesOk()) n = 1;
+      if (n === 3 && !(slidesOk() && music)) n = music ? 1 : 2;
+      step = n;
+      document.querySelectorAll("#czForm .cz-step").forEach(function (s) { s.hidden = Number(s.dataset.step) !== n; });
+      stepsBar.querySelectorAll("button").forEach(function (b) { var k = Number(b.dataset.step); b.classList.toggle("on", k === n); b.classList.toggle("done", (k === 1 && slidesOk()) || (k === 2 && !!music)); });
+      backBtn.hidden = n === 1; nextBtn.hidden = n === 3; saveBtn.hidden = n !== 3;
+      nextBtn.textContent = n === 1 ? "Next: soundtrack →" : "Next: name & save →";
+      if (n === 3) { renderReview(); var nm = document.getElementById("czName"); setTimeout(function () { try { nm.focus(); } catch (e) {} }, 30); }
+      refreshFoot();
+      if (czOpen) czOpen.el.scrollTop = 0;
+    }
+    function refreshFoot() {
+      nextBtn.disabled = step === 1 ? !slidesOk() : !music;
+      footHint.textContent = step === 1 ? (picked.length < 2 ? "Pick at least 2 images to continue" : picked.length + " slide" + (picked.length === 1 ? "" : "s") + " · " + nameOf(picked[0]) + " is the cover")
+                           : step === 2 ? (music ? "🎵 " + music.name : (hasMusicUI ? "Pick a track with “Use” to continue" : "Connect a TikTok account to browse music")) : "";
+      document.getElementById("czSub1").textContent = picked.length ? picked.length + " picked" : "none picked";
+      document.getElementById("czSub2").textContent = music ? music.name : "not chosen";
+      var nm = document.getElementById("czName"); document.getElementById("czSub3").textContent = nm && nm.value.trim() ? nm.value.trim() : "";
+      saveBtn.disabled = !(slidesOk() && music);
+    }
     function nameOf(id) { var b = document.querySelector('.cz-img[data-id="' + id + '"]'); return b ? b.title : id; }
     function render() {
       pool.forEach(function (b) { var i = picked.indexOf(Number(b.dataset.id)); b.classList.toggle("on", i >= 0); b.querySelector(".cz-badge").textContent = i >= 0 ? (i + 1) : ""; });
@@ -708,11 +830,18 @@
           '<span class="cz-ctl"><button type="button" data-mv="-1" title="Move left">←</button><button type="button" data-mv="1" title="Move right">→</button><button type="button" data-rm="1" title="Remove">✕</button></span></div>';
       }).join("") : '<span class="muted" style="font-size:12px;">Nothing selected yet.</span>';
       document.getElementById("czIds").value = picked.join(",");
-      document.getElementById("czSave").disabled = !(picked.length >= 2 && picked.length <= 35 && music);
+      refreshFoot();
+    }
+    function renderReview() {
+      document.getElementById("czReview").innerHTML = picked.map(function (id, i) { return '<div class="cz-slide"><img src="/creatives/' + id + '/thumb" alt="" loading="lazy" decoding="async"><span class="cz-n">' + (i + 1) + (i === 0 ? " · cover" : "") + '</span></div>'; }).join("");
+      document.getElementById("czRevCount").textContent = "· " + picked.length + " slides";
+      document.getElementById("czRevMusic").innerHTML = music ? '🎵 <b>' + esc(music.name) + '</b>' + (music.author ? ' · ' + esc(music.author) : '') + (music.duration ? ' · ' + fmtDur(music.duration) : '') : '<span class="muted">none</span>';
+      var nm = document.getElementById("czName");
+      if (!nm.value.trim()) { var d = new Date(), pad = function (n) { return ("0" + n).slice(-2); }; nm.value = "carousel_" + pad(d.getMonth() + 1) + pad(d.getDate()) + "_" + picked.length + "slides"; }
     }
     pool.forEach(function (b) { b.addEventListener("click", function () {
       var id = Number(b.dataset.id), i = picked.indexOf(id);
-      if (i >= 0) picked.splice(i, 1); else if (picked.length < 35) picked.push(id);
+      if (i >= 0) picked.splice(i, 1); else if (picked.length < 35) picked.push(id); else { adopsToast && adopsToast("err", "TikTok allows at most 35 slides."); return; }
       render();
     }); });
     strip.addEventListener("click", function (e) {
@@ -722,27 +851,42 @@
       else { var j = i + Number(btn.dataset.mv); if (j < 0 || j >= picked.length) return; var t = picked[i]; picked[i] = picked[j]; picked[j] = t; }
       render();
     });
+    stepsBar.addEventListener("click", function (e) { var b = e.target.closest("button[data-step]"); if (b) goStep(Number(b.dataset.step)); });
+    nextBtn.addEventListener("click", function () { goStep(step + 1); });
+    backBtn.addEventListener("click", function () { goStep(step - 1); });
+    document.getElementById("czName").addEventListener("input", refreshFoot);
+    czForm.addEventListener("submit", function (e) {
+      if (!(slidesOk() && music)) { e.preventDefault(); goStep(slidesOk() ? 2 : 1); return; }
+      var nm = document.getElementById("czName"); if (!nm.value.trim()) { e.preventDefault(); goStep(3); nm.focus(); adopsToast && adopsToast("err", "Give the carousel a name."); return; }
+      saveBtn.disabled = true; saveBtn.textContent = "Saving…";
+    });
     // ---- soundtrack picker ----
     var list = document.getElementById("czMusic"), status = document.getElementById("czMusicStatus"), audio = document.getElementById("czAudio");
     function fmtDur(d) { d = Number(d || 0); return d ? Math.floor(d / 60) + ":" + ("0" + Math.round(d % 60)).slice(-2) : ""; }
     function esc(t) { var d = document.createElement("div"); d.textContent = t == null ? "" : String(t); return d.innerHTML; }
     function showPicked() {
       var el = document.getElementById("czPicked");
+      if (list) list.querySelectorAll(".cz-track").forEach(function (r) { var m = cur.items[Number(r.dataset.i)]; r.classList.toggle("on", !!(music && m && m.music_id === music.music_id)); });
+      document.getElementById("czMusicId").value = music ? music.music_id : ""; document.getElementById("czMusicName").value = music ? (music.name || "") : ""; document.getElementById("czMusicAuthor").value = music ? (music.author || "") : "";
+      if (!el) return;
       if (!music) { el.style.display = "none"; return; }
-      el.style.display = ""; el.innerHTML = '🎵 <b>' + esc(music.name) + '</b>' + (music.author ? ' · ' + esc(music.author) : '') + (music.duration ? ' · ' + fmtDur(music.duration) : '') + ' <button type="button" class="btn sm" id="czUnpick">change</button>';
-      document.getElementById("czMusicId").value = music.music_id; document.getElementById("czMusicName").value = music.name || ""; document.getElementById("czMusicAuthor").value = music.author || "";
+      el.style.display = ""; el.innerHTML = '✓ Chosen: 🎵 <b>' + esc(music.name) + '</b>' + (music.author ? ' · ' + esc(music.author) : '') + (music.duration ? ' · ' + fmtDur(music.duration) : '') + ' <button type="button" class="btn sm" id="czUnpick">Change</button>';
       document.getElementById("czUnpick").addEventListener("click", function () { music = null; showPicked(); render(); });
     }
     var moreBtn = document.getElementById("czMore"), libInfo = document.getElementById("czLibInfo"), styleSel = document.getElementById("czStyle");
     var cur = { mode: "library", page: 1, pages: 1, items: [] };
+    function startMusic() { if (czStarted || !list) return; czStarted = true; search("library"); }   // the library loads the first time the pop-up opens, not on every page view
     function fmtAgo(iso) { if (!iso) return "never"; var d = (Date.now() - new Date(iso).getTime()) / 864e5; return d < 1 ? "today" : Math.round(d) + " day(s) ago"; }
     function search(mode, page) {
+      if (!list) return;
       page = page || 1;
-      var url = mode === "library" ? "/creatives/music/library?page=" + page + "&q=" + encodeURIComponent(document.getElementById("czQ").value.trim()) + "&style=" + encodeURIComponent(styleSel.value)
+      var q = document.getElementById("czQ").value.trim();
+      var url = mode === "library" ? "/creatives/music/library?page=" + page + "&q=" + encodeURIComponent(q) + "&style=" + encodeURIComponent(styleSel.value)
                                    : "/creatives/music/search?mode=" + mode + "&page=" + page;
-      if (mode === "keyword") url += "&q=" + encodeURIComponent(document.getElementById("czQ").value.trim());
+      if (mode === "keyword") url += "&q=" + encodeURIComponent(q);
       if (mode === "recommend") { if (picked.length < 2) { status.textContent = "Pick at least 2 slides first."; return; } url += "&images=" + picked.join(","); }
-      status.textContent = mode === "recommend" ? "Uploading slides to TikTok and asking for recommendations…" : "Searching…";
+      document.querySelectorAll("#czModes [data-mode]").forEach(function (b) { b.classList.toggle("on", b.dataset.mode === mode); });
+      status.textContent = mode === "recommend" ? "Uploading slides to TikTok and asking for suggestions…" : "Searching…";
       if (page === 1) { list.innerHTML = ""; cur = { mode: mode, page: 1, pages: 1, items: [] }; }
       fetch(url).then(function (r) { return r.json(); }).then(function (d) {
         if (!d.ok) { status.textContent = d.error || "Search failed"; moreBtn.hidden = true; return; }
@@ -750,7 +894,7 @@
         moreBtn.hidden = !(cur.pages > cur.page && (mode === "library" || mode === "keyword"));
         if (mode === "library") {
           if (d.styles && styleSel.options.length <= 1) d.styles.forEach(function (st) { var o = document.createElement("option"); o.value = st[0]; o.textContent = st[0] + " (" + st[1] + ")"; styleSel.appendChild(o); });
-          libInfo.textContent = d.total === 0 && !d.synced_at ? (d.syncing ? "Library is being downloaded from TikTok right now — check the Jobs page." : "Library not downloaded yet — hit Refresh library once (it runs in the background).")
+          libInfo.textContent = d.total === 0 && !d.synced_at ? (d.syncing ? "Library is being downloaded from TikTok right now — check Jobs." : "Library not downloaded yet — hit Refresh library once (it runs in the background).")
                                 : "Library: " + (d.status || d.total + " tracks") + " · synced " + fmtAgo(d.synced_at) + (d.syncing ? " · refreshing now" : "");
         }
         status.textContent = cur.items.length ? (cur.items.length + " track(s)" + (d.total && d.total > cur.items.length ? " of " + d.total : "")) : (mode === "library" ? "No tracks match." : "No music found — try another word.");
@@ -769,18 +913,23 @@
             list.querySelectorAll("[data-play]").forEach(function (x) { x.textContent = "▶"; });
             audio.src = m.url; audio.play().then(function () { pb.textContent = "⏸"; }).catch(function () { status.textContent = "Preview couldn't play (TikTok preview links expire after 12h — search again)."; });
           });
-          row.querySelector("[data-pick]").addEventListener("click", function () { music = m; audio.pause(); showPicked(); render(); });
+          row.querySelector("[data-pick]").addEventListener("click", function () { music = m; audio.pause(); showPicked(); render(); if (czOpen) czOpen.el.scrollTop = 0; });
+          if (music && music.music_id === m.music_id) row.classList.add("on");
         });
       }).catch(function () { status.textContent = "Search failed — check the connection."; });
     }
-    audio.addEventListener("ended", function () { list.querySelectorAll("[data-play]").forEach(function (x) { x.textContent = "▶"; }); });
-    document.getElementById("czSearch").addEventListener("click", function () { search("library"); });
-    styleSel.addEventListener("change", function () { search("library"); });
-    document.getElementById("czQ").addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); search("library"); } });
-    document.getElementById("czRecommend").addEventListener("click", function () { search("recommend"); });
-    moreBtn.addEventListener("click", function () { search(cur.mode, cur.page + 1); });
-    document.querySelectorAll("[data-mode]").forEach(function (b) { b.addEventListener("click", function () { search(b.dataset.mode); }); });
-    render(); search("library");
+    if (list) {
+      audio.addEventListener("ended", function () { list.querySelectorAll("[data-play]").forEach(function (x) { x.textContent = "▶"; }); });
+      document.getElementById("czSearch").addEventListener("click", function () { search(cur.mode === "keyword" ? "keyword" : "library"); });
+      styleSel.addEventListener("change", function () { search("library"); });
+      document.getElementById("czQ").addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); search(cur.mode === "keyword" ? "keyword" : "library"); } });
+      document.getElementById("czRecommend").addEventListener("click", function () { search("recommend"); });
+      moreBtn.addEventListener("click", function () { search(cur.mode, cur.page + 1); });
+      document.querySelectorAll("#czModes [data-mode]").forEach(function (b) { b.addEventListener("click", function () { search(b.dataset.mode); }); });
+    }
+    render(); goStep(1);
+    if (czOpen) startMusic();
+    }
   }
 
   // ---- performance: side player driven by the leaderboard ----

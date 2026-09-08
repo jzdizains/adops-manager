@@ -1030,3 +1030,34 @@ table.data.aud thead th:first-child { white-space: nowrap; }
 .cr-grid.selmode .cr-tile .cr-play { display: none; }
 .cr-tile.sel { outline: 2px solid var(--accent); outline-offset: -2px; }
 .cr-tile.sel .cr-thumb::after { content: ""; position: absolute; inset: 0; background: color-mix(in srgb, var(--accent) 22%, transparent); pointer-events: none; }
+
+/* ---- carousel builder pop-up: 3 steps ---- */
+.modal.cz-modal { width: min(1040px, 100%); }
+.cz-steps { display: flex; gap: 4px; padding: 4px; margin: 0 0 14px; border: 1px solid var(--card-border); border-radius: 14px; background: var(--raised); }
+.cz-steps button { flex: 1; display: flex; align-items: center; gap: 0; min-width: 0; font: inherit; font-size: 13px; font-weight: 600; color: var(--text-dim); background: transparent; border: none; border-radius: 10px; padding: 8px 12px; cursor: pointer; text-align: left; }
+.cz-steps button:hover { background: var(--panel-hover); color: var(--text); }
+.cz-steps button.on { background: var(--panel-hover); color: var(--text); }
+.cz-steps button.on .pf-no, .cz-steps button.done .pf-no { background: var(--accent); color: var(--on-accent); }
+.cz-steps .cz-step-sub { margin-left: auto; padding-left: 10px; font-size: 11px; font-weight: 500; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 55%; }
+.cz-step-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 10px; font-size: 13px; }
+.cz-modal .cz-pool { max-height: min(46vh, 460px); }
+.cz-modal .cz-music { max-height: min(44vh, 420px); }
+.cz-strip-ro .cz-slide { width: 72px; } .cz-strip-ro .cz-slide img { width: 72px; height: 96px; }
+.cz-review { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(280px, 1fr); gap: 20px; align-items: start; }
+.cz-review input[type=text] { width: 100%; }
+.cz-foot { display: flex; align-items: center; gap: 10px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border-soft); }
+.cz-foot #czFootHint { flex: 1; text-align: right; }
+.cz-picked { margin-bottom: 10px; }
+@media (max-width: 760px) { .cz-review { grid-template-columns: 1fr; } .cz-steps .cz-step-sub { display: none; } }
+.cz-track.on { background: var(--accent-soft); }
+.cz-track.on [data-pick] { background: var(--accent); color: var(--on-accent); }
+.pb-rail a.done .pf-no { background: var(--ok-bg); color: var(--ok); }
+/* ---- upload pop-up ---- */
+.up-drop { display: block; position: relative; border: 2px dashed var(--border-strong); border-radius: 14px; padding: 26px 18px; text-align: center; cursor: pointer; background: var(--surface-2); }
+.up-drop:hover, .up-drop.over { border-color: var(--accent); background: var(--accent-soft); }
+.up-drop input[type=file] { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+.up-drop-in { display: block; font-size: 13.5px; pointer-events: none; } .up-drop-in .muted { display: block; font-size: 11.5px; margin-top: 6px; }
+.up-list { margin-top: 10px; max-height: 220px; overflow: auto; border: 1px solid var(--border); border-radius: 10px; font-size: 12.5px; }
+.up-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--border-soft); } .up-row:last-child { border-bottom: none; }
+.up-row .up-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.modal.up-modal { width: min(860px, 100%); }

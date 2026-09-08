@@ -137,6 +137,41 @@
   };
 
   // ---- keyboard help (?) ------------------------------------------------------
+  // ---- wizard: a step rail (a[data-tab]) + section.stab[data-tab] panels, one shown at a time ----
+  // o: {nav, problem(tab) -> "" | "why you can't go past this step", onShow(tab), onBlock(problem, tab), start}
+  UI.wizard = function (o) {
+    var nav = o.nav, links = Array.prototype.slice.call(nav.querySelectorAll("[data-tab]")), tabs = links.map(function (a) { return a.dataset.tab; });
+    var sections = Array.prototype.slice.call(document.querySelectorAll(".stab[data-tab]")), cur = null;
+    links.forEach(function (a) { var no = a.querySelector(".pf-no"); if (no) no.dataset.no = no.textContent; });
+    function firstProblem(upTo) { for (var i = 0; i < upTo; i++) { var pr = o.problem ? o.problem(tabs[i]) : ""; if (pr) return { tab: tabs[i], why: pr }; } return null; }
+    function show(t, quiet) {
+      if (tabs.indexOf(t) < 0) t = tabs[0];
+      var blk = firstProblem(tabs.indexOf(t));
+      if (blk) { t = blk.tab; if (!quiet && o.onBlock) o.onBlock(blk.why, t); }
+      cur = t;
+      sections.forEach(function (s) { s.hidden = s.dataset.tab !== t; });
+      links.forEach(function (a) { a.classList.toggle("on", a.dataset.tab === t); });
+      w.refresh();
+      if (o.onShow) o.onShow(t);
+      if (window.scrollY > 120) window.scrollTo({ top: 0 });
+    }
+    var w = {
+      tabs: tabs, show: show, current: function () { return cur; },
+      next: function () { show(tabs[Math.min(tabs.length - 1, tabs.indexOf(cur) + 1)]); },
+      prev: function () { show(tabs[Math.max(0, tabs.indexOf(cur) - 1)]); },
+      sub: function (tab, text) { var el = nav.querySelector('[data-tab="' + tab + '"] .pb-rail-sub'); if (el) el.textContent = text || ""; },
+      refresh: function () {   // done ticks on every step that has no problem and sits before the current one
+        var i = tabs.indexOf(cur);
+        links.forEach(function (a, k) { var ok = !(o.problem && o.problem(a.dataset.tab)); var done = k < i && ok; a.classList.toggle("done", done); var no = a.querySelector(".pf-no"); if (no) no.textContent = done ? "✓" : no.dataset.no; });
+      },
+      firstOpen: function () { var b = firstProblem(tabs.length); return b ? b.tab : tabs[tabs.length - 1]; }
+    };
+    nav.addEventListener("click", function (e) { var a = e.target.closest("[data-tab]"); if (a) { e.preventDefault(); show(a.dataset.tab); } });
+    document.addEventListener("click", function (e) { var b = e.target.closest("[data-next]"); if (b && b.closest(".stab")) { e.preventDefault(); show(b.dataset.next); } });
+    show(o.start || tabs[0], true);
+    return w;
+  };
+
   UI.kbdHelp = function (rows) {
     var html = '<div class="kbd-help">' + rows.map(function (r) { return "<span><kbd>" + esc(r[0]) + "</kbd></span><span>" + esc(r[1]) + "</span>"; }).join("") + "</div>";
     UI.modal({ title: "Keyboard shortcuts", body: html });

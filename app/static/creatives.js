@@ -13,7 +13,8 @@
   if (ub) ub.addEventListener("click", function () {
     if (!box) { location.href = "/creatives?view=library&upload=1"; return; }
     var node = box.firstElementChild; box.hidden = false;
-    UI.modal({ title: "Upload videos & images", body: node, wide: true, onClose: function () { box.appendChild(node); box.hidden = true; } });
+    var m = UI.modal({ title: "Upload videos & images", body: node, wide: true, onClose: function () { box.appendChild(node); box.hidden = true; } });
+    m.el.classList.add("up-modal");
   });
   if (box && /[?&]upload=1/.test(location.search)) ub.click();
 

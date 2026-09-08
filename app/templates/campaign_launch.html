@@ -6,61 +6,85 @@
   <div class="actions"><a class="btn" href="/presets/new">＋ New preset</a></div>
 </div>
 
-<form method="post" action="/campaigns/launch" id="clForm">
+<div class="pb-wrap">
+<nav class="card pb-rail" id="clNav" aria-label="Steps">
+  <a href="#preset" data-tab="preset"><span class="pf-no">1</span>Preset<span class="pb-rail-sub" data-sum="preset"></span></a>
+  <a href="#creative" data-tab="creative"><span class="pf-no">2</span>Creative<span class="pb-rail-sub" data-sum="creative"></span></a>
+  <a href="#accounts" data-tab="accounts"><span class="pf-no">3</span>Accounts<span class="pb-rail-sub" data-sum="accounts"></span></a>
+  <a href="#review" data-tab="review"><span class="pf-no">4</span>Review &amp; launch<span class="pb-rail-sub" data-sum="review"></span></a>
+  <div class="pb-rail-foot">
+    <div class="muted" style="font-size:11.5px;line-height:1.5;">Runs in the background — you land on a result page with every account's outcome and a retry button.</div>
+  </div>
+</nav>
+
+<div style="min-width:0;">
+<form method="post" action="/campaigns/launch" id="clForm" novalidate>
 <input type="hidden" name="spark_code_id" id="sparkId" value="">
 <input type="hidden" name="creative_id" id="creativeId" value="">
-<div class="grid cols-2" style="align-items:start;gap:14px;">
-  <div style="display:flex;flex-direction:column;gap:14px;">
-    <div class="card mb0">
-      <div class="card-header"><span class="card-title">1 · Preset</span><span class="card-meta">{{ templates|length }} preset{{ 's' if templates|length != 1 }}</span></div>
+
+{# ================================ 1 · PRESET ================================ #}
+<section class="stab" data-tab="preset" hidden>
+  <div class="card">
+    <div class="card-header"><span class="card-title">1 · Preset</span><span class="card-meta">{{ templates|length }} preset{{ 's' if templates|length != 1 }}</span></div>
+    {% if templates %}
+    <label class="field"><span class="field-label">Which preset</span>
       <select name="template_id" id="clPreset" required>
         <option value="">— pick a preset —</option>
         {% for p in templates %}<option value="{{ p.id }}" {{ 'selected' if request.query_params.get('preset') == p.id|string }}>{{ p.name }}</option>{% endfor %}
-      </select>
-      {% if not templates %}<span class="hint">No presets yet — <a href="/presets/new">create one</a> first.</span>{% endif %}
-      <div class="preset-preview" id="clPreview" hidden style="margin-top:10px;">
-        <div class="pp-grid">
-          <div><span class="lab">Goal</span><b data-pp="objective"></b></div>
-          <div><span class="lab">Destination</span><b data-pp="destination"></b></div>
-          <div><span class="lab">Creative</span><b data-pp="creative"></b></div>
-          <div><span class="lab">Budget</span><b data-pp="budget"></b></div>
-          <div><span class="lab">Call to action</span><b data-pp="cta"></b></div>
-          <div><span class="lab">Ad groups</span><b data-pp="duplicates"></b></div>
-        </div>
-        <div class="muted" style="font-size:11.5px;margin-top:6px;" data-pp="landing"></div>
-        <a class="muted" style="font-size:11.5px;" id="clEditPreset" href="#">Edit this preset →</a>
+      </select></label>
+    <div class="preset-preview" id="clPreview" hidden>
+      <div class="pp-grid">
+        <div><span class="lab">Goal</span><b data-pp="objective"></b></div>
+        <div><span class="lab">Destination</span><b data-pp="destination"></b></div>
+        <div><span class="lab">Creative</span><b data-pp="creative"></b></div>
+        <div><span class="lab">Budget</span><b data-pp="budget"></b></div>
+        <div><span class="lab">Call to action</span><b data-pp="cta"></b></div>
+        <div><span class="lab">Ad groups</span><b data-pp="duplicates"></b></div>
       </div>
+      <div class="muted" style="font-size:11.5px;margin-top:6px;" data-pp="landing"></div>
+      <a class="muted" style="font-size:11.5px;" id="clEditPreset" href="#">Edit this preset →</a>
     </div>
-
-    <div class="card mb0">
-      <div class="card-header"><span class="card-title">2 · Creative</span><span class="card-meta">what the ad shows</span></div>
-      <div class="seg" id="clCreativeSeg" style="display:inline-flex;flex-wrap:wrap;">
-        <button type="button" class="on" data-mode="">Preset default</button>
-        <button type="button" data-mode="pick" {{ 'disabled' if not (creatives or carousels) }} title="Pick one video or carousel from the library — with a preview">Pick from library <span class="n">{{ creatives|length + carousels|length }}</span></button>
-        <button type="button" data-mode="spark" {{ 'disabled' if not sparks }} title="Launch a creator's post through its spark code">Spark code <span class="n">{{ sparks|length }}</span></button>
-      </div>
-      <div id="clPicked" hidden style="margin-top:10px;display:flex;align-items:center;gap:10px;">
-        <img id="clPickedImg" alt="" style="width:44px;height:60px;object-fit:cover;border-radius:8px;background:var(--panel-hover);flex:none;">
-        <div style="min-width:0;flex:1;"><b id="clPickedName" style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></b><span class="muted" id="clPickedSub" style="font-size:11.5px;"></span></div>
-        <button type="button" class="btn sm" id="clChange">Change…</button>
-      </div>
-      <div id="clSparkBox" hidden style="margin-top:10px;">
-        <div class="search-wrap"><input type="text" id="clSparkQ" placeholder="Search spark by name, creator or code…"></div>
-        <div id="clSparkList" style="max-height:220px;overflow:auto;margin-top:6px;border:1px solid var(--border);border-radius:12px;">
-          {% for s in sparks %}<label class="cl-spark" data-search="{{ (s.name ~ ' ' ~ s.code ~ ' ' ~ (s.group.name if s.group else ''))|lower }}" style="display:flex;align-items:center;gap:9px;padding:7px 10px;border-bottom:1px solid var(--border-soft);cursor:pointer;font-size:12.5px;">
-            <input type="radio" name="_spark" value="{{ s.id }}" style="width:auto;">
-            {% if s.thumbnail_url %}<img src="{{ s.thumbnail_url }}" alt="" loading="lazy" style="width:26px;height:34px;object-fit:cover;border-radius:5px;">{% else %}<span style="width:26px;height:34px;border-radius:5px;background:var(--panel-hover);display:grid;place-items:center;color:var(--text-dim);font-size:11px;">✦</span>{% endif %}
-            <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><b>{{ s.name or s.code[:16] }}</b>{% if s.group %} <span class="muted">· {{ s.group.name }}</span>{% endif %}</span>
-            <span class="muted" style="font-size:11px;">{{ s.media_type|lower }}</span>
-            {% if s.tiktok_post_url %}<a href="{{ s.tiktok_post_url }}" target="_blank" rel="noopener" class="muted" style="font-size:11px;" onclick="event.stopPropagation()">post ↗</a>{% endif %}</label>{% endfor %}
-          {% if not sparks %}<div class="muted" style="padding:10px;font-size:12px;">No active spark codes — add them on the <a href="/spark-codes">Sparks</a> page.</div>{% endif %}
-        </div>
-      </div>
-      <div class="hint" id="clCreativeHint" style="margin-top:8px;">Preset default = whatever the preset says (its spark, or the next unused library creative per account).</div>
-    </div>
+    {% else %}
+    <div class="empty"><div class="empty-title">No presets yet</div><a class="btn primary" href="/presets/new" style="margin-top:8px;">Create your first preset</a></div>
+    {% endif %}
   </div>
+  <div class="pf-foot"><span></span><button type="button" class="btn" data-next="creative">Next · Creative →</button></div>
+</section>
 
-  <div class="card mb0">
+{# ================================ 2 · CREATIVE ================================ #}
+<section class="stab" data-tab="creative" hidden>
+  <div class="card">
+    <div class="card-header"><span class="card-title">2 · Creative</span><span class="card-meta">what the ad shows</span></div>
+    <div class="seg" id="clCreativeSeg" style="display:inline-flex;flex-wrap:wrap;">
+      <button type="button" class="on" data-mode="">Preset default</button>
+      <button type="button" data-mode="pick" {{ 'disabled' if not (creatives or carousels) }} title="Pick one video or carousel from the library — with a preview">Pick from library <span class="n">{{ creatives|length + carousels|length }}</span></button>
+      <button type="button" data-mode="spark" {{ 'disabled' if not sparks }} title="Launch a creator's post through its spark code">Spark code <span class="n">{{ sparks|length }}</span></button>
+    </div>
+    <div id="clPicked" hidden style="margin-top:10px;display:flex;align-items:center;gap:10px;">
+      <img id="clPickedImg" alt="" style="width:44px;height:60px;object-fit:cover;border-radius:8px;background:var(--panel-hover);flex:none;">
+      <div style="min-width:0;flex:1;"><b id="clPickedName" style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></b><span class="muted" id="clPickedSub" style="font-size:11.5px;"></span></div>
+      <button type="button" class="btn sm" id="clChange">Change…</button>
+    </div>
+    <div id="clSparkBox" hidden style="margin-top:10px;">
+      <div class="search-wrap"><input type="text" id="clSparkQ" placeholder="Search spark by name, creator or code…"></div>
+      <div id="clSparkList" style="max-height:300px;overflow:auto;margin-top:6px;border:1px solid var(--border);border-radius:12px;">
+        {% for s in sparks %}<label class="cl-spark" data-search="{{ (s.name ~ ' ' ~ s.code ~ ' ' ~ (s.group.name if s.group else ''))|lower }}" style="display:flex;align-items:center;gap:9px;padding:7px 10px;border-bottom:1px solid var(--border-soft);cursor:pointer;font-size:12.5px;">
+          <input type="radio" name="_spark" value="{{ s.id }}" style="width:auto;">
+          {% if s.thumbnail_url %}<img src="{{ s.thumbnail_url }}" alt="" loading="lazy" style="width:26px;height:34px;object-fit:cover;border-radius:5px;">{% else %}<span style="width:26px;height:34px;border-radius:5px;background:var(--panel-hover);display:grid;place-items:center;color:var(--text-dim);font-size:11px;">✦</span>{% endif %}
+          <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><b>{{ s.name or s.code[:16] }}</b>{% if s.group %} <span class="muted">· {{ s.group.name }}</span>{% endif %}</span>
+          <span class="muted" style="font-size:11px;">{{ s.media_type|lower }}</span>
+          {% if s.tiktok_post_url %}<a href="{{ s.tiktok_post_url }}" target="_blank" rel="noopener" class="muted" style="font-size:11px;">post ↗</a>{% endif %}</label>{% endfor %}
+        {% if not sparks %}<div class="muted" style="padding:10px;font-size:12px;">No active spark codes — add them on the <a href="/spark-codes">Sparks</a> page.</div>{% endif %}
+      </div>
+    </div>
+    <div class="hint" id="clCreativeHint" style="margin-top:8px;">Preset default = whatever the preset says (its spark, or the next unused library creative per account).</div>
+  </div>
+  <div class="pf-foot"><button type="button" class="btn ghost" data-next="preset">← Preset</button><button type="button" class="btn" data-next="accounts">Next · Accounts →</button></div>
+</section>
+
+{# ================================ 3 · ACCOUNTS ================================ #}
+<section class="stab" data-tab="accounts" hidden>
+  <div class="card">
     <div class="card-header"><span class="card-title">3 · Accounts</span>
       <span class="card-meta" style="display:flex;gap:6px;align-items:center;">{{ accounts|length }} account(s)
         <button class="btn sm" type="button" id="slNone">None</button></span></div>
@@ -69,12 +93,35 @@
     {% else %}
     <div class="empty"><div class="empty-title">No ad accounts yet</div><a class="btn primary" href="/oauth/connect">Connect TikTok</a></div>
     {% endif %}
-    <div class="sl-summary" id="clSummary" style="margin-top:14px;">Pick a preset and an account.</div>
-    <button class="btn primary" type="submit" id="clLaunch" style="width:100%;justify-content:center;font-size:14px;padding:11px;">🚀 Launch</button>
-    <div class="hint" style="text-align:center;margin-top:8px;">Runs in the background — you land on a result page with every account's outcome and a retry button.</div>
   </div>
-</div>
+  <div class="pf-foot"><button type="button" class="btn ghost" data-next="creative">← Creative</button><button type="button" class="btn" data-next="review">Next · Review →</button></div>
+</section>
+
+{# ================================ 4 · REVIEW ================================ #}
+<section class="stab" data-tab="review" hidden>
+  <div class="card">
+    <div class="card-header"><span class="card-title">4 · Review &amp; launch</span><span class="card-meta">check, then go</span></div>
+    <div class="sl-summary" id="clSummary">Pick a preset and an account.</div>
+    <div class="kpis kpis-3" id="clTiles" style="margin:0 0 12px;gap:8px;">
+      <div class="kpi" style="padding:10px 12px;"><div class="lab">Accounts</div><div class="val" style="font-size:17px;" data-t="acc">0</div><div class="sub" data-t="accSub">none selected</div></div>
+      <div class="kpi" style="padding:10px 12px;"><div class="lab">Ad groups</div><div class="val" style="font-size:17px;" data-t="groups">0</div><div class="sub" data-t="groupsSub">—</div></div>
+      <div class="kpi" style="padding:10px 12px;"><div class="lab">Daily budget</div><div class="val" style="font-size:17px;" data-t="budget">$0</div><div class="sub" data-t="budgetSub">if every ad group spends</div></div>
+    </div>
+    <button class="btn primary" type="submit" id="clLaunch" style="width:100%;justify-content:center;font-size:14px;padding:11px;">🚀 Launch</button>
+  </div>
+  <div class="pf-foot"><button type="button" class="btn ghost" data-next="accounts">← Accounts</button><span></span></div>
+</section>
 </form>
+</div>
+
+<aside class="pb-preview">
+  <div class="card" style="padding:12px;">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><b style="font-size:13px;">Summary</b></div>
+    <div class="pb-summ" id="clSumm"></div>
+    <button class="btn primary" type="submit" form="clForm" id="clLaunchSide" style="width:100%;justify-content:center;margin-top:12px;" disabled>🚀 Launch</button>
+  </div>
+</aside>
+</div>
 {% endblock %}
 {% block scripts %}
 <script src="/static/account-picker.js?v={{ STATIC_V }}"></script>
@@ -83,9 +130,18 @@
   var $ = function (s) { return document.querySelector(s); }, $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
   var PRESETS = {{ preset_info_json | safe }};
   var CREATIVE_LABELS = { spark: "Spark code (creator post)", library: "Library video — next unused", carousel: "Library carousel — next unused" };
-  var preset = $("#clPreset"), preview = $("#clPreview"), summary = $("#clSummary"), launchBtn = $("#clLaunch"), form = $("#clForm");
-  var sparkId = $("#sparkId"), creativeId = $("#creativeId"), mode = "", picked = null;
+  var preset = $("#clPreset"), preview = $("#clPreview"), summary = $("#clSummary"), launchBtn = $("#clLaunch"), launchSide = $("#clLaunchSide"), form = $("#clForm");
+  var sparkId = $("#sparkId"), creativeId = $("#creativeId"), mode = "", picked = null, wiz = null;
   var picker = window.AccountPicker.init({ onChange: function () { if (picker) syncSummary(); } });
+
+  function n() { return picker.selected().length; }
+  function problem(tab) {
+    if (tab === "preset") return preset && preset.value ? "" : "Pick a preset first.";
+    if (tab === "creative") { if (mode === "spark" && !sparkId.value) return "Pick a spark code (or switch back to Preset default)."; if (mode === "pick" && !picked) return "Pick a creative from the library."; return ""; }
+    if (tab === "accounts") { if (!n()) return "Tick at least one account."; if (mode === "pick" && picked && n() > 1) return "A specific creative launches once — keep one account, or use the Super Launcher."; return ""; }
+    return "";
+  }
+  wiz = UI.wizard({ nav: $("#clNav"), problem: problem, start: "preset", onBlock: function (why) { adopsToast && adopsToast("err", why); }, onShow: function () { if (wiz) syncSummary(); } });
 
   function setMode(m) {
     mode = m; $$("#clCreativeSeg button").forEach(function (b) { b.classList.toggle("on", b.dataset.mode === m); });
@@ -114,8 +170,8 @@
   $("#clSparkQ").addEventListener("input", function () { var q = this.value.trim().toLowerCase(); $$(".cl-spark").forEach(function (r) { r.hidden = !!q && r.dataset.search.indexOf(q) < 0; }); });
 
   function syncPreset() {
-    var p = PRESETS[preset.value];
-    if (!p) { preview.hidden = true; syncSummary(); return; }
+    var p = preset ? PRESETS[preset.value] : null;
+    if (!p) { if (preview) preview.hidden = true; syncSummary(); return; }
     preview.hidden = false;
     var set = function (k, v) { var el = preview.querySelector('[data-pp="' + k + '"]'); if (el) el.textContent = v; };
     set("objective", p.objective); set("destination", p.destination);
@@ -127,34 +183,43 @@
     $("#clEditPreset").href = "/presets/" + preset.value + "/edit";
     syncSummary();
   }
-  function n() { return picker.selected().length; }
   function creativeText() {
     if (mode === "pick" && picked) return picked.name;
     if (mode === "spark" && sparkId.value) { var r = $('input[name="_spark"]:checked'); return "spark " + (r ? r.closest("label").querySelector("b").textContent : ""); }
+    if (mode === "spark") return "spark — not picked yet";
+    if (mode === "pick") return "not picked yet";
     return "preset default";
   }
-  function problem() {
-    if (!preset.value) return "Pick a preset.";
-    if (!n()) return "Tick at least one account.";
-    if (mode === "pick" && picked && n() > 1) return "A specific creative launches once — keep one account, or use the Super Launcher.";
-    if (mode === "spark" && !sparkId.value) return "Pick a spark code.";
-    return "";
-  }
   function syncSummary() {
-    var k = n(), name = preset.value ? preset.options[preset.selectedIndex].text : "", pr = problem();
-    if (pr) { summary.textContent = pr; summary.classList.remove("ready"); launchBtn.textContent = "🚀 Launch"; return; }
-    summary.innerHTML = "<b>" + UI.esc(name) + "</b> · " + UI.esc(creativeText()) + " → <b>" + k + "</b> account" + (k === 1 ? "" : "s") + " → <b>" + k + "</b> campaign" + (k === 1 ? "" : "s");
-    summary.classList.add("ready");
-    launchBtn.textContent = "🚀 Launch " + k + " campaign" + (k === 1 ? "" : "s");
+    var k = n(), name = preset && preset.value ? preset.options[preset.selectedIndex].text : "", p = (preset && PRESETS[preset.value]) || {};
+    var pr = problem("preset") || problem("creative") || problem("accounts");
+    wiz.sub("preset", name || "not chosen"); wiz.sub("creative", name ? creativeText() : ""); wiz.sub("accounts", k ? k + " selected" : "none yet");
+    if (pr) { summary.textContent = pr; summary.classList.remove("ready"); launchBtn.textContent = "🚀 Launch"; }
+    else {
+      summary.innerHTML = "<b>" + UI.esc(name) + "</b> · " + UI.esc(creativeText()) + " → <b>" + k + "</b> account" + (k === 1 ? "" : "s") + " → <b>" + k + "</b> campaign" + (k === 1 ? "" : "s");
+      summary.classList.add("ready");
+      launchBtn.textContent = "🚀 Launch " + k + " campaign" + (k === 1 ? "" : "s");
+    }
+    var perCamp = p.smart_plus ? 1 : Math.max(1, p.caps || 1) * Math.max(1, p.duplicates || 1);
+    var daily = p.budget_mode === "ABO" ? (parseFloat(p.budget) || 0) * perCamp * k : (parseFloat(p.campaign_budget) || 0) * k;
+    var t = function (key, v) { var el = $('#clTiles [data-t="' + key + '"]'); if (el) el.textContent = v; };
+    t("acc", k); t("accSub", k ? "selected by hand" : "none selected");
+    t("groups", k * perCamp); t("groupsSub", perCamp + " per campaign" + (p.caps > 1 ? " · " + p.caps + " caps" : "") + (p.duplicates > 1 ? " × " + p.duplicates : ""));
+    t("budget", UI.money(daily, 0)); t("budgetSub", p.budget_mode === "ABO" ? "$" + (p.budget || 0) + " per ad group, if all spend" : (p.campaign_budget ? "CBO $" + p.campaign_budget + " per campaign" : "—"));
+    var row = function (l, v) { return '<div><span class="muted">' + l + '</span><b>' + v + '</b></div>'; };
+    $("#clSumm").innerHTML = row("Preset", name ? UI.esc(name) : "—") + row("Creative", name ? UI.esc(creativeText()) : "—") + row("Accounts", k || "—") + row("Ad groups each", perCamp) + row("Daily budget", k ? UI.money(daily, 0) : "—");
+    launchSide.disabled = !!pr; launchSide.textContent = pr ? "🚀 Launch" : "🚀 Launch " + k + " campaign" + (k === 1 ? "" : "s");
+    wiz.refresh();
   }
-  preset.addEventListener("change", syncPreset);
+  if (preset) preset.addEventListener("change", syncPreset);
   form.addEventListener("submit", function (e) {
     if (form.dataset.ok) return;
     e.preventDefault();
-    var pr = problem(); if (pr) { adopsToast && adopsToast("err", pr); return; }
+    var pr = problem("preset") || problem("creative") || problem("accounts");
+    if (pr) { adopsToast && adopsToast("err", pr); wiz.show(problem("preset") ? "preset" : (problem("creative") ? "creative" : "accounts")); return; }
     var k = n();
     UI.confirm({ title: "Launch " + k + " campaign" + (k === 1 ? "" : "s") + "?", html: true, text: "<b>" + UI.esc(preset.options[preset.selectedIndex].text) + "</b> with " + UI.esc(creativeText()) + " on " + k + " account" + (k === 1 ? "" : "s") + ". They start in the background; you land on the result page.", ok: "Launch" })
-      .then(function (y) { if (!y) return; form.dataset.ok = "1"; launchBtn.disabled = true; launchBtn.textContent = "Starting…"; form.submit(); });
+      .then(function (y) { if (!y) return; form.dataset.ok = "1"; launchBtn.disabled = true; launchSide.disabled = true; launchBtn.textContent = "Starting…"; form.submit(); });
   });
   // arrived with ?accounts=id,id or ?creative=ID
   var qs = new URLSearchParams(location.search), preAcc = (qs.get("accounts") || "").split(",").filter(Boolean);
@@ -162,6 +227,7 @@
   var preCr = qs.get("creative");
   if (preCr) UI.get("/creatives/" + preCr + "/detail").then(function (d) { if (d && d.id) { picked = { id: d.id, name: d.name, kind: d.kind, poster: d.poster, slides: d.slides, music: d.music, uploaded_ago: d.uploaded_ago }; creativeId.value = d.id; $("#clPickedImg").src = d.poster; $("#clPickedName").textContent = d.name; $("#clPickedSub").textContent = d.kind + " · uploaded " + d.uploaded_ago; setMode("pick"); } });
   syncPreset();
+  wiz.show(!preset || !preset.value ? "preset" : (n() ? "review" : "creative"), true);
 })();
 </script>
 {% endblock %}
