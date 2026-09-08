@@ -32,6 +32,24 @@ def browse_account(db: Session):
             .order_by(models.AdAccount.advertiser_name).first())
 
 
+def _check_split(acct, ids: list[str], errors: list, depth: int = 0) -> list[dict]:
+    """SEARCH_BY_MUSIC_ID rejects the WHOLE batch with 40000 "Invalid music id" when
+    a single id is not valid for the carousel scene — which used to zero out the
+    entire library. On that error split the batch in halves and retry; a lone bad
+    id is simply left unusable."""
+    if not ids:
+        return []
+    try:
+        return tiktok_api.carousel_music_by_ids(acct.access_token, acct.advertiser_id, ids)
+    except tiktok_api.TikTokError as e:
+        if len(ids) == 1 or depth > 8:
+            if len(ids) > 1 or len(errors) < 20:
+                errors.append(f"carousel check ({len(ids)} id{'s' if len(ids) > 1 else ''}): {e}")
+            return []
+        mid = len(ids) // 2
+        return _check_split(acct, ids[:mid], errors, depth + 1) + _check_split(acct, ids[mid:], errors, depth + 1)
+
+
 def _upsert(db: Session, m: dict, now: datetime, carousel_ok: bool | None = None) -> models.MusicTrack | None:
     mid = str(m.get("music_id") or "")
     if not mid:
@@ -109,11 +127,7 @@ def sync(db: Session, should_stop=None, on_progress=None) -> dict:
             r["stopped"] = True
             break
         chunk = seen[i:i + tiktok_api.MUSIC_ID_BATCH]
-        try:
-            found = tiktok_api.carousel_music_by_ids(acct.access_token, acct.advertiser_id, chunk)
-        except tiktok_api.TikTokError as e:
-            r["errors"].append(f"carousel check {i // tiktok_api.MUSIC_ID_BATCH + 1}: {e}")
-            continue
+        found = _check_split(acct, chunk, r["errors"])
         for m in found:
             row = _upsert(db, m, now, carousel_ok=True)
             if row is not None:

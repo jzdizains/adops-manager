@@ -36,7 +36,7 @@
 <div class="cr-grid" id="rsGrid">
   {% for f in families %}
   {% set c = f.thumb %}
-  <div class="cr-tile cr-{{ f.cls }}" data-cid="{{ c.id }}" data-cls="{{ f.cls }}" data-cids="{{ f.rows|map(attribute='c')|map(attribute='id')|join(',') }}" data-camps="{{ f.rows|map(attribute='c')|map(attribute='used_campaign_id')|join(',') }}" data-advs="{{ f.rows|map(attribute='c')|map(attribute='used_advertiser_id')|join(',') }}">
+  <div class="cr-tile cr-{{ f.cls }}" data-cid="{{ c.id }}" data-cls="{{ f.cls }}" data-kind="{{ c.kind or 'video' }}"{% if c.kind == 'carousel' %} data-slides="{{ f.rows[0].slides|join(',') }}"{% endif %} data-cids="{{ f.rows|map(attribute='c')|map(attribute='id')|join(',') }}" data-camps="{{ f.rows|map(attribute='c')|map(attribute='used_campaign_id')|join(',') }}" data-advs="{{ f.rows|map(attribute='c')|map(attribute='used_advertiser_id')|join(',') }}">
     <div class="cr-thumb"><img loading="lazy" src="/creatives/{{ c.id }}/poster" alt=""><span class="pill {{ 'ok' if f.cls == 'winner' else ('err' if f.cls == 'losing' else 'dim') }} cr-badge">{{ f.cls }}</span><label class="cr-chk"><input type="checkbox" class="rschk"></label>{% if c.kind == 'carousel' %}<span class="cr-dur">{{ f.rows[0].slides|length }} slides</span>{% endif %}{% if c.favorite %}<span class="cr-fav">★</span>{% endif %}</div>
     <div class="cr-meta">
       <div class="cr-name" title="{{ f.name }}">{{ f.name }}</div>
@@ -63,13 +63,15 @@
     <div class="form-row" style="grid-template-columns:1.2fr 1fr;gap:16px;">
       <div>
         <div class="field-label" style="margin-bottom:6px;">1 · Pick slides <span class="muted" id="czCount">(0 selected)</span></div>
-        <div class="cz-pool">
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;"><div class="search-wrap" style="max-width:220px;"><input type="text" id="czPoolQ" placeholder="Filter images…"></div><span class="muted" style="font-size:11.5px;">{{ image_pool|length }} images · click to add, click again to remove · numbers show the slide order</span></div>
+        <div class="cz-pool" id="czPool">
           {% for r in image_pool %}
-          <span class="cz-tile">
+          <span class="cz-tile" data-name="{{ r.name|lower }}">
             <button type="button" class="cz-img" data-id="{{ r.id }}" title="{{ r.name }}">
-              <img src="/creatives/{{ r.id }}/thumb" alt="{{ r.name }}" loading="lazy" decoding="async"><span class="cz-badge"></span>
+              <img src="/creatives/{{ r.id }}/thumb" alt="" loading="lazy" decoding="async"><span class="cz-badge"></span>
             </button>
             <button type="button" class="cz-t txtBtn" data-id="{{ r.id }}" data-name="{{ r.name }}" data-src="/creatives/{{ r.id }}/file" data-back="carousels" title="Add text to this image">T</button>
+            <span class="cz-name">{{ r.name }}</span>
           </span>
           {% endfor %}
         </div>
@@ -96,7 +98,7 @@
         <div style="display:flex;gap:8px;align-items:center;justify-content:space-between;margin-top:6px;font-size:11.5px;" class="muted">
           <span id="czLibInfo">Library: loading…</span>
           <span style="display:flex;gap:6px;align-items:center;"><button type="button" class="btn sm" id="czMore" hidden>More</button>
-          <form method="post" action="/creatives/music/sync" style="display:inline;"><button type="submit" class="btn sm" title="Re-read every page of TikTok's Audio Library and re-check which tracks Carousel Ads accept (runs in the background)">↻ Refresh library</button></form></span>
+<button type="submit" form="czSyncForm" class="btn sm" title="Re-read every page of TikTok's Audio Library and re-check which tracks Carousel Ads accept (runs in the background)">↻ Refresh library</button></span>
         </div>
         <div id="czPicked" class="cz-picked" style="display:none;"></div>
         <audio id="czAudio" preload="none"></audio>
@@ -112,6 +114,8 @@
       <span class="hint">Caption + CTA come from the preset at launch (TikTok allows one for the whole carousel). Slides are delivered in TikTok's carousel sizes automatically — 720×1280 vertical, 640×640 square, 1200×628 horizontal — so design at 9:16, 1:1 or 1.91:1 to avoid any cropping.</span>
     </div>
   </form>
+  {# a nested <form> would silently end the builder form (the browser closes it) — the sync form lives outside and its button targets it via form="…" #}
+  <form method="post" action="/creatives/music/sync" id="czSyncForm" hidden></form>
   {% endif %}
 </div>
 
@@ -134,7 +138,7 @@
             <div style="font-size:11px;">{{ accounts.get(cz.used_advertiser_id, cz.used_advertiser_id)[:26] }}</div>
           {% else %}—{% endif %}
         </td>
-        <td class="num">{% if cz.status == 'available' %}<form method="post" action="/creatives/{{ cz.id }}/delete" style="display:inline;" onsubmit="return confirm('Delete this carousel? (the images stay)');"><button class="btn sm danger" type="submit">✕</button></form>{% endif %}</td>
+        <td class="num" style="white-space:nowrap;"><button type="button" class="btn sm cz-del" data-id="{{ cz.id }}" data-name="{{ cz.name }}" data-n="{{ slide_map.get(cz.id, [])|length }}" data-status="{{ cz.status }}" title="Delete this carousel">Delete</button></td>
       </tr>
     {% endfor %}
     </tbody>
@@ -281,7 +285,7 @@
     <div class="seg" id="imgSize" title="Thumbnail size"><button type="button" data-s="s">Small</button><button type="button" data-s="m" class="on">Medium</button><button type="button" data-s="l">Large</button></div>
     <label class="img-details-toggle"><input type="checkbox" id="imgDetails" style="width:auto;"> details</label>
   </div>
-  <form method="post" action="/creatives/images/bulk-delete" id="imgBulk" class="img-bulk" hidden onsubmit="return confirm('Delete the selected images? Images used in a carousel or already launched are kept.');">
+  <form method="post" action="/creatives/images/bulk-delete" id="imgBulk" class="img-bulk" hidden onsubmit="return confirm('Delete the selected images for good? Images that are slides in a carousel are kept — delete the carousel first. Launched images can go (TikTok keeps its copy).');">
     <span id="imgSelCount">0 selected</span>
     <button type="button" class="btn sm" id="imgSelAll">Select all shown</button>
     <button type="button" class="btn sm" id="imgSelNone">Clear</button>
@@ -680,7 +684,21 @@
   var czForm = document.getElementById("czForm");
   if (czForm) {
     var picked = [], music = null;
+    document.addEventListener("click", function (e) {
+      var b = e.target.closest(".cz-del"); if (!b) return;
+      var d = b.dataset, launched = d.status !== "available";
+      var body = UI.el('<div style="font-size:13px;line-height:1.5;"><div class="muted">' + (launched ? "It has already been launched — the campaign on TikTok keeps running with its own copy, but this carousel disappears from Results here. Archive keeps the history instead." : "Its images stay in the library unless you tick below.") + '</div><label class="sw" style="margin-top:10px;"><input type="checkbox" id="czDelImgs"><span class="tog"></span><span>Also delete its ' + d.n + ' slide image' + (d.n === "1" ? "" : "s") + ' <span class="muted">(ones used by another carousel are kept)</span></span></label></div>');
+      var m = UI.modal({ title: "Delete “" + d.name + "”?", body: body, footer: '<button type="button" class="btn" data-close>Cancel</button><button type="button" class="btn primary danger" id="czDelGo">Delete</button>' });
+      m.el.querySelector("#czDelGo").addEventListener("click", function () {
+        UI.post("/creatives/" + d.id + "/delete", { with_images: body.querySelector("#czDelImgs").checked ? "1" : "" }).then(function (r) {
+          m.close(); if (!r.ok) { adopsToast && adopsToast("err", r.error || "Could not delete."); return; }
+          adopsToast && adopsToast("ok", "Deleted" + (r.removed_images ? " with " + r.removed_images + " slide(s)" : "")); setTimeout(function () { location.reload(); }, 400);
+        });
+      });
+    });
     var pool = document.querySelectorAll(".cz-img"), strip = document.getElementById("czStrip");
+    var poolQ = document.getElementById("czPoolQ");
+    if (poolQ) poolQ.addEventListener("input", function () { var q = this.value.trim().toLowerCase(); document.querySelectorAll("#czPool .cz-tile").forEach(function (t) { t.hidden = !!q && t.dataset.name.indexOf(q) < 0; }); });
     function nameOf(id) { var b = document.querySelector('.cz-img[data-id="' + id + '"]'); return b ? b.title : id; }
     function render() {
       pool.forEach(function (b) { var i = picked.indexOf(Number(b.dataset.id)); b.classList.toggle("on", i >= 0); b.querySelector(".cz-badge").textContent = i >= 0 ? (i + 1) : ""; });

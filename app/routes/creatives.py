@@ -217,16 +217,17 @@ def creative_file(creative_id: int, db: Session = Depends(get_db)):
     Range requests, so the player can seek/scrub. Only files inside the creatives
     directory are ever served."""
     from pathlib import Path
+    from fastapi.responses import Response
     row = db.get(models.Creative, creative_id)
     if not row or not row.file_path:
-        return RedirectResponse("/creatives?err=not+found", status_code=303)
+        return Response("not found", status_code=404)          # media URLs answer 404, never an HTML page
     p = Path(row.file_path).resolve()
     try:
         p.relative_to(CREATIVES_DIR.resolve())     # never serve outside the store
     except ValueError:
-        return RedirectResponse("/creatives?err=blocked", status_code=303)
+        return Response("blocked", status_code=403)
     if not p.exists():
-        return RedirectResponse("/creatives?err=file+missing", status_code=303)
+        return Response("file missing", status_code=404)
     ext = p.suffix.lower()
     return FileResponse(str(p), media_type=_MIME.get(ext, "application/octet-stream"),
                         filename=row.file_name or p.name)
@@ -248,29 +249,32 @@ def creative_thumb(creative_id: int, db: Session = Depends(get_db)):
     native size per tile is what made the browser tab balloon in memory."""
     from pathlib import Path
     row = db.get(models.Creative, creative_id)
+    # an <img> must never be redirected to an HTML page: a missing file used to trigger a
+    # full Creatives page render per broken tile — that is what made the page crawl
     if not row or row.kind != "image" or not row.file_path:
-        return RedirectResponse("/creatives?err=not+found", status_code=303)
+        return RedirectResponse("/static/no-poster.svg", status_code=303)
     src = Path(row.file_path).resolve()
     try:
         src.relative_to(CREATIVES_DIR.resolve())
     except ValueError:
-        return RedirectResponse("/creatives?err=blocked", status_code=303)
+        return RedirectResponse("/static/no-poster.svg", status_code=303)
     if not src.exists():
-        return RedirectResponse("/creatives?err=file+missing", status_code=303)
+        return RedirectResponse("/static/no-poster.svg", status_code=303)
     THUMB_DIR.mkdir(parents=True, exist_ok=True)
     out = THUMB_DIR / f"{row.id}_{(row.md5 or 'x')[:12]}.jpg"
     if not out.exists():
         try:
-            from PIL import Image
+            from PIL import Image, ImageOps
             with _DECODE_GATE:
                 if not out.exists():
                     with Image.open(src) as im:
                         im.draft("RGB", (THUMB_PX * 2, THUMB_PX * 2))   # JPEG: decode at reduced size
+                        im = ImageOps.exif_transpose(im)                 # phone photos carry rotation in EXIF
                         im = im.convert("RGB")
                         im.thumbnail((THUMB_PX, THUMB_PX))
                         im.save(out, "JPEG", quality=82, optimize=True)
-        except Exception:                      # unreadable image → serve the original
-            return FileResponse(str(src), media_type=_MIME.get(src.suffix.lower(), "image/png"))
+        except Exception:                      # unreadable image → a placeholder, never the multi-MB original
+            return RedirectResponse("/static/no-poster.svg", status_code=303)
     return FileResponse(str(out), media_type="image/jpeg",
                         headers={"Cache-Control": "private, max-age=86400"})
 
@@ -629,9 +633,9 @@ async def update_creative(creative_id: int, request: Request,
 
 
 def _image_delete_block(db: Session, row: models.Creative) -> str:
-    """Why an image can't be deleted ("" = it can)."""
-    if row.status == "used":
-        return "already launched — kept for P&L history"
+    """Why an image can't be deleted ("" = it can). Launched images may go —
+    campaigns on TikTok keep their uploaded copy; only a carousel slide is
+    protected (delete the carousel first, or delete it with its slides)."""
     if row.kind == "image":
         import json as _json
         for cz in db.query(models.Creative).filter_by(kind="carousel").all():
@@ -678,33 +682,42 @@ async def bulk_delete_images(request: Request, db: Session = Depends(get_db)):
 
 
 @router.post("/creatives/{creative_id}/delete")
-def delete_creative(creative_id: int, db: Session = Depends(get_db)):
+async def delete_creative(request: Request, creative_id: int, db: Session = Depends(get_db)):
+    """Delete a creative for good. Carousels: with_images=1 also removes its
+    slides (those not used by another carousel). Launched creatives may be
+    deleted — TikTok keeps its own copy; their rows vanish from Results, so
+    Archive is the option that keeps history. Fetch callers get JSON."""
+    from fastapi.responses import JSONResponse
+    import json as _json
+    form = await request.form()
+    wants_json = request.headers.get("x-requested-with") == "fetch"
     row = db.get(models.Creative, creative_id)
     if not row:
-        return RedirectResponse("/creatives?err=not+found", status_code=303)
-    if row.status == "used":
-        return RedirectResponse(
-            "/creatives?err=already+launched+—+kept+for+P%26L+history", status_code=303)
+        return JSONResponse({"ok": False, "error": "not found"}, status_code=404) if wants_json else RedirectResponse("/creatives?err=not+found", status_code=303)
     if row.kind == "image":
-        import json as _json
-        for cz in db.query(models.Creative).filter_by(kind="carousel").all():
-            try:
-                if row.id in [int(x) for x in _json.loads(cz.carousel_images or "[]")]:
-                    return RedirectResponse(
-                        f"/creatives?err=“{row.name}”+is+a+slide+in+carousel+“{cz.name}”+—+delete+that+carousel+first",
-                        status_code=303)
-            except (ValueError, TypeError):
-                pass
-    try:
-        if row.file_path:
-            from pathlib import Path
-            Path(row.file_path).unlink(missing_ok=True)
-    except OSError:
-        pass
-    db.query(models.CreativeUpload).filter_by(creative_id=row.id).delete()
-    db.delete(row)
+        why = _image_delete_block(db, row)
+        if why:
+            return JSONResponse({"ok": False, "error": f"“{row.name}” is a {why} — delete that carousel first (or delete it with its slides)."}, status_code=400) if wants_json else \
+                RedirectResponse(f"/creatives?view=images&err=“{row.name}”+is+a+{why.replace(' ', '+')}+—+delete+that+carousel+first", status_code=303)
+    removed_images = 0
+    if row.kind == "carousel" and str(form.get("with_images") or "") in ("1", "true", "on"):
+        mine = _slides_of(row)
+        others: set[int] = set()
+        for cz in db.query(models.Creative).filter(models.Creative.kind == "carousel", models.Creative.id != row.id):
+            others.update(_slides_of(cz))
+        for iid in mine:
+            if iid in others:
+                continue
+            img = db.get(models.Creative, iid)
+            if img is not None:
+                _delete_row(db, img); removed_images += 1
+    view = "carousels" if row.kind == "carousel" else ("images" if row.kind == "image" else "library")
+    _delete_row(db, row)
     db.commit()
-    return RedirectResponse("/creatives?view=library&ok=deleted", status_code=303)
+    if wants_json:
+        return JSONResponse({"ok": True, "removed_images": removed_images})
+    msg = "deleted" + (f"+with+{removed_images}+slide(s)" if removed_images else "")
+    return RedirectResponse(f"/creatives?view={view}&ok={msg}", status_code=303)
 
 
 # ============================================================================
