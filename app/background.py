@@ -22,6 +22,28 @@ _started = False
 _lock = threading.Lock()
 
 
+def _posters_pass(db, limit: int = 3) -> int:
+    """Generate posters for up to `limit` video creatives that don't have one yet,
+    so the Creatives grid and the picker never trigger ffmpeg under page load."""
+    from pathlib import Path
+    from . import models
+    from .routes import creatives as _cr
+    n = 0
+    try:
+        for row in (db.query(models.Creative).filter(models.Creative.kind == "video", models.Creative.status != "processing",
+                                                     models.Creative.file_path != "").order_by(models.Creative.id.desc()).limit(400)):
+            out = _cr.THUMB_DIR / f"v{row.id}_{(row.md5 or 'x')[:12]}.jpg"
+            if out.exists() or not Path(row.file_path).exists():
+                continue
+            _cr.ensure_poster(row)
+            n += 1
+            if n >= limit:
+                break
+    except Exception:  # noqa: BLE001
+        log.exception("poster pass failed")
+    return n
+
+
 def _accounts_with_active_campaigns(db):
     from datetime import datetime, timedelta, timezone
 
@@ -102,6 +124,7 @@ def _loop():
             rules.evaluate_profit_rules(db, settings)
             queue_worker.process(db, settings)
             tensorpix_worker.process_pending(db, limit=6)   # advance variant jobs
+            _posters_pass(db)                                 # pre-make a few missing video posters, one at a time
             log.info("sweep %s done (slow=%s) rss=%.0fMB", sweep_n, slow, rss_mb())
         except Exception:  # one bad sweep must never kill the worker
             log.exception("background sweep failed")

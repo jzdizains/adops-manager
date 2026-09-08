@@ -150,6 +150,7 @@ def preset_facts(presets) -> dict:
             "budget_mode": p.campaign_budget_mode or "ABO", "campaign_budget": p.campaign_budget or 0,
             "landing": f.get("landing_page_url") or "", "creative": f.get("creative_source") or "spark",
             "cta": f.get("call_to_action") or "", "duplicates": int(f.get("duplicates") or 1),
+            "caps": len(f.get("cost_cap_ladder") or []),
             "policy": f.get("account_policy") or "",
             "smart_plus": bool(f.get("smart_plus")), "ad_text": (f.get("ad_text") or "")[:80],
         }

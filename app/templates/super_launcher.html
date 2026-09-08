@@ -268,8 +268,14 @@
     e.preventDefault();
     var p = PRESETS[preset.value] || {}, m = slCreative.value;
     var cre = m === "pick" ? picked.length + " picked creative(s)" : (m === "library" ? "fresh library videos" : (m === "carousel" ? "fresh library carousels" : (slSpark.value ? "spark override" : "the preset's creative")));
-    UI.confirm({ title: "Launch to " + label + "?", html: true, ok: "Launch now",
-      text: "<b>" + UI.esc(preset.options[preset.selectedIndex].text) + "</b><br>" + UI.esc(cre) + (p.budget ? " · $" + p.budget + "/day per ad group" : "") + "<br>" + UI.esc(document.getElementById("slAssignSummary").textContent || "") + "<br><span style='color:var(--text-dim)'>Runs in the background; the results page opens at once and you get a notification when every account is done.</span>" })
+    var nAcc = autoBox.checked ? (parseInt(document.querySelector('[name="auto_count"]') ? document.querySelector('[name="auto_count"]').value : "0", 10) || 0) : boxes.filter(function (b) { return b.checked; }).length;
+    var perCamp = p.smart_plus ? 1 : Math.max(1, p.caps || 1) * Math.max(1, p.duplicates || 1);
+    var daily = p.budget_mode === "ABO" ? (parseFloat(p.budget) || 0) * perCamp * nAcc : (parseFloat(p.campaign_budget) || 0) * nAcc;
+    var tile = function (l, v, d) { return '<div class="kpi" style="padding:10px 12px;"><div class="lab">' + l + '</div><div class="val" style="font-size:17px;">' + v + '</div><div class="sub">' + d + "</div></div>"; };
+    UI.confirm({ title: "Launch " + nAcc + " campaign" + (nAcc === 1 ? "" : "s") + "?", html: true, ok: "🚀 Launch now",
+      text: '<div style="display:flex;gap:12px;align-items:center;padding:10px;border:1px solid var(--border);border-radius:12px;margin-bottom:10px;"><div><b>' + UI.esc(preset.options[preset.selectedIndex].text) + '</b><div style="font-size:12px;">' + UI.esc(cre) + " · " + UI.esc(p.objective || "") + (p.destination ? " · " + UI.esc(p.destination) : "") + (p.cta ? " · CTA " + UI.esc(p.cta === "AUTO" ? "auto" : p.cta.replace(/_/g, " ").toLowerCase()) : "") + "</div></div></div>" +
+        '<div class="kpis kpis-3" style="margin:0 0 10px;gap:8px;">' + tile("Accounts", nAcc, label) + tile("Ad groups", nAcc * perCamp, perCamp + " per campaign" + (p.caps ? " · " + p.caps + " cap" + (p.caps > 1 ? "s" : "") : "") + (p.duplicates > 1 ? " × " + p.duplicates : "")) + tile("Daily budget", UI.money(daily, 0), p.budget_mode === "ABO" ? "$" + p.budget + " per ad group, if all spend" : "CBO $" + p.campaign_budget + " per campaign") + "</div>" +
+        "<div style='font-size:12px;'>" + UI.esc(document.getElementById("slAssignSummary").textContent || "") + "</div><div style='color:var(--text-dim);font-size:12px;margin-top:6px;'>Runs in the background — the results page opens at once and you get a notification when every account is done.</div>" })
       .then(function (yes) { if (!yes) return; slForm.dataset.ok = "1"; launchBtn.disabled = true; launchBtn.textContent = "Starting…"; slForm.submit(); });
   });
   syncPreset();

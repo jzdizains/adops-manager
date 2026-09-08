@@ -233,6 +233,11 @@ def creative_file(creative_id: int, db: Session = Depends(get_db)):
 
 
 THUMB_DIR = CREATIVES_DIR / "_thumbs"
+import threading as _threading
+# Thumbnails and posters are generated on first request. A grid of hundreds of tiles
+# arrives as hundreds of parallel requests; without a gate that is hundreds of ffmpeg /
+# Pillow decodes at once — which is exactly what took the 512 MB Render instance down.
+_DECODE_GATE = _threading.BoundedSemaphore(2)
 THUMB_PX = 320
 
 
@@ -257,10 +262,13 @@ def creative_thumb(creative_id: int, db: Session = Depends(get_db)):
     if not out.exists():
         try:
             from PIL import Image
-            with Image.open(src) as im:
-                im = im.convert("RGB")
-                im.thumbnail((THUMB_PX, THUMB_PX))
-                im.save(out, "JPEG", quality=82, optimize=True)
+            with _DECODE_GATE:
+                if not out.exists():
+                    with Image.open(src) as im:
+                        im.draft("RGB", (THUMB_PX * 2, THUMB_PX * 2))   # JPEG: decode at reduced size
+                        im = im.convert("RGB")
+                        im.thumbnail((THUMB_PX, THUMB_PX))
+                        im.save(out, "JPEG", quality=82, optimize=True)
         except Exception:                      # unreadable image → serve the original
             return FileResponse(str(src), media_type=_MIME.get(src.suffix.lower(), "image/png"))
     return FileResponse(str(out), media_type="image/jpeg",
@@ -947,15 +955,40 @@ def creative_poster(creative_id: int, db: Session = Depends(get_db)):
     THUMB_DIR.mkdir(parents=True, exist_ok=True)
     out = THUMB_DIR / f"v{row.id}_{(row.md5 or 'x')[:12]}.jpg"
     if not out.exists() and src.exists():
-        try:
-            subprocess.run([video_freshen.ffmpeg_exe(), "-y", "-loglevel", "error", "-ss", "0.5", "-i", str(src),
-                            "-frames:v", "1", "-vf", "scale=270:-2", "-q:v", "5", str(out)], timeout=20, check=False,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except Exception:  # noqa: BLE001
-            pass
+        _make_poster(src, out)
     if not out.exists():
         return RedirectResponse("/static/no-poster.svg", status_code=303)
     return FileResponse(str(out), media_type="image/jpeg", headers={"Cache-Control": "private, max-age=86400"})
+
+
+def _make_poster(src, out) -> bool:
+    """First frame → small JPEG, one ffmpeg at a time (gate), single-threaded,
+    no audio decode. Called on upload (video_freshen) and lazily by /poster."""
+    import subprocess
+    from .. import video_freshen
+    try:
+        with _DECODE_GATE:
+            if out.exists():
+                return True
+            subprocess.run([video_freshen.ffmpeg_exe(), "-y", "-loglevel", "error", "-threads", "1", "-ss", "0.5", "-i", str(src),
+                            "-an", "-sn", "-frames:v", "1", "-vf", "scale=270:-2", "-q:v", "5", str(out)], timeout=20, check=False,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:  # noqa: BLE001
+        return False
+    return out.exists()
+
+
+def ensure_poster(row) -> None:
+    """Best-effort poster for a video creative (used right after upload so the
+    library never has to generate posters under page load)."""
+    from pathlib import Path
+    if not row or row.kind != "video" or not row.file_path:
+        return
+    src = Path(row.file_path)
+    if not src.exists():
+        return
+    THUMB_DIR.mkdir(parents=True, exist_ok=True)
+    _make_poster(src, THUMB_DIR / f"v{row.id}_{(row.md5 or 'x')[:12]}.jpg")
 
 
 @router.get("/creatives/pick.json")
@@ -996,6 +1029,7 @@ def creatives_pick(request: Request, db: Session = Depends(get_db)):
                 "variants": fam_ct.get(r.source_md5 or r.md5 or "", 1), "variant": bool(r.freshen or r.uniquify),
                 "note": notes.get(str(r.id), ""), "music": r.music_name or "",
                 "slides": len(_slides_of(r)) if r.kind == "carousel" else 0,
+                "slide_ids": _slides_of(r) if r.kind == "carousel" else [],
                 "spend": round(p["spend"], 2) if p else 0.0, "revenue": round(p["revenue"], 2) if p else 0.0,
                 "profit": round(p["profit"], 2) if p else 0.0, "roas": round(p["roas"], 2) if p else 0.0,
                 "used_in": (p["campaign_name"] if p else ""), "used_account": (p["account_name"] if p else "")}
@@ -1104,7 +1138,7 @@ def creative_detail(creative_id: int, db: Session = Depends(get_db)):
         "uploaded_at": (r.uploaded_at.isoformat() + "Z") if r.uploaded_at else "", "uploaded_ago": _ago(r.uploaded_at),
         "uploaded_str": r.uploaded_at.strftime("%d %b %Y · %H:%M") if r.uploaded_at else "",
         "poster": f"/creatives/{r.id}/poster", "file": f"/creatives/{r.id}/file" if r.kind != "carousel" else "",
-        "music": r.music_name or "", "slides": len(_slides_of(r)) if r.kind == "carousel" else 0,
+        "music": r.music_name or "", "slides": len(_slides_of(r)) if r.kind == "carousel" else 0, "slide_ids": _slides_of(r) if r.kind == "carousel" else [],
         "variants": [{"id": v.id, "name": v.name, "status": v.status, "archived": bool(v.archived)} for v in variants if v.id != r.id][:30],
         "today": _sum(today), "alltime": _sum(alltime), "by_account": by_acct[:40], "note": note.text if note else "",
         "used_in": r.used_campaign_id or "", "used_account": r.used_advertiser_id or "",

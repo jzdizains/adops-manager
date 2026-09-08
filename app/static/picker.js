@@ -54,7 +54,7 @@
       }
       function preview(it) {
         cur = it;
-        var media = it.kind === "video" && it.file ? '<video src="' + esc(it.file) + '" controls playsinline preload="metadata" poster="' + esc(it.poster) + '"></video>' : '<img src="' + esc(it.poster) + '" alt="">';
+        var media = it.kind === "video" && it.file ? '<video src="' + esc(it.file) + '" controls playsinline preload="metadata" poster="' + esc(it.poster) + '"></video>' : (it.kind === "carousel" ? "" : '<img src="' + esc(it.poster) + '" alt="">');
         side.innerHTML = '<div class="pk-phone">' + media + '</div><div class="pk-info"><b>' + esc(it.name) + '</b>' +
           '<div class="muted" style="font-size:11.5px;">' + esc(it.kind) + (it.slides ? " · " + it.slides + " slides" : "") + (it.music ? " · ♫ " + esc(it.music) : "") + " · " + it.size_mb + " MB</div>" +
           '<div style="margin-top:8px;display:flex;gap:6px;align-items:center;"><span class="pill ' + (it.state === "fresh" ? "ok" : "mute") + '">' + it.state + '</span><span class="muted" style="font-size:11.5px;">uploaded ' + esc(it.uploaded_ago) + '</span></div>' +
@@ -62,6 +62,7 @@
           (it.used_in ? '<div class="muted" style="font-size:11.5px;margin-top:4px;">last in ' + esc(it.used_in) + " · " + esc(it.used_account) + "</div>" : "") +
           (it.note ? '<div class="muted" style="font-size:12px;margin-top:8px;border-left:2px solid var(--border-strong);padding-left:8px;">' + esc(it.note) + "</div>" : "") +
           '<div style="margin-top:10px;"><button type="button" class="btn sm ' + (sel[it.id] ? "" : "primary") + ' pk-toggle">' + (sel[it.id] ? "Remove" : (o.multi ? "Add" : "Select")) + "</button></div></div>";
+        if (it.kind === "carousel") UI.slides(side.querySelector(".pk-phone"), it.slide_ids || [], { poster: it.poster });
         side.querySelector(".pk-toggle").addEventListener("click", function () { toggle(it.id); preview(it); });
       }
       function toggle(id) {

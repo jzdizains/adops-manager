@@ -1,68 +1,77 @@
 {% extends "base.html" %}
-{% block page_width %}narrow{% endblock %}
 {% block content %}
-<div class="page-head">
-  <div><h1>Create Campaign</h1>
-    <div class="muted">Launch one preset to one or a few accounts. For dozens at once use the <a href="/super-launcher">Super Launcher</a>.</div></div>
+<div class="page-head" style="margin-bottom:10px;">
+  <div><h1>Single campaign</h1>
+    <div class="muted" style="font-size:12.5px;">One preset to one or a few accounts — pick the exact creative or spark with a preview. For dozens of accounts use the <a href="/super-launcher">Super Launcher</a>.</div></div>
+  <div class="actions"><a class="btn" href="/presets/new">＋ New preset</a></div>
 </div>
 
 <form method="post" action="/campaigns/launch" id="clForm">
-<div class="grid cols-2" style="align-items:start;">
-  <div class="card mb0">
-    <div class="card-header"><span class="card-title">1 · What to launch</span></div>
-    <label class="field"><span class="field-label">Preset</span>
+<input type="hidden" name="spark_code_id" id="sparkId" value="">
+<input type="hidden" name="creative_id" id="creativeId" value="">
+<div class="grid cols-2" style="align-items:start;gap:14px;">
+  <div style="display:flex;flex-direction:column;gap:14px;">
+    <div class="card mb0">
+      <div class="card-header"><span class="card-title">1 · Preset</span><span class="card-meta">{{ templates|length }} preset{{ 's' if templates|length != 1 }}</span></div>
       <select name="template_id" id="clPreset" required>
         <option value="">— pick a preset —</option>
-        {% for p in templates %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}
+        {% for p in templates %}<option value="{{ p.id }}" {{ 'selected' if request.query_params.get('preset') == p.id|string }}>{{ p.name }}</option>{% endfor %}
       </select>
-      {% if not templates %}<span class="hint">No presets yet — <a href="/presets/new">create one</a> first.</span>{% endif %}</label>
-
-    <div class="preset-preview" id="clPreview" hidden>
-      <div class="pp-grid">
-        <div><span class="lab">Goal</span><b data-pp="objective"></b></div>
-        <div><span class="lab">Destination</span><b data-pp="destination"></b></div>
-        <div><span class="lab">Creative</span><b data-pp="creative"></b></div>
-        <div><span class="lab">Budget</span><b data-pp="budget"></b></div>
-        <div><span class="lab">Call to action</span><b data-pp="cta"></b></div>
-        <div><span class="lab">Ad groups</span><b data-pp="duplicates"></b></div>
+      {% if not templates %}<span class="hint">No presets yet — <a href="/presets/new">create one</a> first.</span>{% endif %}
+      <div class="preset-preview" id="clPreview" hidden style="margin-top:10px;">
+        <div class="pp-grid">
+          <div><span class="lab">Goal</span><b data-pp="objective"></b></div>
+          <div><span class="lab">Destination</span><b data-pp="destination"></b></div>
+          <div><span class="lab">Creative</span><b data-pp="creative"></b></div>
+          <div><span class="lab">Budget</span><b data-pp="budget"></b></div>
+          <div><span class="lab">Call to action</span><b data-pp="cta"></b></div>
+          <div><span class="lab">Ad groups</span><b data-pp="duplicates"></b></div>
+        </div>
+        <div class="muted" style="font-size:11.5px;margin-top:6px;" data-pp="landing"></div>
+        <a class="muted" style="font-size:11.5px;" id="clEditPreset" href="#">Edit this preset →</a>
       </div>
-      <div class="muted" style="font-size:11.5px;margin-top:6px;" data-pp="landing"></div>
-      <a class="muted" style="font-size:11.5px;" id="clEditPreset" href="#">Edit this preset →</a>
     </div>
 
-    <label class="field"><span class="field-label">Spark code (optional override)</span>
-      <select name="spark_code_id" id="sparkSel">
-        <option value="">— use preset default —</option>
-        {% for s in sparks %}
-          <option value="{{ s.id }}">{{ s.name or s.code[:18] }} ({{ s.media_type }})</option>
-        {% endfor %}
-      </select></label>
-    <label class="field"><span class="field-label">Library creative (optional override)</span>
-      <select name="creative_id" id="creativeSel">
-        <option value="">— use preset default —</option>
-        {% for c in creatives %}
-          <option value="{{ c.id }}">🎬 {{ c.name }}{% if c.source %} · {{ c.source }}{% endif %}</option>
-        {% endfor %}
-        {% for c in carousels %}
-          <option value="{{ c.id }}">🖼 {{ c.name }} (carousel · {{ c.music_name or 'music' }})</option>
-        {% endfor %}
-      </select>
-      <span class="hint">Pick at most one override. A spark code launches a creator post; a library creative launches a video or carousel ad under the account's own identity. Only unused creatives are listed — each launches once.</span></label>
+    <div class="card mb0">
+      <div class="card-header"><span class="card-title">2 · Creative</span><span class="card-meta">what the ad shows</span></div>
+      <div class="seg" id="clCreativeSeg" style="display:inline-flex;flex-wrap:wrap;">
+        <button type="button" class="on" data-mode="">Preset default</button>
+        <button type="button" data-mode="pick" {{ 'disabled' if not (creatives or carousels) }} title="Pick one video or carousel from the library — with a preview">Pick from library <span class="n">{{ creatives|length + carousels|length }}</span></button>
+        <button type="button" data-mode="spark" {{ 'disabled' if not sparks }} title="Launch a creator's post through its spark code">Spark code <span class="n">{{ sparks|length }}</span></button>
+      </div>
+      <div id="clPicked" hidden style="margin-top:10px;display:flex;align-items:center;gap:10px;">
+        <img id="clPickedImg" alt="" style="width:44px;height:60px;object-fit:cover;border-radius:8px;background:var(--panel-hover);flex:none;">
+        <div style="min-width:0;flex:1;"><b id="clPickedName" style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></b><span class="muted" id="clPickedSub" style="font-size:11.5px;"></span></div>
+        <button type="button" class="btn sm" id="clChange">Change…</button>
+      </div>
+      <div id="clSparkBox" hidden style="margin-top:10px;">
+        <div class="search-wrap"><input type="text" id="clSparkQ" placeholder="Search spark by name, creator or code…"></div>
+        <div id="clSparkList" style="max-height:220px;overflow:auto;margin-top:6px;border:1px solid var(--border);border-radius:12px;">
+          {% for s in sparks %}<label class="cl-spark" data-search="{{ (s.name ~ ' ' ~ s.code ~ ' ' ~ (s.group.name if s.group else ''))|lower }}" style="display:flex;align-items:center;gap:9px;padding:7px 10px;border-bottom:1px solid var(--border-soft);cursor:pointer;font-size:12.5px;">
+            <input type="radio" name="_spark" value="{{ s.id }}" style="width:auto;">
+            {% if s.thumbnail_url %}<img src="{{ s.thumbnail_url }}" alt="" loading="lazy" style="width:26px;height:34px;object-fit:cover;border-radius:5px;">{% else %}<span style="width:26px;height:34px;border-radius:5px;background:var(--panel-hover);display:grid;place-items:center;color:var(--text-dim);font-size:11px;">✦</span>{% endif %}
+            <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><b>{{ s.name or s.code[:16] }}</b>{% if s.group %} <span class="muted">· {{ s.group.name }}</span>{% endif %}</span>
+            <span class="muted" style="font-size:11px;">{{ s.media_type|lower }}</span>
+            {% if s.tiktok_post_url %}<a href="{{ s.tiktok_post_url }}" target="_blank" rel="noopener" class="muted" style="font-size:11px;" onclick="event.stopPropagation()">post ↗</a>{% endif %}</label>{% endfor %}
+          {% if not sparks %}<div class="muted" style="padding:10px;font-size:12px;">No active spark codes — add them on the <a href="/spark-codes">Sparks</a> page.</div>{% endif %}
+        </div>
+      </div>
+      <div class="hint" id="clCreativeHint" style="margin-top:8px;">Preset default = whatever the preset says (its spark, or the next unused library creative per account).</div>
+    </div>
   </div>
 
   <div class="card mb0">
-    <div class="card-header"><span class="card-title">2 · Where</span>
+    <div class="card-header"><span class="card-title">3 · Accounts</span>
       <span class="card-meta" style="display:flex;gap:6px;align-items:center;">{{ accounts|length }} account(s)
         <button class="btn sm" type="button" id="slNone">None</button></span></div>
     {% if accounts %}
     {% include "_account_picker.html" %}
-    <div class="hint" style="margin-top:6px;">Tick one or a few accounts — each gets its own campaign from this preset, launched together as one batch. Search, the state filter and the Business Center tags work like the Super Launcher.</div>
     {% else %}
     <div class="empty"><div class="empty-title">No ad accounts yet</div><a class="btn primary" href="/oauth/connect">Connect TikTok</a></div>
     {% endif %}
     <div class="sl-summary" id="clSummary" style="margin-top:14px;">Pick a preset and an account.</div>
     <button class="btn primary" type="submit" id="clLaunch" style="width:100%;justify-content:center;font-size:14px;padding:11px;">🚀 Launch</button>
-    <div class="hint" style="text-align:center;margin-top:8px;">You'll see a result page with every account's outcome and a retry button.</div>
+    <div class="hint" style="text-align:center;margin-top:8px;">Runs in the background — you land on a result page with every account's outcome and a retry button.</div>
   </div>
 </div>
 </form>
@@ -70,15 +79,39 @@
 {% block scripts %}
 <script src="/static/account-picker.js?v={{ STATIC_V }}"></script>
 <script>
+(function () {
+  var $ = function (s) { return document.querySelector(s); }, $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
   var PRESETS = {{ preset_info_json | safe }};
   var CREATIVE_LABELS = { spark: "Spark code (creator post)", library: "Library video — next unused", carousel: "Library carousel — next unused" };
-  var sparkSel = document.getElementById("sparkSel"), creativeSel = document.getElementById("creativeSel");
-  var preset = document.getElementById("clPreset"), preview = document.getElementById("clPreview");
-  var summary = document.getElementById("clSummary"), launchBtn = document.getElementById("clLaunch");
-  var picker = window.AccountPicker.init({ onChange: function () { if (picker) syncSummary(); } });   // (init fires once before `picker` exists; syncPreset() below covers that)
-  // the two overrides are mutually exclusive — picking one clears the other
-  sparkSel.addEventListener("change", function () { if (sparkSel.value) creativeSel.value = ""; syncSummary(); });
-  creativeSel.addEventListener("change", function () { if (creativeSel.value) sparkSel.value = ""; syncSummary(); });
+  var preset = $("#clPreset"), preview = $("#clPreview"), summary = $("#clSummary"), launchBtn = $("#clLaunch"), form = $("#clForm");
+  var sparkId = $("#sparkId"), creativeId = $("#creativeId"), mode = "", picked = null;
+  var picker = window.AccountPicker.init({ onChange: function () { if (picker) syncSummary(); } });
+
+  function setMode(m) {
+    mode = m; $$("#clCreativeSeg button").forEach(function (b) { b.classList.toggle("on", b.dataset.mode === m); });
+    $("#clPicked").hidden = !(m === "pick" && picked); $("#clSparkBox").hidden = m !== "spark";
+    if (m !== "pick") { picked = null; creativeId.value = ""; }
+    if (m !== "spark") { sparkId.value = ""; $$('input[name="_spark"]').forEach(function (r) { r.checked = false; }); }
+    $("#clCreativeHint").textContent = m === "pick" ? "One specific creative launches ONCE — pick a single account with it. For one-per-account use the Super Launcher." : (m === "spark" ? "The creator's post runs as the ad under their identity; the preset's text and destination still apply." : "Preset default = whatever the preset says (its spark, or the next unused library creative per account).");
+    syncSummary();
+  }
+  function openPicker() {
+    UI.pickCreatives({ kind: picked && picked.kind === "carousel" ? "carousel" : "video", kinds: ["video", "carousel"], multi: false, state: "fresh", selected: picked ? [picked.id] : [], title: "Pick the creative", hint: "Videos or carousels never launched before." }).then(function (items) {
+      if (!items) { if (!picked) setMode(""); return; }
+      picked = items[0]; creativeId.value = picked.id;
+      $("#clPickedImg").src = picked.poster; $("#clPickedName").textContent = picked.name;
+      $("#clPickedSub").textContent = picked.kind + (picked.slides ? " · " + picked.slides + " slides" : "") + (picked.music ? " · ♫ " + picked.music : "") + " · uploaded " + picked.uploaded_ago;
+      setMode("pick");
+    });
+  }
+  $("#clCreativeSeg").addEventListener("click", function (e) {
+    var b = e.target.closest("button[data-mode]"); if (!b || b.disabled) return;
+    if (b.dataset.mode === "pick") { openPicker(); return; }
+    setMode(b.dataset.mode);
+  });
+  $("#clChange").addEventListener("click", openPicker);
+  $("#clSparkList").addEventListener("change", function (e) { if (e.target.name === "_spark") { sparkId.value = e.target.value; syncSummary(); } });
+  $("#clSparkQ").addEventListener("input", function () { var q = this.value.trim().toLowerCase(); $$(".cl-spark").forEach(function (r) { r.hidden = !!q && r.dataset.search.indexOf(q) < 0; }); });
 
   function syncPreset() {
     var p = PRESETS[preset.value];
@@ -91,28 +124,44 @@
     set("cta", p.cta === "AUTO" ? "Auto (TikTok picks)" : (p.cta || "—").replace(/_/g, " ").toLowerCase());
     set("duplicates", p.duplicates + (p.smart_plus ? " · Smart+" : ""));
     set("landing", p.landing ? "Lands on " + p.landing : "No landing URL on this preset");
-    document.getElementById("clEditPreset").href = "/presets/" + preset.value + "/edit";
+    $("#clEditPreset").href = "/presets/" + preset.value + "/edit";
     syncSummary();
   }
-  function pickedAccounts() { return picker.selected().length; }
+  function n() { return picker.selected().length; }
+  function creativeText() {
+    if (mode === "pick" && picked) return picked.name;
+    if (mode === "spark" && sparkId.value) { var r = $('input[name="_spark"]:checked'); return "spark " + (r ? r.closest("label").querySelector("b").textContent : ""); }
+    return "preset default";
+  }
+  function problem() {
+    if (!preset.value) return "Pick a preset.";
+    if (!n()) return "Tick at least one account.";
+    if (mode === "pick" && picked && n() > 1) return "A specific creative launches once — keep one account, or use the Super Launcher.";
+    if (mode === "spark" && !sparkId.value) return "Pick a spark code.";
+    return "";
+  }
   function syncSummary() {
-    var name = preset.value ? preset.options[preset.selectedIndex].text : "", n = pickedAccounts();
-    if (!name || !n) {
-      summary.textContent = !name ? "Pick a preset" + (!n ? " and an account." : ".") : "Pick an account.";
-      summary.classList.remove("ready"); launchBtn.textContent = "🚀 Launch"; return;
-    }
-    var over = sparkSel.value ? " · spark override" : (creativeSel.value ? " · creative override" : "");
-    summary.innerHTML = "<b>" + name + "</b> → <b>" + n + "</b> account" + (n === 1 ? "" : "s") + " → <b>" + n + "</b> campaign" + (n === 1 ? "" : "s") + over;
+    var k = n(), name = preset.value ? preset.options[preset.selectedIndex].text : "", pr = problem();
+    if (pr) { summary.textContent = pr; summary.classList.remove("ready"); launchBtn.textContent = "🚀 Launch"; return; }
+    summary.innerHTML = "<b>" + UI.esc(name) + "</b> · " + UI.esc(creativeText()) + " → <b>" + k + "</b> account" + (k === 1 ? "" : "s") + " → <b>" + k + "</b> campaign" + (k === 1 ? "" : "s");
     summary.classList.add("ready");
-    launchBtn.textContent = "🚀 Launch " + n + " campaign" + (n === 1 ? "" : "s");
+    launchBtn.textContent = "🚀 Launch " + k + " campaign" + (k === 1 ? "" : "s");
   }
   preset.addEventListener("change", syncPreset);
-
-  document.getElementById("clForm").addEventListener("submit", function (e) {
-    if (!preset.value) { e.preventDefault(); alert("Pick a preset."); return; }
-    if (!pickedAccounts()) { e.preventDefault(); alert("Tick at least one account."); return; }
-    launchBtn.disabled = true; launchBtn.textContent = "Starting…";
+  form.addEventListener("submit", function (e) {
+    if (form.dataset.ok) return;
+    e.preventDefault();
+    var pr = problem(); if (pr) { adopsToast && adopsToast("err", pr); return; }
+    var k = n();
+    UI.confirm({ title: "Launch " + k + " campaign" + (k === 1 ? "" : "s") + "?", html: true, text: "<b>" + UI.esc(preset.options[preset.selectedIndex].text) + "</b> with " + UI.esc(creativeText()) + " on " + k + " account" + (k === 1 ? "" : "s") + ". They start in the background; you land on the result page.", ok: "Launch" })
+      .then(function (y) { if (!y) return; form.dataset.ok = "1"; launchBtn.disabled = true; launchBtn.textContent = "Starting…"; form.submit(); });
   });
+  // arrived with ?accounts=id,id or ?creative=ID
+  var qs = new URLSearchParams(location.search), preAcc = (qs.get("accounts") || "").split(",").filter(Boolean);
+  if (preAcc.length) picker.selectRows(function (row) { var b = row.querySelector(".sl-acct"); return !!b && !b.disabled && preAcc.indexOf(b.value) >= 0; });
+  var preCr = qs.get("creative");
+  if (preCr) UI.get("/creatives/" + preCr + "/detail").then(function (d) { if (d && d.id) { picked = { id: d.id, name: d.name, kind: d.kind, poster: d.poster, slides: d.slides, music: d.music, uploaded_ago: d.uploaded_ago }; creativeId.value = d.id; $("#clPickedImg").src = d.poster; $("#clPickedName").textContent = d.name; $("#clPickedSub").textContent = d.kind + " · uploaded " + d.uploaded_ago; setMode("pick"); } });
   syncPreset();
+})();
 </script>
 {% endblock %}

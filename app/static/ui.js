@@ -113,6 +113,29 @@
     return me;
   };
 
+  // ---- carousel slide viewer: big image + thumbnail strip + arrows ------------
+  // UI.slides(host, ids, {poster}) — ids are image creative ids; empty → poster only
+  UI.slides = function (host, ids, o) {
+    o = o || {};
+    if (!ids || ids.length < 2) { host.innerHTML = '<img src="' + esc(o.poster || (ids && ids[0] ? "/creatives/" + ids[0] + "/thumb" : "/static/no-poster.svg")) + '" alt="">'; return; }
+    var i = 0, n = ids.length;
+    host.classList.add("slides");
+    host.innerHTML = '<div class="sl-main"><img alt=""><button type="button" class="sl-nav sl-prev" title="Previous slide">‹</button><button type="button" class="sl-nav sl-next" title="Next slide">›</button><span class="sl-count"></span></div>' +
+      '<div class="sl-strip">' + ids.map(function (id, k) { return '<img src="/creatives/' + id + '/thumb" alt="" data-k="' + k + '" title="Slide ' + (k + 1) + '">'; }).join("") + "</div>";
+    var img = host.querySelector(".sl-main img"), cnt = host.querySelector(".sl-count");
+    function show(k) {
+      i = (k + n) % n; img.src = "/creatives/" + ids[i] + "/file"; cnt.textContent = (i + 1) + " / " + n;
+      host.querySelectorAll(".sl-strip img").forEach(function (t, k2) { t.classList.toggle("on", k2 === i); });
+    }
+    host.querySelector(".sl-prev").addEventListener("click", function (e) { e.stopPropagation(); show(i - 1); });
+    host.querySelector(".sl-next").addEventListener("click", function (e) { e.stopPropagation(); show(i + 1); });
+    host.querySelector(".sl-strip").addEventListener("click", function (e) { var t = e.target.closest("img[data-k]"); if (t) show(+t.dataset.k); });
+    img.addEventListener("click", function () { show(i + 1); });
+    host.tabIndex = 0;
+    host.addEventListener("keydown", function (e) { if (e.key === "ArrowLeft") { show(i - 1); e.preventDefault(); } if (e.key === "ArrowRight") { show(i + 1); e.preventDefault(); } });
+    show(0);
+  };
+
   // ---- keyboard help (?) ------------------------------------------------------
   UI.kbdHelp = function (rows) {
     var html = '<div class="kbd-help">' + rows.map(function (r) { return "<span><kbd>" + esc(r[0]) + "</kbd></span><span>" + esc(r[1]) + "</span>"; }).join("") + "</div>";

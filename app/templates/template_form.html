@@ -1,578 +1,297 @@
 {% extends "base.html" %}
 {% block content %}
+{% set pv = (videos|selectattr('id', 'equalto', blob.get('video_creative_id'))|list)[0] if blob.get('video_creative_id') else None %}
+{% set pc = (carousels|selectattr('id', 'equalto', blob.get('carousel_id'))|list)[0] if blob.get('carousel_id') else None %}
+{% set ps = (sparks|selectattr('id', 'equalto', blob.get('spark_code_id'))|list)[0] if blob.get('spark_code_id') else None %}
+{% set pdc = (display_cards|selectattr('id', 'equalto', blob.get('display_card_id'))|list)[0] if blob.get('display_card_id') else None %}
 <div class="page-head" style="margin-bottom:10px;">
-  <div><h1>{{ t.name if t else "New preset" }}</h1><div class="muted" style="font-size:12.5px;">{% if t %}Edit preset{% if usage %} · {{ usage.ok }} launch{{ 'es' if usage.ok != 1 }}{% if usage.last %} · last {{ usage.last|ago }}{% endif %}{% endif %}{% else %}A preset is everything a campaign needs — goal, destination, targeting, budget, creative. Build it once, launch it to any number of accounts.{% endif %}</div></div>
+  <div><h1 id="pbTitle">{{ t.name if t else "New preset" }}</h1><div class="muted" style="font-size:12.5px;">{% if t %}Edit preset{% if usage %} · {{ usage.ok }} launch{{ 'es' if usage.ok != 1 }}{% if usage.last %} · last {{ usage.last|ago }}{% endif %}{% endif %}{% else %}Everything a campaign needs, set once — then launched to any number of accounts.{% endif %}</div></div>
   <div class="actions">{% if t %}<a class="btn" href="/super-launcher?preset={{ t.id }}">🚀 Launch</a>{% endif %}<a class="btn" href="/presets">Cancel</a><button class="btn primary" type="submit" form="presetForm" id="presetSave">Save preset</button></div>
 </div>
 
-<div class="settings-wrap">
-<nav class="settings-nav" id="pfNav" aria-label="Steps">
-  <a href="#campaign" data-tab="campaign"><span class="pf-no">1</span>Campaign</a>
-  <a href="#location" data-tab="location"><span class="pf-no">2</span>Destination</a>
-  <a href="#targeting" data-tab="targeting"><span class="pf-no">3</span>Targeting</a>
-  <a href="#budget" data-tab="budget"><span class="pf-no">4</span>Budget &amp; bidding</a>
-  <a href="#ad" data-tab="ad"><span class="pf-no">5</span>Ad &amp; creative</a>
-  <a href="#addons" data-tab="addons"><span class="pf-no">6</span>Add-ons</a>
-  <div class="muted" style="font-size:11.5px;padding:14px 12px;line-height:1.5;">Every step is optional except a name, goal and destination. Empty targeting = TikTok's broadest defaults.</div>
+<div class="pb-wrap">
+<nav class="card pb-rail" id="pfNav" aria-label="Steps">
+  <a href="#campaign" data-tab="campaign"><span class="pf-no">1</span>Campaign<span class="pb-rail-sub" data-sum="campaign"></span></a>
+  <a href="#location" data-tab="location"><span class="pf-no">2</span>Destination<span class="pb-rail-sub" data-sum="location"></span></a>
+  <a href="#targeting" data-tab="targeting"><span class="pf-no">3</span>Targeting<span class="pb-rail-sub" data-sum="targeting"></span></a>
+  <a href="#budget" data-tab="budget"><span class="pf-no">4</span>Budget &amp; bidding<span class="pb-rail-sub" data-sum="budget"></span></a>
+  <a href="#ad" data-tab="ad"><span class="pf-no">5</span>Ad &amp; creative<span class="pb-rail-sub" data-sum="ad"></span></a>
+  <a href="#addons" data-tab="addons"><span class="pf-no">6</span>Add-ons<span class="pb-rail-sub" data-sum="addons"></span></a>
+  <div class="pb-rail-foot">
+    <div class="muted" style="font-size:11.5px;line-height:1.5;">Only a name, goal and destination are required. Empty targeting = TikTok's broadest defaults.</div>
+    {% if t %}<form method="post" action="/presets/{{ t.id }}/duplicate"><button class="btn sm" type="submit" style="width:100%;justify-content:center;">⧉ Duplicate</button></form>{% endif %}
+  </div>
 </nav>
+
 <div style="min-width:0;">
 <form method="post" action="/presets/save" id="presetForm" novalidate>
   {% if t %}<input type="hidden" name="preset_id" value="{{ t.id }}">{% endif %}
+  <input type="hidden" name="optimization_goal" value="">
 
-<section class="stab" data-tab="campaign" hidden>
-  {# ============================ CAMPAIGN ================================= #}
-  <div class="card" id="campaign">
-    <div class="card-header"><span class="card-title">Campaign</span>
-      <span class="card-meta">objective · budget · special categories</span></div>
-    <div class="form-row-3">
+  {# ================================ 1 · CAMPAIGN ================================ #}
+  <section class="stab" data-tab="campaign" hidden>
+  <div class="card">
+    <div class="card-header"><span class="card-title">1 · Campaign</span><span class="card-meta">name · goal · how campaigns are named</span></div>
+    <div class="form-row">
       <label class="field"><span class="field-label">Preset name</span>
-        <input type="text" name="name" value="{{ t.name if t else '' }}" required></label>
-      <label class="field"><span class="field-label">Optimization goal</span>
-        <select name="objective_type" id="objType">
-          {% for o, label in objective_options %}
-            <option value="{{ o }}" {{ 'selected' if t and t.objective_type == o else '' }}>{{ label }}</option>
-          {% endfor %}
-        </select>
-        <span class="hint">Same wording as TikTok Ads Manager’s “Optimization goal”. Sets which destinations &amp; events are valid.</span></label>
+        <input type="text" name="name" id="pbName" value="{{ t.name if t else '' }}" required placeholder="US · carousel · leads"></label>
       <label class="field"><span class="field-label">Campaign name pattern</span>
-        <input type="text" name="campaign_name_pattern" value="{{ t.campaign_name_pattern if t else '' }}"
-               placeholder="{account} · {date} · offer">
-        <span class="hint">{{ '{account}' }}, {{ '{date}' }} and {{ '{time}' }} are substituted at launch. A time suffix is added automatically if {{ '{time}' }} isn't used — TikTok rejects duplicate campaign names.</span></label>
+        <input type="text" name="campaign_name_pattern" value="{{ t.campaign_name_pattern if t else '' }}" placeholder="{account} · {date} · offer">
+        <span class="hint"><span class="mono">{account}</span>, <span class="mono">{date}</span>, <span class="mono">{time}</span> fill in at launch. A time suffix is added if <span class="mono">{time}</span> is missing — TikTok rejects duplicate names.</span></label>
     </div>
-    <div class="form-row-3">
-      <label class="field"><span class="field-label">Budget mode</span>
-        <select name="campaign_budget_mode" id="budgetMode">
-          <option value="ABO" {{ 'selected' if not t or t.campaign_budget_mode == 'ABO' else '' }}>ABO — budget per ad group</option>
-          <option value="BUDGET_MODE_DAY" {{ 'selected' if t and t.campaign_budget_mode == 'BUDGET_MODE_DAY' else '' }}>CBO — daily campaign budget</option>
-          <option value="BUDGET_MODE_TOTAL" {{ 'selected' if t and t.campaign_budget_mode == 'BUDGET_MODE_TOTAL' else '' }}>CBO — total campaign budget</option>
-        </select></label>
-      <label class="field" id="cboBudgetField"><span class="field-label">CBO campaign budget ($)</span>
-        <input type="number" step="0.01" name="campaign_budget"
-               value="{{ t.campaign_budget if t and t.campaign_budget else '' }}"></label>
-      <label class="field"><span class="field-label">Special ad categories</span>
-        <div data-chip-picker data-name="special_industries"
-             data-options='{{ special_industries|tojson }}'
-             data-selected='{{ blob.get("special_industries", [])|tojson }}'></div>
-        <span class="hint">Only if the offer touches housing / employment / credit.</span></label>
-    </div>
-    <div class="form-row">
-      <label class="field"><span class="field-label">Smart+</span>
-        <span style="display:flex;align-items:center;gap:8px;">
-          <input type="checkbox" name="smart_plus" value="1" style="width:auto;"
-                 {{ 'checked' if blob.get('smart_plus') }}>
-          <span>Smart+ campaign — TikTok automates targeting, placements &amp; delivery</span>
-        </span>
-        <span class="hint">Needs Website or Pixel destination + a spark creative. One smart ad group per campaign — duplicates &amp; multi-cap ladders don't apply (first cap is used).</span></label>
+    <div class="field"><span class="field-label">Goal <span class="muted">(Ads Manager "optimization goal")</span></span>
+      <select name="objective_type" id="objType" hidden>{% for o, label in objective_options %}<option value="{{ o }}" {{ 'selected' if (t and t.objective_type == o) or (not t and o == 'WEB_CONVERSIONS') }}>{{ label }}</option>{% endfor %}</select>
+      <div class="pb-cards" id="objCards">
+        {% for o, label, sub in [('WEB_CONVERSIONS', 'Website engagements', 'optimise for a pixel event — purchases, sign-ups'), ('LEAD_GENERATION', 'Leads', 'instant form or a site with a pixel'), ('TRAFFIC', 'Click', 'cheapest clicks to a page'), ('REACH', 'Reach', 'the most people, once'), ('VIDEO_VIEWS', 'Video views', 'focused 6-second views')] %}
+        <button type="button" class="pb-card" data-val="{{ o }}"><b>{{ label }}</b><span class="muted">{{ sub }}</span></button>
+        {% endfor %}
+      </div>
+      <span class="hint">The goal decides which destinations and events are valid — the next step only offers what TikTok accepts for it.</span></div>
+    <div class="form-row" style="margin-top:6px;">
+      <div class="field"><span class="field-label">Smart+</span>
+        <label class="sw"><input type="checkbox" name="smart_plus" value="1" {{ 'checked' if blob.get('smart_plus') }}><span class="tog"></span><span><b>Smart+ campaign</b><span class="muted" style="display:block;font-size:11.5px;">TikTok automates targeting, placements and delivery. Needs Website/Pixel + a spark creative; one smart ad group per campaign (first cost cap is used).</span></span></label></div>
+      <div class="field"><span class="field-label">Special ad categories</span>
+        <div data-chip-picker data-name="special_industries" data-options='{{ special_industries|tojson }}' data-selected='{{ blob.get("special_industries", [])|tojson }}'></div>
+        <span class="hint">Only when the offer touches housing, employment or credit.</span></div>
     </div>
   </div>
+  <div class="pf-foot"><span></span><button type="button" class="btn" data-next="location">Next · Destination →</button></div>
+  </section>
 
-  <div class="pf-foot"><span></span><button type="button" class="btn" data-next="location">Next · Destination →</button></div></section>
-<section class="stab" data-tab="location" hidden>
-  {# ==================== OPTIMIZATION LOCATION & PIXEL ===================== #}
-  <div class="card" id="location">
-    <div class="card-header"><span class="card-title">Optimization location</span>
-      <span class="card-meta">where conversions happen — pixel + event per preset</span></div>
-    <div class="form-row">
-      <label class="field"><span class="field-label">Destination type</span>
-        <select name="destination_type" id="destType">
-          {% for d in destinations %}
-            <option value="{{ d }}" {{ 'selected' if blob.get('destination_type', 'website') == d else '' }}>{{ d.replace('_',' ')|title }}</option>
-          {% endfor %}
-        </select></label>
+  {# =============================== 2 · DESTINATION ============================== #}
+  <section class="stab" data-tab="location" hidden>
+  <div class="card">
+    <div class="card-header"><span class="card-title">2 · Destination</span><span class="card-meta">where the click lands and what counts as a conversion</span></div>
+    <select name="destination_type" id="destType" hidden>{% for d in destinations %}<option value="{{ d }}" {{ 'selected' if blob.get('destination_type', 'website') == d }}>{{ d }}</option>{% endfor %}</select>
+    <div class="pb-cards" id="destCards">
+      {% for d, label, sub in [('website', 'Website', 'landing page URL, no pixel event'), ('pixel', 'Website + pixel', 'landing page URL, optimised for a pixel event'), ('instant_page', 'Instant page', "each account's own copy, by name"), ('lead_form', 'Instant form', 'TikTok lead form, by name')] %}
+      <button type="button" class="pb-card" data-val="{{ d }}"><b>{{ label }}</b><span class="muted">{{ sub }}</span></button>
+      {% endfor %}
+    </div>
+    <div class="form-row" style="margin-top:12px;">
       <label class="field" data-dest="website pixel"><span class="field-label">Landing page URL</span>
-        <input type="url" name="landing_page_url" value="{{ blob.get('landing_page_url', '') }}"
-               placeholder="https://offer.example.com/page">
-        <span class="hint">Just the page URL — the source is appended at launch automatically (<span class="mono">?source=__CAMPAIGN_NAME__</span> in campaign-name mode, see Settings). Other parameters you add here are kept.</span></label>
+        <input type="url" name="landing_page_url" id="pbLanding" value="{{ blob.get('landing_page_url', '') }}" placeholder="https://offer.example.com/page">
+        <span class="hint">Just the page. The source rides along at launch (<span class="mono">?source=__CAMPAIGN_NAME__</span> in campaign-name mode — see Settings → Sources). Other parameters you add are kept.</span></label>
+      <label class="field" data-dest="instant_page"><span class="field-label">Instant page <span class="muted">(by name)</span></span>
+        <select name="instant_page_name"><option value="">— pick —</option>{% for p in instant_pages %}<option value="{{ p.name }}" {{ 'selected' if blob.get('instant_page_name') == p.name }}>{{ p.name }} — on {{ p.count }} account(s)</option>{% endfor %}</select>
+        <span class="hint">Each account's OWN copy of this page is used; accounts without one fail with a clear message. Sync on <a href="/instant-pages">Instant pages</a>.</span></label>
+      <label class="field" data-dest="lead_form"><span class="field-label">Lead form <span class="muted">(by name)</span></span>
+        <select name="lead_form_name"><option value="">— pick —</option>{% for f in lead_forms %}<option value="{{ f.name }}" {{ 'selected' if blob.get('lead_form_name') == f.name }}>{{ f.name }} — on {{ f.count }} account(s)</option>{% endfor %}</select>
+        <span class="hint">Same per-account matching as instant pages. Sync on <a href="/lead-forms">Lead forms</a>.</span></label>
+    </div>
+    <div class="pb-sub" data-dest="pixel website" data-needs-event="1">
+      <div class="pb-sub-h">Pixel &amp; optimisation event</div>
+      <div class="form-row-3">
+        <label class="field"><span class="field-label">Pixel</span>
+          <select name="pixel_id"><option value="">— pick a pixel —</option>{% for px in pixels %}<option value="{{ px.pixel_id }}" {{ 'selected' if blob.get('pixel_id') == px.pixel_id }}>{{ px.pixel_name or px.pixel_id }}{{ ' · BC-shared' if px.owner_bc_id }}</option>{% endfor %}</select>
+          <span class="hint">From the <a href="/pixels">pixel inventory</a> — sync there if empty.</span></label>
+        <label class="field"><span class="field-label">…or pixel code</span>
+          <input type="text" name="pixel_code" value="{{ blob.get('pixel_code', '') }}" placeholder="C0FFEE123"><span class="hint">Used only when no pixel is picked; resolved at launch.</span></label>
+        <label class="field"><span class="field-label">Optimisation event</span>
+          <select name="optimization_event"><option value="">— pick —</option>{% for ev, label in pixel_events %}<option value="{{ ev }}" {{ 'selected' if blob.get('optimization_event') == ev }}>{{ label }} ({{ ev }})</option>{% endfor %}</select>
+          <span class="hint">Must already exist on the pixel (has received events).</span></label>
+      </div>
+    </div>
+  </div>
+  <div class="pf-foot"><button type="button" class="btn ghost" data-next="campaign">← Campaign</button><button type="button" class="btn" data-next="targeting">Next · Targeting →</button></div>
+  </section>
+
+  {# ================================ 3 · TARGETING =============================== #}
+  <section class="stab" data-tab="targeting" hidden>
+  <div class="card">
+    <div class="card-header"><span class="card-title">3 · Targeting</span><span class="card-meta">empty = TikTok's broadest defaults</span></div>
+    <div class="form-row-3">
+      <label class="field"><span class="field-label">Locations <span class="muted">(TikTok location IDs)</span></span>
+        <div style="display:flex;gap:6px;"><input type="text" name="location_ids" id="pbLoc" value="{{ blob.get('location_ids', [])|join(' ') }}" placeholder="6252001 (US) 2635167 (UK)"><a class="btn sm" href="/locations" target="_blank" rel="noopener" title="Look IDs up per account and objective" style="white-space:nowrap;flex:none;">Look up ↗</a></div>
+        <span class="hint">Space-separated. Availability differs per account and objective — the Locations page reads the real list.</span></label>
+      <div class="field"><span class="field-label">Gender</span>
+        <select name="gender" id="genderSel" hidden>{% for g in ["GENDER_UNLIMITED", "GENDER_MALE", "GENDER_FEMALE"] %}<option value="{{ g }}" {{ 'selected' if blob.get('gender', 'GENDER_UNLIMITED') == g }}>{{ g }}</option>{% endfor %}</select>
+        <div class="seg" data-seg-for="genderSel"><button type="button" data-val="GENDER_UNLIMITED">All</button><button type="button" data-val="GENDER_MALE">Men</button><button type="button" data-val="GENDER_FEMALE">Women</button></div></div>
+      <div class="field"><span class="field-label">Ages</span>
+        <div data-chip-picker data-name="age_groups" data-options='[["AGE_13_17","13–17"],["AGE_18_24","18–24"],["AGE_25_34","25–34"],["AGE_35_44","35–44"],["AGE_45_54","45–54"],["AGE_55_100","55+"]]' data-selected='{{ blob.get("age_groups", [])|tojson }}'></div></div>
     </div>
     <div class="form-row-3">
-      <label class="field" data-dest="pixel website" data-needs-event="1"><span class="field-label">Pixel</span>
-        <select name="pixel_id">
-          <option value="">— pick a pixel —</option>
-          {% for px in pixels %}
-            <option value="{{ px.pixel_id }}" {{ 'selected' if blob.get('pixel_id') == px.pixel_id else '' }}>
-              {{ px.pixel_name or px.pixel_id }}{{ ' · BC-shared' if px.owner_bc_id else '' }}</option>
-          {% endfor %}
-        </select>
-        <span class="hint">From your <a href="/pixels">pixel inventory</a> — sync there if empty.</span></label>
-      <label class="field" data-dest="pixel website" data-needs-event="1"><span class="field-label">…or pixel code (manual)</span>
-        <input type="text" name="pixel_code" value="{{ blob.get('pixel_code', '') }}" placeholder="e.g. C0FFEE123">
-        <span class="hint">Used only when no pixel is picked; resolved + cached at launch.</span></label>
-      <label class="field" data-dest="pixel website" data-needs-event="1"><span class="field-label">Optimization event</span>
-        <select name="optimization_event">
-          <option value="">— pick —</option>
-          {% for ev, label in pixel_events %}
-            <option value="{{ ev }}" {{ 'selected' if blob.get('optimization_event') == ev else '' }}>{{ label }} ({{ ev }})</option>
-          {% endfor %}
-        </select>
-        <span class="hint">⚠ Must already exist on the pixel (have received events). This is your
-          Ads Manager “Optimization event”.</span></label>
+      <label class="field"><span class="field-label">Languages</span><input type="text" name="languages" value="{{ blob.get('languages', [])|join(' ') }}" placeholder="en es"><span class="hint">Codes, space-separated. Empty = all.</span></label>
+      <label class="field"><span class="field-label">Operating system</span><select name="operating_systems">{% for v, label in os_options %}<option value="{{ v }}" {{ 'selected' if blob.get('operating_systems', '') == v }}>{{ label }}</option>{% endfor %}</select></label>
+      <label class="field"><span class="field-label">Spending power</span><select name="spending_power">{% for v, label in spending_power_options %}<option value="{{ v }}" {{ 'selected' if blob.get('spending_power', '') == v }}>{{ label }}</option>{% endfor %}</select></label>
     </div>
     <div class="form-row">
-      <label class="field" data-dest="instant_page"><span class="field-label">Instant page (by name)</span>
-        <select name="instant_page_name">
-          <option value="">— pick —</option>
-          {% for p in instant_pages %}
-            <option value="{{ p.name }}" {{ 'selected' if blob.get('instant_page_name') == p.name else '' }}>{{ p.name }} — on {{ p.count }} account(s)</option>
-          {% endfor %}
-        </select>
-        <span class="hint">At launch, each account's OWN copy of this page is used —
-          accounts without a copy fail with a clear message. Sync on
-          <a href="/instant-pages">Instant Pages</a> after sharing.</span></label>
-      <label class="field" data-dest="lead_form"><span class="field-label">Lead form (by name)</span>
-        <select name="lead_form_name">
-          <option value="">— pick —</option>
-          {% for f in lead_forms %}
-            <option value="{{ f.name }}" {{ 'selected' if blob.get('lead_form_name') == f.name else '' }}>{{ f.name }} — on {{ f.count }} account(s)</option>
-          {% endfor %}
-        </select>
-        <span class="hint">Same per-account matching as instant pages. Sync on
-          <a href="/lead-forms">Lead Forms</a> after sharing.</span></label>
+      <div class="field"><span class="field-label">Connection</span><div data-chip-picker data-name="network_types" data-options='{{ network_options|tojson }}' data-selected='{{ blob.get("network_types", [])|tojson }}'></div></div>
+      <div class="field"><span class="field-label">Placements</span>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          <label class="sw"><input type="checkbox" name="search_enabled" value="1" {{ 'checked' if blob.get('search_enabled') }}><span class="tog"></span><span>Also show in TikTok search results</span></label>
+          <label class="sw"><input type="checkbox" id="placementAuto" {{ 'checked' if blob.get('placement_auto') }}><span class="tog"></span><span>Automatic placements <span class="muted">(off = TikTok only, no Pangle — recommended)</span></span></label>
+          <input type="hidden" name="placement_mode" id="placementMode" value="{{ 'auto' if blob.get('placement_auto') else 'tiktok' }}">
+        </div></div>
+    </div>
+    <details class="pb-adv" {{ 'open' if blob.get('interest_category_ids') or blob.get('audience_ids') or blob.get('excluded_audience_ids') }}><summary>Interests &amp; audiences <span class="muted">(IDs)</span></summary>
+      <div class="form-row-3" style="margin-top:8px;">
+        <label class="field"><span class="field-label">Interest category IDs</span><input type="text" name="interest_category_ids" value="{{ blob.get('interest_category_ids', [])|join(' ') }}" placeholder="numeric IDs"></label>
+        <label class="field"><span class="field-label">Include custom audiences</span><input type="text" name="audience_ids" value="{{ blob.get('audience_ids', [])|join(' ') }}"></label>
+        <label class="field"><span class="field-label">Exclude custom audiences</span><input type="text" name="excluded_audience_ids" value="{{ blob.get('excluded_audience_ids', [])|join(' ') }}"></label>
+      </div></details>
+  </div>
+  <div class="pf-foot"><button type="button" class="btn ghost" data-next="location">← Destination</button><button type="button" class="btn" data-next="budget">Next · Budget &amp; bidding →</button></div>
+  </section>
+
+  {# ============================ 4 · BUDGET & BIDDING ============================ #}
+  <section class="stab" data-tab="budget" hidden>
+  <div class="card">
+    <div class="card-header"><span class="card-title">4 · Budget &amp; bidding</span><span class="card-meta" id="pbBudgetMeta"></span></div>
+    <select name="campaign_budget_mode" id="budgetMode" hidden><option value="ABO" {{ 'selected' if not t or t.campaign_budget_mode == 'ABO' }}>ABO</option><option value="BUDGET_MODE_DAY" {{ 'selected' if t and t.campaign_budget_mode == 'BUDGET_MODE_DAY' }}>CBO day</option><option value="BUDGET_MODE_TOTAL" {{ 'selected' if t and t.campaign_budget_mode == 'BUDGET_MODE_TOTAL' }}>CBO total</option></select>
+    <div class="pb-cards" id="budgetCards">
+      <button type="button" class="pb-card" data-val="ABO"><b>ABO</b><span class="muted">a budget on every ad group</span></button>
+      <button type="button" class="pb-card" data-val="BUDGET_MODE_DAY"><b>CBO · daily</b><span class="muted">one campaign budget per day, TikTok spreads it</span></button>
+      <button type="button" class="pb-card" data-val="BUDGET_MODE_TOTAL"><b>CBO · lifetime</b><span class="muted">one total for the whole run</span></button>
+    </div>
+    <div class="form-row-3" style="margin-top:12px;">
+      <label class="field" id="cboBudgetField"><span class="field-label">Campaign budget ($)</span><input type="number" step="0.01" name="campaign_budget" id="pbCbo" value="{{ t.campaign_budget if t and t.campaign_budget else '' }}"></label>
+      <label class="field" id="aboBudgetField"><span class="field-label">Ad group budget ($)</span>
+        <div style="display:flex;gap:6px;"><input type="number" step="0.01" name="adgroup_budget" id="pbAgb" value="{{ blob.get('adgroup_budget', 20) }}">
+          <select name="adgroup_budget_mode" style="max-width:120px;"><option value="BUDGET_MODE_DAY" {{ 'selected' if blob.get('adgroup_budget_mode', 'BUDGET_MODE_DAY') == 'BUDGET_MODE_DAY' }}>per day</option><option value="BUDGET_MODE_TOTAL" {{ 'selected' if blob.get('adgroup_budget_mode') == 'BUDGET_MODE_TOTAL' }}>lifetime</option></select></div></label>
+      <label class="field"><span class="field-label">Copies of each ad group</span><input type="number" min="1" max="20" name="duplicates" id="pbDup" value="{{ blob.get('duplicates', 1) }}"><span class="hint">Multiplies every cost cap below.</span></label>
+    </div>
+    <div class="pb-sub">
+      <div class="pb-sub-h">Bidding</div>
+      <div class="form-row">
+        <label class="field"><span class="field-label">Bid strategy</span><select name="bid_strategy">{% for v, label in bid_strategy_options %}<option value="{{ v }}" {{ 'selected' if blob.get('bid_strategy', '') == v }}>{{ label }}</option>{% endfor %}</select></label>
+        <div class="field"><span class="field-label">Cost caps <span class="muted">— one ad group per cap</span></span>
+          <input type="hidden" name="cost_cap_ladder" id="ladderInput" value="{{ blob.get('cost_cap_ladder', [])|join(' ') }}">
+          <div class="pb-ladder" id="ladder"></div>
+          <div style="display:flex;gap:6px;margin-top:6px;"><input type="text" inputmode="decimal" id="ladderNew" placeholder="9.50" style="max-width:110px;"><button type="button" class="btn sm" id="ladderAdd">＋ Add cap</button><span class="muted" style="font-size:11.5px;align-self:center;" id="ladderHint">Empty = lowest cost (no cap).</span></div></div>
+      </div>
+      <div class="pb-calc" id="pbCalc"></div>
+    </div>
+    <div class="pb-sub">
+      <div class="pb-sub-h">Schedule &amp; delivery</div>
+      <div class="form-row-3">
+        <label class="field"><span class="field-label">Schedule</span><select name="schedule_type" id="schedType"><option value="SCHEDULE_FROM_NOW" {{ 'selected' if blob.get('schedule_type', 'SCHEDULE_FROM_NOW') == 'SCHEDULE_FROM_NOW' }}>Start now, run continuously</option><option value="SCHEDULE_START_END" {{ 'selected' if blob.get('schedule_type') == 'SCHEDULE_START_END' }}>Start &amp; end time</option></select></label>
+        <label class="field" data-sched="SCHEDULE_START_END"><span class="field-label">Start (UTC)</span><input type="datetime-local" name="schedule_start_time" value="{{ blob.get('schedule_start_time', '').replace(' ', 'T') }}"></label>
+        <label class="field" data-sched="SCHEDULE_START_END"><span class="field-label">End (UTC)</span><input type="datetime-local" name="schedule_end_time" value="{{ blob.get('schedule_end_time', '').replace(' ', 'T') }}"></label>
+      </div>
+      <div class="form-row-3">
+        <label class="field"><span class="field-label">Delivery</span><select name="pacing">{% for v, label in pacing_options %}<option value="{{ v }}" {{ 'selected' if blob.get('pacing', 'PACING_MODE_SMOOTH') == v }}>{{ label }}</option>{% endfor %}</select></label>
+        <label class="field"><span class="field-label">Click attribution</span><select name="click_attribution_window">{% for v, label in click_attr_options %}<option value="{{ v }}" {{ 'selected' if blob.get('click_attribution_window', '') == v }}>{{ label }}</option>{% endfor %}</select></label>
+        <label class="field"><span class="field-label">View attribution</span><select name="view_attribution_window">{% for v, label in view_attr_options %}<option value="{{ v }}" {{ 'selected' if blob.get('view_attribution_window', '') == v }}>{{ label }}</option>{% endfor %}</select></label>
+      </div>
+      <label class="field" style="max-width:360px;"><span class="field-label">Auto-pick accounts</span><select name="account_policy"><option value="new_only" {{ 'selected' if blob.get('account_policy', 'new_only') == 'new_only' }}>Fresh accounts only</option><option value="reuse" {{ 'selected' if blob.get('account_policy') == 'reuse' }}>Reuse accounts with nothing live</option></select><span class="hint">Which accounts qualify when a launcher picks for you.</span></label>
     </div>
   </div>
+  <div class="pf-foot"><button type="button" class="btn ghost" data-next="targeting">← Targeting</button><button type="button" class="btn" data-next="ad">Next · Ad &amp; creative →</button></div>
+  </section>
 
-  <div class="pf-foot"><button type="button" class="btn ghost" data-next="campaign">← Campaign</button><button type="button" class="btn" data-next="targeting">Next · Targeting →</button></div></section>
-<section class="stab" data-tab="targeting" hidden>
-  {# ============================= PLACEMENTS =============================== #}
-  <div class="card" id="placements">
-    <div class="card-header"><span class="card-title">Placements</span></div>
-    <div class="form-row">
-      <label class="field"><span class="field-label">TikTok Search</span>
-        <span style="display:flex;align-items:center;gap:8px;">
-          <input type="checkbox" name="search_enabled" value="1" style="width:auto;"
-                 {{ 'checked' if blob.get('search_enabled') }}>
-          <span>Also show ads in TikTok search results</span>
-        </span></label>
-      <label class="field"><span class="field-label">Placement</span>
-        <select name="placement_mode">
-          <option value="tiktok" {{ 'selected' if not blob.get('placement_auto') else '' }}>TikTok only (recommended — no Pangle)</option>
-          <option value="auto" {{ 'selected' if blob.get('placement_auto') else '' }}>Automatic (TikTok decides)</option>
-        </select></label>
+  {# ============================== 5 · AD & CREATIVE ============================= #}
+  <section class="stab" data-tab="ad" hidden>
+  <div class="card">
+    <div class="card-header"><span class="card-title">5 · Ad &amp; creative</span><span class="card-meta">what gets published to each account</span></div>
+    <select name="creative_source" id="creativeSource" hidden><option value="spark" {{ 'selected' if blob.get('creative_source', 'spark') == 'spark' }}>spark</option><option value="library" {{ 'selected' if blob.get('creative_source') == 'library' }}>library</option><option value="carousel" {{ 'selected' if blob.get('creative_source') == 'carousel' }}>carousel</option></select>
+    <div class="pb-cards" id="creativeCards">
+      <button type="button" class="pb-card" data-val="spark"><b>✦ Spark code</b><span class="muted">a creator's own post</span></button>
+      <button type="button" class="pb-card" data-val="library"><b>🎬 Library video</b><span class="muted">next unused per launch, or pinned</span></button>
+      <button type="button" class="pb-card" data-val="carousel"><b>🖼 Carousel</b><span class="muted">images + music, next unused or pinned</span></button>
     </div>
-  </div>
-
-  {# ============================== TARGETING =============================== #}
-  <div class="card" id="targeting">
-    <div class="card-header"><span class="card-title">Targeting</span>
-      <span class="card-meta">empty fields = TikTok defaults (broadest)</span></div>
-    <div class="form-row-3">
-      <label class="field"><span class="field-label">Geo — location IDs</span>
-        <input type="text" name="location_ids" value="{{ blob.get('location_ids', [])|join(' ') }}"
-               placeholder="e.g. 6252001 (US)">
-        <span class="hint">TikTok numeric location IDs, space-separated — look them up on the <a href="/locations" target="_blank">Locations page</a>.</span></label>
-      <label class="field"><span class="field-label">Languages</span>
-        <input type="text" name="languages" value="{{ blob.get('languages', [])|join(' ') }}"
-               placeholder="e.g. en es">
-        <span class="hint">Language codes, space-separated. Empty = all.</span></label>
-      <label class="field"><span class="field-label">Gender</span>
-        <select name="gender">
-          {% for g in ["GENDER_UNLIMITED", "GENDER_MALE", "GENDER_FEMALE"] %}
-            <option value="{{ g }}" {{ 'selected' if blob.get('gender', 'GENDER_UNLIMITED') == g else '' }}>{{ g.replace('GENDER_','')|title }}</option>
-          {% endfor %}
-        </select></label>
-    </div>
-    <div class="form-row-3">
-      <label class="field"><span class="field-label">Age groups</span>
-        <div data-chip-picker data-name="age_groups"
-             data-options='[["AGE_13_17","13–17"],["AGE_18_24","18–24"],["AGE_25_34","25–34"],["AGE_35_44","35–44"],["AGE_45_54","45–54"],["AGE_55_100","55+"]]'
-             data-selected='{{ blob.get("age_groups", [])|tojson }}'></div></label>
-      <label class="field"><span class="field-label">Spending power</span>
-        <select name="spending_power">
-          {% for v, label in spending_power_options %}
-            <option value="{{ v }}" {{ 'selected' if blob.get('spending_power', '') == v else '' }}>{{ label }}</option>
-          {% endfor %}
-        </select></label>
-      <label class="field"><span class="field-label">Operating system</span>
-        <select name="operating_systems">
-          {% for v, label in os_options %}
-            <option value="{{ v }}" {{ 'selected' if blob.get('operating_systems', '') == v else '' }}>{{ label }}</option>
-          {% endfor %}
-        </select></label>
-    </div>
-    <div class="form-row-3">
-      <label class="field"><span class="field-label">Interest category IDs</span>
-        <input type="text" name="interest_category_ids" value="{{ blob.get('interest_category_ids', [])|join(' ') }}"
-               placeholder="numeric IDs, space-separated"></label>
-      <label class="field"><span class="field-label">Include custom audiences (IDs)</span>
-        <input type="text" name="audience_ids" value="{{ blob.get('audience_ids', [])|join(' ') }}"></label>
-      <label class="field"><span class="field-label">Exclude custom audiences (IDs)</span>
-        <input type="text" name="excluded_audience_ids" value="{{ blob.get('excluded_audience_ids', [])|join(' ') }}"></label>
-    </div>
-    <div class="form-row">
-      <label class="field"><span class="field-label">Connection type</span>
-        <div data-chip-picker data-name="network_types"
-             data-options='{{ network_options|tojson }}'
-             data-selected='{{ blob.get("network_types", [])|tojson }}'></div>
-        <span class="hint">Empty = all connections.</span></label>
-    </div>
-  </div>
-
-  <div class="pf-foot"><button type="button" class="btn ghost" data-next="location">← Destination</button><button type="button" class="btn" data-next="budget">Next · Budget &amp; bidding →</button></div></section>
-<section class="stab" data-tab="budget" hidden>
-  {# ========================== BUDGET & SCHEDULE =========================== #}
-  <div class="card" id="budget">
-    <div class="card-header"><span class="card-title">Budget & schedule</span></div>
-    <div class="form-row-3">
-      <label class="field"><span class="field-label">Ad group budget ($, ABO)</span>
-        <input type="number" step="0.01" name="adgroup_budget" value="{{ blob.get('adgroup_budget', 20) }}"></label>
-      <label class="field"><span class="field-label">Ad group budget type</span>
-        <select name="adgroup_budget_mode">
-          <option value="BUDGET_MODE_DAY" {{ 'selected' if blob.get('adgroup_budget_mode', 'BUDGET_MODE_DAY') == 'BUDGET_MODE_DAY' else '' }}>Daily</option>
-          <option value="BUDGET_MODE_TOTAL" {{ 'selected' if blob.get('adgroup_budget_mode') == 'BUDGET_MODE_TOTAL' else '' }}>Lifetime (total)</option>
-        </select></label>
-      <label class="field"><span class="field-label">Duplicate ad groups</span>
-        <input type="number" min="1" max="20" name="duplicates" value="{{ blob.get('duplicates', 1) }}">
-        <span class="hint">Copies of each ad group (also multiplies every cost-cap bid).</span></label>
-    </div>
-    <div class="form-row-3">
-      <label class="field"><span class="field-label">Schedule</span>
-        <select name="schedule_type" id="schedType">
-          <option value="SCHEDULE_FROM_NOW" {{ 'selected' if blob.get('schedule_type', 'SCHEDULE_FROM_NOW') == 'SCHEDULE_FROM_NOW' else '' }}>Start immediately, run continuously</option>
-          <option value="SCHEDULE_START_END" {{ 'selected' if blob.get('schedule_type') == 'SCHEDULE_START_END' else '' }}>Set start & end time</option>
-        </select></label>
-      <label class="field" data-sched="SCHEDULE_START_END"><span class="field-label">Start (UTC)</span>
-        <input type="datetime-local" name="schedule_start_time"
-               value="{{ blob.get('schedule_start_time', '').replace(' ', 'T') }}"></label>
-      <label class="field" data-sched="SCHEDULE_START_END"><span class="field-label">End (UTC)</span>
-        <input type="datetime-local" name="schedule_end_time"
-               value="{{ blob.get('schedule_end_time', '').replace(' ', 'T') }}"></label>
-    </div>
-  </div>
-
-  {# ======================== BIDDING & OPTIMIZATION ======================== #}
-  <div class="card" id="bidding">
-    <div class="card-header"><span class="card-title">Bidding & optimization</span></div>
-    {# API-level optimization goal is auto-derived from the Optimization goal above
-       (matches how Ads Manager sets it) — kept hidden so it stays in sync. #}
-    <input type="hidden" name="optimization_goal" value="">
-    <div class="form-row-3">
-      <label class="field"><span class="field-label">Bid strategy</span>
-        <select name="bid_strategy">
-          {% for v, label in bid_strategy_options %}
-            <option value="{{ v }}" {{ 'selected' if blob.get('bid_strategy', '') == v else '' }}>{{ label }}</option>
-          {% endfor %}
-        </select></label>
-      <label class="field"><span class="field-label">Cost cap(s) ($, space-separated)</span>
-        <input type="text" name="cost_cap_ladder"
-               value="{{ blob.get('cost_cap_ladder', [])|join(' ') }}" placeholder="empty = lowest cost (no cap)">
-        <span class="hint">One value = flat cap; several = one set per bid. “Duplicate ad groups” multiplies each bid (e.g. 2 caps × 5 duplicates = 10 ad groups).</span></label>
-    </div>
-    <div class="form-row-3">
-      <label class="field"><span class="field-label">Delivery type</span>
-        <select name="pacing">
-          {% for v, label in pacing_options %}
-            <option value="{{ v }}" {{ 'selected' if blob.get('pacing', 'PACING_MODE_SMOOTH') == v else '' }}>{{ label }}</option>
-          {% endfor %}
-        </select></label>
-      <label class="field"><span class="field-label">Click attribution window</span>
-        <select name="click_attribution_window">
-          {% for v, label in click_attr_options %}
-            <option value="{{ v }}" {{ 'selected' if blob.get('click_attribution_window', '') == v else '' }}>{{ label }}</option>
-          {% endfor %}
-        </select></label>
-      <label class="field"><span class="field-label">View attribution window</span>
-        <select name="view_attribution_window">
-          {% for v, label in view_attr_options %}
-            <option value="{{ v }}" {{ 'selected' if blob.get('view_attribution_window', '') == v else '' }}>{{ label }}</option>
-          {% endfor %}
-        </select></label>
-    </div>
-    <div class="form-row-3">
-      <label class="field"><span class="field-label">Auto-pick account policy</span>
-        <select name="account_policy">
-          <option value="new_only" {{ 'selected' if blob.get('account_policy', 'new_only') == 'new_only' }}>New accounts only</option>
-          <option value="reuse" {{ 'selected' if blob.get('account_policy') == 'reuse' }}>Reuse — no active campaign</option>
-        </select></label>
-    </div>
-  </div>
-
-  {# ========================== ADVANCED SETTINGS =========================== #}
-  <div class="card" id="advanced">
-    <div class="card-header"><span class="card-title">Advanced settings</span>
-      <span class="card-meta">comments · downloads · sharing</span></div>
-    <div class="form-row-3">
-      <label class="field"><span class="field-label">Comments</span>
-        <span style="display:flex;align-items:center;gap:8px;">
-          <input type="checkbox" name="comment_disabled" value="1" style="width:auto;"
-                 {{ 'checked' if blob.get('comment_disabled') }}>
-          <span>Turn comments off on the ads</span>
-        </span></label>
-      <label class="field"><span class="field-label">Video download</span>
-        <span style="display:flex;align-items:center;gap:8px;">
-          <input type="checkbox" name="video_download_disabled" value="1" style="width:auto;"
-                 {{ 'checked' if blob.get('video_download_disabled') }}>
-          <span>Block video downloads</span>
-        </span></label>
-      <label class="field"><span class="field-label">Sharing</span>
-        <span style="display:flex;align-items:center;gap:8px;">
-          <input type="checkbox" name="share_disabled" value="1" style="width:auto;"
-                 {{ 'checked' if blob.get('share_disabled') }}>
-          <span>Block sharing of the ads</span>
-        </span></label>
-    </div>
-    <div class="muted" style="font-size:12px;">Applied per ad group at launch (works for both regular and Smart+ campaigns).</div>
-  </div>
-
-  {# ================================== AD ================================== #}
-  <div class="pf-foot"><button type="button" class="btn ghost" data-next="targeting">← Targeting</button><button type="button" class="btn" data-next="ad">Next · Ad &amp; creative →</button></div></section>
-<section class="stab" data-tab="ad" hidden>
-  <div class="card" id="ad">
-    <div class="card-header"><span class="card-title">Ad</span>
-      <span class="card-meta">spark creative · text · CTA</span></div>
-    <div class="form-row-3">
-      <label class="field"><span class="field-label">Creative source</span>
-        <select name="creative_source" id="creativeSource">
-          <option value="spark" {{ 'selected' if blob.get('creative_source', 'spark') == 'spark' }}>Spark code (organic post)</option>
-          <option value="library" {{ 'selected' if blob.get('creative_source') == 'library' }}>Creative library — next unused video</option>
-          <option value="carousel" {{ 'selected' if blob.get('creative_source') == 'carousel' }}>Creative library — next unused carousel (images + music)</option>
-        </select>
-        <span class="hint" id="libraryHint" style="display:none;">Each launch consumes ONE unused creative from the <a href="/creatives">library</a> (unless Smart Creative is on).</span>
-        <div class="field" id="videoPick" style="display:none;margin-top:8px;"><span class="field-label">Which video</span>
-          {% set pv = (videos|selectattr('id', 'equalto', blob.get('video_creative_id'))|list)[0] if blob.get('video_creative_id') else None %}
-          <input type="hidden" name="video_creative_id" id="videoId" value="{{ pv.id if pv else '' }}">
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><span class="pk-chip" id="videoChip" data-kind="video" {{ 'hidden' if not pv }}><img src="{{ '/creatives/' ~ pv.id ~ '/poster' if pv else '' }}" alt="" style="width:20px;height:28px;object-fit:cover;border-radius:4px;"><span id="videoChipName">{{ pv.name if pv else '' }}</span><button type="button" title="Unpin" data-unpin="video">✕</button></span>
-            <button type="button" class="btn sm" data-pick="video">{{ 'Change…' if pv else 'Pin a specific video…' }}</button><span class="muted" style="font-size:11.5px;" id="videoAuto" {{ 'hidden' if pv }}>Automatic — each launch takes the next unused video</span></div>
-          <span class="hint">Pinned = every account this preset launches to gets that video (each uploads its own copy). Automatic = a fresh video per launch. Manage videos on <a href="/creatives?view=library">Creatives</a>.</span></div>
-        <div class="field" id="carouselPick" style="display:none;margin-top:8px;"><span class="field-label">Which carousel</span>
-          {% set pc = (carousels|selectattr('id', 'equalto', blob.get('carousel_id'))|list)[0] if blob.get('carousel_id') else None %}
-          <input type="hidden" name="carousel_id" id="carouselId" value="{{ pc.id if pc else '' }}">
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><span class="pk-chip" id="carouselChip" data-kind="carousel" {{ 'hidden' if not pc }}><img src="{{ '/creatives/' ~ pc.id ~ '/poster' if pc else '' }}" alt="" style="width:20px;height:28px;object-fit:cover;border-radius:4px;"><span id="carouselChipName">{{ pc.name if pc else '' }}</span><button type="button" title="Unpin" data-unpin="carousel">✕</button></span>
-            <button type="button" class="btn sm" data-pick="carousel">{{ 'Change…' if pc else 'Pin a specific carousel…' }}</button><span class="muted" style="font-size:11.5px;" id="carouselAuto" {{ 'hidden' if pc }}>Automatic — each launch takes the next unused carousel</span></div>
-          <span class="hint">Pinned = every account gets that carousel (each uploads its own copies). Manage carousels on <a href="/creatives?view=carousels">Creatives → Carousels</a>.</span></div>
-        <label id="smartCreativeToggle" style="display:none;align-items:center;gap:6px;font-size:12px;color:var(--text-soft);cursor:pointer;margin-top:8px;">
-          <input type="checkbox" name="smart_creative" id="smartCreative" value="1" style="width:auto;"
-                 {{ 'checked' if blob.get('smart_creative') }}> 🧠 Use Smart Creative to create ads — auto-combines several videos + texts into one self-optimising ad
-        </label></label>
-      <label class="field" id="sparkField"><span class="field-label">Spark code (default)</span>
-        <select name="spark_code_id">
-          <option value="">— pick at launch —</option>
-          {% for s in sparks %}
-            <option value="{{ s.id }}" {{ 'selected' if blob.get('spark_code_id') == s.id else '' }}>{{ s.name or s.code[:18] }} ({{ s.media_type }}{{ ' · ' + s.source if s.source }})</option>
-          {% endfor %}
-        </select></label>
-      <label class="field"><span class="field-label">Ad text</span>
-        <input type="text" name="ad_text" value="{{ blob.get('ad_text', '') }}" maxlength="100"></label>
+    <div class="form-row" style="margin-top:12px;">
+      <div class="field" id="sparkField"><span class="field-label">Which spark</span>
+        <input type="hidden" name="spark_code_id" id="sparkId" value="{{ ps.id if ps else '' }}">
+        <div class="pb-pick" id="sparkPick">
+          <span class="pb-pick-chip" id="sparkChip" {{ 'hidden' if not ps }}>{% if ps and ps.thumbnail_url %}<img src="{{ ps.thumbnail_url }}" alt="">{% else %}<span class="pb-pick-ph">✦</span>{% endif %}<span id="sparkChipName">{{ (ps.name or ps.code[:16]) if ps else '' }}</span><button type="button" data-unpin="spark" title="Pick at launch instead">✕</button></span>
+          <span class="muted" id="sparkAuto" style="font-size:12px;" {{ 'hidden' if ps }}>Picked at launch time</span>
+          <button type="button" class="btn sm" id="sparkChoose">{{ 'Change…' if ps else 'Choose a spark…' }}</button></div>
+        <div id="sparkList" hidden style="margin-top:6px;border:1px solid var(--border);border-radius:12px;max-height:200px;overflow:auto;">
+          <div style="padding:6px;"><input type="text" id="sparkQ" placeholder="Search name, creator, code…"></div>
+          {% for s in sparks %}<label class="cl-spark" data-id="{{ s.id }}" data-name="{{ s.name or s.code[:16] }}" data-thumb="{{ s.thumbnail_url or '' }}" data-search="{{ (s.name ~ ' ' ~ s.code ~ ' ' ~ (s.group.name if s.group else ''))|lower }}" style="display:flex;align-items:center;gap:9px;padding:6px 10px;border-top:1px solid var(--border-soft);cursor:pointer;font-size:12.5px;">
+            {% if s.thumbnail_url %}<img src="{{ s.thumbnail_url }}" alt="" loading="lazy" style="width:24px;height:32px;object-fit:cover;border-radius:5px;">{% else %}<span style="width:24px;height:32px;border-radius:5px;background:var(--panel-hover);display:grid;place-items:center;color:var(--text-dim);font-size:11px;">✦</span>{% endif %}
+            <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><b>{{ s.name or s.code[:16] }}</b>{% if s.group %} <span class="muted">· {{ s.group.name }}</span>{% endif %}</span><span class="muted" style="font-size:11px;">{{ s.media_type|lower }}</span></label>{% endfor %}
+          {% if not sparks %}<div class="muted" style="padding:8px 10px;font-size:12px;">No active spark codes — add them on <a href="/spark-codes">Sparks</a>.</div>{% endif %}
+        </div></div>
+      <div class="field" id="videoPick"><span class="field-label">Which video</span>
+        <input type="hidden" name="video_creative_id" id="videoId" value="{{ pv.id if pv else '' }}">
+        <div class="pb-pick"><span class="pb-pick-chip pk-chip" id="videoChip" {{ 'hidden' if not pv }}><img src="{{ '/creatives/' ~ pv.id ~ '/poster' if pv else '' }}" alt=""><span id="videoChipName">{{ pv.name if pv else '' }}</span><button type="button" data-unpin="video" title="Unpin">✕</button></span>
+          <span class="muted" id="videoAuto" style="font-size:12px;" {{ 'hidden' if pv }}>Automatic — each launch takes the next unused video</span>
+          <button type="button" class="btn sm" data-pick="video">{{ 'Change…' if pv else 'Pin a specific video…' }}</button></div>
+        <span class="hint">Pinned = every account gets that video (each uploads its own copy).</span></div>
+      <div class="field" id="carouselPick"><span class="field-label">Which carousel</span>
+        <input type="hidden" name="carousel_id" id="carouselId" value="{{ pc.id if pc else '' }}">
+        <div class="pb-pick"><span class="pb-pick-chip pk-chip" id="carouselChip" {{ 'hidden' if not pc }}><img src="{{ '/creatives/' ~ pc.id ~ '/poster' if pc else '' }}" alt=""><span id="carouselChipName">{{ pc.name if pc else '' }}</span><button type="button" data-unpin="carousel" title="Unpin">✕</button></span>
+          <span class="muted" id="carouselAuto" style="font-size:12px;" {{ 'hidden' if pc }}>Automatic — each launch takes the next unused carousel</span>
+          <button type="button" class="btn sm" data-pick="carousel">{{ 'Change…' if pc else 'Pin a specific carousel…' }}</button></div>
+        <span class="hint">Pinned = every account gets that carousel (each uploads its own copies).</span></div>
       <label class="field"><span class="field-label">Call to action</span>
-        <select name="call_to_action">
-          <option value="AUTO" {{ 'selected' if blob.get('call_to_action') == 'AUTO' }}>Auto — Dynamic CTA (TikTok picks the best button per viewer)</option>
-          {% for cta in cta_options %}
-            <option value="{{ cta }}" {{ 'selected' if blob.get('call_to_action', 'LEARN_MORE') == cta else '' }}>{{ cta.replace('_',' ')|title }}</option>
-          {% endfor %}
-        </select>
-        <span class="hint">Auto = TikTok's Dynamic CTA: it rotates between Learn more, Shop now, Sign up, Get quote… and serves each viewer the one most likely to click. Set up once per account automatically.</span></label>
+        <select name="call_to_action" id="ctaSel"><option value="AUTO" {{ 'selected' if blob.get('call_to_action') == 'AUTO' }}>Auto — TikTok picks the best button per viewer</option>{% for cta in cta_options %}<option value="{{ cta }}" {{ 'selected' if blob.get('call_to_action', 'LEARN_MORE') == cta }}>{{ cta.replace('_',' ')|title }}</option>{% endfor %}</select></label>
     </div>
-    <div class="form-row-3" id="smartCreativeOpts" style="display:none;">
-      <label class="field"><span class="field-label">Videos per ad</span>
-        <input type="number" name="smart_creative_videos" min="2" max="20"
-               value="{{ blob.get('smart_creative_videos', 5) }}">
-        <span class="hint">Reserves this many unused library videos per ad; TikTok combines &amp; rotates them.</span></label>
-      <label class="field"><span class="field-label">Texts per ad</span>
-        <input type="number" name="smart_creative_texts" min="1" max="20"
-               value="{{ blob.get('smart_creative_texts', 5) }}">
-        <span class="hint">Pulls this many from the <a href="/ad-texts">Ad Texts</a> list (falls back to the Ad text above).</span></label>
-      <div class="field"><span class="field-label">&nbsp;</span>
-        <span class="hint">Smart Creative needs the <b>Library</b> source and ≥2 available videos. It makes ONE auto-optimizing ad per ad group (ignores “ads per ad group”).</span></div>
+    <div class="form-row">
+      <label class="field"><span class="field-label">Ad text <span class="muted" id="adTextCount">0 / 100</span></span>
+        <input type="text" name="ad_text" id="pbAdText" value="{{ blob.get('ad_text', '') }}" maxlength="100" placeholder="if you know you know…"></label>
+      <label class="field" id="poolModes"><span class="field-label">Text per launch</span>
+        <select name="ad_text_mode" id="adTextMode"><option value="fixed" {{ 'selected' if blob.get('ad_text_mode', 'fixed') == 'fixed' }}>Always this text</option><option value="pool" {{ 'selected' if blob.get('ad_text_mode') == 'pool' }}>Unique — take the next one from Ad texts</option></select>
+        <span class="hint">Unique mode consumes one line from <a href="/ad-texts">Ad texts</a> per launch and falls back to the text above.</span></label>
     </div>
-    <div class="form-row-3" id="poolModes" style="display:none;">
-      <label class="field"><span class="field-label">Ad text (required by TikTok)</span>
-        <select name="ad_text_mode">
-          <option value="fixed" {{ 'selected' if blob.get('ad_text_mode', 'fixed') == 'fixed' }}>Enter manually — the Ad text field above</option>
-          <option value="pool" {{ 'selected' if blob.get('ad_text_mode') == 'pool' }}>From the Ad Texts list — unique per launch</option>
-        </select>
-        <span class="hint">TikTok requires ad text on every ad. Manual = the text above (must not be empty); list mode consumes one text from <a href="/ad-texts">Ad Texts</a> per launch.</span></label>
-      <label class="field"><span class="field-label">Identity on ads</span>
-        <span class="hint" style="margin-top:8px;">TikTok no longer supports custom identities — ads publish under the account's own TikTok identity as ad-only (dark) posts, automatically.</span></label>
+    <div class="pb-sub">
+      <div class="pb-sub-h">Options</div>
+      <div class="pb-toggles">
+        <label class="sw" id="smartCreativeToggle"><input type="checkbox" name="smart_creative" id="smartCreative" value="1" {{ 'checked' if blob.get('smart_creative') }}><span class="tog"></span><span><b>Smart Creative</b><span class="muted" style="display:block;font-size:11.5px;">Several videos + texts combined into one self-optimising ad (library videos only, ≥2 available).</span></span></label>
+        <div class="form-row-3" id="smartCreativeOpts" style="margin:0 0 4px 46px;max-width:520px;">
+          <label class="field"><span class="field-label">Videos per ad</span><input type="number" name="smart_creative_videos" min="2" max="20" value="{{ blob.get('smart_creative_videos', 5) }}"></label>
+          <label class="field"><span class="field-label">Texts per ad</span><input type="number" name="smart_creative_texts" min="1" max="20" value="{{ blob.get('smart_creative_texts', 5) }}"></label>
+        </div>
+        <label class="sw"><input type="checkbox" name="comment_disabled" value="1" {{ 'checked' if blob.get('comment_disabled') }}><span class="tog"></span><span><b>Comments off</b><span class="muted" style="display:block;font-size:11.5px;">viewers can't comment on the ad</span></span></label>
+        <label class="sw"><input type="checkbox" name="video_download_disabled" value="1" {{ 'checked' if blob.get('video_download_disabled') }}><span class="tog"></span><span><b>Block downloads</b></span></label>
+        <label class="sw"><input type="checkbox" name="share_disabled" value="1" {{ 'checked' if blob.get('share_disabled') }}><span class="tog"></span><span><b>Block sharing</b></span></label>
+      </div>
+      <div class="muted" style="font-size:11.5px;margin-top:6px;">Ads publish under each account's own TikTok identity as ad-only (dark) posts — TikTok no longer supports custom identities.</div>
     </div>
   </div>
+  <div class="pf-foot"><button type="button" class="btn ghost" data-next="budget">← Budget &amp; bidding</button><button type="button" class="btn" data-next="addons">Next · Add-ons →</button></div>
+  </section>
 
-  <div class="pf-foot"><button type="button" class="btn ghost" data-next="budget">← Budget &amp; bidding</button><button type="button" class="btn" data-next="addons">Next · Add-ons →</button></div></section>
-<section class="stab" data-tab="addons" hidden>
-  <div class="card" id="addons">
-    <div class="card-header"><span class="card-title">Interactive add-ons</span>
-      <span class="card-meta">display card</span></div>
-    <div class="form-row-3">
-      <label class="field"><span class="field-label">Display card <span class="muted">(interactive add-on)</span></span>
-        <select name="display_card_id" id="displayCardSel">
-          <option value="">None</option>
-          {% for dc in display_cards %}
-            <option value="{{ dc.id }}" {{ 'selected' if blob.get('display_card_id') == dc.id }}>{{ dc.name }}</option>
-          {% endfor %}
-        </select>
-        <span class="hint">An image card that pops up in the video and works as a second click-through. Uploaded once here; each account gets its own copy at launch. Video ads on TikTok placement only (not carousels).</span></label>
-      <div class="dc-block"><span class="field-label">Preview</span>
-        <img id="displayCardPrev" alt="" class="dc-prev">
-        <span class="muted" id="displayCardNone" style="font-size:12px;">No card selected.</span>
-        <button class="btn sm" type="submit" id="displayCardDel" form="displayCardDelForm" style="display:none;margin-top:8px;"
-                onclick="return confirm('Remove this display card from the app? Cards already created in TikTok accounts stay there.');">Remove card</button></div>
-      <div class="dc-block"><span class="field-label">Upload a new card</span>
-        <input type="file" id="displayCardFile" accept=".png,.jpg,.jpeg,.webp">
-        <input type="text" id="displayCardName" placeholder="Name (optional)">
-        <button class="btn sm" type="button" id="displayCardUp">Upload &amp; select</button>
-        <span class="hint">TikTok wants exactly 750 × 421 px (PNG/JPG); other sizes are scaled and centre-cropped to fit. The picture is the card; the button text comes from the CTA above.</span>
-        <span class="hint" id="displayCardMsg"></span></div>
+  {# ================================= 6 · ADD-ONS ================================ #}
+  <section class="stab" data-tab="addons" hidden>
+  <div class="card">
+    <div class="card-header"><span class="card-title">6 · Add-ons</span><span class="card-meta">display card — a second click-through inside the video (video ads only)</span></div>
+    <select name="display_card_id" id="displayCardSel" hidden><option value="">None</option>{% for dc in display_cards %}<option value="{{ dc.id }}" {{ 'selected' if blob.get('display_card_id') == dc.id }}>{{ dc.name }}</option>{% endfor %}</select>
+    <div class="pb-dcgrid" id="dcGrid">
+      <button type="button" class="pb-dc" data-val=""><span class="pb-dc-none">No card</span></button>
+      {% for dc in display_cards %}<button type="button" class="pb-dc" data-val="{{ dc.id }}" data-name="{{ dc.name }}"><img src="/display-cards/{{ dc.id }}/image" alt="" loading="lazy"><span>{{ dc.name }}</span></button>{% endfor %}
+      <label class="pb-dc pb-dc-up" title="Upload a new card"><input type="file" id="displayCardFile" accept=".png,.jpg,.jpeg,.webp" hidden><span class="pb-dc-none">＋ Upload<br><span class="muted" style="font-size:10.5px;">750 × 421 px</span></span></label>
     </div>
+    <div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap;">
+      <input type="text" id="displayCardName" placeholder="Name for the upload (optional)" style="max-width:260px;">
+      <button class="btn sm" type="button" id="displayCardUp" hidden>Upload &amp; select</button>
+      <button class="btn sm ghost" type="submit" id="displayCardDel" form="displayCardDelForm" hidden onclick="return confirm('Remove this display card from the app? Cards already created in TikTok accounts stay there.');">Remove selected card</button>
+      <span class="hint" id="displayCardMsg" style="margin:0;"></span>
+    </div>
+    <div class="hint" style="margin-top:8px;">Uploaded once; each account gets its own copy at launch. Other sizes are scaled and centre-cropped to 750 × 421. The button text comes from the CTA.</div>
+    <img id="displayCardPrev" alt="" hidden>
   </div>
-
-  <div class="pf-foot"><button type="button" class="btn ghost" data-next="ad">← Ad &amp; creative</button><button class="btn primary" type="submit">Save preset</button></div></section>
+  <div class="pf-foot"><button type="button" class="btn ghost" data-next="ad">← Ad &amp; creative</button><button class="btn primary" type="submit">Save preset</button></div>
+  </section>
 </form>
-</div></div>
-{# the delete form can't sit inside the preset form (browsers drop a nested <form>, which broke the page script) — the button targets it via form="…" #}
-<form method="post" id="displayCardDelForm" action="" hidden></form>
-{% endblock %}
+</div>
 
+<aside class="pb-preview" id="pbPreview">
+  <div class="card" style="padding:12px;">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;"><b style="font-size:13px;">Preview</b><span class="muted" style="font-size:11.5px;">as it will run</span></div>
+    <div class="pb-phone" id="pbPhone">
+      <div class="pb-phone-media" id="phMedia"></div>
+      <div class="pb-phone-side">♡<br>12.4K<br>💬<br>318</div>
+      <div class="pb-phone-text"><b id="phHandle">@account</b><span id="phText">Ad text…</span></div>
+      <div class="pb-phone-card" id="phCard" hidden><img alt=""><span></span></div>
+      <div class="pb-phone-cta" id="phCta">Learn more</div>
+    </div>
+    <div class="muted" style="font-size:11px;text-align:center;margin-top:8px;" id="phSub"></div>
+  </div>
+  <div class="card" style="padding:12px;">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><b style="font-size:13px;">Per launch</b></div>
+    <div class="pb-summ" id="pbSumm"></div>
+  </div>
+</aside>
+</div>
+<form method="post" id="displayCardDelForm" action="" hidden></form>
+<script type="application/json" id="pbRules">{{ objective_rules_json|safe }}</script>
+<script type="application/json" id="pbDest">{{ dest_labels_json|safe }}</script>
+<script type="application/json" id="pbMeta">{{ {"preset_id": t.id if t else 0, "video": {"id": pv.id, "name": pv.name} if pv else None, "carousel": {"id": pc.id, "name": pc.name, "slides": pc.carousel_images or ''} if pc else None, "spark": {"id": ps.id, "name": ps.name or ps.code[:16], "thumb": ps.thumbnail_url or ''} if ps else None, "card": {"id": pdc.id, "name": pdc.name} if pdc else None}|tojson }}</script>
+{% endblock %}
 {% block scripts %}
 <script src="/static/chip-picker.js?v={{ STATIC_V }}"></script>
-<script>
-  // objective (Ads-Manager goal) drives which destinations, optimization goals
-  // and events are valid — mirrors TikTok so the preset can't build an invalid combo
-  var RULES = {{ objective_rules_json | safe }},
-      GOAL_LABELS = {{ goal_labels_json | safe }},
-      DEST_LABELS = {{ dest_labels_json | safe }};
-  var objSel = document.getElementById("objType"),
-      destSel = document.getElementById("destType");
-
-  function rebuild(sel, values, labels) {
-    var cur = sel.value;
-    sel.innerHTML = "";
-    values.forEach(function (v) {
-      var o = document.createElement("option");
-      o.value = v; o.textContent = labels[v] || v;
-      sel.appendChild(o);
-    });
-    // keep the current choice if it's still valid, else fall back to the first
-    sel.value = values.indexOf(cur) >= 0 ? cur : values[0];
-  }
-
-  function syncObjective() {
-    var rule = RULES[objSel.value] || {destinations: ["website"], event: "none"};
-    rebuild(destSel, rule.destinations, DEST_LABELS);   // valid destinations only
-    syncDest();                                          // API optimization_goal auto-derives
-  }
-
-  function syncDest() {
-    var objRule = RULES[objSel.value] || {event: "none"};
-    var dest = destSel.value;
-    document.querySelectorAll("[data-dest]").forEach(function (el) {
-      var destOk = el.dataset.dest.split(" ").indexOf(dest) >= 0;
-      // pixel/event fields also require the objective to actually use an event
-      if (el.dataset.needsEvent && objRule.event === "none") destOk = false;
-      el.style.display = destOk ? "" : "none";
-    });
-  }
-
-  objSel.addEventListener("change", syncObjective);
-  destSel.addEventListener("change", syncDest);
-  syncObjective();
-
-  var csSel = document.getElementById("creativeSource"),
-      sparkField = document.getElementById("sparkField"),
-      libraryHint = document.getElementById("libraryHint");
-  var poolModes = document.getElementById("poolModes");
-  var smartCreative = document.getElementById("smartCreative"),
-      smartCreativeOpts = document.getElementById("smartCreativeOpts"),
-      smartCreativeChk = document.getElementById("smartCreative");
-  function syncCreative() {
-    var lib = csSel.value === "library", car = csSel.value === "carousel";
-    sparkField.style.display = (lib || car) ? "none" : "";
-    document.getElementById("carouselPick").style.display = car ? "" : "none";
-    document.getElementById("videoPick").style.display = (lib && !smartCreativeChk.checked) ? "" : "none";
-    libraryHint.style.display = (lib || car) ? "" : "none";
-    poolModes.style.display = (lib || car) ? "" : "none";
-    // Smart Creative toggle only applies to the (video) library source — TikTok
-    // requires ACO off for Carousel Ads
-    document.getElementById("smartCreativeToggle").style.display = lib ? "flex" : "none";
-    if (car) smartCreativeChk.checked = false;
-    smartCreativeOpts.style.display = (lib && smartCreativeChk.checked) ? "" : "none";
-  }
-  csSel.addEventListener("change", syncCreative);
-  smartCreativeChk.addEventListener("change", syncCreative);
-  syncCreative();
-
-  // Display card: preview of the picked card + inline upload (fetch → JSON) that selects the new card
-  var dcSel = document.getElementById("displayCardSel"), dcPrev = document.getElementById("displayCardPrev"),
-      dcNone = document.getElementById("displayCardNone"), dcDel = document.getElementById("displayCardDel"),
-      dcMsg = document.getElementById("displayCardMsg");
-  function syncCard() {
-    var id = dcSel.value;
-    dcPrev.style.display = id ? "block" : "none"; dcNone.style.display = id ? "none" : "";
-    dcDel.style.display = id ? "" : "none";
-    if (id) { dcPrev.src = "/display-cards/" + id + "/image"; document.getElementById("displayCardDelForm").action = "/display-cards/" + id + "/delete?next=" + encodeURIComponent(location.pathname); }
-  }
-  dcSel.addEventListener("change", syncCard); syncCard();
-  document.getElementById("displayCardUp").addEventListener("click", function () {
-    var f = document.getElementById("displayCardFile").files[0];
-    if (!f) { dcMsg.textContent = "Pick an image file first."; return; }
-    var fd = new FormData(); fd.append("file", f); fd.append("name", document.getElementById("displayCardName").value);
-    dcMsg.textContent = "Uploading…"; this.disabled = true; var btn = this;
-    fetch("/display-cards/upload", { method: "POST", body: fd, headers: { "Accept": "application/json" }, credentials: "same-origin" })
-      .then(function (r) {
-        return r.text().then(function (t) {
-          var j; try { j = JSON.parse(t); } catch (e) { j = { error: "Unexpected reply from the server (HTTP " + r.status + (r.redirected ? ", redirected — are you still logged in?" : "") + ")." }; }
-          return { ok: r.ok && !r.redirected, j: j };
-        });
-      })
-      .then(function (res) {
-        btn.disabled = false;
-        if (!res.ok) { dcMsg.textContent = res.j.error || "Upload failed."; return; }
-        var o = document.createElement("option"); o.value = res.j.id; o.textContent = res.j.name; o.selected = true;
-        dcSel.appendChild(o); syncCard();
-        dcMsg.textContent = res.j.message + " Save the preset to keep it selected.";
-        document.getElementById("displayCardFile").value = ""; document.getElementById("displayCardName").value = "";
-      })
-      .catch(function () { btn.disabled = false; dcMsg.textContent = "Upload failed — check the connection and try again."; });
-  });
-
-  // ---- stepped builder: one step at a time, remembered per preset; invalid fields pull you to their step
-  (function () {
-    var tabs = Array.prototype.slice.call(document.querySelectorAll("#pfNav a[data-tab]")), key = "adops-preset-step-" + ({{ t.id if t else 0 }});
-    function show(k) {
-      if (!document.querySelector('.stab[data-tab="' + k + '"]')) k = "campaign";
-      document.querySelectorAll(".stab").forEach(function (sct) { sct.hidden = sct.dataset.tab !== k; });
-      tabs.forEach(function (a) { a.classList.toggle("on", a.dataset.tab === k); });
-      try { sessionStorage.setItem(key, k); } catch (e) {}
-      if (location.hash !== "#" + k) history.replaceState(null, "", "#" + k);
-      window.scrollTo(0, 0);
-    }
-    tabs.forEach(function (a) { a.addEventListener("click", function (e) { e.preventDefault(); show(a.dataset.tab); }); });
-    document.addEventListener("click", function (e) { var b = e.target.closest("[data-next]"); if (b) show(b.dataset.next); });
-    var start = (location.hash || "").slice(1); if (!start) { try { start = sessionStorage.getItem(key) || ""; } catch (e) {} }
-    show(start || "campaign");
-    document.getElementById("presetForm").addEventListener("submit", function (e) {
-      var f = this; if (f.checkValidity()) return;
-      e.preventDefault();
-      var bad = f.querySelector(":invalid"), sct = bad && bad.closest(".stab");
-      if (sct) show(sct.dataset.tab);
-      if (bad) { bad.reportValidity(); bad.focus(); }
-    });
-  })();
-  // ---- pin a specific library creative through the picker pop-up
-  document.querySelectorAll("[data-pick]").forEach(function (b) {
-    b.addEventListener("click", function () {
-      var kind = b.dataset.pick, cur = document.getElementById(kind + "Id").value;
-      UI.pickCreatives({ kind: kind, kinds: [kind], multi: false, state: "all", selected: cur ? [Number(cur)] : [], title: "Pin a " + kind, hint: "Every account this preset launches to gets this one." }).then(function (items) {
-        if (!items || !items.length) return;
-        var it = items[0], chip = document.getElementById(kind + "Chip");
-        document.getElementById(kind + "Id").value = it.id; chip.hidden = false; chip.querySelector("img").src = it.poster || "/creatives/" + it.id + "/poster";
-        document.getElementById(kind + "ChipName").textContent = it.name; document.getElementById(kind + "Auto").hidden = true; b.textContent = "Change…";
-      });
-    });
-  });
-  document.querySelectorAll("[data-unpin]").forEach(function (x) {
-    x.addEventListener("click", function () {
-      var kind = x.dataset.unpin; document.getElementById(kind + "Id").value = ""; document.getElementById(kind + "Chip").hidden = true;
-      document.getElementById(kind + "Auto").hidden = false; document.querySelector('[data-pick="' + kind + '"]').textContent = "Pin a specific " + kind + "…";
-    });
-  });
-
-  var modeSel = document.getElementById("budgetMode"), cbo = document.getElementById("cboBudgetField");
-  function syncMode() { cbo.style.display = modeSel.value === "ABO" ? "none" : ""; }
-  modeSel.addEventListener("change", syncMode); syncMode();
-
-  var schedSel = document.getElementById("schedType");
-  function syncSched() {
-    document.querySelectorAll("[data-sched]").forEach(function (el) {
-      el.style.display = el.dataset.sched === schedSel.value ? "" : "none";
-    });
-  }
-  schedSel.addEventListener("change", syncSched); syncSched();
-</script>
+<script src="/static/preset-builder.js?v={{ STATIC_V }}"></script>
 {% endblock %}
