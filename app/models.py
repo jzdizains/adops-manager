@@ -797,3 +797,53 @@ class RegionName(Base):
     parent_id = Column(String, default="")
     region_code = Column(String, default="")
     synced_at = Column(DateTime, default=utcnow)
+
+
+class HourlyMetric(Base):
+    """Per campaign, per LOCAL hour: the cumulative today-values TikTok reported
+    last within that hour (spend/impressions/clicks/conversions). Written by the
+    campaign sync; read as deltas between consecutive hours → the hourly trend
+    in the campaign drawer and on Home (today vs yesterday). Kept 8 days."""
+    __tablename__ = "hourly_metrics"
+    __table_args__ = (UniqueConstraint("campaign_id", "day", "hour", name="uq_hourly_campaign_hour"),)
+
+    id = Column(Integer, primary_key=True)
+    advertiser_id = Column(String, default="")
+    campaign_id = Column(String, index=True, nullable=False)
+    day = Column(String, index=True, nullable=False)          # local YYYY-MM-DD
+    hour = Column(Integer, nullable=False)                    # local 0..23
+    spend = Column(Float, default=0.0)
+    impressions = Column(Integer, default=0)
+    clicks = Column(Integer, default=0)
+    conversions = Column(Integer, default=0)
+    updated_at = Column(DateTime, default=utcnow)
+
+
+class Note(Base):
+    """A free-text note pinned to any object (campaign, creative, account,
+    preset…): kind + ref_id identify it. One note per object, edited in place."""
+    __tablename__ = "notes"
+    __table_args__ = (UniqueConstraint("kind", "ref_id", name="uq_note_ref"),)
+
+    id = Column(Integer, primary_key=True)
+    kind = Column(String, index=True, nullable=False)
+    ref_id = Column(String, index=True, nullable=False)
+    text = Column(Text, default="")
+    by_email = Column(String, default="")
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class ActivityEvent(Base):
+    """Who did what to which object, when — the per-campaign timeline
+    (paused / resumed / budget / bid / launched by rule…). Rules and launches
+    also have their own tables; the timeline merges all three."""
+    __tablename__ = "activity_events"
+
+    id = Column(Integer, primary_key=True)
+    kind = Column(String, index=True, default="campaign")
+    ref_id = Column(String, index=True, nullable=False)
+    advertiser_id = Column(String, default="")
+    action = Column(String, default="")        # paused | resumed | budget | bid | note | …
+    detail = Column(Text, default="")
+    by_email = Column(String, default="")
+    at = Column(DateTime, default=utcnow, index=True)

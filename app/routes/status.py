@@ -38,7 +38,10 @@ SORT_KEYS = {
     "pb_clicks": lambda row: row["pb_clicks"],
     "cvr": lambda row: row["cvr"],
     "profit": lambda row: row["profit"],
+    "roas": lambda row: row["roas"],
+    "epc": lambda row: row["epc"],
 }
+GROUPS = ("", "creative", "account", "bc", "source")
 
 
 # Campaign secondary statuses that mean "switched on but CANNOT deliver"
@@ -84,6 +87,9 @@ def status_page(request: Request, db: Session = Depends(get_db)):
     sort = request.query_params.get("sort", "spend")
     if sort not in SORT_KEYS:
         sort = "spend"
+    group = request.query_params.get("group", "")
+    if group not in GROUPS:
+        group = ""
 
     records = db.query(models.CampaignRecord).all()
     # campaigns this tool launched (successful launches carry the campaign id)
@@ -213,6 +219,9 @@ def status_page(request: Request, db: Session = Depends(get_db)):
             # CVR is a ratio → identical for every campaign on the source
             "cvr": (src_conv / src_clicks * 100) if src_clicks else 0.0,
             "profit": revenue - m["spend"],
+            "roas": (revenue / m["spend"]) if (src and m["spend"]) else 0.0,
+            # earnings per TikTok click — what a click actually pays back
+            "epc": (revenue / m["clicks"]) if (src and m["clicks"]) else 0.0,
         })
 
     reverse = sort not in ("name", "source")
@@ -239,8 +248,29 @@ def status_page(request: Request, db: Session = Depends(get_db)):
         "pb_clicks": pb_clicks,
         "cvr": (pb_conversions / pb_clicks * 100) if pb_clicks else 0.0,
         "profit": revenue - spend,
+        "roas": (revenue / spend) if spend else 0.0,
+        "epc": (revenue / clicks) if clicks else 0.0,
     }
     active = sum(1 for row in rows if row["r"].operation_status == "ENABLE")
+    # how many rows each Status view would show (the segmented control's counts)
+    state_counts = {"active": 0, "blocked": 0, "paused": 0, "all": 0}
+    for r in records:
+        acct_ = accounts.get(r.advertiser_id)
+        if account and r.advertiser_id != account:
+            continue
+        if source_f and sources.get(r.campaign_id, "") != source_f:
+            continue
+        nm = ((acct_.advertiser_name if acct_ else r.advertiser_id) or r.advertiser_id).lower()
+        if q and q not in (r.campaign_name or "").lower() and q not in nm:
+            continue
+        state_counts["all"] += 1
+        blk = blocked_reason(r, acct_) if r.operation_status == "ENABLE" else ""
+        if r.operation_status == "ENABLE" and not blk:
+            state_counts["active"] += 1
+        elif blk:
+            state_counts["blocked"] += 1
+        elif r.operation_status == "DISABLE":
+            state_counts["paused"] += 1
 
     # account dropdown: only accounts that actually have campaigns cached
     adv_ids_with_campaigns = {r.advertiser_id for r in records}
@@ -325,7 +355,69 @@ def status_page(request: Request, db: Session = Depends(get_db)):
             pace_tot["impressions"] += w["impressions"]; pace_tot["clicks"] += w["clicks"]
             pace_tot["spend"] += w["spend"]; pace_tot["n"] += 1
 
+    # --- per-row 'last 12h' spend bars (today only; from the hourly rollups) ----
+    trend: dict[str, list[float]] = {}
+    if range_key == "today" and shown_ids:
+        from .. import hourly as _hourly
+        h_now = timeutil.now_local().hour
+        for cid, vals in _hourly.series_by_campaign(db, shown_ids, timeutil.local_date_str(start_utc)).items():
+            lo = max(0, h_now - 11)
+            trend[cid] = vals[lo:h_now + 1]
+
+    # --- group-by roll-ups (creative / account / BC / source) -------------------
+    from .. import activity as _activity
+    notes = _activity.notes_for(db, "campaign", shown_ids)
+    grouped: list[dict] = []
+    family_root: dict[str, models.Creative] = {}
+    family_size: dict[str, int] = {}
+    if group == "creative" and creative_by_cid:
+        fams = {(c.source_md5 or c.md5 or f"c{c.id}") for c in creative_by_cid.values()}
+        for c in db.query(models.Creative).filter((models.Creative.source_md5.in_(list(fams))) | (models.Creative.md5.in_(list(fams)))):
+            fam = c.source_md5 or c.md5 or f"c{c.id}"
+            family_size[fam] = family_size.get(fam, 0) + 1
+            if fam not in family_root or (c.md5 == fam) or (family_root[fam].md5 != fam and c.id < family_root[fam].id):
+                family_root[fam] = c
+    if group:
+        buckets: dict[str, dict] = {}
+        for row in rows:
+            r = row["r"]
+            if group == "creative":
+                # variants of one upload share source_md5 → one roll-up per ORIGINAL creative
+                cr_ = creative_by_cid.get(r.campaign_id)
+                sp_ = spark_by_cid.get(r.campaign_id, "")
+                if cr_:
+                    fam = cr_.source_md5 or cr_.md5 or f"c{cr_.id}"
+                    root = family_root.get(fam, cr_)
+                    key, label, sub = f"f:{fam}", root.name, ("library creative" + (f" · {family_size.get(fam, 1)} variants" if family_size.get(fam, 1) > 1 else ""))
+                else:
+                    key, label, sub = ((f"s:{sp_}", sp_, "spark code") if sp_ else ("-", "No creative linked", ""))
+            elif group == "account":
+                key, label, sub = r.advertiser_id, row["account_name"], bc_by_aid.get(r.advertiser_id, "")
+            elif group == "bc":
+                b = bc_by_aid.get(r.advertiser_id, "")
+                key, label, sub = (b or "-"), (b or "No Business Center"), ""
+            else:
+                key, label, sub = (row["source"] or "-"), (row["source"] or "No source"), ""
+            g = buckets.get(key)
+            if g is None:
+                g = buckets[key] = {"key": key, "label": label, "sub": sub, "rows": [], "creative": (family_root.get(cr_.source_md5 or cr_.md5 or "", cr_) if (group == "creative" and cr_) else None),
+                                    "spend": 0.0, "revenue": 0.0, "profit": 0.0, "conversions": 0, "clicks": 0, "impressions": 0, "active": 0, "has_rev": False}
+            g["rows"].append(row)
+            g["spend"] += row["m"]["spend"]; g["revenue"] += row["revenue"]; g["profit"] += row["profit"]
+            g["conversions"] += row["m"]["conversions"]; g["clicks"] += row["m"]["clicks"]; g["impressions"] += row["m"]["impressions"]
+            g["active"] += 1 if r.operation_status == "ENABLE" else 0
+            g["has_rev"] = g["has_rev"] or bool(row["source"])
+        for g in buckets.values():
+            g["n"] = len(g["rows"])
+            g["roas"] = (g["revenue"] / g["spend"]) if g["spend"] else 0.0
+            g["epc"] = (g["revenue"] / g["clicks"]) if g["clicks"] else 0.0
+            g["cpa"] = (g["spend"] / g["conversions"]) if g["conversions"] else 0.0
+        gkey = {"spend": lambda g: g["spend"], "revenue": lambda g: g["revenue"], "profit": lambda g: g["profit"], "roas": lambda g: g["roas"],
+                "epc": lambda g: g["epc"], "conv": lambda g: g["conversions"], "name": lambda g: g["label"].lower()}.get(sort, lambda g: g["spend"])
+        grouped = sorted(buckets.values(), key=gkey, reverse=sort != "name")
+
     return render(request, "status.html", {
+        "group": group, "grouped": grouped, "notes": notes, "state_counts": state_counts, "trend": trend,
         "pace": pace_by_cid, "pace_tot": pace_tot,
         "deltas": deltas, "spark_json": _json2.dumps(spark),
         "creative_by_cid": creative_by_cid, "spark_by_cid": spark_by_cid,
@@ -419,3 +511,85 @@ def sync_now(request: Request, db: Session = Depends(get_db)):
     if request.headers.get("x-requested-with") == "fetch" or "application/json" in request.headers.get("accept", ""):
         return JSONResponse({"queued": True, "job_id": job_id, "already": bool(running)})
     return RedirectResponse("/status?ok=Syncing+in+the+background+—+you%27ll+get+a+notification.", status_code=303)
+
+
+@router.get("/campaigns/{advertiser_id}/{campaign_id}/detail")
+def campaign_detail(advertiser_id: str, campaign_id: str, db: Session = Depends(get_db)):
+    """Everything the campaign drawer shows, as JSON: today's metrics + P&L,
+    hourly trend today vs yesterday, timeline, note, creative, links."""
+    from datetime import timedelta as _td
+    from fastapi.responses import JSONResponse
+    from .. import activity, hourly
+    rec = (db.query(models.CampaignRecord)
+           .filter_by(advertiser_id=advertiser_id, campaign_id=campaign_id).first())
+    if rec is None:
+        return JSONResponse({"error": "campaign not in the synced cache yet"}, status_code=404)
+    acct = db.query(models.AdAccount).filter_by(advertiser_id=advertiser_id).first()
+    sources = pnl_data.campaign_source_map(db)
+    src = sources.get(campaign_id, "")
+    # revenue share: same apportioning as the table (spend share among campaigns on the source)
+    start_utc, end_utc = timeutil.range_bounds("today")
+    pb = pnl_data.revenue_by_source(db, start_utc, end_utc).get(src, {}) if src else {}
+    y_start, y_end = timeutil.range_bounds("yesterday")
+    pb_y = pnl_data.revenue_by_source(db, y_start, y_end).get(src, {}) if src else {}
+    share = 1.0
+    if src:
+        siblings = [r for r in db.query(models.CampaignRecord).all() if sources.get(r.campaign_id, "") == src]
+        total = sum(float(r.spend_today or 0) for r in siblings)
+        if len(siblings) > 1:
+            share = (float(rec.spend_today or 0) / total) if total > 0 else 1.0 / len(siblings)
+    spend = float(rec.spend_today or 0)
+    revenue = float(pb.get("revenue", 0.0)) * share
+    clicks = int(rec.clicks or 0)
+    m = {"spend": spend, "revenue": revenue, "profit": revenue - spend,
+         "roas": (revenue / spend) if (src and spend) else 0.0, "epc": (revenue / clicks) if (src and clicks) else 0.0,
+         "impressions": int(rec.impressions or 0), "clicks": clicks, "conversions": int(rec.conversions or 0),
+         "ctr": float(rec.ctr or 0), "cpc": float(rec.cpc or 0), "cpm": float(rec.cpm or 0), "cpa": float(rec.cpa or 0),
+         "pb_clicks": float(pb.get("clicks", 0)) * share, "pb_conversions": float(pb.get("conversions", 0)) * share,
+         "share": share, "shared_n": len(siblings) if src else 0}
+    # yesterday for the same campaign (snapshot) + its revenue share of yesterday
+    y_day = timeutil.local_date_str(y_start)
+    snap = db.query(models.SpendSnapshot).filter_by(campaign_id=campaign_id, day=y_day).first()
+    y_spend = float(snap.spend) if snap else 0.0
+    y_rev = float(pb_y.get("revenue", 0.0)) * share
+    today = timeutil.local_date_str(start_utc)
+    h_today, h_y = hourly.series(db, [campaign_id], today), hourly.series(db, [campaign_id], y_day)
+    rev_today, rev_y = hourly.revenue_series(db, {src} if src else set(), today), hourly.revenue_series(db, {src} if src else set(), y_day)
+    if src and m["shared_n"] > 1:
+        rev_today = [v * share for v in rev_today]; rev_y = [v * share for v in rev_y]
+    cr = db.query(models.Creative).filter(models.Creative.used_campaign_id == campaign_id).first()
+    spark_name = ""
+    lg = (db.query(models.LaunchLog).filter(models.LaunchLog.campaign_id == campaign_id,
+                                             models.LaunchLog.spark_code_id != None).first())    # noqa: E711
+    if lg:
+        sp = db.get(models.SparkCode, lg.spark_code_id)
+        spark_name = sp.name if sp else ""
+    bc = db.query(models.BusinessCenter).filter_by(bc_id=acct.owner_bc_id).first() if (acct and acct.owner_bc_id) else None
+    note = activity.get_note(db, "campaign", campaign_id)
+    tl = [{"at": (i["at"].isoformat() + "Z") if i["at"] else "", "ago": _ago(i["at"]), "action": i["action"], "detail": i["detail"], "who": i["who"]}
+          for i in activity.timeline(db, campaign_id)]
+    return JSONResponse({
+        "campaign": {"id": campaign_id, "name": rec.campaign_name, "advertiser_id": advertiser_id,
+                     "account": (acct.advertiser_name if acct else advertiser_id) or advertiser_id,
+                     "account_status": (acct.status if acct else "") or "", "bc": (bc.name if bc else ""),
+                     "status": rec.operation_status, "secondary": (rec.secondary_status or "").replace("CAMPAIGN_STATUS_", "").replace("_", " ").lower(),
+                     "blocked": blocked_reason(rec, acct) if rec.operation_status == "ENABLE" else "",
+                     "budget": float(rec.budget or 0), "budget_mode": rec.budget_mode or "", "objective": rec.objective_type or "",
+                     "smart_plus": bool(rec.is_smart_plus), "launched_at": rec.launched_at.isoformat() + "Z" if rec.launched_at else "",
+                     "launched_ago": _ago(rec.launched_at), "source": src,
+                     "ads_manager_url": f"https://ads.tiktok.com/i18n/dashboard?aadvid={advertiser_id}"},
+        "metrics": m,
+        "yesterday": {"spend": y_spend, "revenue": y_rev, "profit": y_rev - y_spend, "roas": (y_rev / y_spend) if y_spend else 0.0},
+        "hourly": {"today": {"spend": h_today["spend"], "conversions": h_today["conversions"], "clicks": h_today["clicks"], "revenue": rev_today},
+                   "yesterday": {"spend": h_y["spend"], "conversions": h_y["conversions"], "clicks": h_y["clicks"], "revenue": rev_y},
+                   "hour_now": timeutil.now_local().hour},
+        "creative": ({"id": cr.id, "name": cr.name, "kind": cr.kind or "video", "file": f"/creatives/{cr.id}/file", "thumb": f"/creatives/{cr.id}/thumb"} if cr else None),
+        "spark": spark_name,
+        "note": (note.text if note else ""),
+        "timeline": tl,
+    })
+
+
+def _ago(dt):
+    from ..templating import _ago as _f
+    return _f(dt)

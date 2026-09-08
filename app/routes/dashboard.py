@@ -20,54 +20,86 @@ router = APIRouter()
 
 @router.get("/")
 def overview(request: Request, db: Session = Depends(get_db)):
-    """Home = the live command center (Overview + the old Live page merged).
-    Today's KPIs are server-rendered, then the page polls /performance/data
-    every 15s (overlap-guarded) and streams the live event feed."""
-    start_utc, end_utc = timeutil.range_bounds("today")
-    kpis = pnl_data.overall_totals(db, start_utc, end_utc)
-
-    top_accounts = (
-        db.query(models.CampaignRecord.advertiser_id,
-                 func.sum(models.CampaignRecord.spend_today).label("spend"),
-                 func.count(models.CampaignRecord.id).label("campaigns"))
-        .group_by(models.CampaignRecord.advertiser_id)
-        .order_by(func.sum(models.CampaignRecord.spend_today).desc())
-        .limit(8).all())
-    names = {a.advertiser_id: a.advertiser_name for a in db.query(models.AdAccount).all()}
-
-    active = (db.query(models.CampaignRecord)
-              .filter(models.CampaignRecord.operation_status == "ENABLE")
-              .order_by(models.CampaignRecord.spend_today.desc()).limit(10).all())
-
-    # ---- "Needs attention" = the unified inbox (single source of truth) -----
+    """Home = the live command center: profit first, today by hour vs
+    yesterday, which creatives won / lost today, what needs attention, and
+    the Business Centers at a glance. Live tiles poll /performance/data."""
+    from datetime import timedelta
+    from .. import creative_perf, hourly
     from .. import inbox as inbox_mod
+    from . import super_launcher as sl
+
+    start_utc, end_utc = timeutil.range_bounds("today")
+    y_start, y_end = timeutil.range_bounds("yesterday")
+    kpis = pnl_data.overall_totals(db, start_utc, end_utc)
+    ykpis = pnl_data.overall_totals(db, y_start, y_end)
+    tt_clicks = int(db.query(func.coalesce(func.sum(models.CampaignRecord.clicks), 0)).scalar() or 0)
+    kpis["tt_clicks"] = tt_clicks
+    kpis["epc"] = (kpis["revenue"] / tt_clicks) if tt_clicks else 0.0
+    y_tt_clicks = 0     # TikTok clicks aren't snapshotted per day; EPC delta uses postback clicks
+    kpis["epc_pb"] = (kpis["revenue"] / kpis["clicks"]) if kpis["clicks"] else 0.0
+    ykpis["epc_pb"] = (ykpis["revenue"] / ykpis["clicks"]) if ykpis["clicks"] else 0.0
+    # pace of the day: profit at this hour yesterday (so +38% means vs the same time)
+    today_day, y_day = timeutil.local_date_str(start_utc), timeutil.local_date_str(y_start)
+    h_now = timeutil.now_local().hour
+    active_ids = [r[0] for r in db.query(models.CampaignRecord.campaign_id).filter(models.CampaignRecord.operation_status == "ENABLE")]
+    all_ids = [r[0] for r in db.query(models.CampaignRecord.campaign_id)]
+    ht, hy = hourly.series(db, all_ids, today_day), hourly.series(db, all_ids, y_day)
+    rt, ry = hourly.revenue_series(db, None, today_day), hourly.revenue_series(db, None, y_day)
+    y_same_hour = {"spend": sum(hy["spend"][:h_now + 1]), "revenue": sum(ry[:h_now + 1])}
+    y_same_hour["profit"] = y_same_hour["revenue"] - y_same_hour["spend"]
+    hourly_json = json.dumps({"today": {"spend": ht["spend"], "revenue": rt, "conversions": ht["conversions"], "clicks": ht["clicks"]},
+                              "yesterday": {"spend": hy["spend"], "revenue": ry, "conversions": hy["conversions"], "clicks": hy["clicks"]},
+                              "hour_now": h_now, "has_hourly": hourly.days_available(db) > 0})
+
+    # ---- today's creative tests: families rolled up, winners / learning / losing
+    perf = creative_perf.rows(db, start_utc, end_utc, today=True)
+    fams = creative_perf.families([r for r in perf if r["spend"] > 0 or r["revenue"] > 0])
+    def _cls(f):
+        if f["spend"] < 5:
+            return "learning"
+        return "winner" if f["roas"] >= 1.3 else ("losing" if f["roas"] < 0.9 else "learning")
+    for f in fams:
+        f["cls"] = _cls(f)
+        f["accounts"] = len({r["c"].used_advertiser_id for r in f["rows"]})
+        f["thumb_id"] = f["best"]["c"].id if f.get("best") else None
+        f["clicks"] = sum(r["clicks"] for r in f["rows"])
+        f["epc"] = (f["revenue"] / f["clicks"]) if f["clicks"] else 0.0
+    tests = {"n": len(fams), "winners": sum(1 for f in fams if f["cls"] == "winner"),
+             "losing": sum(1 for f in fams if f["cls"] == "losing"), "learning": sum(1 for f in fams if f["cls"] == "learning"),
+             "launched_today": db.query(models.LaunchLog).filter(models.LaunchLog.ok == True, models.LaunchLog.created_at >= start_utc.replace(tzinfo=None)).count()}  # noqa: E712
+    winners = [f for f in fams if f["cls"] == "winner"][:5]
+    losers = sorted([f for f in fams if f["cls"] == "losing"], key=lambda f: f["profit"])[:5]
+
+    # ---- attention (unified inbox) + Business Centers -------------------------
     inbox_items = inbox_mod.build(db)
     inbox_counts = inbox_mod.counts(inbox_items)
-
-    # chart series: last 14 days of revenue / spend / profit (client redraws)
-    days, rev_series, spend_series, profit_series = [], [], [], []
-    for offset in range(-13, 1):
-        d_start = timeutil.local_midnight_utc(offset)
-        d_end = timeutil.local_midnight_utc(offset + 1)
-        t = pnl_data.overall_totals(db, d_start, d_end)
-        days.append(timeutil.local_date_str(d_start + (d_end - d_start) / 2))
-        rev_series.append(round(t["revenue"], 2))
-        spend_series.append(round(t["spend"], 2))
-        profit_series.append(round(t["profit"], 2))
+    accounts = db.query(models.AdAccount).all()
+    ctx = sl.account_picker_context(db, accounts)
+    bcs = db.query(models.BusinessCenter).order_by(models.BusinessCenter.name).all()
+    spend_by_aid = {r[0]: float(r[1] or 0) for r in db.query(models.CampaignRecord.advertiser_id, func.sum(models.CampaignRecord.spend_today)).group_by(models.CampaignRecord.advertiser_id)}
+    src_map = pnl_data.campaign_source_map(db)
+    pb = pnl_data.revenue_by_source(db, start_utc, end_utc)
+    rev_by_aid: dict[str, float] = {}
+    for r in db.query(models.CampaignRecord).all():
+        src = src_map.get(r.campaign_id, "")
+        if src and src in pb:
+            rev_by_aid[r.advertiser_id] = rev_by_aid.get(r.advertiser_id, 0.0) + float(pb[src].get("revenue", 0.0))
+    bc_rows = []
+    for b in bcs:
+        aids = [a.advertiser_id for a in accounts if a.owner_bc_id == b.bc_id]
+        st = [ctx["info"][a]["state"] for a in aids if a in ctx["info"]]
+        sp = sum(spend_by_aid.get(a, 0.0) for a in aids); rv = sum(rev_by_aid.get(a, 0.0) for a in aids)
+        bc_rows.append({"bc": b, "n": len(aids), "fresh": st.count("fresh"), "live": st.count("active"), "blocked": st.count("blocked"),
+                        "spend": sp, "revenue": rv, "profit": rv - sp, "low": (b.balance or 0) < (b.alert_threshold or 0)})
+    no_bc = [a.advertiser_id for a in accounts if not a.owner_bc_id]
 
     return render(request, "home.html", {
         "title": "Home",
-        "kpis": kpis,
-        "top_accounts": [{"advertiser_id": r.advertiser_id,
-                          "name": names.get(r.advertiser_id, r.advertiser_id),
-                          "spend": float(r.spend or 0), "campaigns": r.campaigns}
-                         for r in top_accounts],
-        "active_campaigns": active,
-        "account_names": names,
+        "kpis": kpis, "ykpis": ykpis, "y_same_hour": y_same_hour, "tests": tests, "winners": winners, "losers": losers,
+        "hourly_json": hourly_json, "h_now": h_now,
         "synced_ago": queries.campaigns_synced_ago(db),
         "attention": inbox_items[:6], "inbox_counts": inbox_counts,
-        "chart_json": json.dumps({"labels": days, "series": {
-            "revenue": rev_series, "spend": spend_series, "profit": profit_series}}),
+        "bc_rows": bc_rows, "no_bc": len(no_bc), "acct_counts": ctx["counts"], "n_accounts": len(accounts),
     })
 
 

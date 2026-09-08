@@ -16,15 +16,16 @@
   </script>
   <link rel="stylesheet" href="/static/style.css?v={{ STATIC_V }}">
   {% block head %}{% endblock %}
-  <!-- topnav.css = the app shell (sidebar / mobile bar); loads after style.css -->
+  <!-- topnav.css = the app shell (sidebar / top bar / mobile bar); loads after style.css -->
   <link rel="stylesheet" href="/static/topnav.css?v={{ STATIC_V }}">
+  <script src="/static/ui.js?v={{ STATIC_V }}"></script>
 </head>
 <body>
 {# ---- icon set: inline SVG (crisp at any size, inherits currentColor) ---- #}
 {% macro ic(name) -%}
 <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
 {%- if name == 'home' %}<path d="M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/>
-{%- elif name == 'campaigns' %}<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 10v10"/>
+{%- elif name == 'campaigns' %}<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>
 {%- elif name == 'health' %}<path d="M3 12h4l2-6 4 12 2-6h6"/>
 {%- elif name == 'pnl' %}<path d="M12 3v18"/><path d="M16.5 7c0-1.7-2-3-4.5-3S7.5 5.3 7.5 7s2 2.5 4.5 3 4.5 1.3 4.5 3.5-2 3.5-4.5 3.5-4.5-1.3-4.5-3"/>
 {%- elif name == 'automation' %}<path d="M13 2L4 14h7l-1 8 9-12h-7z"/>
@@ -41,11 +42,11 @@
 {%- elif name == 'pages' %}<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 12h6M9 16h6"/>
 {%- elif name == 'forms' %}<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M9 12.5l2 2 4-4"/>
 {%- elif name == 'pin' %}<path d="M12 21s-6-5.5-6-11a6 6 0 0 1 12 0c0 5.5-6 11-6 11z"/><circle cx="12" cy="10" r="2"/>
-{%- elif name == 'settings' %}<path d="M4 7h9M19 7h1M4 17h1M11 17h9"/><circle cx="16" cy="7" r="2.5"/><circle cx="8" cy="17" r="2.5"/>
+{%- elif name == 'settings' %}<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>
 {%- elif name == 'cookie' %}<path d="M20.5 12.5A8.5 8.5 0 1 1 11.5 3.5a3 3 0 0 0 3 3 3 3 0 0 0 3 3 3 3 0 0 0 3 3z"/><circle cx="9" cy="10" r="1"/><circle cx="14" cy="15" r="1"/><circle cx="9" cy="15" r="1"/>
 {%- elif name == 'link' %}<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>
 {%- elif name == 'logout' %}<path d="M10 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h5M15 8l4 4-4 4M19 12H9"/>
-{%- elif name == 'collapse' %}<path d="M11 7l-5 5 5 5M18 7l-5 5 5 5"/>
+{%- elif name == 'collapse' %}<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16M15 10l-2 2 2 2"/>
 {%- elif name == 'menu' %}<path d="M4 7h16M4 12h16M4 17h16"/>
 {%- elif name == 'sun' %}<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>
 {%- elif name == 'moon' %}<path d="M21 13A9 9 0 1 1 11 3a7 7 0 0 0 10 10z"/>
@@ -54,15 +55,24 @@
 {%- elif name == 'audience' %}<circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.4"/><path d="M3 19c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5"/><path d="M15.5 14c2.6.3 4.5 2 4.5 4.5"/>
 {%- elif name == 'shield' %}<path d="M12 3l7 3v5c0 4.5-3 8.5-7 10-4-1.5-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/>
 {%- elif name == 'system' %}<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>
+{%- elif name == 'search' %}<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>
+{%- elif name == 'bell' %}<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10 21a2 2 0 0 0 4 0"/>
+{%- elif name == 'arrow' %}<path d="M5 12h14M13 6l6 6-6 6"/>
+{%- elif name == 'check' %}<path d="M5 12l5 5L20 7"/>
+{%- elif name == 'x' %}<path d="M6 6l12 12M18 6L6 18"/>
+{%- elif name == 'sparkle' %}<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"/>
 {%- endif %}</svg>
 {%- endmacro %}
 {% macro acct_link(advertiser_id, name, show_id=False) -%}
 <a href="{{ ads_manager_url(advertiser_id) }}" target="_blank" rel="noopener" class="acct-link" title="Open this ad account in TikTok Ads Manager (new tab)">{{ name or advertiser_id }}<span class="ext">↗</span></a>{% if show_id %}<div class="mono muted" style="font-size:10px;">{{ advertiser_id }}</div>{% endif %}
 {%- endmacro %}
 {% macro sn(href, icon, label, on) -%}
-<a href="{{ href }}" class="sn {{ 'active' if on else '' }}" title="{{ label }}">{{ ic(icon) }}<span class="sn-l">{{ label }}</span></a>
+<a href="{{ href }}" class="sn {{ 'active' if on else '' }}" title="{{ label }}">{{ ic(icon) }}<span class="sn-l">{{ label }}</span>{% if href == '/inbox' %}<span class="badge" data-inbox-badge hidden></span>{% endif %}</a>
 {%- endmacro %}
-{% set launch_active = active.startswith('/super-launcher') or active.startswith('/campaigns') or active.startswith('/queue') %}
+{% set me = request.state.user if request.state.user is defined else none %}
+{% set me_email = (me.email if me else '') %}
+{% set me_initials = (me_email[:2] | upper) if me_email else '··' %}
+{% set section_tabs = nav_tabs(request) %}
 
 <div class="mobile-bar">
   <button type="button" class="mb-btn" id="mobileMenu" title="Menu">{{ ic('menu') }}</button>
@@ -74,60 +84,52 @@
 <div class="shell">
 <aside class="side" id="side">
   <div class="side-head">
-    <a href="/" class="side-mark" title="AdOps"><img src="/static/g-logo.png?v={{ STATIC_V }}" alt=""></a>
-    <button type="button" class="side-toggle" id="sideToggle" title="Collapse sidebar">{{ ic('collapse') }}</button>
+    <a href="/" class="side-mark" title="Home"><img src="/static/g-logo.png?v={{ STATIC_V }}" alt=""></a>
+    <button type="button" class="side-toggle" id="sideToggle" title="Collapse sidebar (⌘\)">{{ ic('collapse') }}</button>
   </div>
   <nav class="side-nav">
-    {{ sn('/', 'home', 'Home', active == '/') }}
-    {{ sn('/status', 'campaigns', 'Campaigns', active.startswith('/status')) }}
-    {{ sn('/monitor', 'health', 'Health', active.startswith('/monitor') or active.startswith('/issues')) }}
-    {{ sn('/pnl', 'pnl', 'P&L', active.startswith('/pnl')) }}
-    {{ sn('/automation', 'automation', 'Automation', active.startswith('/automation')) }}
-    {{ sn('/appeals', 'shield', 'Appeals', active.startswith('/appeals')) }}
-    {{ sn('/audience', 'audience', 'Audience', active.startswith('/audience')) }}
-    <a href="/inbox" class="sn {{ 'active' if active.startswith('/inbox') else '' }}" title="Inbox">{{ ic('inbox') }}<span class="sn-l">Inbox</span><span class="badge" data-inbox-badge hidden></span></a>
-
-    <div class="sn-group"><span>Launch</span></div>
-    {{ sn('/super-launcher', 'rocket', 'Super Launcher', active.startswith('/super-launcher')) }}
-    {{ sn('/campaigns/launch', 'plus', 'Create Campaign', active == '/campaigns/launch') }}
-    {{ sn('/queue', 'queue', 'Launch Queue', active.startswith('/queue')) }}
-
-    <div class="sn-group"><span>Assets</span></div>
-    {{ sn('/presets', 'presets', 'Presets', active.startswith('/presets')) }}
-    {{ sn('/spark-codes', 'spark', 'Spark Codes', active.startswith('/spark-codes')) }}
-    {{ sn('/creatives', 'creatives', 'Creatives', active.startswith('/creatives')) }}
-    {{ sn('/ad-texts', 'texts', 'Ad Texts', active.startswith('/ad-texts')) }}
-    {{ sn('/pixels', 'pixels', 'Pixels', active.startswith('/pixels')) }}
-    {{ sn('/partners', 'partners', 'Partners', active.startswith('/partners')) }}
-    {{ sn('/accounts', 'accounts', 'Ad Accounts', active.startswith('/accounts')) }}
-    {{ sn('/instant-pages', 'pages', 'Instant Pages', active.startswith('/instant-pages')) }}
-    {{ sn('/lead-forms', 'forms', 'Lead Forms', active.startswith('/lead-forms')) }}
-    {{ sn('/locations', 'pin', 'Locations', active.startswith('/locations')) }}
-
-    <div class="sn-group"><span>Tools</span></div>
-    {{ sn('/campaigns/source-check', 'link', 'Source check', active.startswith('/campaigns/source-check')) }}
-    {{ sn('/escape-test', 'system', 'Escape test', active.startswith('/escape-test')) }}
+    {% for it in nav_sidebar(active) %}{% if it is none %}<div class="sn-group"></div>{% else %}{{ sn(it[0], it[1], it[2], it[3]) }}{% endif %}{% endfor %}
   </nav>
   <div class="side-foot">
-    <a href="/jobs" class="sn jr" id="jobsRunning" hidden title="Background jobs running — click for the list"><span class="jr-dot"></span><span class="sn-l jr-t">running</span></a>
-    {{ sn('/jobs', 'jobs', 'Jobs', active.startswith('/jobs')) }}
-    {{ sn('/settings', 'settings', 'Settings', active.startswith('/settings')) }}
-    {{ sn('/cookies', 'cookie', 'TikTok Cookies', active.startswith('/cookies')) }}
-    {{ sn('/oauth/connect', 'link', 'Connect TikTok', active.startswith('/oauth')) }}
-    <button type="button" class="sn theme-btn" id="themeBtn" title="Theme: follow system">
-      <span data-th="system">{{ ic('system') }}</span><span data-th="light" hidden>{{ ic('sun') }}</span><span data-th="dark" hidden>{{ ic('moon') }}</span>
-      <span class="sn-l" id="themeLabel">System theme</span>
-    </button>
-    <a href="/logout" class="sn" title="Log out">{{ ic('logout') }}<span class="sn-l">Log out</span></a>
+    {% for it in nav_footer(active) %}{{ sn(it[0], it[1], it[2], it[3]) }}{% endfor %}
   </div>
 </aside>
 
 <main class="main">
+  <header class="top">
+    {% if section_tabs %}<nav class="tabs" data-section-tabs>{% for href, label, on in section_tabs %}<a href="{{ href }}" class="{{ 'on' if on else '' }}">{{ label }}</a>{% endfor %}</nav>{% endif %}
+    <div class="right">
+      <a href="/jobs" class="jr-top" id="jobsRunning" hidden title="Background jobs running — click for the list"><span class="jr-dot"></span><span class="jr-t">running</span></a>
+      <button type="button" class="gsearch" id="cmdkOpen" title="Search or jump to a page (⌘K)">{{ ic('search') }}<span>Search or jump to…</span><kbd>⌘K</kbd></button>
+      <a href="/inbox" class="iconbtn" title="Inbox">{{ ic('bell') }}<span class="badge" data-inbox-badge hidden></span></a>
+      <button type="button" class="avatar" id="userBtn" title="{{ me_email or 'Account' }}" aria-haspopup="true">{{ me_initials }}</button>
+    </div>
+    <div class="umenu" id="userMenu" hidden>
+      <div class="um-head"><span class="avatar">{{ me_initials }}</span><div class="um-who"><b>{{ me_email or 'Signed in' }}</b><span>{{ 'owner' if (me and is_owner(me)) else ('admin' if (me and me.is_admin) else 'member') }}{% if me and me.totp_secret %} · 2FA on{% endif %}</span></div></div>
+      <div class="um-theme" id="themeBtn" role="group" aria-label="Theme">
+        <button type="button" data-th="system" title="Follow the system theme">{{ ic('system') }} Auto</button>
+        <button type="button" data-th="light" title="Light theme">{{ ic('sun') }} Light</button>
+        <button type="button" data-th="dark" title="Dark theme">{{ ic('moon') }} Dark</button>
+      </div>
+      <a href="/settings#security">{{ ic('shield') }} Security &amp; 2FA</a>
+      <a href="/settings">{{ ic('settings') }} Settings</a>
+      <a href="/logout">{{ ic('logout') }} Log out</a>
+    </div>
+  </header>
   <div class="page {% block page_width %}{% endblock %}">
     {% block content %}{% endblock %}
   </div>
 </main>
 </div>
+
+{# ---- ⌘K: jump to any page / search campaigns ---- #}
+<div class="cmdk-bg" id="cmdk" hidden>
+  <div class="cmdk" role="dialog" aria-label="Search or jump to">
+    <div class="cmdk-in">{{ ic('search') }}<input type="text" id="cmdkInput" placeholder="Jump to a page, or type to search campaigns…" autocomplete="off" spellcheck="false"><kbd>esc</kbd></div>
+    <div class="cmdk-list" id="cmdkList"></div>
+  </div>
+</div>
+<script id="cmdkData" type="application/json">{{ nav_jump | tojson }}</script>
 
 <div id="toasts" class="toasts" aria-live="polite"></div>
 <script>
@@ -161,45 +163,106 @@
 
     var root = document.documentElement;
 
-    // ---- sidebar: collapse (remembered) + mobile drawer ---------------------
+    // ---- sidebar: collapse (remembered, ⌘\ / Ctrl+\) + mobile drawer ---------
     var toggle = document.getElementById("sideToggle");
+    function setCollapsed(c) {
+      if (c) root.setAttribute("data-side", "collapsed"); else root.removeAttribute("data-side");
+      if (toggle) toggle.title = (c ? "Expand" : "Collapse") + " sidebar (⌘\\)";
+      try { localStorage.setItem("adops-side", c ? "collapsed" : "open"); } catch (e) {}
+    }
     if (toggle) {
-      toggle.addEventListener("click", function () {
-        var collapsed = root.getAttribute("data-side") === "collapsed";
-        if (collapsed) root.removeAttribute("data-side"); else root.setAttribute("data-side", "collapsed");
-        toggle.title = collapsed ? "Collapse sidebar" : "Expand sidebar";
-        try { localStorage.setItem("adops-side", collapsed ? "open" : "collapsed"); } catch (e) {}
-      });
-      if (root.getAttribute("data-side") === "collapsed") toggle.title = "Expand sidebar";
+      toggle.addEventListener("click", function () { setCollapsed(root.getAttribute("data-side") !== "collapsed"); });
+      if (root.getAttribute("data-side") === "collapsed") toggle.title = "Expand sidebar (⌘\\)";
     }
     var mob = document.getElementById("mobileMenu"), backdrop = document.getElementById("sideBackdrop");
     function closeDrawer() { root.classList.remove("side-open"); }
     if (mob) mob.addEventListener("click", function () { root.classList.toggle("side-open"); });
     if (backdrop) backdrop.addEventListener("click", closeDrawer);
-    document.addEventListener("keydown", function (e) { if (e.key === "Escape") closeDrawer(); });
 
-    // ---- theme: system → light → dark → system -----------------------------
+    // ---- user menu (avatar) ----------------------------------------------------
+    var ub = document.getElementById("userBtn"), um = document.getElementById("userMenu");
+    function closeMenu() { if (um) um.hidden = true; }
+    if (ub && um) {
+      ub.addEventListener("click", function (e) { e.stopPropagation(); um.hidden = !um.hidden; });
+      um.addEventListener("click", function (e) { e.stopPropagation(); });
+      document.addEventListener("click", closeMenu);
+    }
+
+    // ---- theme: system / light / dark ------------------------------------------
     var themeBtn = document.getElementById("themeBtn");
     if (themeBtn) {
-      var LABEL = { system: "System theme", light: "Light theme", dark: "Dark theme" };
       function readTheme() {
         try { var t = localStorage.getItem("adops-theme"); return (t === "light" || t === "dark") ? t : "system"; }
         catch (e) { return "system"; }
       }
       function applyTheme(t) {
         if (t === "system") root.removeAttribute("data-theme"); else root.setAttribute("data-theme", t);
-        themeBtn.querySelectorAll("[data-th]").forEach(function (s) { s.hidden = s.getAttribute("data-th") !== t; });
-        document.getElementById("themeLabel").textContent = LABEL[t];
-        themeBtn.title = "Theme: " + LABEL[t].toLowerCase() + " (click to change)";
+        themeBtn.querySelectorAll("[data-th]").forEach(function (b) { b.classList.toggle("on", b.getAttribute("data-th") === t); });
       }
       applyTheme(readTheme());
-      themeBtn.addEventListener("click", function () {
-        var order = ["system", "light", "dark"];
-        var next = order[(order.indexOf(readTheme()) + 1) % 3];
-        try { localStorage.setItem("adops-theme", next); } catch (e) {}
-        applyTheme(next);
+      themeBtn.querySelectorAll("[data-th]").forEach(function (b) {
+        b.addEventListener("click", function () {
+          var t = b.getAttribute("data-th");
+          try { localStorage.setItem("adops-theme", t); } catch (e) {}
+          applyTheme(t);
+        });
       });
     }
+
+    // ---- section tabs with #anchors (Settings): mark by the current hash ------
+    var tabs = document.querySelector("[data-section-tabs]");
+    function markHashTab() {
+      if (!tabs) return;
+      var anchors = tabs.querySelectorAll('a[href*="#"]');
+      if (!anchors.length) return;
+      var hash = location.hash, hit = false;
+      anchors.forEach(function (a) { var on = hash && a.getAttribute("href").endsWith(hash); a.classList.toggle("on", !!on); if (on) hit = true; });
+      var plain = tabs.querySelector('a[href="' + location.pathname + '"]');
+      if (plain) plain.classList.toggle("on", !hit);
+    }
+    markHashTab();
+    window.addEventListener("hashchange", markHashTab);
+
+    // ---- ⌘K palette --------------------------------------------------------------
+    var cmdk = document.getElementById("cmdk"), cin = document.getElementById("cmdkInput"), clist = document.getElementById("cmdkList");
+    var pages = []; try { pages = JSON.parse(document.getElementById("cmdkData").textContent) || []; } catch (e) {}
+    var sel = 0, items = [];
+    function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
+    function renderList(q) {
+      q = (q || "").trim().toLowerCase();
+      var hits = pages.filter(function (p) { return !q || (p[1] + " " + p[2] + " " + p[3]).toLowerCase().indexOf(q) >= 0; });
+      items = [];
+      var html = "", grp = "";
+      if (q) { items.push({ href: "/status?q=" + encodeURIComponent(q), label: 'Search campaigns for “' + q + '”', group: "Search", icon: "search" }); }
+      hits.forEach(function (p) { items.push({ href: p[0], label: p[1], group: p[2], icon: p[4] || "arrow" }); });
+      if (!items.length) { clist.innerHTML = '<div class="cmdk-empty">Nothing matches “' + esc(q) + '”</div>'; return; }
+      items.forEach(function (it, i) {
+        if (it.group !== grp) { grp = it.group; html += '<div class="cmdk-grp">' + esc(grp) + '</div>'; }
+        html += '<a class="cmdk-it' + (i === sel ? ' on' : '') + '" href="' + esc(it.href) + '" data-i="' + i + '"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>' + esc(it.label) + '<span class="k">' + esc(it.group) + '</span></a>';
+      });
+      clist.innerHTML = html;
+    }
+    function openK() { if (!cmdk) return; cmdk.hidden = false; sel = 0; cin.value = ""; renderList(""); setTimeout(function () { cin.focus(); }, 0); }
+    function closeK() { if (cmdk) cmdk.hidden = true; }
+    var openBtn = document.getElementById("cmdkOpen");
+    if (openBtn) openBtn.addEventListener("click", openK);
+    if (cmdk) {
+      cmdk.addEventListener("click", function (e) { if (e.target === cmdk) closeK(); });
+      cin.addEventListener("input", function () { sel = 0; renderList(cin.value); });
+      cin.addEventListener("keydown", function (e) {
+        if (e.key === "ArrowDown") { e.preventDefault(); sel = Math.min(sel + 1, items.length - 1); renderList(cin.value); }
+        else if (e.key === "ArrowUp") { e.preventDefault(); sel = Math.max(sel - 1, 0); renderList(cin.value); }
+        else if (e.key === "Enter") { e.preventDefault(); if (items[sel]) location.href = items[sel].href; }
+      });
+    }
+    document.addEventListener("keydown", function (e) {
+      var tag = (e.target && e.target.tagName) || "";
+      var typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || (e.target && e.target.isContentEditable);
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); if (cmdk && !cmdk.hidden) closeK(); else openK(); }
+      else if ((e.metaKey || e.ctrlKey) && e.key === "\\") { e.preventDefault(); setCollapsed(root.getAttribute("data-side") !== "collapsed"); }
+      else if (e.key === "Escape") { closeK(); closeMenu(); closeDrawer(); }
+      else if (!typing && !e.metaKey && !e.ctrlKey && !e.altKey && e.key === "/") { e.preventDefault(); openK(); }
+    });
 
     // ---- Inbox badge: unified attention count (visibility-gated poll) -------
     var badges = document.querySelectorAll("[data-inbox-badge]");

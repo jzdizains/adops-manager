@@ -1,559 +1,246 @@
 {% extends "base.html" %}
 {% block content %}
 {% set range_labels = {'today': 'Today', 'yesterday': 'Yesterday', '7d': 'Last 7 days', '30d': 'Last 30 days', 'mtd': 'This month', 'custom': 'Custom'} %}
-{% set origin_labels = {'tool': 'Launched by this tool', 'all': 'All on TikTok'} %}
-{% set state_labels = {'active': 'Active only', 'blocked': 'On but blocked', 'paused': 'Paused only', 'all': 'All statuses'} %}
-{% set roas = (totals.revenue / totals.spend) if totals.spend else 0 %}
-{% macro sort_link(key, label) -%}
-  <a class="th-sort {{ 'on' if sort == key else '' }}"
-     href="?q={{ q|urlencode }}&state={{ state }}&account={{ account }}&source={{ source_f|urlencode }}&origin={{ origin }}&range={{ range_key }}&start={{ start }}&end={{ end }}&sort={{ key }}">{{ label }}{% if sort == key %} ▾{% endif %}</a>
+{% set origin_labels = {'tool': 'Launched here', 'all': 'All on TikTok'} %}
+{% set group_labels = {'creative': 'Creative', 'account': 'Account', 'bc': 'BC', 'source': 'Source', '': 'None'} %}
+{% set qs_base = 'q=' ~ (q|urlencode) ~ '&account=' ~ account ~ '&source=' ~ (source_f|urlencode) ~ '&origin=' ~ origin ~ '&range=' ~ range_key ~ '&start=' ~ start ~ '&end=' ~ end ~ '&group=' ~ group %}
+{% macro sort_link(key, label, title='') -%}
+  <a class="th-sort {{ 'on' if sort == key else '' }}" href="?{{ qs_base }}&state={{ state }}&sort={{ key }}" title="{{ title }}">{{ label }}{% if sort == key %} ▾{% endif %}</a>
+{%- endmacro %}
+{% macro roas_pill(r, has) -%}
+  {% if has and r %}<span class="roas-pill {{ 'g' if r >= 1.3 else ('w' if r >= 0.9 else 'r') }}">{{ "%.2f"|format(r) }}×</span>{% else %}<span class="roas-pill n">—</span>{% endif %}
+{%- endmacro %}
+{% macro profit(v, has) -%}
+  {% if has %}<span class="profit-cell {{ 'pos' if v >= 0 else 'neg' }}">{{ '+' if v > 0 }}{{ '−' if v < 0 }}${{ "%.0f"|format(v|abs) if v|abs >= 100 else "%.2f"|format(v|abs) }}</span>{% else %}<span class="muted">—</span>{% endif %}
+{%- endmacro %}
+{% macro pace_chip(p, key, money=false) -%}
+  {% if p and p.w[15] and p.w[15][key] is not none %}
+    {% set v15 = p.w[15][key] %}{% set v5 = p.w[5][key] if p.w[5] else 0 %}{% set v60 = p.w[60][key] if p.w[60] else 0 %}
+    <span class="pace {{ 'up' if v15 else 'flat' }}" title="last 5 min: +{{ ('$%.2f'|format(v5)) if money else v5 }} · last 15 min: +{{ ('$%.2f'|format(v15)) if money else v15 }} · last hour: +{{ ('$%.2f'|format(v60)) if money else v60 }}">{% if v5 %}<i class="live"></i>{% endif %}+{{ ('$%.2f'|format(v15)) if money else v15 }}<small>15m</small></span>
+  {% endif %}
+{%- endmacro %}
+{% macro pace_bars(p) -%}
+  {% if p and p.bars %}{% set mx = p.bars|max %}<span class="mbars" title="impressions per 5 min, last hour">{% for b in p.bars %}<i style="height:{{ (2 + (b / mx * 10)) if mx else 2 }}px;" class="{{ 'on' if b else '' }}"></i>{% endfor %}</span>{% endif %}
+{%- endmacro %}
+{% macro trend_bars(cid) -%}
+  {% set t = trend.get(cid) %}
+  {% if t %}{% set mx = t|max %}<span class="spark12" title="spend per hour, last 12 h">{% for v in t %}<i style="height:{{ (2 + (v / mx * 16)) if mx else 2 }}px;opacity:{{ '.85' if v else '.25' }};"></i>{% endfor %}</span>{% else %}<span class="muted">—</span>{% endif %}
+{%- endmacro %}
+{# ---- one campaign row (also used as a group child) ---- #}
+{% macro camp_row(row, child=false, gkey='') -%}
+  {% set r = row.r %}{% set p = pace.get(r.campaign_id) %}
+  <tr class="camp-row {{ 'grp-child' if child }}" data-cid="{{ r.campaign_id }}" data-adv="{{ r.advertiser_id }}" data-name="{{ r.campaign_name }}" data-status="{{ r.operation_status }}" data-budget="{{ r.budget or '' }}" {% if child %}data-grp="{{ gkey }}" hidden{% endif %}>
+    <td class="c-sel"><input type="checkbox" class="rowchk" aria-label="select"></td>
+    <td class="c-name">
+      <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+        {% set cr_ = creative_by_cid.get(r.campaign_id) %}
+        {% if cr_ and not child %}<span class="thumb previewBtn" style="width:24px;height:32px;border-radius:5px;flex:none;background:var(--accent-soft);display:grid;place-items:center;color:var(--accent-ink);font-size:10px;cursor:pointer;" data-src="/creatives/{{ cr_.id }}/file" data-name="{{ cr_.name }}" title="Play {{ cr_.name }}">▶</span>{% endif %}
+        <div style="min-width:0;">
+          <div class="cname"><a href="#" class="open-drawer" style="color:inherit;text-decoration:none;font-weight:600;">{{ r.campaign_name[:52] }}</a>{% if r.is_smart_plus %} <span class="pill dim" title="Smart+">S+</span>{% endif %}{% if notes.get(r.campaign_id) %} <span title="{{ notes.get(r.campaign_id)[:200] }}" style="font-size:11px;">📝</span>{% endif %}</div>
+          <div class="muted" style="font-size:10.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:320px;">
+            {{ acct_link(r.advertiser_id, row.account_name[:22]) }}{% if bc_by_aid.get(r.advertiser_id) %} · {{ bc_by_aid.get(r.advertiser_id)[:18] }}{% endif %}{% if r.launched_at %} · {{ r.launched_at|ago }}{% endif %}
+            {% if row.blocked %} · <span style="color:var(--err);">blocked: {{ row.blocked }}</span>{% elif r.operation_status == 'DISABLE' %} · <span style="color:var(--warn);">paused</span>{% endif %}
+            {% if cr_ and group != 'creative' %} · {{ cr_.name[:24] }}{% elif spark_by_cid.get(r.campaign_id) and group != 'creative' %} · ✦ {{ spark_by_cid.get(r.campaign_id)[:20] }}{% endif %}
+          </div>
+        </div>
+      </div>
+    </td>
+    <td class="c-status"><button type="button" class="tog {{ 'on' if r.operation_status == 'ENABLE' }}" data-toggle title="{{ 'Pause' if r.operation_status == 'ENABLE' else 'Resume' }} on TikTok"></button></td>
+    <td class="num c-spend"><div>${{ "%.2f"|format(row.m.spend) }}</div>{% if p %}<div class="pl">{{ pace_chip(p, 'spend', true) }}</div>{% endif %}</td>
+    <td class="num c-revenue">{% if row.source %}${{ "%.2f"|format(row.revenue) }}{% else %}<span class="muted">—</span>{% endif %}</td>
+    <td class="num c-profit">{{ profit(row.profit, row.source) }}</td>
+    <td class="num c-roas">{{ roas_pill(row.roas, row.source and row.m.spend) }}</td>
+    <td class="num c-epc">{% if row.source and row.m.clicks %}${{ "%.2f"|format(row.epc) }}{% else %}<span class="muted">—</span>{% endif %}</td>
+    <td class="num c-cpa">{% if row.m.conversions %}${{ "%.2f"|format(row.m.cpa) }}{% else %}<span class="muted">—</span>{% endif %}</td>
+    <td class="num c-conv">{{ row.m.conversions }}</td>
+    <td class="num c-impr"><div>{{ "{:,}".format(row.m.impressions) }}</div>{% if p %}<div class="pl">{{ pace_chip(p, 'impressions') }}{{ pace_bars(p) }}</div>{% endif %}</td>
+    <td class="num c-clicks"><div>{{ "{:,}".format(row.m.clicks) }}</div>{% if p %}<div class="pl">{{ pace_chip(p, 'clicks') }}</div>{% endif %}</td>
+    <td class="num c-ctr">{{ "%.2f"|format(row.m.ctr) }}%</td>
+    <td class="num c-cpc">{% if row.m.clicks %}${{ "%.2f"|format(row.m.cpc) }}{% else %}—{% endif %}</td>
+    <td class="num c-cpm">{% if row.m.impressions %}${{ "%.2f"|format(row.m.cpm) }}{% else %}—{% endif %}</td>
+    <td class="num c-cvr">{% if row.source and row.pb_clicks %}{{ "%.1f"|format(row.cvr) }}%{% else %}—{% endif %}</td>
+    <td class="num c-pbclicks">{% if row.source %}{{ "%.0f"|format(row.pb_clicks) }}{% else %}—{% endif %}</td>
+    <td class="c-source">{% if row.source %}<a href="/status?source={{ row.source|urlencode }}&range={{ range_key }}&origin={{ origin }}" class="mono" style="font-size:11px;color:inherit;">{{ row.source[:26] }}</a>{% if row.shared_n %} <span class="muted" title="shared by {{ row.shared_n }} campaigns — split by spend">÷{{ row.shared_n }}</span>{% endif %}{% else %}—{% endif %}</td>
+    <td class="num c-budget">{% if r.budget %}${{ "%.0f"|format(r.budget) }}{% if r.budget_mode == 'BUDGET_MODE_DAY' %}/d{% endif %}{% else %}—{% endif %}</td>
+    <td class="c-trend">{{ trend_bars(r.campaign_id) }}</td>
+    <td class="c-more"><button type="button" class="btn sm rowmenu" title="More">···</button></td>
+  </tr>
 {%- endmacro %}
 
 <div class="page-head">
   <div>
     <h1>Campaigns</h1>
-    <div class="muted" style="font-size:12.5px;">{{ range_labels[range_key] }} · {{ 'launched by this tool' if origin == 'tool' else 'all campaigns on TikTok' }} · synced <span id="syncedAgo">{{ synced_ago }}</span></div>
+    <div class="muted" style="font-size:12.5px;">{{ range_labels[range_key] }} · {{ 'launched here' if origin == 'tool' else 'all campaigns on TikTok' }}{% if group %} · grouped by {{ group_labels[group]|lower }}{% endif %} · synced <span id="syncedAgo">{{ synced_ago }}</span></div>
   </div>
   <div class="actions">
-    <a class="btn" href="/campaigns/source-check" title="Read every running campaign's landing URL from TikTok and confirm the source reaches Glitchy">🔎 Source check</a>
-    <button type="button" class="btn" id="refreshBtn" title="Reload the numbers and the table in place — filters, sort and scroll position stay">↻ Refresh</button>
-    <form method="post" action="/status/sync" id="syncForm"><button class="btn primary" type="submit" id="syncBtn" title="Pull fresh campaign data from every TikTok account, then refresh in place">⟳ Sync now</button></form>
+    <button type="button" class="btn" id="colsBtn" title="Choose columns">▥ Columns</button>
+    <button type="button" class="btn" id="refreshBtn" title="Reload in place — filters, sort and scroll stay">↻ Refresh</button>
+    <form method="post" action="/status/sync" id="syncForm"><button class="btn" type="submit" id="syncBtn" title="Pull fresh data from every TikTok account">⟳ Sync</button></form>
+    <a class="btn primary" href="/super-launcher">🚀 Launch</a>
   </div>
 </div>
 
 <div id="pendingFlash">
 {% if origin == 'tool' and pending_tool %}
-<div class="flash ok">{{ pending_tool }} tool-launched campaign(s) exist on TikTok but aren't in the synced cache yet:
-  {% for pd in pending_details %}
-    <div style="margin-top:4px;">· campaign <span class="mono">{{ pd.campaign_id }}</span> on <b>{{ pd.account }}</b>
-      {% if pd.sync_error %}— <span style="color:var(--err);">that account's last sync FAILED ({{ pd.sync_error[:120] }})</span>
-      {% else %}— no sync error recorded; hit “Sync now” and it should appear{% endif %}</div>
-  {% endfor %}
-  <form method="post" action="/status/verify-pending" style="margin-top:8px;">
-    <button class="btn sm" type="submit">🔎 Verify on TikTok</button>
-    <span class="hint">Asks TikTok about each campaign BY ID (deleted included) and reports its true status.</span>
-  </form>
+<div class="flash ok">{{ pending_tool }} campaign(s) launched here aren't in the synced cache yet
+  {% for pd in pending_details %}<div style="margin-top:4px;">· <span class="mono">{{ pd.campaign_id }}</span> on <b>{{ pd.account }}</b>{% if pd.sync_error %} — <span style="color:var(--err);">last sync failed ({{ pd.sync_error[:120] }})</span>{% endif %}</div>{% endfor %}
+  <form method="post" action="/status/verify-pending" style="margin-top:8px;"><button class="btn sm" type="submit">Verify on TikTok</button></form>
 </div>
 {% endif %}
 </div>
 
-{# ---- delivery pace chip: +N in the last 15 min, dot pulsing when the last 5 min moved ---- #}
-{% macro pace_chip(p, key, money=false) -%}
-  {% if p and p.w[15] and p.w[15][key] is not none %}
-    {% set v15 = p.w[15][key] %}{% set v5 = p.w[5][key] if p.w[5] else 0 %}{% set v60 = p.w[60][key] if p.w[60] else 0 %}
-    <span class="pace {{ 'up' if v15 else 'flat' }}" title="last 5 min: +{{ ('$%.2f'|format(v5)) if money else v5 }} · last 15 min: +{{ ('$%.2f'|format(v15)) if money else v15 }} · last hour: +{{ ('$%.2f'|format(v60)) if money else v60 }}{% if p.since_min < 60 %} · {{ p.since_min }} min of history so far{% endif %}">
-      {% if v5 %}<i class="live"></i>{% endif %}+{{ ('$%.2f'|format(v15)) if money else v15 }}<small>15m</small></span>
-  {% endif %}
-{%- endmacro %}
-{% macro pace_bars(p) -%}
-  {% if p and p.bars %}{% set mx = p.bars|max %}
-    <span class="mbars" title="impressions per 5 min, last hour (oldest → newest)">{% for b in p.bars %}<i style="height:{{ (2 + (b / mx * 10)) if mx else 2 }}px;" class="{{ 'on' if b else '' }}"></i>{% endfor %}</span>
-  {% endif %}
-{%- endmacro %}
-
-{# ---- KPI delta chip macro (only when real prior-period data exists) ---- #}
+{# ---- KPI strip: profit leads ---- #}
 {% macro pct_chip(pct, good_up=true) -%}
-  {% if deltas.has_prev and pct is not none %}
-    {% set up = pct >= 0 %}
-    {% set cls = 'flat' if not good_up else ('up' if up else 'down') %}
-    <span class="delta {{ cls }}">{{ '▲' if up else '▼' }} {{ "%.0f"|format(pct|abs) }}%</span>
-  {% endif %}
+  {% if deltas.has_prev and pct is not none %}{% set up = pct >= 0 %}<span class="delta {{ 'flat' if not good_up else ('up' if up else 'down') }}">{{ '▲' if up else '▼' }} {{ "%.0f"|format(pct|abs) }}%</span>{% endif %}
 {%- endmacro %}
-
-<!-- KPI tiles: real figures + vs-previous-period deltas + daily sparklines -->
-<div class="kpis" id="campKpis">
-  <div class="kpi accent">
-    <div class="lab">Spend</div>
-    <div class="val">${{ "%.2f"|format(totals.spend) }} {{ pct_chip(deltas.spend_pct, good_up=false) }}</div>
-    <div class="spark" data-spark="spend"></div>
-  </div>
-  <div class="kpi">
-    <div class="lab">Revenue</div>
-    <div class="val"><span class="good">${{ "%.2f"|format(totals.revenue) }}</span> {{ pct_chip(deltas.revenue_pct) }}</div>
-    <div class="spark" data-spark="revenue"></div>
-  </div>
-  <div class="kpi">
-    <div class="lab">Profit</div>
-    <div class="val"><span class="{{ 'good' if totals.profit >= 0 else 'bad' }}">{{ '−' if totals.profit < 0 }}${{ "%.2f"|format(totals.profit|abs) }}</span>
-      {% if deltas.has_prev %}<span class="delta {{ 'up' if deltas.profit_abs >= 0 else 'down' }}">{{ '▲' if deltas.profit_abs >= 0 else '▼' }} {{ '−' if deltas.profit_abs < 0 }}${{ "%.0f"|format(deltas.profit_abs|abs) }}</span>{% endif %}</div>
-    <div class="sub">revenue − spend</div>
-  </div>
-  <div class="kpi">
-    <div class="lab">ROAS</div>
-    <div class="val"><span class="{{ 'good' if roas >= 1 else ('bad' if roas > 0 else '') }}">{{ "%.2f"|format(roas) }}×</span>
-      {% if deltas.has_prev and deltas.roas_abs is not none %}<span class="delta {{ 'up' if deltas.roas_abs >= 0 else 'down' }}">{{ '▲' if deltas.roas_abs >= 0 else '▼' }} {{ "%.2f"|format(deltas.roas_abs|abs) }}</span>{% endif %}</div>
-    <div class="sub">{{ "%.0f"|format(totals.pb_clicks) }} PB clicks{% if totals.pb_clicks %} · {{ "%.1f"|format(totals.cvr) }}% CVR{% endif %}</div>
-  </div>
-  <div class="kpi">
-    <div class="lab">Conversions</div>
-    <div class="val">{{ "{:,}".format(totals.conversions) }}</div>
-    <div class="sub">{{ "{:,}".format(totals.impressions) }} impr · {{ "{:,}".format(totals.clicks) }} clicks</div>
-  </div>
-  <div class="kpi">
-    <div class="lab">Active</div>
-    <div class="val">{{ active_count }}</div>
-    <div class="sub">of {{ rows|length }} shown</div>
-  </div>
+<div class="kpis kpis-7" id="campKpis">
+  <div class="kpi"><div class="lab">Profit</div><div class="val"><span class="{{ 'good' if totals.profit >= 0 else 'bad' }}">{{ '+' if totals.profit > 0 }}{{ '−' if totals.profit < 0 }}${{ "%.0f"|format(totals.profit|abs) if totals.profit|abs >= 100 else "%.2f"|format(totals.profit|abs) }}</span>{% if deltas.has_prev %}<span class="delta {{ 'up' if deltas.profit_abs >= 0 else 'down' }}">{{ '▲' if deltas.profit_abs >= 0 else '▼' }} ${{ "%.0f"|format(deltas.profit_abs|abs) }}</span>{% endif %}</div><div class="sub">revenue − spend</div></div>
+  <div class="kpi"><div class="lab">ROAS</div><div class="val"><span class="{{ 'good' if totals.roas >= 1 else ('bad' if totals.roas > 0 else '') }}">{{ "%.2f"|format(totals.roas) }}×</span>{% if deltas.has_prev and deltas.roas_abs is not none %}<span class="delta {{ 'up' if deltas.roas_abs >= 0 else 'down' }}">{{ '▲' if deltas.roas_abs >= 0 else '▼' }} {{ "%.2f"|format(deltas.roas_abs|abs) }}</span>{% endif %}</div><div class="sub">{{ "%.0f"|format(totals.pb_clicks) }} PB clicks{% if totals.pb_clicks %} · {{ "%.1f"|format(totals.cvr) }}% CVR{% endif %}</div></div>
+  <div class="kpi"><div class="lab">Spend</div><div class="val">${{ "%.2f"|format(totals.spend) }} {{ pct_chip(deltas.spend_pct, good_up=false) }}</div><div class="spark" data-spark="spend"></div></div>
+  <div class="kpi"><div class="lab">Revenue</div><div class="val">${{ "%.2f"|format(totals.revenue) }} {{ pct_chip(deltas.revenue_pct) }}</div><div class="spark" data-spark="revenue"></div></div>
+  <div class="kpi"><div class="lab">EPC</div><div class="val">{% if totals.clicks and totals.revenue %}${{ "%.2f"|format(totals.epc) }}{% else %}—{% endif %}</div><div class="sub">revenue per TikTok click</div></div>
+  <div class="kpi"><div class="lab">CPA</div><div class="val">{% if totals.conversions %}${{ "%.2f"|format(totals.cpa) }}{% else %}—{% endif %}</div><div class="sub">{{ "{:,}".format(totals.conversions) }} conversions</div></div>
+  <div class="kpi"><div class="lab">Campaigns</div><div class="val">{{ rows|length }}</div><div class="sub">{{ active_count }} active{% if pace_tot.n %} · +${{ "%.2f"|format(pace_tot.spend) }} last 15 min{% endif %}</div></div>
 </div>
 
-<!-- filter bar: chip-style dropdowns backed by a real GET form -->
-<div class="card" style="margin-bottom:14px;padding:12px 14px;">
-  <form method="get" action="/status" id="filterForm" class="filterbar">
-    <div class="search-wrap"><input type="text" name="q" value="{{ q }}" placeholder="Search campaign or account…"></div>
-
-    <div class="fsel" data-fsel>
-      <button type="button"><span class="k">Range</span> <span class="v">{{ range_labels[range_key] }}</span> <span class="chev">▾</span></button>
-      <div class="fmenu">
-        {% for k, lbl in range_labels.items() %}<a data-val="{{ k }}" class="{{ 'sel' if range_key == k }}">{{ lbl }}</a>{% endfor %}
-      </div>
-      <input type="hidden" name="range" value="{{ range_key }}">
-    </div>
-    <span id="customDates" style="display:{{ 'inline-flex' if range_key == 'custom' else 'none' }};gap:6px;">
-      <input type="date" name="start" value="{{ start }}">
-      <input type="date" name="end" value="{{ end }}">
-    </span>
-
-    <div class="fsel" data-fsel>
-      <button type="button"><span class="k">Show</span> <span class="v">{{ origin_labels[origin] }}</span> <span class="chev">▾</span></button>
-      <div class="fmenu">
-        {% for k, lbl in origin_labels.items() %}<a data-val="{{ k }}" class="{{ 'sel' if origin == k }}">{{ lbl }}</a>{% endfor %}
-      </div>
-      <input type="hidden" name="origin" value="{{ origin }}">
-    </div>
-
-    <div class="fsel" data-fsel>
-      <button type="button"><span class="k">Status</span> <span class="v">{{ state_labels[state] }}</span> <span class="chev">▾</span></button>
-      <div class="fmenu">
-        {% for k, lbl in state_labels.items() %}<a data-val="{{ k }}" class="{{ 'sel' if state == k }}">{{ lbl }}</a>{% endfor %}
-      </div>
-      <input type="hidden" name="state" value="{{ state }}">
-    </div>
-
-    <div class="fsel" data-fsel>
-      <button type="button"><span class="k">Account</span> <span class="v">{% if account %}{% for aid, lbl in account_options %}{% if aid == account %}{{ lbl[:20] }}{% endif %}{% endfor %}{% else %}All accounts{% endif %}</span> <span class="chev">▾</span></button>
-      <div class="fmenu">
-        <a data-val="" class="{{ 'sel' if not account }}">All accounts</a>
-        {% for aid, lbl in account_options %}<a data-val="{{ aid }}" class="{{ 'sel' if account == aid }}">{{ lbl[:34] }}</a>{% endfor %}
-      </div>
-      <input type="hidden" name="account" value="{{ account }}">
-    </div>
-
-    {% if source_options %}
-    <div class="fsel" data-fsel>
-      <button type="button"><span class="k">Source</span> <span class="v">{{ source_f if source_f else 'All sources' }}</span> <span class="chev">▾</span></button>
-      <div class="fmenu">
-        <a data-val="" class="{{ 'sel' if not source_f }}">All sources</a>
-        {% for sname in source_options %}<a data-val="{{ sname }}" class="{{ 'sel' if source_f == sname }}"><span class="mono">{{ sname[:34] }}</span></a>{% endfor %}
-      </div>
-      <input type="hidden" name="source" value="{{ source_f }}">
-    </div>
-    {% endif %}
-
-    <input type="hidden" name="sort" value="{{ sort }}">
-    <button class="btn" type="submit">Apply</button>
-    {% if q or state != 'active' or account or source_f or origin != 'tool' or range_key != 'today' %}<a class="btn sm" href="/status">✕ Clear</a>{% endif %}
-    {% if range_errors %}<span class="hint" style="color:var(--warn);">{{ range_errors }} account(s) failed to load range metrics</span>{% endif %}
-  </form>
-</div>
+{# ---- filter row ---- #}
+<form method="get" action="/status" id="filterForm" class="filterbar" style="margin-bottom:12px;">
+  <div class="search-wrap" style="max-width:230px;"><input type="text" name="q" value="{{ q }}" placeholder="Search campaign, account…"></div>
+  <div class="seg" id="stateSeg">
+    {% for k, lbl in [('active', 'Active'), ('blocked', 'Blocked'), ('paused', 'Paused'), ('all', 'All')] %}<button type="button" class="{{ 'on' if state == k }}" data-state="{{ k }}">{{ lbl }} <span class="n">{{ state_counts[k] }}</span></button>{% endfor %}
+  </div>
+  <input type="hidden" name="state" value="{{ state }}">
+  <div class="fsel" data-fsel>
+    <button type="button"><span class="k">Range</span> <span class="v">{{ range_labels[range_key] }}</span> <span class="chev">▾</span></button>
+    <div class="fmenu">{% for k, lbl in range_labels.items() %}<a data-val="{{ k }}" class="{{ 'sel' if range_key == k }}">{{ lbl }}</a>{% endfor %}</div>
+    <input type="hidden" name="range" value="{{ range_key }}">
+  </div>
+  <span id="customDates" style="display:{{ 'inline-flex' if range_key == 'custom' else 'none' }};gap:6px;"><input type="date" name="start" value="{{ start }}"><input type="date" name="end" value="{{ end }}"></span>
+  <div class="fsel" data-fsel>
+    <button type="button"><span class="k">Show</span> <span class="v">{{ origin_labels[origin] }}</span> <span class="chev">▾</span></button>
+    <div class="fmenu">{% for k, lbl in origin_labels.items() %}<a data-val="{{ k }}" class="{{ 'sel' if origin == k }}">{{ lbl }}</a>{% endfor %}</div>
+    <input type="hidden" name="origin" value="{{ origin }}">
+  </div>
+  <div class="fsel" data-fsel>
+    <button type="button"><span class="k">Account</span> <span class="v">{% if account %}{% for aid, lbl in account_options %}{% if aid == account %}{{ lbl[:20] }}{% endif %}{% endfor %}{% else %}All{% endif %}</span> <span class="chev">▾</span></button>
+    <div class="fmenu"><a data-val="" class="{{ 'sel' if not account }}">All accounts</a>{% for aid, lbl in account_options %}<a data-val="{{ aid }}" class="{{ 'sel' if account == aid }}">{{ lbl[:34] }}</a>{% endfor %}</div>
+    <input type="hidden" name="account" value="{{ account }}">
+  </div>
+  {% if source_options %}
+  <div class="fsel" data-fsel>
+    <button type="button"><span class="k">Source</span> <span class="v">{{ source_f[:18] if source_f else 'All' }}</span> <span class="chev">▾</span></button>
+    <div class="fmenu"><a data-val="" class="{{ 'sel' if not source_f }}">All sources</a>{% for sname in source_options %}<a data-val="{{ sname }}" class="{{ 'sel' if source_f == sname }}"><span class="mono">{{ sname[:34] }}</span></a>{% endfor %}</div>
+    <input type="hidden" name="source" value="{{ source_f }}">
+  </div>
+  {% endif %}
+  <span style="margin-left:auto;display:inline-flex;align-items:center;gap:8px;"><span class="muted" style="font-size:12px;">Group by</span>
+    <div class="seg" id="groupSeg">{% for k in ['creative', 'account', 'bc', 'source', ''] %}<button type="button" class="{{ 'on' if group == k }}" data-group="{{ k }}">{{ group_labels[k] }}</button>{% endfor %}</div>
+  </span>
+  <input type="hidden" name="group" value="{{ group }}">
+  <input type="hidden" name="sort" value="{{ sort }}">
+  {% if q or state != 'active' or account or source_f or origin != 'tool' or range_key != 'today' %}<a class="btn sm" href="/status">✕ Clear</a>{% endif %}
+  {% if range_errors %}<span class="hint" style="color:var(--warn);">{{ range_errors }} account(s) failed to load range metrics</span>{% endif %}
+</form>
 
 <div class="card" style="padding:0;overflow:hidden;" id="campCard">
-  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;border-bottom:1px solid var(--border-soft);">
-    <div style="font-size:12.5px;font-weight:650;">{{ rows|length }} campaigns
-      <span class="muted" style="font-weight:400;">· spend, revenue &amp; profit lead; TikTok metrics follow</span></div>
-    <button type="button" class="detail-toggle" id="detailToggle">Show details <span class="chev">▾</span></button>
+  <div class="sel-bar" id="selBar" hidden>
+    <span class="cnt" id="selCount">0 selected</span>
+    <button type="button" class="btn sm" data-bulk="pause">Pause</button>
+    <button type="button" class="btn sm" data-bulk="resume">Resume</button>
+    <button type="button" class="btn sm" data-bulk="budget">Budget…</button>
+    <button type="button" class="btn sm" data-bulk="bid">Bid…</button>
+    <button type="button" class="btn sm ghost" data-bulk="clear">Clear</button>
+    <span class="hint-k">J/K move · Enter open · P pause · B budget · X select · ? help</span>
   </div>
   {% if rows %}
   <div class="table-scroll">
   <table class="data dense" id="campTable">
     <thead><tr>
-      <th>{{ sort_link('name', 'Campaign') }}</th>
-      <th>Creative</th>
-      <th>Account</th>
-      <th>{{ sort_link('source', 'Source') }}</th>
-      <th class="num col-money grp-start">{{ sort_link('spend', 'Spend') }}</th>
-      <th class="num col-money" title="Revenue from Glitchy postbacks (via source)">{{ sort_link('revenue', 'Revenue') }}</th>
-      <th class="num col-money" title="Profit = postback revenue − TikTok spend">{{ sort_link('profit', 'Profit') }}</th>
-      <th class="num col-money grp-end" title="Return on ad spend = revenue ÷ spend">ROAS</th>
-      <th class="num">{{ sort_link('conv', 'Conv.') }}</th>
-      <th class="num">{{ sort_link('budget', 'Budget') }}</th>
-      <th class="num col-detail" title="Clicks reported by Glitchy postbacks">{{ sort_link('pb_clicks', 'PB clicks') }}</th>
-      <th class="num col-detail" title="CVR from Glitchy postbacks (conversions / clicks, source level)">{{ sort_link('cvr', 'CVR') }}</th>
-      <th class="num col-detail">{{ sort_link('impr', 'Impr.') }}</th>
-      <th class="num col-detail">{{ sort_link('clicks', 'Clicks') }}</th>
-      <th class="num col-detail">{{ sort_link('ctr', 'CTR') }}</th>
-      <th class="num col-detail">{{ sort_link('cpc', 'CPC') }}</th>
-      <th class="num col-detail">{{ sort_link('cpm', 'CPM') }}</th>
-      <th class="num col-detail">{{ sort_link('cpa', 'CPA') }}</th>
-      <th class="num sticky-r">Actions</th>
+      <th class="c-sel"><input type="checkbox" id="selAll" aria-label="select all"></th>
+      <th class="c-name">{{ sort_link('name', 'Campaign') }}</th>
+      <th class="c-status">On</th>
+      <th class="num c-spend">{{ sort_link('spend', 'Spend') }}</th>
+      <th class="num c-revenue">{{ sort_link('revenue', 'Revenue', 'Glitchy postbacks via source') }}</th>
+      <th class="num c-profit">{{ sort_link('profit', 'Profit', 'revenue − spend') }}</th>
+      <th class="num c-roas">{{ sort_link('roas', 'ROAS') }}</th>
+      <th class="num c-epc">{{ sort_link('epc', 'EPC', 'revenue per TikTok click') }}</th>
+      <th class="num c-cpa">{{ sort_link('cpa', 'CPA') }}</th>
+      <th class="num c-conv">{{ sort_link('conv', 'Conv') }}</th>
+      <th class="num c-impr">{{ sort_link('impr', 'Impr.') }} <span class="muted" style="font-weight:500;">· pace</span></th>
+      <th class="num c-clicks">{{ sort_link('clicks', 'Clicks') }}</th>
+      <th class="num c-ctr">{{ sort_link('ctr', 'CTR') }}</th>
+      <th class="num c-cpc">{{ sort_link('cpc', 'CPC') }}</th>
+      <th class="num c-cpm">{{ sort_link('cpm', 'CPM') }}</th>
+      <th class="num c-cvr">{{ sort_link('cvr', 'CVR') }}</th>
+      <th class="num c-pbclicks">{{ sort_link('pb_clicks', 'PB clicks') }}</th>
+      <th class="c-source">{{ sort_link('source', 'Source') }}</th>
+      <th class="num c-budget">{{ sort_link('budget', 'Budget') }}</th>
+      <th class="c-trend">Last 12h</th>
+      <th class="c-more"></th>
     </tr></thead>
     <tbody>
-    {% for row in rows %}
-      {% set r = row.r %}
-      {% set cr = (row.revenue / row.m.spend) if (row.source and row.m.spend) else 0 %}
-      <tr>
-        <td style="min-width:180px;">
-          <div style="display:flex;align-items:center;gap:8px;">
-            <span class="dot {{ 'on' if r.operation_status == 'ENABLE' else 'off' }}"
-                  title="{% if r.operation_status == 'ENABLE' %}Active{% elif r.operation_status == 'DISABLE' %}Paused{% else %}{{ r.operation_status or '—' }}{% endif %}"></span>
-            <div style="min-width:0;">
-              <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:300px;"><a href="/campaigns/{{ r.advertiser_id }}/{{ r.campaign_id }}/edit" style="color:inherit;" title="Open campaign">{{ r.campaign_name[:46] }}</a>{% if r.is_smart_plus %} <span class="pill dim" title="Smart+ campaign — TikTok automates targeting & placements">S+</span>{% endif %}</div>
-              {% set _sec = (r.secondary_status or '').replace('CAMPAIGN_STATUS_','').replace('_',' ')|lower %}
-              <div class="muted" style="font-size:10.5px;white-space:nowrap;">
-                {% if r.launched_at %}<span title="created {{ r.launched_at|local('%Y-%m-%d %H:%M') }} ({{ TZ_NAME }})">created {{ r.launched_at|ago }}</span>{% endif %}
-                {% if r.operation_status == 'DISABLE' %}{% if r.launched_at %} · {% endif %}<span style="color:var(--warn);">paused</span>
-                {% elif row.blocked %}{% if r.launched_at %} · {% endif %}<span style="color:var(--err);" title="Switched on, but TikTok is not delivering it — hidden from the Active view">blocked: {{ row.blocked }}</span>
-                {% elif _sec and _sec not in ('enable', 'delivery ok') %}{% if r.launched_at %} · {% endif %}<span title="TikTok status">{{ _sec }}</span>
-                {% elif not r.launched_at and _sec %}{{ _sec }}{% endif %}
-              </div>
-            </div>
-          </div>
-        </td>
-        <td>
-          {% set cr_ = creative_by_cid.get(r.campaign_id) %}
-          {% set sp_ = spark_by_cid.get(r.campaign_id, '') %}
-          {% if cr_ %}
-            <div class="creat">
-              <span class="thumb previewBtn" title="Play creative" data-src="/creatives/{{ cr_.id }}/file" data-name="{{ cr_.name }}">▶</span>
-              <div style="min-width:0;">
-                <div class="nm"><a href="/creatives?view=performance" style="color:inherit;" title="Creative performance">{{ cr_.name }}</a></div>
-                <div class="kind">library{% if cr_.freshen %} · variant ✨{% endif %}</div>
-              </div>
-            </div>
-          {% elif sp_ %}
-            <div class="creat">
-              <span class="thumb" style="cursor:default;">✦</span>
-              <div style="min-width:0;"><div class="nm"><a href="/spark-codes" style="color:inherit;">{{ sp_[:28] }}</a></div><div class="kind">spark code</div></div>
-            </div>
-          {% else %}<span class="muted">—</span>{% endif %}
-        </td>
-        <td style="white-space:nowrap;">
-          {{ acct_link(r.advertiser_id, row.account_name[:22]) }}
-          <div class="muted" style="font-size:10.5px;">{% if bc_by_aid.get(r.advertiser_id) %}{{ bc_by_aid.get(r.advertiser_id)[:22] }} · {% endif %}<a href="/status?account={{ r.advertiser_id }}&range={{ range_key }}&origin={{ origin }}" style="color:inherit;" title="Show only this account's campaigns">filter</a></div>
-        </td>
-        <td style="white-space:nowrap;">
-          {% if row.source %}<a href="/status?source={{ row.source|urlencode }}&range={{ range_key }}&origin={{ origin }}" class="mono" style="font-size:11px;color:inherit;" title="Only this source">{{ row.source[:34] }}</a> <a href="/pnl?range={{ range_key }}" class="muted" style="font-size:10px;" title="P&L by source">P&L</a>
-            {% if row.shared_n %}<span class="muted" title="This spark/source runs on {{ row.shared_n }} campaigns — revenue & clicks are split by spend share" style="font-size:11px;"> ÷{{ row.shared_n }}</span>{% endif %}
-          {% else %}<span class="muted">—</span>{% endif %}
-        </td>
-        <td class="num col-money grp-start">${{ "%.2f"|format(row.m.spend) }}{% if pace.get(r.campaign_id) %}<div class="pl">{{ pace_chip(pace.get(r.campaign_id), 'spend', true) }}</div>{% endif %}</td>
-        <td class="num col-money">{% if row.source %}<span style="color:var(--ok);font-weight:600;">${{ "%.2f"|format(row.revenue) }}</span>{% else %}—{% endif %}</td>
-        <td class="num col-money {{ 'pos' if row.profit >= 0 else 'neg' }}">{% if row.source %}{{ '−' if row.profit < 0 }}${{ "%.2f"|format(row.profit|abs) }}{% else %}—{% endif %}</td>
-        <td class="num col-money grp-end">
-          {% if row.source and row.m.spend %}
-            <span class="roas"><span class="x {{ 'g' if cr >= 1 else 'r' }}">{{ "%.2f"|format(cr) }}×</span></span>
-          {% else %}<span class="roas"><span class="x n">—</span></span>{% endif %}
-        </td>
-        <td class="num">{{ row.m.conversions }}</td>
-        <td class="num">{% if r.budget %}${{ "%.0f"|format(r.budget) }}{% if r.budget_mode == 'BUDGET_MODE_DAY' %}/d{% endif %}{% else %}—{% endif %}</td>
-        <td class="num col-detail">{% if row.source %}{{ "%.0f"|format(row.pb_clicks) }}{% else %}—{% endif %}</td>
-        <td class="num col-detail">{% if row.source and row.pb_clicks %}{{ "%.2f"|format(row.cvr) }}%{% else %}—{% endif %}</td>
-        <td class="num col-detail">{{ "{:,}".format(row.m.impressions) }}{% if pace.get(r.campaign_id) %}<div class="pl col">{{ pace_chip(pace.get(r.campaign_id), 'impressions') }}{{ pace_bars(pace.get(r.campaign_id)) }}</div>{% endif %}</td>
-        <td class="num col-detail">{{ "{:,}".format(row.m.clicks) }}{% if pace.get(r.campaign_id) %}<div class="pl">{{ pace_chip(pace.get(r.campaign_id), 'clicks') }}</div>{% endif %}</td>
-        <td class="num col-detail">{{ "%.2f"|format(row.m.ctr) }}%</td>
-        <td class="num col-detail">{% if row.m.clicks %}${{ "%.2f"|format(row.m.cpc) }}{% else %}—{% endif %}</td>
-        <td class="num col-detail">{% if row.m.impressions %}${{ "%.2f"|format(row.m.cpm) }}{% else %}—{% endif %}</td>
-        <td class="num col-detail">{% if row.m.conversions %}${{ "%.2f"|format(row.m.cpa) }}{% else %}—{% endif %}</td>
-        <td class="num sticky-r" style="white-space:nowrap;">
-          <form method="post" action="/campaigns/{{ r.advertiser_id }}/{{ r.campaign_id }}/status" style="display:inline;">
-            <input type="hidden" name="next" value="/status?q={{ q|urlencode }}&state={{ state }}&account={{ account }}&source={{ source_f|urlencode }}&origin={{ origin }}&range={{ range_key }}&start={{ start }}&end={{ end }}&sort={{ sort }}">
-            {% if r.operation_status == "ENABLE" %}
-              <input type="hidden" name="operation_status" value="DISABLE">
-              <button class="btn sm" type="submit" title="Pause this campaign on TikTok">⏸</button>
-            {% else %}
-              <input type="hidden" name="operation_status" value="ENABLE">
-              <button class="btn sm" type="submit" title="Resume this campaign on TikTok">▶</button>
-            {% endif %}
-          </form>
-          <button type="button" class="btn sm bidBtn" data-adv="{{ r.advertiser_id }}" data-cid="{{ r.campaign_id }}" data-name="{{ r.campaign_name }}" title="Bid: change the cost cap on every ad group of this campaign">$</button>
-          <a class="btn sm" href="/campaigns/{{ r.advertiser_id }}/{{ r.campaign_id }}/edit" title="Edit budgets & cost caps">✎</a>
-        </td>
+    {% if group %}
+      {% for g in grouped %}
+      <tr class="grp-row" data-gkey="{{ g.key }}">
+        <td class="c-sel"><input type="checkbox" class="grpchk" aria-label="select group"></td>
+        <td class="c-name"><div style="display:flex;align-items:center;gap:8px;"><span class="caret">▶</span>
+          {% if g.creative %}<span class="thumb previewBtn" style="width:24px;height:32px;border-radius:5px;flex:none;background:var(--accent-soft);display:grid;place-items:center;color:var(--accent-ink);font-size:10px;cursor:pointer;" data-src="/creatives/{{ g.creative.id }}/file" data-name="{{ g.creative.name }}">▶</span>{% endif %}
+          <div><div style="font-weight:700;">{{ g.label[:48] }}</div><div class="muted" style="font-size:10.5px;">{{ g.n }} campaign{{ 's' if g.n != 1 }} · {{ g.active }} on{% if g.sub %} · {{ g.sub[:30] }}{% endif %}</div></div></div></td>
+        <td class="c-status"><span class="muted" style="font-size:11px;">{{ g.active }}/{{ g.n }}</span></td>
+        <td class="num c-spend">${{ "%.2f"|format(g.spend) }}</td>
+        <td class="num c-revenue">{% if g.has_rev %}${{ "%.2f"|format(g.revenue) }}{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td class="num c-profit">{{ profit(g.profit, g.has_rev) }}</td>
+        <td class="num c-roas">{{ roas_pill(g.roas, g.has_rev and g.spend) }}</td>
+        <td class="num c-epc">{% if g.has_rev and g.clicks %}${{ "%.2f"|format(g.epc) }}{% else %}—{% endif %}</td>
+        <td class="num c-cpa">{% if g.conversions %}${{ "%.2f"|format(g.cpa) }}{% else %}—{% endif %}</td>
+        <td class="num c-conv">{{ g.conversions }}</td>
+        <td class="num c-impr">{{ "{:,}".format(g.impressions) }}</td>
+        <td class="num c-clicks">{{ "{:,}".format(g.clicks) }}</td>
+        <td class="num c-ctr">{% if g.impressions %}{{ "%.2f"|format(g.clicks / g.impressions * 100) }}%{% else %}—{% endif %}</td>
+        <td class="num c-cpc">{% if g.clicks %}${{ "%.2f"|format(g.spend / g.clicks) }}{% else %}—{% endif %}</td>
+        <td class="num c-cpm">{% if g.impressions %}${{ "%.2f"|format(g.spend / g.impressions * 1000) }}{% else %}—{% endif %}</td>
+        <td class="num c-cvr">—</td><td class="num c-pbclicks">—</td><td class="c-source">{% if group == 'source' %}{{ g.label[:26] }}{% endif %}</td><td class="num c-budget"></td><td class="c-trend"></td><td class="c-more"></td>
       </tr>
-    {% endfor %}
+      {% for row in g.rows %}{{ camp_row(row, true, g.key) }}{% endfor %}
+      {% endfor %}
+    {% else %}
+      {% for row in rows %}{{ camp_row(row) }}{% endfor %}
+    {% endif %}
     </tbody>
     <tfoot>
       <tr style="font-weight:650;">
-        <td colspan="4">Totals ({{ rows|length }} campaigns)</td>
-        <td class="num col-money grp-start">${{ "%.2f"|format(totals.spend) }}{% if pace_tot.n %}<div class="pl"><span class="pace {{ 'up' if pace_tot.spend else 'flat' }}" title="all shown active campaigns, last 15 min">+${{ "%.2f"|format(pace_tot.spend) }}<small>15m</small></span></div>{% endif %}</td>
-        <td class="num col-money">${{ "%.2f"|format(totals.revenue) }}</td>
-        <td class="num col-money {{ 'pos' if totals.profit >= 0 else 'neg' }}">{{ '−' if totals.profit < 0 }}${{ "%.2f"|format(totals.profit|abs) }}</td>
-        <td class="num col-money grp-end"><span class="roas"><span class="x {{ 'g' if roas >= 1 else ('r' if roas > 0 else 'n') }}">{% if roas %}{{ "%.2f"|format(roas) }}×{% else %}—{% endif %}</span></span></td>
-        <td class="num">{{ totals.conversions }}</td>
-        <td></td>
-        <td class="num col-detail">{{ "%.0f"|format(totals.pb_clicks) }}</td>
-        <td class="num col-detail">{% if totals.pb_clicks %}{{ "%.2f"|format(totals.cvr) }}%{% else %}—{% endif %}</td>
-        <td class="num col-detail">{{ "{:,}".format(totals.impressions) }}{% if pace_tot.n %}<div class="pl"><span class="pace {{ 'up' if pace_tot.impressions else 'flat' }}" title="all shown active campaigns, last 15 min">+{{ pace_tot.impressions }}<small>15m</small></span></div>{% endif %}</td>
-        <td class="num col-detail">{{ "{:,}".format(totals.clicks) }}{% if pace_tot.n %}<div class="pl"><span class="pace {{ 'up' if pace_tot.clicks else 'flat' }}" title="all shown active campaigns, last 15 min">+{{ pace_tot.clicks }}<small>15m</small></span></div>{% endif %}</td>
-        <td class="num col-detail">{{ "%.2f"|format(totals.ctr) }}%</td>
-        <td class="num col-detail">{% if totals.clicks %}${{ "%.2f"|format(totals.cpc) }}{% else %}—{% endif %}</td>
-        <td class="num col-detail">{% if totals.impressions %}${{ "%.2f"|format(totals.cpm) }}{% else %}—{% endif %}</td>
-        <td class="num col-detail">{% if totals.conversions %}${{ "%.2f"|format(totals.cpa) }}{% else %}—{% endif %}</td>
-        <td class="sticky-r"></td>
+        <td class="c-sel"></td><td class="c-name">Totals · {{ rows|length }} campaigns</td><td class="c-status"></td>
+        <td class="num c-spend">${{ "%.2f"|format(totals.spend) }}</td>
+        <td class="num c-revenue">${{ "%.2f"|format(totals.revenue) }}</td>
+        <td class="num c-profit">{{ profit(totals.profit, true) }}</td>
+        <td class="num c-roas">{{ roas_pill(totals.roas, totals.spend and totals.revenue) }}</td>
+        <td class="num c-epc">{% if totals.clicks and totals.revenue %}${{ "%.2f"|format(totals.epc) }}{% else %}—{% endif %}</td>
+        <td class="num c-cpa">{% if totals.conversions %}${{ "%.2f"|format(totals.cpa) }}{% else %}—{% endif %}</td>
+        <td class="num c-conv">{{ totals.conversions }}</td>
+        <td class="num c-impr">{{ "{:,}".format(totals.impressions) }}{% if pace_tot.n %}<div class="pl"><span class="pace {{ 'up' if pace_tot.impressions else 'flat' }}">+{{ pace_tot.impressions }}<small>15m</small></span></div>{% endif %}</td>
+        <td class="num c-clicks">{{ "{:,}".format(totals.clicks) }}</td>
+        <td class="num c-ctr">{{ "%.2f"|format(totals.ctr) }}%</td>
+        <td class="num c-cpc">{% if totals.clicks %}${{ "%.2f"|format(totals.cpc) }}{% else %}—{% endif %}</td>
+        <td class="num c-cpm">{% if totals.impressions %}${{ "%.2f"|format(totals.cpm) }}{% else %}—{% endif %}</td>
+        <td class="num c-cvr">{% if totals.pb_clicks %}{{ "%.1f"|format(totals.cvr) }}%{% else %}—{% endif %}</td>
+        <td class="num c-pbclicks">{{ "%.0f"|format(totals.pb_clicks) }}</td>
+        <td class="c-source"></td><td class="c-budget"></td><td class="c-trend"></td><td class="c-more"></td>
       </tr>
     </tfoot>
   </table>
   </div>
   {% else %}
-  <div class="empty">{% if origin == 'tool' %}<div class="empty-title">No campaigns launched by this tool yet</div>Everything you launch appears here automatically. Switch “Show” to “All on TikTok” to see campaigns created elsewhere.<br><a class="btn primary" href="/super-launcher">🚀 Launch your first</a>{% else %}<div class="empty-title">No campaigns cached yet</div>Hit “Sync now” to pull them from every account.{% endif %}</div>
+  <div class="empty">{% if origin == 'tool' %}<div class="empty-title">Nothing launched from here yet</div>Everything you launch appears here. Switch “Show” to “All on TikTok” for campaigns created elsewhere.<br><a class="btn primary" href="/super-launcher">🚀 Launch</a>{% else %}<div class="empty-title">No campaigns cached yet</div>Hit “Sync” to pull them from every account.{% endif %}</div>
   {% endif %}
-</div>
-
-<div id="bidPop" class="bidpop" hidden>
-  <div class="bp-head"><b id="bpTitle">Bid</b><button type="button" class="btn sm" id="bpClose" style="padding:1px 8px;">✕</button></div>
-  <div id="bpBody" class="muted" style="font-size:12px;">Loading…</div>
-  <form id="bpForm" hidden>
-    <div class="bp-row">
-      <span class="bp-cur" id="bpCur"></span>
-      <div class="bp-quick" id="bpQuick">
-        <button type="button" data-pct="-10">−10%</button><button type="button" data-pct="-5">−5%</button>
-        <button type="button" data-pct="5">+5%</button><button type="button" data-pct="10">+10%</button><button type="button" data-pct="20">+20%</button>
-      </div>
-    </div>
-    <div class="bp-row">
-      <span class="bp-dollar">$</span><input type="text" inputmode="decimal" id="bpCap" placeholder="cost cap" autocomplete="off">
-      <button type="submit" class="btn sm primary" id="bpApply">Apply to all</button>
-    </div>
-    <div class="hint" id="bpHint" style="margin:4px 0 0;font-size:11px;">One cost cap for every ad group (BID_TYPE_CUSTOM). TikTok applies it within minutes — watch the pace chips.</div>
-  </form>
 </div>
 
 <div id="vidModal" style="display:none;position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.8);align-items:center;justify-content:center;">
-  <div style="background:var(--panel);border-radius:12px;padding:12px;max-width:min(94vw,420px);box-shadow:0 12px 40px rgba(0,0,0,.5);">
-    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px;">
-      <span id="vidTitle" style="font-weight:600;font-size:13px;color:var(--text-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></span>
-      <button type="button" id="vidClose" class="btn sm" style="padding:2px 10px;">✕</button>
-    </div>
-    <video id="vidPlayer" controls playsinline preload="metadata" style="width:100%;max-height:78vh;border-radius:8px;background:#000;display:block;"></video>
+  <div style="background:var(--raised);border-radius:16px;padding:12px;max-width:min(94vw,420px);box-shadow:var(--shadow);">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px;"><span id="vidTitle" style="font-weight:600;font-size:13px;color:var(--text-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></span><button type="button" id="vidClose" class="btn sm">✕</button></div>
+    <video id="vidPlayer" controls playsinline preload="metadata" style="width:100%;max-height:78vh;border-radius:10px;background:#000;display:block;"></video>
   </div>
 </div>
 <script id="sparkData" type="application/json">{{ spark_json|safe }}</script>
-<script>
-(function () {
-  // ---- chip-style filter dropdowns (backed by hidden inputs) --------------
-  var form = document.getElementById("filterForm");
-  var customDates = document.getElementById("customDates");
-  document.querySelectorAll("[data-fsel]").forEach(function (fs) {
-    var btn = fs.querySelector("button"), input = fs.querySelector("input[type=hidden]");
-    btn.addEventListener("click", function (e) {
-      e.stopPropagation();
-      var open = fs.classList.contains("open");
-      document.querySelectorAll("[data-fsel].open").forEach(function (o) { o.classList.remove("open"); });
-      if (!open) fs.classList.add("open");
-    });
-    fs.querySelectorAll(".fmenu a").forEach(function (a) {
-      a.addEventListener("click", function (e) {
-        e.preventDefault();
-        var val = a.getAttribute("data-val");
-        input.value = val;
-        fs.querySelector(".v").textContent = a.textContent.trim();
-        fs.classList.remove("open");
-        if (input.name === "range" && val === "custom") {
-          customDates.style.display = "inline-flex";     // let the user pick dates, then Apply
-          return;
-        }
-        if (input.name === "range") customDates.style.display = "none";
-        form.submit();
-      });
-    });
-  });
-  document.addEventListener("click", function () {
-    document.querySelectorAll("[data-fsel].open").forEach(function (o) { o.classList.remove("open"); });
-  });
-
-  // ---- money-first table: Details toggle (remembered) ---------------------
-  // Delegated, so it keeps working after an in-place refresh swaps the table.
-  function detailApply(on) {
-    var tbl = document.getElementById("campTable"), tg = document.getElementById("detailToggle");
-    if (!tbl || !tg) return;
-    tbl.classList.toggle("show-detail", on);
-    tg.classList.toggle("on", on);
-    tg.childNodes[0].nodeValue = on ? "Hide details " : "Show details ";
-  }
-  function detailSaved() { try { return localStorage.getItem("adops-camp-detail") === "1"; } catch (e) { return false; } }
-  detailApply(detailSaved());
-  document.addEventListener("click", function (e) {
-    var tg = e.target.closest && e.target.closest("#detailToggle");
-    if (!tg) return;
-    var tbl = document.getElementById("campTable");
-    var on = !(tbl && tbl.classList.contains("show-detail"));
-    try { localStorage.setItem("adops-camp-detail", on ? "1" : "0"); } catch (e2) {}
-    detailApply(on);
-  });
-
-  // ---- KPI sparklines (real daily series; inline SVG, no library) ---------
-  var spark = {};
-  try { spark = JSON.parse(document.getElementById("sparkData").textContent || "{}"); } catch (e) {}
-  function draw(el, data, color) {
-    if (!data || data.length < 3) { el.style.display = "none"; return; }
-    var w = 120, h = 22, mx = Math.max.apply(null, data), mn = Math.min.apply(null, data);
-    var rng = (mx - mn) || 1, n = data.length;
-    var pts = data.map(function (v, i) {
-      var x = (i / (n - 1)) * w, y = h - 2 - ((v - mn) / rng) * (h - 4);
-      return x.toFixed(1) + "," + y.toFixed(1);
-    });
-    var area = "M0," + h + " L" + pts.join(" L") + " L" + w + "," + h + " Z";
-    var line = "M" + pts.join(" L");
-    var lx = (w).toFixed(1), ly = (h - 2 - ((data[n - 1] - mn) / rng) * (h - 4)).toFixed(1);
-    el.innerHTML =
-      '<svg viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none">' +
-      '<path d="' + area + '" fill="' + color + '" opacity="0.12"/>' +
-      '<path d="' + line + '" fill="none" stroke="' + color + '" stroke-width="1.5" ' +
-      'stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>' +
-      '<circle cx="' + lx + '" cy="' + ly + '" r="1.8" fill="' + color + '"/></svg>';
-  }
-  var cs = getComputedStyle(document.documentElement);
-  var accent = cs.getPropertyValue("--accent").trim() || "#5b5bd6";
-  var good = cs.getPropertyValue("--ok").trim() || "#0e9f6e";
-  function drawSparks() {
-    document.querySelectorAll("[data-spark]").forEach(function (el) {
-      var k = el.getAttribute("data-spark");
-      draw(el, spark[k], k === "revenue" ? good : accent);
-    });
-  }
-  drawSparks();
-
-  // ---- creative preview modal (thumb in the Creative column) ---------------
-  var modal = document.getElementById("vidModal"), player = document.getElementById("vidPlayer"), vidTitle = document.getElementById("vidTitle");
-  function closeModal() { modal.style.display = "none"; player.pause(); player.removeAttribute("src"); player.load(); }
-  document.addEventListener("click", function (e) {
-    var b = e.target.closest && e.target.closest(".previewBtn");
-    if (!b) return;
-    e.stopPropagation(); vidTitle.textContent = b.dataset.name || "Preview"; player.src = b.dataset.src; modal.style.display = "flex"; player.play().catch(function () {});
-  });
-  document.getElementById("vidClose").addEventListener("click", closeModal);
-  modal.addEventListener("click", function (e) { if (e.target === modal) closeModal(); });
-  document.addEventListener("keydown", function (e) { if (e.key === "Escape" && modal.style.display === "flex") closeModal(); });
-
-  // ---- inline bid popover ($ bid button on each row) -----------------------
-  var pop = document.getElementById("bidPop"), bpBody = document.getElementById("bpBody"), bpForm = document.getElementById("bpForm");
-  var bpCap = document.getElementById("bpCap"), bpCur = document.getElementById("bpCur"), bpTitle = document.getElementById("bpTitle"), bpApply = document.getElementById("bpApply");
-  var bp = { adv: "", cid: "", cap: null, busy: false };
-  function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
-  function money(v) { return "$" + (Math.round(v * 100) / 100).toFixed(2); }
-  function closePop() { pop.hidden = true; bp.adv = bp.cid = ""; }
-  function openPop(btn) {
-    var r = btn.getBoundingClientRect();
-    bp.adv = btn.dataset.adv; bp.cid = btn.dataset.cid; bp.cap = null;
-    bpTitle.textContent = "Bid · " + (btn.dataset.name || bp.cid);
-    bpBody.hidden = false; bpBody.textContent = "Reading ad groups from TikTok…"; bpForm.hidden = true;
-    pop.hidden = false;
-    var w = pop.offsetWidth || 320, h = pop.offsetHeight || 150;
-    var left = Math.min(Math.max(8, r.right - w), window.innerWidth - w - 8);
-    var top = r.bottom + 6 + window.scrollY;
-    if (r.bottom + h + 12 > window.innerHeight) top = r.top - h - 6 + window.scrollY;
-    pop.style.left = left + "px"; pop.style.top = top + "px";
-    fetch("/campaigns/" + bp.adv + "/" + bp.cid + "/bids", { credentials: "same-origin" })
-      .then(function (x) { return x.json().then(function (d) { return { ok: x.ok, d: d }; }); })
-      .then(function (res) {
-        var d = res.d;
-        if (!res.ok || d.error) { bpBody.innerHTML = '<span style="color:var(--warn);">' + esc(d.error || "couldn't load") + '</span>'; return; }
-        if (!d.n) { bpBody.textContent = "This campaign has no ad groups."; return; }
-        var cur;
-        if (d.cap) { cur = money(d.cap) + " cap on " + d.n + " ad group" + (d.n > 1 ? "s" : ""); bp.cap = d.cap; }
-        else if (d.caps && d.caps.length) { cur = "mixed: " + d.caps.map(money).join(", ") + (d.uncapped ? " + " + d.uncapped + " without cap" : "") + " (" + d.n + " ad groups)"; bp.cap = d.caps[d.caps.length - 1]; }
-        else { cur = (d.no_bid ? "no cap (lowest cost)" : "no cost cap set") + " · " + d.n + " ad group" + (d.n > 1 ? "s" : ""); }
-        bpCur.textContent = cur;
-        bpCap.value = bp.cap ? (Math.round(bp.cap * 100) / 100).toFixed(2) : "";
-        document.getElementById("bpQuick").style.visibility = bp.cap ? "visible" : "hidden";
-        bpBody.hidden = true; bpForm.hidden = false;
-        document.getElementById("bpHint").textContent = (d.smart_plus ? "Smart+ campaign: TikTok may refuse ad-group edits — the answer shows here. " : "")
-          + "One cost cap for every ad group (BID_TYPE_CUSTOM). TikTok applies it within minutes — watch the pace chips.";
-        bpCap.focus(); bpCap.select();
-      })
-      .catch(function () { bpBody.innerHTML = '<span style="color:var(--warn);">Couldn\'t reach the server.</span>'; });
-  }
-  document.addEventListener("click", function (e) {
-    var b = e.target.closest && e.target.closest(".bidBtn");
-    if (b) { e.preventDefault(); if (!pop.hidden && bp.cid === b.dataset.cid) { closePop(); } else { openPop(b); } return; }
-    if (e.target.closest && e.target.closest("#bpClose")) { closePop(); return; }
-    var q = e.target.closest && e.target.closest("#bpQuick button");
-    if (q) { var base = parseFloat(bpCap.value) || bp.cap || 0; if (base) bpCap.value = (Math.round(base * (1 + parseInt(q.dataset.pct, 10) / 100) * 100) / 100).toFixed(2); return; }
-    if (!pop.hidden && !pop.contains(e.target)) closePop();
-  });
-  document.addEventListener("keydown", function (e) { if (e.key === "Escape" && !pop.hidden) closePop(); });
-  bpForm.addEventListener("submit", function (e) {
-    e.preventDefault();
-    if (bp.busy) return;
-    var v = parseFloat(String(bpCap.value).replace(",", "."));
-    if (!(v > 0)) { bpCap.focus(); return; }
-    bp.busy = true; bpApply.disabled = true; bpApply.textContent = "Applying…";
-    var body = new URLSearchParams(); body.set("cap", v.toFixed(2));
-    fetch("/campaigns/" + bp.adv + "/" + bp.cid + "/bids", { method: "POST", credentials: "same-origin", body: body })
-      .then(function (x) { return x.json().then(function (d) { return { ok: x.ok, d: d }; }); })
-      .then(function (res) {
-        var d = res.d;
-        if (res.ok && d.queued) {
-          bpCur.textContent = money(d.cap) + " queued — TikTok is being updated in the background ✓";
-          document.getElementById("bpHint").textContent = "You'll get a notification bottom-right when every ad group is done (or if TikTok refuses).";
-          setTimeout(closePop, 1400);
-        } else {
-          var msg = d.error || ((d.errors && d.errors.length) ? d.errors.join(" · ") : "TikTok refused");
-          if (d.applied) msg = d.applied + " of " + d.n + " ad groups updated — " + msg;
-          document.getElementById("bpHint").innerHTML = '<span style="color:var(--err);">' + esc(msg) + '</span>';
-        }
-      })
-      .catch(function () { document.getElementById("bpHint").innerHTML = '<span style="color:var(--err);">Couldn\'t reach the server.</span>'; })
-      .then(function () { bp.busy = false; bpApply.disabled = false; bpApply.textContent = "Apply to all"; });
-  });
-
-  // ---- in-place refresh: swap KPIs + table (+ sparklines) without a reload --
-  // Filters, sort, scroll position and the Details toggle all stay put.
-  var refreshBtn = document.getElementById("refreshBtn"), syncBtn = document.getElementById("syncBtn"), syncForm = document.getElementById("syncForm");
-  var busy = false;
-  function setBusy(on, which) {
-    busy = on;
-    [refreshBtn, syncBtn].forEach(function (b) { if (b) b.disabled = on; });
-    if (refreshBtn) refreshBtn.textContent = on && which === "refresh" ? "↻ Refreshing…" : "↻ Refresh";
-    if (syncBtn) syncBtn.textContent = on && which === "sync" ? "⟳ Syncing…" : "⟳ Sync now";
-  }
-  function swapFrom(doc) {
-    ["pendingFlash", "campKpis", "campCard"].forEach(function (id) {
-      var cur = document.getElementById(id), nxt = doc.getElementById(id);
-      if (cur && nxt) cur.replaceWith(nxt);
-    });
-    var sa = doc.getElementById("syncedAgo"), sc = document.getElementById("syncedAgo");
-    if (sa && sc) sc.textContent = sa.textContent;
-    var sd = doc.getElementById("sparkData");
-    if (sd) { try { spark = JSON.parse(sd.textContent || "{}"); } catch (e) {} }
-    drawSparks();
-    detailApply(detailSaved());
-  }
-  var syncWaiting = false;
-  document.addEventListener("adops:job", function (e) {
-    var j = e.detail || {};
-    if (j.kind === "status_sync" && syncWaiting) { syncWaiting = false; setBusy(false); refreshInPlace("refresh"); return; }
-    if (j.kind === "bid" || j.kind === "campaign_edit" || j.kind === "launch") refreshInPlace("refresh");   // numbers changed on TikTok
-  });
-  function refreshInPlace(which) {
-    if (busy) return Promise.resolve();
-    if (which === "sync") {
-      setBusy(true, "sync"); syncWaiting = true;
-      return fetch("/status/sync", { method: "POST", credentials: "same-origin", headers: { "X-Requested-With": "fetch" } })
-        .then(function (r) { return r.json(); })
-        .then(function (d) { if (!d.queued) { syncWaiting = false; setBusy(false); } })
-        .catch(function () { syncWaiting = false; setBusy(false); });
-    }
-    setBusy(true, which || "refresh");
-    var url = location.pathname + location.search;
-    var pre = Promise.resolve();
-    return pre.then(function () { return fetch(url, { credentials: "same-origin", headers: { "X-Requested-With": "fetch" } }); })
-      .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.text(); })
-      .then(function (html) { swapFrom(new DOMParser().parseFromString(html, "text/html")); })
-      .catch(function () { location.reload(); })       // fall back to a full reload — never leave stale numbers
-      .then(function () { setBusy(false); });
-  }
-  if (refreshBtn) refreshBtn.addEventListener("click", function () { refreshInPlace("refresh"); });
-  if (syncForm) syncForm.addEventListener("submit", function (e) { e.preventDefault(); refreshInPlace("sync"); });
-
-  // ---- auto-refresh only the LIVE (today) view (in place, not a reload) ----
-  {% if range_key == 'today' %}
-  setInterval(function () {
-    var el = document.activeElement;
-    var typing = el && (el.tagName === "INPUT" || el.tagName === "SELECT" || el.tagName === "TEXTAREA");
-    var selecting = window.getSelection && String(window.getSelection());
-    if (document.hidden) return;                       // never churn a background tab
-    if (!typing && !selecting && !document.querySelector("[data-fsel].open") && modal.style.display !== "flex") refreshInPlace("refresh");
-  }, 60000);
-  {% endif %}
-})();
-</script>
+<script id="pageState" type="application/json">{{ {'range': range_key, 'group': group, 'state': state} | tojson }}</script>
+<script src="/static/campaigns.js?v={{ STATIC_V }}"></script>
 {% endblock %}

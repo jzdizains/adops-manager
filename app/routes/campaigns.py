@@ -1888,26 +1888,45 @@ def edit_campaign(request: Request, advertiser_id: str, campaign_id: str,
 
 
 @router.post("/campaigns/{advertiser_id}/{campaign_id}/edit")
-def apply_campaign_edit(advertiser_id: str, campaign_id: str,
+def apply_campaign_edit(request: Request, advertiser_id: str, campaign_id: str,
                         campaign_name: str = Form(""),
                         campaign_budget: str = Form(""),
                         adgroup_budget_all: str = Form(""),
                         cost_cap_all: str = Form(""),
                         db: Session = Depends(get_db)):
     """Queue whichever fields were filled: campaign name, CBO campaign budget,
-    all ad-group budgets, and/or all cost caps."""
-    from .. import jobs
+    all ad-group budgets, and/or all cost caps. fetch() callers get JSON."""
+    from .. import activity, jobs
+    from fastapi.responses import JSONResponse
+    wants_json = request.headers.get("x-requested-with") == "fetch" or "application/json" in request.headers.get("accept", "")
     acct = db.query(models.AdAccount).filter_by(advertiser_id=advertiser_id).first()
     if not acct or not acct.access_token:
+        if wants_json:
+            return JSONResponse({"ok": False, "error": "account not connected"}, status_code=400)
         return RedirectResponse(
             f"/campaigns/{advertiser_id}/{campaign_id}/edit?err=no+token", status_code=303)
     if not any(str(v).strip() for v in (campaign_name, campaign_budget, adgroup_budget_all, cost_cap_all)):
+        if wants_json:
+            return JSONResponse({"ok": False, "error": "nothing to change"}, status_code=400)
         return RedirectResponse(f"/campaigns/{advertiser_id}/{campaign_id}/edit?err=no+changes+applied", status_code=303)
     rec = db.query(models.CampaignRecord).filter_by(advertiser_id=advertiser_id, campaign_id=campaign_id).first()
-    jobs.enqueue(db, "campaign_edit", f"Edit {rec.campaign_name if rec else campaign_id}",
-                 {"advertiser_id": advertiser_id, "campaign_id": campaign_id, "campaign_name": campaign_name,
-                  "campaign_budget": campaign_budget, "adgroup_budget_all": adgroup_budget_all, "cost_cap_all": cost_cap_all},
-                 href=f"/campaigns/{advertiser_id}/{campaign_id}/edit")
+    job = jobs.enqueue(db, "campaign_edit", f"Edit {rec.campaign_name if rec else campaign_id}",
+                       {"advertiser_id": advertiser_id, "campaign_id": campaign_id, "campaign_name": campaign_name,
+                        "campaign_budget": campaign_budget, "adgroup_budget_all": adgroup_budget_all, "cost_cap_all": cost_cap_all},
+                       href=f"/campaigns/{advertiser_id}/{campaign_id}/edit")
+    changes = []
+    if campaign_name.strip():
+        changes.append(f"name → {campaign_name.strip()[:60]}")
+    if campaign_budget.strip():
+        changes.append(f"campaign budget → ${campaign_budget.strip()}")
+    if adgroup_budget_all.strip():
+        changes.append(f"ad-group budgets → ${adgroup_budget_all.strip()}")
+    if cost_cap_all.strip():
+        changes.append(f"cost cap → ${cost_cap_all.strip()}")
+    activity.record(db, "campaign", campaign_id, "bid" if (cost_cap_all.strip() and not campaign_budget.strip() and not adgroup_budget_all.strip()) else "budget",
+                    " · ".join(changes), request=request, advertiser_id=advertiser_id)
+    if wants_json:
+        return JSONResponse({"ok": True, "queued": True, "job_id": job.id, "changes": changes})
     return RedirectResponse(f"/campaigns/{advertiser_id}/{campaign_id}/edit?ok=Applying+in+the+background+—+you%27ll+get+a+notification.", status_code=303)
 
 
@@ -2042,7 +2061,7 @@ def campaign_bids(advertiser_id: str, campaign_id: str, db: Session = Depends(ge
 
 
 @router.post("/campaigns/{advertiser_id}/{campaign_id}/bids")
-def campaign_bids_apply(advertiser_id: str, campaign_id: str, cap: str = Form(...),
+def campaign_bids_apply(request: Request, advertiser_id: str, campaign_id: str, cap: str = Form(...),
                         db: Session = Depends(get_db)):
     """Queue ONE cost cap for every ad group of the campaign. Returns JSON
     {queued: true, job_id} at once; the result arrives as a notification."""
@@ -2059,6 +2078,8 @@ def campaign_bids_apply(advertiser_id: str, campaign_id: str, cap: str = Form(..
     rec = db.query(models.CampaignRecord).filter_by(advertiser_id=advertiser_id, campaign_id=campaign_id).first()
     job = jobs.enqueue(db, "bid", f"Cost cap ${new_cap:.2f} → {rec.campaign_name if rec else campaign_id}",
                        {"advertiser_id": advertiser_id, "campaign_id": campaign_id, "cap": new_cap}, href="/status")
+    from .. import activity as _activity
+    _activity.record(db, "campaign", campaign_id, "bid", f"cost cap → ${new_cap:.2f} (every ad group)", request=request, advertiser_id=advertiser_id)
     return JSONResponse({"ok": True, "queued": True, "job_id": job.id, "cap": new_cap})
 
 
@@ -2091,12 +2112,17 @@ def apply_bid(db: Session, advertiser_id: str, campaign_id: str, new_cap: float)
 
 
 @router.post("/campaigns/{advertiser_id}/{campaign_id}/status")
-def campaign_status_update(advertiser_id: str, campaign_id: str,
+def campaign_status_update(request: Request, advertiser_id: str, campaign_id: str,
                            operation_status: str = Form(...),
                            next: str = Form("/status"),
                            db: Session = Depends(get_db)):
+    """Pause / resume one campaign on TikTok. Form posts redirect back; fetch()
+    callers (the Campaigns console, bulk bar, undo) get JSON."""
+    from .. import activity
+    from fastapi.responses import JSONResponse
     acct = db.query(models.AdAccount).filter_by(advertiser_id=advertiser_id).first()
     err = ""
+    rec = None
     if acct:
         rec = (db.query(models.CampaignRecord)
                .filter_by(advertiser_id=advertiser_id, campaign_id=campaign_id).first())
@@ -2111,10 +2137,16 @@ def campaign_status_update(advertiser_id: str, campaign_id: str,
             if rec:
                 rec.operation_status = operation_status
                 db.commit()
+            activity.record(db, "campaign", campaign_id, "resumed" if operation_status == "ENABLE" else "paused",
+                            rec.campaign_name if rec else "", request=request, advertiser_id=advertiser_id)
         except tiktok_api.TikTokError as e:
             err = f"code {e.code}: {e.message[:100]}"
     else:
         err = "account not found"
+    wants_json = request.headers.get("x-requested-with") == "fetch" or "application/json" in request.headers.get("accept", "")
+    if wants_json:
+        return JSONResponse({"ok": not err, "error": err, "operation_status": operation_status,
+                             "campaign_id": campaign_id, "name": rec.campaign_name if rec else campaign_id}, status_code=200 if not err else 400)
     # only ever redirect within the app (next comes from our own hidden input)
     target = next if next.startswith("/") and not next.startswith("//") else "/status"
     if err:

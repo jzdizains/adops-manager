@@ -104,16 +104,18 @@ def sync_campaigns(db: Session, accounts: list[models.AdAccount] | None = None) 
                 snap.spend = _f(m, "spend")
                 snap.conversions = int(_f(m, "conversion"))
             # pace ticks (delivery velocity for the Campaigns page)
-            from . import pace as _pace
+            from . import hourly as _hourly, pace as _pace
             _pace.record(db, new_recs)
+            _hourly.record(db, new_recs)        # per-hour buckets (drawer + Home trend)
             db.commit()
             synced += 1
         except tiktok_api.TikTokError as e:
             db.rollback()
             errors.append({"advertiser_id": acct.advertiser_id, "code": str(e.code),
                            "message": (e.message or "")[:200]})
-    from . import pace as _pace
+    from . import hourly as _hourly, pace as _pace
     _pace.prune(db)
+    _hourly.prune(db)
     # persist the report — sync failures must never be invisible
     import json as _json
     from datetime import datetime as _dt, timezone as _tz

@@ -4,7 +4,7 @@ from pathlib import Path
 from fastapi import Request
 from fastapi.templating import Jinja2Templates
 
-from . import config
+from . import config, nav, users
 
 templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent / "templates"))
 templates.env.globals.update({
@@ -15,6 +15,12 @@ templates.env.globals.update({
     # Ads Manager deep link for one ad account (verified aadvid format) — every
     # account name/id shown in a table links here, in a new tab.
     "ads_manager_url": lambda advertiser_id: f"https://ads.tiktok.com/i18n/dashboard?aadvid={advertiser_id}",
+    # shell navigation (see nav.py): sidebar items, section tabs, ⌘K jump list
+    "nav_sidebar": nav.sidebar,
+    "nav_footer": nav.footer,
+    "nav_tabs": nav.tabs,
+    "nav_jump": [list(j) for j in nav.JUMP],
+    "is_owner": users.is_owner,
 })
 
 

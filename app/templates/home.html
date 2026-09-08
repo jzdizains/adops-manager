@@ -1,184 +1,182 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="page-head">
+{% macro money0(v) -%}{{ '−' if v < 0 }}${{ "%.0f"|format(v|abs) if v|abs >= 100 else "%.2f"|format(v|abs) }}{%- endmacro %}
+{% macro roas_pill(r, has) -%}
+  {% if has and r %}<span class="roas-pill {{ 'g' if r >= 1.3 else ('w' if r >= 0.9 else 'r') }}">{{ "%.2f"|format(r) }}×</span>{% else %}<span class="roas-pill n">—</span>{% endif %}
+{%- endmacro %}
+{% set y = y_same_hour %}
+{% set d_profit = kpis.profit - y.profit %}
+<div class="page-head" style="margin-bottom:12px;">
   <div><h1>Home</h1>
-    <div class="muted" style="font-size:12.5px;">Today, live · <span id="pfStatus">connecting…</span> · campaigns synced <span id="pfSynced">{{ synced_ago }}</span></div></div>
+    <div class="muted" style="font-size:12.5px;">Today, live · <span id="pfStatus">connecting…</span> · synced <span id="pfSynced">{{ synced_ago }}</span></div></div>
   <div class="actions">
-    <label class="btn" style="cursor:pointer;">
-      <input type="checkbox" id="pfSound" style="width:auto;margin:0;"> 🔊 ding on conversions
-    </label>
+    <label class="btn" style="cursor:pointer;" title="Play a sound when a conversion lands"><input type="checkbox" id="pfSound" style="width:auto;margin:0;"> 🔊 Sound</label>
+    <a class="btn" href="/status">Campaigns</a>
     <a class="btn primary" href="/super-launcher">🚀 Launch</a>
   </div>
 </div>
 
-{# ---- Needs attention: top of the unified inbox ---------------------------- #}
-{% if attention %}
-<div class="card" style="padding:0;overflow:hidden;">
-  <div style="display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border-bottom:1px solid var(--border-soft);">
-    <span style="font-weight:650;font-size:13px;">Needs attention
-      {% if inbox_counts.err %}<span class="pill err" style="margin-left:6px;">{{ inbox_counts.err }} error{{ 's' if inbox_counts.err != 1 }}</span>{% endif %}
-      {% if inbox_counts.warn %}<span class="pill warn" style="margin-left:4px;">{{ inbox_counts.warn }} warning{{ 's' if inbox_counts.warn != 1 }}</span>{% endif %}</span>
-    <a class="btn sm" href="/inbox">Inbox{% if inbox_counts.total > attention|length %} · all {{ inbox_counts.total }}{% endif %} →</a>
+{# ---- hero strip: profit first ---- #}
+<div class="kpis" id="homeKpis" style="grid-template-columns:1.4fr repeat(5, 1fr);">
+  <div class="kpi" style="background:linear-gradient(135deg, var(--accent-soft), var(--panel) 60%);">
+    <div class="lab">Profit today</div>
+    <div class="val" style="font-size:30px;"><span class="{{ 'good' if kpis.profit >= 0 else 'bad' }}" id="pfProfit">{{ '+' if kpis.profit > 0 }}{{ money0(kpis.profit) }}</span></div>
+    <div class="sub" id="pfProfitSub">{% if y.spend or y.revenue %}vs {{ '+' if y.profit > 0 }}{{ money0(y.profit) }} at this time yesterday · <span class="{{ 'pos' if d_profit >= 0 else 'neg' }}">{{ '+' if d_profit >= 0 else '−' }}{{ money0(d_profit|abs) }}</span>{% else %}revenue − spend{% endif %}</div>
   </div>
-  {% for it in attention %}
-  <div class="inbox-row lvl-{{ it.level }}">
-    <span class="inbox-dot"></span>
-    <div class="inbox-body">
-      <div class="inbox-title">{{ it.title }}{% if it.where %} <span class="muted">· {{ it.where }}</span>{% endif %}</div>
-      <div class="inbox-msg">{{ it.message }}</div>
-    </div>
-    <div class="inbox-acts">
-      {% if it.href %}<a class="btn sm" href="{{ it.href }}" {% if it.external %}target="_blank" rel="noopener"{% endif %}>{{ 'Open ↗' if it.external else 'View →' }}</a>{% endif %}
-    </div>
-  </div>
-  {% endfor %}
-</div>
-{% endif %}
-
-{# ---- Live KPI tiles (server-rendered today, then polled) ------------------ #}
-<div class="kpis">
-  <div class="kpi accent"><div class="lab">Spend</div><div class="val" id="pfSpend">${{ "%.2f"|format(kpis.spend) }}</div><div class="sub">today</div></div>
-  <div class="kpi"><div class="lab">Revenue</div><div class="val good" id="pfRevenue">${{ "%.2f"|format(kpis.revenue) }}</div><div class="sub">Glitchy postbacks</div></div>
-  <div class="kpi"><div class="lab">Profit</div><div class="val {{ 'good' if kpis.profit >= 0 else 'bad' }}" id="pfProfit">{{ '−' if kpis.profit < 0 }}${{ "%.2f"|format(kpis.profit|abs) }}</div><div class="sub">revenue − spend</div></div>
-  <div class="kpi"><div class="lab">ROAS</div><div class="val {{ 'good' if kpis.roas >= 1 else ('bad' if kpis.roas > 0 else '') }}" id="pfRoas">{{ "%.2f"|format(kpis.roas) }}×</div><div class="sub" id="pfCvr">{{ "%.1f"|format(kpis.cvr) }}% CVR</div></div>
-  <div class="kpi"><div class="lab">Conversions</div><div class="val" id="pfConv">{{ "{:,}".format(kpis.conversions) }}</div><div class="sub" id="pfCpa">{% if kpis.conversions %}${{ "%.2f"|format(kpis.cpa) }} CPA{% else %}—{% endif %}</div></div>
-  <div class="kpi"><div class="lab">Clicks</div><div class="val" id="pfClicks">{{ "{:,}".format(kpis.clicks) }}</div><div class="sub">postback clicks</div></div>
+  <div class="kpi"><div class="lab">ROAS</div><div class="val"><span class="{{ 'good' if kpis.roas >= 1 else ('bad' if kpis.roas > 0 else '') }}" id="pfRoas">{{ "%.2f"|format(kpis.roas) }}×</span></div><div class="sub">{% if ykpis.spend %}yesterday {{ "%.2f"|format(ykpis.roas) }}×{% else %}revenue ÷ spend{% endif %}</div></div>
+  <div class="kpi"><div class="lab">Spend</div><div class="val" id="pfSpend">${{ "%.2f"|format(kpis.spend) }}</div><div class="sub">{% if y.spend %}{{ money0(y.spend) }} by now yesterday{% else %}TikTok, today{% endif %}</div></div>
+  <div class="kpi"><div class="lab">Revenue</div><div class="val" id="pfRevenue">${{ "%.2f"|format(kpis.revenue) }}</div><div class="sub" id="pfConvSub">Glitchy · <span id="pfConv">{{ "{:,}".format(kpis.conversions) }}</span> conv</div></div>
+  <div class="kpi"><div class="lab">EPC</div><div class="val" id="pfEpc">{% if kpis.tt_clicks and kpis.revenue %}${{ "%.2f"|format(kpis.epc) }}{% else %}—{% endif %}</div><div class="sub">{% if ykpis.clicks %}PB EPC yesterday ${{ "%.2f"|format(ykpis.epc_pb) }}{% else %}revenue per TikTok click{% endif %}</div></div>
+  <div class="kpi"><div class="lab">Tests today</div><div class="val">{{ tests.n }}</div><div class="sub"><span class="pos">{{ tests.winners }} winning</span> · <span class="neg">{{ tests.losing }} losing</span> · {{ tests.learning }} learning</div></div>
 </div>
 
-<div class="grid cols-2" style="grid-template-columns:1.6fr 1fr;">
-  {# ---- 14-day trend ---- #}
-  <div class="card mb0">
-    <div class="card-header">
-      <span class="card-title">Last 14 days</span>
-      <span class="card-meta">
-        <select id="chartA" style="width:auto;display:inline-block;font-size:12px;padding:4px 8px;"></select>
-        vs
-        <select id="chartB" style="width:auto;display:inline-block;font-size:12px;padding:4px 8px;"></select>
-      </span>
+<div class="grid" style="grid-template-columns:minmax(0, 1.65fr) minmax(0, 1fr);gap:14px;align-items:start;">
+  <div style="display:flex;flex-direction:column;gap:14px;min-width:0;">
+    {# ---- today by hour ---- #}
+    <div class="card mb0">
+      <div class="card-header" style="margin-bottom:6px;">
+        <span class="card-title">Today by hour <span class="muted" style="font-weight:500;font-size:12px;margin-left:6px;">yesterday dashed</span></span>
+        <span class="seg" id="hourSeg"><button type="button" class="on" data-series="spend">Spend</button><button type="button" data-series="revenue">Revenue</button><button type="button" data-series="profit">Profit</button><button type="button" data-series="conversions">Conv</button></span>
+      </div>
+      <div id="hourChart" style="height:132px;"></div>
+      <div style="display:flex;justify-content:space-between;font-size:10.5px;color:var(--faint);padding:2px 2px 0;"><span>0h</span><span>6h</span><span>12h</span><span>18h</span><span>now {{ "%02d"|format(h_now) }}h</span></div>
+      <div class="muted" id="hourNote" style="font-size:11.5px;margin-top:4px;" hidden>Hourly history starts collecting from the first sync after this update — today's line fills in as the day goes on.</div>
     </div>
-    <div id="cmpChart"></div>
-  </div>
-  {# ---- Live feed ---- #}
-  <div class="card mb0" style="display:flex;flex-direction:column;">
-    <div class="card-header"><span class="card-title">Live feed</span><span class="card-meta">conversions · launches · errors</span></div>
-    <div id="pfFeed" style="flex:1;max-height:300px;overflow:auto;font-size:12.5px;">
-      <div class="empty">Waiting for events…</div>
+    {# ---- winners / losers ---- #}
+    <div class="grid cols-2" style="gap:14px;">
+      <div class="card mb0" style="padding:0;overflow:hidden;">
+        <div class="card-header" style="padding:14px 16px 8px;margin:0;"><span class="card-title">Winning creatives</span><span class="card-meta">today · <a href="/creatives?view=performance&range=today">all {{ tests.n }}</a></span></div>
+        {% if winners %}
+        <table class="data dense"><thead><tr><th>Creative</th><th class="num">Spend</th><th class="num">Profit</th><th class="num">ROAS</th></tr></thead><tbody>
+        {% for f in winners %}<tr><td><div style="display:flex;align-items:center;gap:8px;min-width:0;">{% if f.thumb_id %}<span class="thumb previewBtn" style="width:22px;height:30px;border-radius:5px;flex:none;background:var(--accent-soft);display:grid;place-items:center;color:var(--accent-ink);font-size:9px;cursor:pointer;" data-src="/creatives/{{ f.thumb_id }}/file" data-name="{{ f.name }}">▶</span>{% endif %}<div style="min-width:0;"><div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:190px;">{{ f.name }}</div><div class="muted" style="font-size:10.5px;">{{ f.n }} test{{ 's' if f.n != 1 }} · {{ f.accounts }} account{{ 's' if f.accounts != 1 }}{% if f.clicks %} · EPC ${{ "%.2f"|format(f.epc) }}{% endif %}</div></div></div></td>
+          <td class="num">${{ "%.0f"|format(f.spend) }}</td><td class="num"><span class="profit-cell {{ 'pos' if f.profit >= 0 else 'neg' }}">{{ '+' if f.profit > 0 }}{{ money0(f.profit) }}</span></td><td class="num">{{ roas_pill(f.roas, true) }}</td></tr>{% endfor %}
+        </tbody></table>
+        {% else %}<div class="empty" style="padding:22px;">No winners yet today{% if not tests.n %} — nothing with spend and revenue so far{% endif %}.</div>{% endif %}
+      </div>
+      <div class="card mb0" style="padding:0;overflow:hidden;">
+        <div class="card-header" style="padding:14px 16px 8px;margin:0;"><span class="card-title">Losing money</span><span class="card-meta">{% if losers %}<a href="/status?group=creative&sort=profit">open in Campaigns</a>{% else %}today{% endif %}</span></div>
+        {% if losers %}
+        <table class="data dense"><thead><tr><th>Creative</th><th class="num">Spend</th><th class="num">Profit</th><th class="num">ROAS</th></tr></thead><tbody>
+        {% for f in losers %}<tr><td><div style="display:flex;align-items:center;gap:8px;min-width:0;">{% if f.thumb_id %}<span class="thumb previewBtn" style="width:22px;height:30px;border-radius:5px;flex:none;background:var(--accent-soft);display:grid;place-items:center;color:var(--accent-ink);font-size:9px;cursor:pointer;" data-src="/creatives/{{ f.thumb_id }}/file" data-name="{{ f.name }}">▶</span>{% endif %}<div style="min-width:0;"><div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:190px;">{{ f.name }}</div><div class="muted" style="font-size:10.5px;">{{ f.n }} test{{ 's' if f.n != 1 }} · {{ f.accounts }} account{{ 's' if f.accounts != 1 }}</div></div></div></td>
+          <td class="num">${{ "%.0f"|format(f.spend) }}</td><td class="num"><span class="profit-cell neg">{{ money0(f.profit) }}</span></td><td class="num">{{ roas_pill(f.roas, true) }}</td></tr>{% endfor %}
+        </tbody></table>
+        {% else %}<div class="empty" style="padding:22px;">Nothing losing money right now.</div>{% endif %}
+      </div>
     </div>
   </div>
-</div>
 
-<div style="height:14px;"></div>
-
-<div class="grid cols-2">
-  <div class="card mb0">
-    <div class="card-header"><span class="card-title">Top ad accounts</span><span class="card-meta">by spend today</span></div>
-    {% if top_accounts %}
-    <table class="data">
-      <thead><tr><th>Account</th><th class="num">Campaigns</th><th class="num">Spend</th></tr></thead>
-      <tbody>
-      {% for a in top_accounts %}
-        <tr><td style="white-space:nowrap;">{{ acct_link(a.advertiser_id, a.name) }} <a href="/status?account={{ a.advertiser_id }}" class="muted" style="font-size:10.5px;" title="Show only this account's campaigns">filter</a></td>
-            <td class="num">{{ a.campaigns }}</td><td class="num">${{ "%.2f"|format(a.spend) }}</td></tr>
+  <div style="display:flex;flex-direction:column;gap:14px;min-width:0;">
+    {# ---- needs attention ---- #}
+    <div class="card mb0" style="padding:0;overflow:hidden;">
+      <div class="card-header" style="padding:14px 16px 8px;margin:0;"><span class="card-title">Needs attention{% if inbox_counts.err %} <span class="pill err" style="margin-left:4px;">{{ inbox_counts.err }}</span>{% endif %}{% if inbox_counts.warn %} <span class="pill warn" style="margin-left:2px;">{{ inbox_counts.warn }}</span>{% endif %}</span><span class="card-meta"><a href="/inbox">Inbox{% if inbox_counts.total > attention|length %} · all {{ inbox_counts.total }}{% endif %} →</a></span></div>
+      {% if attention %}{% for it in attention %}
+      <div class="inbox-row lvl-{{ it.level }}" style="padding:8px 16px;">
+        <span class="inbox-dot"></span>
+        <div class="inbox-body"><div class="inbox-title">{{ it.title }}{% if it.where %} <span class="muted">· {{ it.where }}</span>{% endif %}</div><div class="inbox-msg" style="font-size:12px;">{{ it.message[:110] }}</div></div>
+        <div class="inbox-acts">{% if it.href %}<a class="btn sm" href="{{ it.href }}" {% if it.external %}target="_blank" rel="noopener"{% endif %}>{{ 'Open ↗' if it.external else 'View' }}</a>{% endif %}</div>
+      </div>
+      {% endfor %}{% else %}<div class="empty" style="padding:22px;">All clear.</div>{% endif %}
+    </div>
+    {# ---- Business Centers ---- #}
+    <div class="card mb0" style="padding:0;overflow:hidden;">
+      <div class="card-header" style="padding:14px 16px 8px;margin:0;"><span class="card-title">Business Centers</span><span class="card-meta">{{ bc_rows|length }} · {{ n_accounts }} accounts · <span class="pos">{{ acct_counts.fresh }} fresh</span>{% if acct_counts.blocked %} · <span class="neg">{{ acct_counts.blocked }} blocked</span>{% endif %}</span></div>
+      {% if bc_rows %}
+      {% for b in bc_rows %}
+      <a href="/accounts?bc={{ b.bc.bc_id }}" style="display:flex;align-items:center;gap:10px;padding:9px 16px;border-bottom:1px solid var(--border-soft);color:inherit;text-decoration:none;font-size:12.5px;">
+        <div style="flex:1;min-width:0;"><div style="font-weight:600;">{{ b.bc.name or b.bc.bc_id }}</div><div class="muted" style="font-size:11px;">{{ b.n }} accounts · {{ b.fresh }} fresh · {{ b.live }} live{% if b.blocked %} · <span class="neg">{{ b.blocked }} blocked</span>{% endif %}</div></div>
+        <div style="text-align:right;"><div style="font-weight:700;{{ 'color:var(--err);' if b.low }}">{{ b.bc.currency or '$' }} {{ "%.0f"|format(b.bc.balance or 0) }}</div><div class="muted" style="font-size:10.5px;">balance</div></div>
+        <div style="text-align:right;width:70px;"><span class="profit-cell {{ 'pos' if b.profit >= 0 else 'neg' }}">{% if b.spend or b.revenue %}{{ '+' if b.profit > 0 }}{{ money0(b.profit) }}{% else %}—{% endif %}</span><div class="muted" style="font-size:10.5px;">today</div></div>
+      </a>
       {% endfor %}
-      </tbody>
-    </table>
-    {% else %}
-    <div class="empty">No campaign data yet.<br><a class="btn sm" href="/status" style="margin-top:8px;">Sync campaigns →</a></div>
-    {% endif %}
-  </div>
-  <div class="card mb0">
-    <div class="card-header"><span class="card-title">Active campaigns</span>
-      <span class="card-meta"><a href="/status?state=active">All active →</a></span></div>
-    {% if active_campaigns %}
-    <table class="data">
-      <thead><tr><th>Campaign</th><th>Account</th><th class="num">Spend</th></tr></thead>
-      <tbody>
-      {% for c in active_campaigns %}
-        <tr>
-          <td><a href="/campaigns/{{ c.advertiser_id }}/{{ c.campaign_id }}/edit" style="color:inherit;">{{ c.campaign_name[:36] }}</a></td>
-          <td class="muted" style="white-space:nowrap;">{{ acct_link(c.advertiser_id, (account_names.get(c.advertiser_id) or c.advertiser_id)[:22]) }}</td>
-          <td class="num">${{ "%.2f"|format(c.spend_today) }}</td>
-        </tr>
-      {% endfor %}
-      </tbody>
-    </table>
-    {% else %}
-    <div class="empty">No active campaigns.<br><a class="btn sm primary" href="/super-launcher" style="margin-top:8px;">🚀 Launch one →</a></div>
-    {% endif %}
+      {% if no_bc %}<div class="muted" style="padding:8px 16px;font-size:11.5px;">{{ no_bc }} account{{ 's' if no_bc != 1 }} without a Business Center</div>{% endif %}
+      {% else %}<div class="empty" style="padding:22px;">No Business Centers synced yet.<br><a class="btn sm" href="/partners" style="margin-top:8px;">Connect one →</a></div>{% endif %}
+    </div>
+    {# ---- live feed (compact) ---- #}
+    <div class="card mb0" style="padding:0;overflow:hidden;">
+      <div class="card-header" style="padding:14px 16px 8px;margin:0;"><span class="card-title">Live feed</span><span class="card-meta">conversions · launches · errors</span></div>
+      <div id="pfFeed" style="max-height:220px;overflow:auto;font-size:12px;padding:0 16px 8px;"><div class="muted" style="padding:8px 0;">Waiting for events…</div></div>
+    </div>
   </div>
 </div>
 
+<div id="vidModal" style="display:none;position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.8);align-items:center;justify-content:center;">
+  <div style="background:var(--raised);border-radius:16px;padding:12px;max-width:min(94vw,420px);box-shadow:var(--shadow);">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px;"><span id="vidTitle" style="font-weight:600;font-size:13px;color:var(--text-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></span><button type="button" id="vidClose" class="btn sm">✕</button></div>
+    <video id="vidPlayer" controls playsinline preload="metadata" style="width:100%;max-height:78vh;border-radius:10px;background:#000;display:block;"></video>
+  </div>
+</div>
 <audio id="pfDing" src="/static/cash-money.wav" preload="none"></audio>
+<script id="hourlyData" type="application/json">{{ hourly_json|safe }}</script>
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/chart.js?v={{ STATIC_V }}"></script>
 <script>
 (function () {
-  // ---- live poll (overlap-guarded; the page never blanks mid-refresh) ------
+  // ---- today by hour (UI.hourChart), profit = revenue − spend per hour -------
+  var H = {}; try { H = JSON.parse(document.getElementById("hourlyData").textContent || "{}"); } catch (e) {}
+  var host = document.getElementById("hourChart"), cur = "spend";
+  function series(day, k) {
+    if (k === "profit") return day.revenue.map(function (r, i) { return r - day.spend[i]; });
+    return day[k] || [];
+  }
+  function draw() {
+    if (!H.today) return;
+    var t = series(H.today, cur), y = series(H.yesterday, cur);
+    if (cur === "profit") { var mn = Math.min.apply(null, t.concat(y)); if (mn < 0) { t = t.map(function (v) { return v - mn; }); y = y.map(function (v) { return v - mn; }); } }
+    UI.hourChart(host, t, y, { hourNow: H.hour_now });
+    host.querySelector("svg").style.height = "132px";
+  }
+  draw();
+  if (H.today && !H.has_hourly) document.getElementById("hourNote").hidden = false;
+  document.querySelectorAll("#hourSeg button").forEach(function (b) { b.addEventListener("click", function () { document.querySelectorAll("#hourSeg button").forEach(function (x) { x.classList.remove("on"); }); b.classList.add("on"); cur = b.dataset.series; draw(); }); });
+
+  // ---- creative preview ------------------------------------------------------------
+  var modal = document.getElementById("vidModal"), player = document.getElementById("vidPlayer");
+  function closeModal() { modal.style.display = "none"; player.pause(); player.removeAttribute("src"); player.load(); }
+  document.addEventListener("click", function (e) { var b = e.target.closest && e.target.closest(".previewBtn"); if (!b) return; e.preventDefault(); document.getElementById("vidTitle").textContent = b.dataset.name || "Preview"; player.src = b.dataset.src; modal.style.display = "flex"; player.play().catch(function () {}); });
+  document.getElementById("vidClose").addEventListener("click", closeModal);
+  modal.addEventListener("click", function (e) { if (e.target === modal) closeModal(); });
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape" && modal.style.display === "flex") closeModal(); });
+
+  // ---- live poll (overlap-guarded; tiles update in place) -------------------------
   var lastId = 0, lastConversions = null, inflight = null;
-  function money(n) { return "$" + Number(Math.abs(n)).toLocaleString("en-US", {minimumFractionDigits: 2, maximumFractionDigits: 2}); }
-  function setVal(id, txt, cls) { var el = document.getElementById(id); el.textContent = txt; if (cls !== undefined) el.className = "val " + cls; }
+  function money(n) { return "$" + Number(Math.abs(n)).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  function money0(n) { var a = Math.abs(n); return (n < 0 ? "−" : "") + "$" + (a >= 100 ? Math.round(a).toLocaleString("en-US") : a.toFixed(2)); }
   function apply(d) {
-    setVal("pfSpend", money(d.spend));
-    setVal("pfRevenue", money(d.revenue), "good");
-    setVal("pfProfit", (d.profit < 0 ? "−" : "") + money(d.profit), d.profit >= 0 ? "good" : "bad");
-    setVal("pfRoas", Number(d.roas).toFixed(2) + "×", d.roas >= 1 ? "good" : (d.roas > 0 ? "bad" : ""));
+    var p = document.getElementById("pfProfit"); p.textContent = (d.profit > 0 ? "+" : "") + money0(d.profit); p.className = d.profit >= 0 ? "good" : "bad";
+    var r = document.getElementById("pfRoas"); r.textContent = Number(d.roas).toFixed(2) + "×"; r.className = d.roas >= 1 ? "good" : (d.roas > 0 ? "bad" : "");
+    document.getElementById("pfSpend").textContent = money(d.spend);
+    document.getElementById("pfRevenue").textContent = money(d.revenue);
     document.getElementById("pfConv").textContent = Number(d.conversions).toLocaleString();
-    document.getElementById("pfClicks").textContent = Number(d.clicks).toLocaleString();
-    document.getElementById("pfCvr").textContent = (d.clicks ? (d.conversions / d.clicks * 100).toFixed(1) : "0.0") + "% CVR";
-    document.getElementById("pfCpa").textContent = d.conversions ? money(d.spend / d.conversions) + " CPA" : "—";
-    document.getElementById("pfSynced").textContent = d.synced_ago;
-    if (d.events && d.events.length) {
-      var feed = document.getElementById("pfFeed");
-      if (feed.querySelector(".empty")) feed.innerHTML = "";
-      d.events.forEach(function (e) {
-        lastId = Math.max(lastId, e.id);
+    if (d.synced_ago) document.getElementById("pfSynced").textContent = d.synced_ago;
+    var feed = document.getElementById("pfFeed"), evs = d.events || [];
+    if (evs.length) {
+      if (feed.querySelector(".muted")) feed.innerHTML = "";
+      evs.forEach(function (ev) {
         var row = document.createElement("div");
-        row.style.cssText = "padding:7px 2px;border-bottom:1px solid var(--border-soft);display:flex;gap:8px;align-items:flex-start;";
-        var icon = { conversion: "💰", launch: "🚀", error: "⚠️" }[e.kind] || "·";
-        var m = document.createElement("span"); m.textContent = e.message; m.style.flex = "1";
-        var t = document.createElement("span"); t.className = "muted mono"; t.style.cssText = "font-size:10.5px;white-space:nowrap;";
-        t.textContent = new Date(e.at).toLocaleTimeString();
-        var i = document.createElement("span"); i.textContent = icon;
-        row.appendChild(i); row.appendChild(m); row.appendChild(t);
-        feed.prepend(row);
+        row.style.cssText = "display:flex;gap:8px;padding:5px 0;border-bottom:1px solid var(--border-soft);";
+        var col = (ev.kind === "error" || ev.level === "err") ? "var(--err)" : (ev.kind === "conversion" ? "var(--ok)" : "var(--accent)");
+        row.innerHTML = '<span style="color:' + col + ';flex:none;">●</span><span style="flex:1;min-width:0;"></span><span class="muted mono" style="flex:none;font-size:10.5px;"></span>';
+        row.children[1].textContent = ev.text || ev.message || ""; row.children[2].textContent = ev.at ? new Date(ev.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+        feed.insertBefore(row, feed.firstChild);
+        if (ev.id > lastId) lastId = ev.id;
       });
-      while (feed.children.length > 100) feed.removeChild(feed.lastChild);   // keep the DOM bounded
+      while (feed.children.length > 40) feed.removeChild(feed.lastChild);
     }
-    if (lastConversions !== null && d.conversions > lastConversions && document.getElementById("pfSound").checked) {
-      document.getElementById("pfDing").play().catch(function () {});
-    }
+    if (lastConversions !== null && d.conversions > lastConversions && document.getElementById("pfSound").checked) { try { document.getElementById("pfDing").play(); } catch (e) {} }
     lastConversions = d.conversions;
+    document.getElementById("pfStatus").textContent = "live";
   }
   function poll() {
-    if (inflight) inflight.abort();
+    if (inflight || document.hidden) return;
     inflight = new AbortController();
-    fetch("/performance/data?last_id=" + lastId, { signal: inflight.signal })
-      .then(function (r) { return r.json(); })
-      .then(function (d) { apply(d); document.getElementById("pfStatus").textContent = "live · " + new Date().toLocaleTimeString(); })
-      .catch(function (err) { if (err.name !== "AbortError") document.getElementById("pfStatus").textContent = "reconnecting…"; });
+    fetch("/performance/data?last_id=" + lastId, { credentials: "same-origin", signal: inflight.signal })
+      .then(function (r) { return r.json(); }).then(apply)
+      .catch(function () { document.getElementById("pfStatus").textContent = "reconnecting…"; })
+      .then(function () { inflight = null; });
   }
-  // poll only while the tab is visible; catch up the moment it comes back
-  function tick() { if (!document.hidden) poll(); }
-  poll(); setInterval(tick, 15000);
+  poll(); setInterval(poll, 15000);
   document.addEventListener("visibilitychange", function () { if (!document.hidden) poll(); });
-
-  // ---- 14-day trend chart --------------------------------------------------
-  var DATA = {{ chart_json | safe }};
-  var METRICS = { revenue: "Revenue", spend: "Spend", profit: "Profit" };
-  var cs = getComputedStyle(document.documentElement);
-  var COLORS = { a: cs.getPropertyValue("--accent").trim() || "#5b5bd6", b: cs.getPropertyValue("--warn").trim() || "#b9770a" };
-  var selA = document.getElementById("chartA"), selB = document.getElementById("chartB");
-  Object.keys(METRICS).forEach(function (k) { selA.add(new Option(METRICS[k], k)); selB.add(new Option(METRICS[k], k)); });
-  selA.value = "revenue"; selB.value = "spend";
-  function draw() {
-    var series = [];
-    if (DATA.series[selA.value]) series.push({ name: METRICS[selA.value], values: DATA.series[selA.value], color: COLORS.a });
-    if (selB.value !== selA.value && DATA.series[selB.value]) series.push({ name: METRICS[selB.value], values: DATA.series[selB.value], color: COLORS.b });
-    AdopsChart(document.getElementById("cmpChart"), { labels: DATA.labels, series: series });
-  }
-  selA.addEventListener("change", draw); selB.addEventListener("change", draw); draw();
 })();
 </script>
 {% endblock %}
