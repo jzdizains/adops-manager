@@ -6,7 +6,7 @@
   <div class="actions">
     <a class="btn" href="/escape-test">↻ Refresh</a>
     {% if rows %}
-    <form method="post" action="/escape-test/clear" onsubmit="return confirm('Clear all test results?');"><button class="btn danger" type="submit">Clear results</button></form>
+    <form method="post" action="/escape-test/clear" data-confirm="Clear all test results?" data-ok-label="Clear" data-danger><button class="btn danger" type="submit">Clear results</button></form>
     {% endif %}
   </div>
 </div>

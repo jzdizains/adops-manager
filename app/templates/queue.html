@@ -5,7 +5,7 @@
     <div class="muted">{% if pending %}{{ pending }} waiting{% else %}Nothing waiting{% endif %}{% if failed_n %} · <span style="color:var(--err);">{{ failed_n }} failed</span>{% endif %} — the background worker launches a few each sweep and retries transient TikTok errors on its own.</div></div>
   <div class="actions">
     {% if failed_n %}
-    <form method="post" action="/queue/retry-failed">
+    <form method="post" action="/queue/retry-failed" data-confirm="Retry all {{ failed_n }} failed launch{{ '' if failed_n == 1 else 'es' }}?" data-confirm-text="Each one goes back into the queue and launches again on the next sweep." data-ok-label="Retry all">
       <button class="btn" type="submit">↻ Retry all failed ({{ failed_n }})</button></form>
     {% endif %}
     {% if pending %}
@@ -44,11 +44,11 @@
             <button class="btn sm" type="submit">↻ Retry</button></form>
           {% endif %}
           {% if i.status in ('pending', 'failed') %}
-          <form method="post" action="/queue/{{ i.id }}/cancel" style="display:inline;">
-            <button class="btn sm danger" type="submit">✕</button></form>
+          <form method="post" action="/queue/{{ i.id }}/cancel" style="display:inline;" data-confirm="Cancel this queued launch?" data-confirm-text="{{ templates.get(i.template_id, '?') }} → {{ names.get(i.advertiser_id, i.advertiser_id) if i.advertiser_id else 'auto-pick' }}. It will not launch." data-ok-label="Cancel launch" data-danger>
+            <button class="btn sm ghost danger" type="submit" title="Cancel">✕</button></form>
           {% endif %}
           {% if i.batch_ref and i.status == 'done' %}
-          <a class="btn sm" href="/campaigns/result/{{ i.batch_ref }}">result</a>
+          <button type="button" class="btn sm q-result" data-ref="{{ i.batch_ref }}">Result</button>
           {% endif %}
         </td>
       </tr>
@@ -61,4 +61,21 @@
     Tick “Launch via background queue” on the <a href="/super-launcher">Super Launcher</a> and launches land here, run a few per sweep, and retry rate limits on their own.</div>
   {% endif %}
 </div>
+<script>
+(function () {
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest(".q-result"); if (!b) return;
+    var d = UI.drawer({ title: "Launch result", sub: b.dataset.ref, body: '<div class="muted">Loading…</div>' });
+    UI.get("/campaigns/result/" + encodeURIComponent(b.dataset.ref)).then(function (r) {
+      if (!r || r.error) { d.body.innerHTML = '<div class="flash err">Could not load.</div>'; return; }
+      d.setTitle(r.template || "Launch result", r.batch_ref + " · <span class='pos'>" + r.ok + " ok</span>" + (r.failed ? " · <span class='neg'>" + r.failed + " failed</span>" : "") + (r.running ? " · still running" : ""));
+      d.body.innerHTML = '<div class="kpis kpis-3" style="margin:0;gap:8px;"><div class="kpi"><div class="lab">Accounts</div><div class="val">' + r.total + '</div></div><div class="kpi"><div class="lab">Launched</div><div class="val good">' + r.ok + '</div></div><div class="kpi"><div class="lab">Failed</div><div class="val' + (r.failed ? " bad" : "") + '">' + r.failed + "</div></div></div>" +
+        '<div><div class="drawer-sec">Per account</div>' + (r.rows.length ? r.rows.map(function (x) {
+          return '<div style="display:flex;gap:8px;align-items:flex-start;font-size:12px;padding:6px 0;border-bottom:1px solid var(--border-soft);"><span class="pill ' + (x.ok ? "ok" : "err") + '" style="flex:none;">' + (x.ok ? "ok" : "failed") + '</span><div style="min-width:0;flex:1;"><b>' + UI.esc(x.account) + "</b>" + (x.ok ? '<div class="muted">' + UI.esc(x.campaign) + "</div>" : '<div class="neg" style="white-space:pre-wrap;">' + UI.esc(x.error) + "</div>") + "</div></div>";
+        }).join("") : '<div class="muted">No accounts finished yet.</div>') + "</div>" +
+        '<div style="display:flex;gap:6px;"><a class="btn sm" href="/campaigns/result/' + encodeURIComponent(r.batch_ref) + '">Full result page</a>' + (r.ok ? '<a class="btn sm" href="/status?state=all&q=' + encodeURIComponent(r.template || "") + '">Campaigns</a>' : "") + "</div>";
+    });
+  });
+})();
+</script>
 {% endblock %}

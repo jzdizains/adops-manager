@@ -4,13 +4,25 @@
   <div><h1>Pixels</h1>
     <div class="muted">Your pixels across all accounts{% if synced_at %} · synced {{ synced_at|ago }}{% endif %}</div></div>
   <div class="actions">
-    <form method="post" action="/pixels/sync">
-      <button class="btn primary" type="submit">↻ Sync pixels</button></form>
+    <form method="post" action="/pixels/sync"><button class="btn" type="submit">↻ Sync pixels</button></form>
+    <button class="btn primary" type="button" id="pxNewBtn">＋ New pixel</button>
   </div>
 </div>
 
+{% if provision_report %}
+<div class="card" id="pxReport">
+  <div class="card-header"><span class="card-title">Last run — “{{ provision_report.name }}”</span><span class="card-meta">{% if provision_report.pixel_id %}pixel {{ provision_report.pixel_id }}{% endif %}</span></div>
+  {% for s in provision_report.steps %}
+  <div class="attn-row">
+    <span class="attn-dot" style="color:var(--{{ 'ok' if s.ok else 'err' }});">●</span>
+    <span style="font-weight:600;">{{ s.step }}</span>
+    <span class="muted" style="font-size:12px;">{{ s.detail }}</span>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
 
-<div class="card">
+<div class="card" style="padding:0;overflow:hidden;">
   {% if rows %}
   <table class="data">
     <thead><tr>
@@ -19,42 +31,34 @@
     <tbody>
     {% for r in rows %}
       {% set p = r.p %}
-      <tr>
+      <tr class="px-row" data-id="{{ p.id }}" data-name="{{ p.pixel_name or '' }}">
         <td>
-          <form method="post" action="/pixels/{{ p.id }}/rename" style="display:flex;gap:4px;align-items:center;">
-            <input type="text" name="pixel_name" value="{{ p.pixel_name or '' }}" placeholder="pixel name"
-                   style="width:170px;font-size:12px;padding:4px 8px;">
-            <button class="btn sm" type="submit" title="Rename on TikTok">💾</button>
-          </form>
-          <div class="mono muted" style="font-size:10px;">{{ p.pixel_id }}</div></td>
+          <div style="display:flex;align-items:center;gap:6px;"><b>{{ p.pixel_name or '(unnamed)' }}</b><button type="button" class="btn sm ghost px-rename" title="Rename on TikTok">✎</button></div>
+          <div class="mono muted" style="font-size:10px;">{{ p.pixel_id }}</div>
+          <form method="post" action="/pixels/{{ p.id }}/rename" hidden><input type="hidden" name="pixel_name" value=""></form>
+        </td>
         <td>
           {% if r.is_bc %}<span class="pill ok">{{ r.owner_label }}</span>
           {% else %}<span class="pill dim">{{ r.owner_label }}</span>{% endif %}
         </td>
         <td class="num" style="white-space:nowrap;">
           {% if r.is_bc %}
-            <form method="post" action="/pixels/{{ p.id }}/link-one" style="display:inline-flex;gap:4px;">
-              <select name="advertiser_id" style="width:170px;font-size:12px;padding:4px 8px;">
-                {% for a in accounts %}{% if a.owner_bc_id == p.owner_bc_id %}
-                  <option value="{{ a.advertiser_id }}">{{ a.advertiser_name or a.advertiser_id }}</option>
-                {% endif %}{% endfor %}
-              </select>
-              <button class="btn sm" type="submit">Link</button>
-            </form>
-            <form method="post" action="/pixels/{{ p.id }}/link-all" style="display:inline;"
-                  onsubmit="return confirm('Link this pixel to all {{ r.bc_account_count }} account(s) in the BC?');">
+            <form method="post" action="/pixels/{{ p.id }}/link-one" hidden><select name="advertiser_id">
+                {% for a in accounts %}{% if a.owner_bc_id == p.owner_bc_id %}<option value="{{ a.advertiser_id }}">{{ a.advertiser_name or a.advertiser_id }}</option>{% endif %}{% endfor %}
+              </select></form>
+            <button type="button" class="btn sm px-link" title="Link this pixel to one account in the BC">Link to account…</button>
+            <form method="post" action="/pixels/{{ p.id }}/link-all" style="display:inline;" data-confirm="Link this pixel to all {{ r.bc_account_count }} account(s) in the BC?" data-ok-label="Link all">
               <button class="btn sm primary" type="submit">⛓ Link all ({{ r.bc_account_count }})</button>
             </form>
           {% elif r.target_bc %}
-            <form method="post" action="/pixels/{{ p.id }}/move-to-bc" style="display:inline;"
-                  onsubmit="return confirm('Move pixel {{ p.pixel_id }} into “{{ r.target_bc.name or r.target_bc.bc_id }}”? TikTok pixel moves into a BC are one-way.');">
+            <form method="post" action="/pixels/{{ p.id }}/move-to-bc" style="display:inline;" data-confirm="Move pixel {{ p.pixel_id }} into “{{ r.target_bc.name or r.target_bc.bc_id }}”?" data-confirm-text="TikTok pixel moves into a Business Center are one-way." data-ok-label="Move">
               <button class="btn sm primary" type="submit">⇪ Move to {{ (r.target_bc.name or r.target_bc.bc_id)[:18] }}</button>
             </form>
           {% else %}
             <span class="muted" style="font-size:12px;">owner account has no BC — sync accounts</span>
           {% endif %}
-          <form method="post" action="/pixels/{{ p.id }}/delete" style="display:inline;">
-            <button class="btn sm danger" type="submit" title="Remove from this list only">✕</button>
+          <form method="post" action="/pixels/{{ p.id }}/delete" style="display:inline;" data-confirm="Remove “{{ p.pixel_name or p.pixel_id }}” from this list?" data-confirm-text="Only this list — the pixel itself stays on TikTok. A sync brings it back." data-ok-label="Remove" data-danger>
+            <button class="btn sm ghost danger" type="submit" title="Remove from this list only">✕</button>
           </form>
         </td>
       </tr>
@@ -62,53 +66,55 @@
     </tbody>
   </table>
   {% else %}
-  <div class="empty">No pixels yet — hit <strong>↻ Sync pixels</strong> to pull them from your
-    accounts, or create one below.</div>
+  <div class="empty"><div class="empty-title">No pixels yet</div>Hit <b>↻ Sync pixels</b> to pull them from your accounts, or <b>＋ New pixel</b> to create one.</div>
   {% endif %}
 </div>
 
-<details class="card" {% if provision_report %}open{% endif %}>
-  <summary style="cursor:pointer;font-weight:700;font-size:14px;">＋ Create a new pixel</summary>
-  <form method="post" action="/pixels/provision" style="margin-top:14px;">
-    <div class="form-row-3">
-      <label class="field"><span class="field-label">Pixel name</span>
-        <input type="text" name="pixel_name" required placeholder="Main purchase pixel"></label>
+<div id="pxNewBox" hidden>
+  <form method="post" action="/pixels/provision" id="pxNewForm">
+    <label class="field"><span class="field-label">Pixel name</span>
+      <input type="text" name="pixel_name" required placeholder="Main purchase pixel" autocomplete="off"></label>
+    <div class="form-row">
       <label class="field"><span class="field-label">Create on account</span>
         <select name="advertiser_id" required>
-          {% for a in accounts %}
-            <option value="{{ a.advertiser_id }}">{{ a.advertiser_name or a.advertiser_id }}</option>
-          {% endfor %}
+          {% for a in accounts %}<option value="{{ a.advertiser_id }}">{{ a.advertiser_name or a.advertiser_id }}</option>{% endfor %}
         </select></label>
       <label class="field"><span class="field-label">Event</span>
         <select name="event_type">
-          {% for ev, label in pixel_events %}
-            <option value="{{ ev }}">{{ label }} ({{ ev }})</option>
-          {% endfor %}
+          {% for ev, label in pixel_events %}<option value="{{ ev }}">{{ label }} ({{ ev }})</option>{% endfor %}
         </select></label>
     </div>
-    <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;">
-      <button class="btn primary" type="submit">Create pixel</button>
-      <label style="display:flex;align-items:center;gap:8px;font-weight:600;font-size:13px;cursor:pointer;">
-        <input type="checkbox" name="do_share" checked style="width:auto;">
-        Move to BC + link to all its accounts after creating
-      </label>
-      <input type="hidden" name="event_name" value="">
-    </div>
+    <label class="sw"><input type="checkbox" name="do_share" checked><span class="tog"></span><span><b>Move to the Business Center and link to all its accounts</b><span class="muted" style="display:block;font-size:11.5px;">Runs right after creating, so every account in the BC can use it.</span></span></label>
+    <input type="hidden" name="event_name" value="">
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary" type="submit">Create pixel</button></div>
   </form>
-
-  {% if provision_report %}
-  <div style="margin-top:14px;border-top:1px solid var(--border-soft);padding-top:12px;">
-    <div class="stat-label" style="font-size:12px;font-weight:600;color:var(--text-dim);margin-bottom:6px;">
-      Last run — “{{ provision_report.name }}”{% if provision_report.pixel_id %} · pixel {{ provision_report.pixel_id }}{% endif %}
-    </div>
-    {% for s in provision_report.steps %}
-    <div class="attn-row">
-      <span class="attn-dot" style="color:var(--{{ 'ok' if s.ok else 'err' }});">●</span>
-      <span style="font-weight:600;">{{ s.step }}</span>
-      <span class="muted" style="font-size:12px;">{{ s.detail }}</span>
-    </div>
-    {% endfor %}
-  </div>
-  {% endif %}
-</details>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  var box = document.getElementById("pxNewBox"), btn = document.getElementById("pxNewBtn");
+  btn.addEventListener("click", function () {
+    var node = box.firstElementChild; box.hidden = false;
+    UI.modal({ title: "Create a new pixel", body: node, onClose: function () { box.appendChild(node); box.hidden = true; } });
+  });
+  if (/[?&]new=1/.test(location.search)) btn.click();
+  document.addEventListener("click", function (e) {
+    var rn = e.target.closest(".px-rename");
+    if (rn) {
+      var row = rn.closest("tr"), f = row.querySelector('form[action$="/rename"]');
+      var p = UI.popover(rn, '<div style="font-weight:700;margin-bottom:6px;">Rename on TikTok</div><div style="display:flex;gap:6px;"><input type="text" value="' + UI.esc(row.dataset.name) + '" placeholder="pixel name" style="flex:1;"><button type="button" class="btn sm primary">Save</button></div>');
+      function go() { var v = p.querySelector("input").value.trim(); if (!v) return; f.pixel_name.value = v; f.submit(); }
+      p.querySelector(".primary").addEventListener("click", go); p.querySelector("input").addEventListener("keydown", function (ev) { if (ev.key === "Enter") { ev.preventDefault(); go(); } });
+      return;
+    }
+    var lk = e.target.closest(".px-link");
+    if (lk) {
+      var row2 = lk.closest("tr"), f2 = row2.querySelector('form[action$="/link-one"]'), sel = f2.querySelector("select");
+      var p2 = UI.popover(lk, '<div style="font-weight:700;margin-bottom:6px;">Link to one account</div><div style="display:flex;gap:6px;"><select style="flex:1;">' + sel.innerHTML + '</select><button type="button" class="btn sm primary">Link</button></div><div class="hint" style="margin-top:6px;">Accounts in the same Business Center as the pixel.</div>', { alignRight: true });
+      p2.querySelector(".primary").addEventListener("click", function () { sel.value = p2.querySelector("select").value; f2.submit(); });
+    }
+  });
+})();
+</script>
 {% endblock %}

@@ -163,14 +163,14 @@
     <tbody>
     {% for cz in carousels %}
       {% set camp = camp_by_id.get(cz.used_campaign_id) if cz.used_campaign_id else none %}
-      <tr id="cz{{ cz.id }}">
+      <tr id="cz{{ cz.id }}" class="cz-row" data-cid="{{ cz.id }}" data-name="{{ cz.name }}" data-slides="{{ slide_map.get(cz.id, [])|join(',') }}">
         <td style="font-weight:600;">{{ cz.name }}<div class="muted" style="font-size:10.5px;">{{ slide_map.get(cz.id, [])|length }} slides{% if cz.source %} · <span class="mono">{{ cz.source }}</span>{% endif %}</div></td>
-        <td><div class="cz-mini">{% for iid in slide_map.get(cz.id, [])[:8] %}<img src="/creatives/{{ iid }}/thumb" alt="" loading="lazy" decoding="async">{% endfor %}{% if slide_map.get(cz.id, [])|length > 8 %}<span class="muted">+{{ slide_map.get(cz.id, [])|length - 8 }}</span>{% endif %}</div></td>
+        <td><div class="cz-mini">{% for iid in slide_map.get(cz.id, [])[:6] %}<img src="/creatives/{{ iid }}/thumb" alt="" loading="lazy" decoding="async" data-k="{{ loop.index0 }}" title="Slide {{ loop.index }}{% if loop.first %} · cover{% endif %} — click to view full size">{% endfor %}{% if slide_map.get(cz.id, [])|length > 6 %}<button type="button" class="cz-more" data-k="6" title="View all slides">+{{ slide_map.get(cz.id, [])|length - 6 }}</button>{% endif %}</div></td>
         <td style="font-size:12px;">🎵 {{ cz.music_name or cz.music_id }}{% if cz.music_author %}<div class="muted" style="font-size:10.5px;">{{ cz.music_author }}</div>{% endif %}</td>
         <td>{% if cz.status == 'available' %}<span class="pill ok">Available</span>{% else %}<span class="pill dim">Launched</span>{% endif %}</td>
         <td class="muted" style="font-size:12px;">
           {% if cz.used_campaign_id %}
-            <a href="/campaigns/?state=all&q={{ (camp.campaign_name if camp else cz.used_campaign_id)|urlencode }}" style="color:inherit;font-weight:600;">{{ (camp.campaign_name if camp else cz.used_campaign_id)[:30] }}</a>
+            <a href="/status?state=all&q={{ (camp.campaign_name if camp else cz.used_campaign_id)|urlencode }}" style="color:inherit;font-weight:600;">{{ (camp.campaign_name if camp else cz.used_campaign_id)[:30] }}</a>
             <div style="font-size:11px;">{{ accounts.get(cz.used_advertiser_id, cz.used_advertiser_id)[:26] }}</div>
           {% else %}—{% endif %}
         </td>
@@ -327,7 +327,7 @@
     <div class="seg" id="imgSize" title="Thumbnail size"><button type="button" data-s="s">Small</button><button type="button" data-s="m" class="on">Medium</button><button type="button" data-s="l">Large</button></div>
     <label class="img-details-toggle"><input type="checkbox" id="imgDetails" style="width:auto;"> details</label>
   </div>
-  <form method="post" action="/creatives/images/bulk-delete" id="imgBulk" class="img-bulk" hidden onsubmit="return confirm('Delete the selected images for good? Images that are slides in a carousel are kept — delete the carousel first. Launched images can go (TikTok keeps its copy).');">
+  <form method="post" action="/creatives/images/bulk-delete" id="imgBulk" class="img-bulk" hidden data-confirm="Delete the selected images for good?" data-confirm-text="Images that are slides in a carousel are kept — delete the carousel first. Launched images can go (TikTok keeps its copy)." data-ok-label="Delete" data-danger>
     <span id="imgSelCount">0 selected</span>
     <button type="button" class="btn sm" id="imgSelAll">Select all shown</button>
     <button type="button" class="btn sm" id="imgSelNone">Clear</button>
@@ -355,7 +355,7 @@
           {% if nb_configured %}<button type="button" class="aiEditBtn" data-id="{{ r.id }}" data-name="{{ r.name }}" data-src="/creatives/{{ r.id }}/thumb" title="Edit with AI">✨</button>{% endif %}
           {% endif %}
           {% if r.status in ('available', 'error') %}
-          <form method="post" action="/creatives/{{ r.id }}/delete" style="display:inline;" onsubmit="return confirm('Delete this image?');"><button type="submit" class="del" title="Delete">✕</button></form>
+          <form method="post" action="/creatives/{{ r.id }}/delete" style="display:inline;" data-confirm="Delete “{{ r.name }}”?" data-confirm-text="The file is removed for good." data-ok-label="Delete" data-danger><button type="submit" class="del" title="Delete">✕</button></form>
           {% endif %}
         </div>
       </div>

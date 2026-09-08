@@ -93,7 +93,7 @@ def audience_page(request: Request, db: Session = Depends(get_db)):
     sections = []
     for key, title in SECTIONS:
         rows = aud.breakdown(db, key, s, e, ids, camp, regions)
-        sections.append({"key": key, "title": title, "rows": rows[:40], "n": len(rows),
+        sections.append({"key": key, "title": title, "rows": rows, "n": len(rows),
                          "spend": sum(r["spend"] for r in rows)})
     # the heatmap covers the same days; for ranges ending yesterday it still
     # adds today's hours (they are near real-time, unlike the breakdowns)

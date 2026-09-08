@@ -21,6 +21,8 @@
   // ---- filter / search / BC chips ------------------------------------------------------------
   var f = "", bcs = {}, search = $("#acSearch"), shown = $("#acShown");
   try { bcs = JSON.parse(localStorage.getItem("adops-acc-bcs") || "{}"); } catch (e) { bcs = {}; }
+  var wantBc = new URLSearchParams(location.search).get("bc");   // arrived from Home → only that Business Center
+  if (wantBc != null && $('#acBcChips .chip[data-bc="' + wantBc + '"]')) { bcs = {}; bcs[wantBc] = true; }
   function anyBc() { return Object.keys(bcs).some(function (k) { return bcs[k]; }); }
   function apply() {
     var q = search.value.trim().toLowerCase(), n = 0;

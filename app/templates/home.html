@@ -72,7 +72,7 @@
       {% if attention %}{% for it in attention %}
       <div class="inbox-row lvl-{{ it.level }}" style="padding:8px 16px;">
         <span class="inbox-dot"></span>
-        <div class="inbox-body"><div class="inbox-title">{{ it.title }}{% if it.where %} <span class="muted">· {{ it.where }}</span>{% endif %}</div><div class="inbox-msg" style="font-size:12px;">{{ it.message[:110] }}</div></div>
+        <div class="inbox-body"><div class="inbox-title">{{ it.title }}{% if it.where %} <span class="muted">· {{ it.where }}</span>{% endif %}</div><div class="inbox-msg clip" style="font-size:12px;" title="{{ it.message }}">{{ it.message }}</div></div>
         <div class="inbox-acts">{% if it.href %}<a class="btn sm" href="{{ it.href }}" {% if it.external %}target="_blank" rel="noopener"{% endif %}>{{ 'Open ↗' if it.external else 'View' }}</a>{% endif %}</div>
       </div>
       {% endfor %}{% else %}<div class="empty" style="padding:22px;">All clear.</div>{% endif %}
@@ -82,7 +82,7 @@
       <div class="card-header" style="padding:14px 16px 8px;margin:0;"><span class="card-title">Business Centers</span><span class="card-meta">{{ bc_rows|length }} · {{ n_accounts }} accounts · <span class="pos">{{ acct_counts.fresh }} fresh</span>{% if acct_counts.blocked %} · <span class="neg">{{ acct_counts.blocked }} blocked</span>{% endif %}</span></div>
       {% if bc_rows %}
       {% for b in bc_rows %}
-      <a href="/accounts?bc={{ b.bc.bc_id }}" style="display:flex;align-items:center;gap:10px;padding:9px 16px;border-bottom:1px solid var(--border-soft);color:inherit;text-decoration:none;font-size:12.5px;">
+      <a href="/accounts?bc={{ b.bc.bc_id }}" class="bc-open" data-bc="{{ b.bc.bc_id }}" style="display:flex;align-items:center;gap:10px;padding:9px 16px;border-bottom:1px solid var(--border-soft);color:inherit;text-decoration:none;font-size:12.5px;">
         <div style="flex:1;min-width:0;"><div style="font-weight:600;">{{ b.bc.name or b.bc.bc_id }}</div><div class="muted" style="font-size:11px;">{{ b.n }} accounts · {{ b.fresh }} fresh · {{ b.live }} live{% if b.blocked %} · <span class="neg">{{ b.blocked }} blocked</span>{% endif %}</div></div>
         <div style="text-align:right;"><div style="font-weight:700;{{ 'color:var(--err);' if b.low }}">{{ b.bc.currency or '$' }} {{ "%.0f"|format(b.bc.balance or 0) }}</div><div class="muted" style="font-size:10.5px;">balance</div></div>
         <div style="text-align:right;width:70px;"><span class="profit-cell {{ 'pos' if b.profit >= 0 else 'neg' }}">{% if b.spend or b.revenue %}{{ '+' if b.profit > 0 }}{{ money0(b.profit) }}{% else %}—{% endif %}</span><div class="muted" style="font-size:10.5px;">today</div></div>
@@ -129,6 +129,25 @@
   draw();
   if (H.today && !H.has_hourly) document.getElementById("hourNote").hidden = false;
   document.querySelectorAll("#hourSeg button").forEach(function (b) { b.addEventListener("click", function () { document.querySelectorAll("#hourSeg button").forEach(function (x) { x.classList.remove("on"); }); b.classList.add("on"); cur = b.dataset.series; draw(); }); });
+
+  // ---- Business Center drawer: its accounts without leaving Home ------------------
+  document.addEventListener("click", function (e) {
+    var a = e.target.closest && e.target.closest(".bc-open"); if (!a) return; e.preventDefault();
+    var d = UI.drawer({ title: "…", sub: "", body: '<div class="muted">Loading…</div>' });
+    UI.get("/accounts/bc/" + encodeURIComponent(a.dataset.bc) + "/detail").then(function (r) {
+      if (r.error) { d.body.innerHTML = '<div class="flash err">' + UI.esc(r.error) + "</div>"; return; }
+      var st = { fresh: "ok", used: "dim", active: "warn", cooldown: "err", blocked: "err" }, lb = { fresh: "fresh", used: "used", active: "live", cooldown: "cooling", blocked: "blocked" };
+      var profit = r.revenue - r.spend;
+      d.setTitle(r.name, r.n + " accounts · <span class='pos'>" + r.fresh + " fresh</span> · " + r.live + " live" + (r.blocked ? " · <span class='neg'>" + r.blocked + " blocked</span>" : "") + (r.block ? " · <span class='pill err'>" + UI.esc(r.block) + "</span>" : ""));
+      d.body.innerHTML = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+        '<div class="kpi"><div class="lab">Balance</div><div class="val' + (r.balance != null && r.balance < r.threshold ? " bad" : "") + '">' + (r.balance == null ? "—" : UI.esc(r.currency) + " " + Math.round(r.balance)) + '</div><div class="sub">' + (r.threshold ? "top-up below " + UI.money(r.threshold, 0) : "no threshold") + "</div></div>" +
+        '<div class="kpi"><div class="lab">Today</div><div class="val ' + (profit >= 0 ? "good" : "bad") + '">' + (r.spend || r.revenue ? (profit > 0 ? "+" : "") + UI.money(profit, 0) : "—") + '</div><div class="sub">' + UI.money(r.spend, 0) + " spend · " + UI.money(r.revenue, 0) + " revenue</div></div></div>" +
+        '<div><div class="drawer-sec">Accounts · best → worst</div>' + (r.rows.length ? r.rows.map(function (x) {
+          return '<div style="display:flex;align-items:center;gap:8px;font-size:12px;padding:5px 0;border-bottom:1px solid var(--border-soft);' + (x.enabled ? "" : "opacity:.55;") + '"><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><a href="/accounts?open=' + encodeURIComponent(x.id) + '" style="color:inherit;font-weight:600;">' + UI.esc(x.name) + "</a>" + (x.active ? ' <span class="muted">· ' + x.active + " live</span>" : "") + '</span><span class="pill ' + (st[x.state] || "dim") + '" style="flex:none;">' + (lb[x.state] || x.state) + '</span><span style="flex:none;width:64px;text-align:right;" class="profit-cell ' + (x.profit >= 0 ? "pos" : "neg") + '">' + (x.spend || x.revenue ? (x.profit > 0 ? "+" : "") + UI.money(x.profit, 0) : "—") + "</span></div>";
+        }).join("") : '<div class="muted">No accounts in this Business Center.</div>') + "</div>" +
+        '<div style="display:flex;gap:6px;flex-wrap:wrap;">' + (r.fresh ? '<a class="btn sm primary" href="/super-launcher?bc=' + encodeURIComponent(r.name) + '&state=fresh">🚀 Launch to ' + r.fresh + ' fresh</a>' : "") + '<a class="btn sm" href="/accounts?bc=' + encodeURIComponent(r.bc_id) + '">Open in Accounts</a>' + (r.portal ? '<a class="btn sm ghost" href="' + UI.esc(r.portal) + '" target="_blank" rel="noopener">Business Center ↗</a>' : "") + "</div>";
+    });
+  });
 
   // ---- creative preview ------------------------------------------------------------
   var modal = document.getElementById("vidModal"), player = document.getElementById("vidPlayer");

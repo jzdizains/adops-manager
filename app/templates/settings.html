@@ -304,10 +304,10 @@
       {% if sec.enabled %}
       <div style="margin-top:6px;"><span class="pill ok">On</span> <span class="muted" style="font-size:12px;">since {{ sec.enabled_at[:16].replace('T', ' ') }} UTC · {{ sec.recovery_left }} recovery code(s) left</span></div>
       <details style="margin-top:10px;"><summary class="muted" style="cursor:pointer;font-size:12.5px;">Reset — e.g. new phone (needs your password and a current code; you'll set it up again at once, 2FA is required)</summary>
-        <form method="post" action="/settings/2fa/disable" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;" autocomplete="off">
+        <form method="post" action="/settings/2fa/disable" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;" autocomplete="off" data-confirm="Reset two-factor authentication?" data-confirm-text="You will be asked to set it up again immediately." data-ok-label="Reset 2FA" data-danger>
           <input type="password" name="password" placeholder="password" style="width:150px;" autocomplete="current-password">
           <input type="text" name="code" placeholder="code" inputmode="numeric" style="width:110px;">
-          <button class="btn danger sm" type="submit" onclick="return confirm('Reset two-factor authentication? You will be asked to set it up again immediately.');">Reset 2FA</button>
+          <button class="btn danger sm" type="submit">Reset 2FA</button>
         </form></details>
       {% elif sec.pending_secret %}
       <div class="hint" style="margin-top:6px;">1. In Google Authenticator, 1Password, Authy or similar, add an account{% if sec.pending_qr %} by scanning this code{% else %} by <b>entering the setup key manually</b>{% endif %}. 2. Type the 6-digit code it shows to confirm.</div>
@@ -361,27 +361,27 @@
         <td style="font-size:11.5px;">{% if u.last_seen_at %}<div class="mono">{{ u.last_seen_at.strftime('%b %d %H:%M') }} UTC</div><div class="muted">{{ u.last_ip }}{% if sec.user_where.get(u.id) %} · {{ sec.user_where[u.id] }}{% endif %}</div><div class="muted">{{ sec.ua.parse(u.last_ua or "").summary }}</div>{% else %}<span class="muted">—</span>{% endif %}</td>
         <td class="num" style="white-space:nowrap;">
           {% if u.id != sec.me.id %}
-          <details style="display:inline-block;text-align:left;"><summary class="btn sm" style="display:inline-flex;list-style:none;cursor:pointer;">Manage ▾</summary>
-            <div style="position:absolute;right:0;z-index:5;background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:10px;box-shadow:var(--shadow);display:grid;gap:6px;min-width:260px;margin-top:4px;">
-              <form method="post" action="/settings/users/{{ u.id }}/password" style="display:flex;gap:6px;" autocomplete="off">
-                <input type="password" name="password" placeholder="new password ({{ sec.min_password }}+)" minlength="{{ sec.min_password }}" required style="font-size:12px;">
-                <button class="btn sm" type="submit">Set</button></form>
-              <form method="post" action="/settings/users/{{ u.id }}/toggle"><button class="btn sm" type="submit" style="width:100%;">{{ 'Reactivate' if not u.active else 'Deactivate (signs them out)' }}</button></form>
-              {% if u.totp_secret %}<form method="post" action="/settings/users/{{ u.id }}/2fa-reset"><button class="btn sm" type="submit" style="width:100%;" onclick="return confirm('Clear 2FA for {{ u.email }}? They log in with the password only until they set it up again.');">Reset 2FA (lost phone)</button></form>{% endif %}
-              <form method="post" action="/settings/users/{{ u.id }}/delete"><button class="btn sm danger" type="submit" style="width:100%;" onclick="return confirm('Delete {{ u.email }}? This cannot be undone.');">Delete user</button></form>
-            </div></details>
+          <form method="post" action="/settings/users/{{ u.id }}/password" hidden autocomplete="off"><input type="hidden" name="password" value=""></form>
+          <form method="post" action="/settings/users/{{ u.id }}/toggle" hidden></form>
+          {% if u.totp_secret %}<form method="post" action="/settings/users/{{ u.id }}/2fa-reset" hidden></form>{% endif %}
+          <form method="post" action="/settings/users/{{ u.id }}/delete" hidden></form>
+          <button type="button" class="btn sm us-menu" data-id="{{ u.id }}" data-email="{{ u.email }}" data-active="{{ '1' if u.active else '' }}" data-2fa="{{ '1' if u.totp_secret else '' }}">Manage ▾</button>
           {% endif %}
         </td>
       </tr>
     {% endfor %}
     </tbody>
   </table>
-  <form method="post" action="/settings/users/create" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:12px;" autocomplete="off">
-    <input type="email" name="email" placeholder="new user's email" required style="width:240px;">
-    <input type="password" name="password" placeholder="temporary password ({{ sec.min_password }}+ characters)" minlength="{{ sec.min_password }}" required style="width:260px;" autocomplete="new-password">
-    <button class="btn primary sm" type="submit">Add user</button>
-  </form>
-  <div class="hint" style="margin-top:6px;">Tell them the email and temporary password out of band; they must choose their own password at first login and can turn on 2FA in their own account card. Members use everything else in the app but never see this card. Nobody outside this list can log in.</div>
+  <div style="display:flex;gap:10px;align-items:center;margin-top:12px;"><button type="button" class="btn primary sm" id="usAddBtn">＋ Add user</button>
+    <span class="hint" style="margin:0;">Members use everything else in the app but never see this card. Nobody outside this list can log in.</span></div>
+  <div id="usAddBox" hidden>
+    <form method="post" action="/settings/users/create" autocomplete="off">
+      <label class="field"><span class="field-label">Email</span><input type="email" name="email" placeholder="name@company.com" required autocomplete="off"></label>
+      <label class="field"><span class="field-label">Temporary password <span class="muted">· {{ sec.min_password }}+ characters</span></span><input type="password" name="password" minlength="{{ sec.min_password }}" required autocomplete="new-password"></label>
+      <div class="hint">Tell them the email and temporary password out of band; they must choose their own password at first login and can turn on 2FA in their own account card.</div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary" type="submit">Add user</button></div>
+    </form>
+  </div>
 </div>
 
 </section>
@@ -441,7 +441,7 @@
     </div>
     <div style="display:flex;gap:8px;align-items:center;">
       <button class="btn primary" type="submit">Upload font files</button>
-      {% if classic_font.semibold or classic_font.regular or classic_font.bold %}<button class="btn" type="submit" name="remove" value="1" onclick="return confirm('Remove the uploaded custom font files?');">Remove</button>{% endif %}
+      {% if classic_font.semibold or classic_font.regular or classic_font.bold %}<button class="btn" type="submit" name="remove" value="1" id="fontRemove">Remove</button>{% endif %}
     </div>
   </form>
 </div>
@@ -500,6 +500,32 @@
   links.forEach(function (a) { a.addEventListener("click", function () { try { sessionStorage.setItem("adops-settab", a.dataset.tab); } catch (e) {} }); });
   window.addEventListener("hashchange", fromHash);
   fromHash();
+
+  // ---- users: Manage ▾ popover + Add user pop-up ----
+  var usAdd = document.getElementById("usAddBtn"), usBox = document.getElementById("usAddBox");
+  if (usAdd) usAdd.addEventListener("click", function () { var node = usBox.firstElementChild; usBox.hidden = false; UI.modal({ title: "Add a user", body: node, onClose: function () { usBox.appendChild(node); usBox.hidden = true; } }); });
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest(".us-menu"); if (!b) return;
+    var td = b.closest("td"), d = b.dataset, f = function (suffix) { return td.querySelector('form[action$="/' + suffix + '"]'); };
+    var html = '<div style="font-weight:700;margin-bottom:8px;">' + UI.esc(d.email) + '</div>' +
+      '<div style="display:flex;gap:6px;margin-bottom:8px;"><input type="password" placeholder="new password ({{ sec.min_password }}+)" style="flex:1;font-size:12px;" autocomplete="new-password"><button type="button" class="btn sm" data-act="password">Set</button></div>' +
+      '<div style="display:grid;gap:4px;">' +
+      '<button type="button" class="btn sm" data-act="toggle">' + (d.active ? "Deactivate (signs them out)" : "Reactivate") + '</button>' +
+      (d["2fa"] ? '<button type="button" class="btn sm" data-act="2fa-reset">Reset 2FA (lost phone)</button>' : "") +
+      '<button type="button" class="btn sm ghost danger" data-act="delete">Delete user</button></div>';
+    var p = UI.popover(b, html, { alignRight: true });
+    p.addEventListener("click", function (ev) {
+      var a = ev.target.closest("[data-act]"); if (!a) return;
+      var act = a.dataset.act;
+      if (act === "password") { var v = p.querySelector("input").value; if (v.length < {{ sec.min_password }}) { adopsToast && adopsToast("err", "Password needs {{ sec.min_password }}+ characters."); return; } f("password").password.value = v; f("password").submit(); return; }
+      if (act === "toggle") { f("toggle").submit(); return; }
+      p.close();
+      if (act === "2fa-reset") UI.confirm({ title: "Clear 2FA for " + d.email + "?", text: "They log in with the password only until they set it up again.", ok: "Reset 2FA" }).then(function (y) { if (y) f("2fa-reset").submit(); });
+      if (act === "delete") UI.confirm({ title: "Delete " + d.email + "?", text: "This cannot be undone.", ok: "Delete", danger: true }).then(function (y) { if (y) f("delete").submit(); });
+    });
+  });
+  var fr = document.getElementById("fontRemove");
+  if (fr) fr.addEventListener("click", function (e) { if (fr.dataset.ok) return; e.preventDefault(); UI.confirm({ title: "Remove the uploaded custom font files?", ok: "Remove", danger: true }).then(function (y) { if (y) { fr.dataset.ok = "1"; fr.click(); } }); });
 })();
 </script>
 {% endblock %}

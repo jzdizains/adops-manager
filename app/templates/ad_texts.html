@@ -5,22 +5,19 @@
     <h1>Ad Texts</h1>
     <div class="muted">{{ available }} available · {{ rows|length - available }} used — each text goes on exactly one campaign's ads.</div>
   </div>
+  <div class="actions"><button type="button" class="btn primary" id="atAddBtn">＋ Add texts</button></div>
 </div>
 
-
-<div class="card" style="margin-bottom:14px;">
-  <div class="card-header"><span class="card-title">Add texts</span>
-    <span class="card-meta">one per line · max {{ max_len }} characters (TikTok limit)</span></div>
-  <form method="post" action="/ad-texts/add" style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start;">
-    <label class="field" style="flex:1;min-width:300px;">
-      <textarea name="texts" rows="5" required
-                placeholder="This deal ends tonight — don't miss out 👀&#10;I wish I knew about this sooner…&#10;…"></textarea>
-      <span class="hint">Duplicates are skipped automatically; longer lines are trimmed to {{ max_len }} characters.</span></label>
-    <button class="btn primary" type="submit" style="align-self:center;">＋ Add</button>
+<div id="atAddBox" hidden>
+  <form method="post" action="/ad-texts/add" id="atAddForm">
+    <label class="field"><span class="field-label">One text per line <span class="muted">· max {{ max_len }} characters each (TikTok limit)</span></span>
+      <textarea name="texts" rows="7" required style="font-family:var(--font-sans);font-size:13px;" placeholder="This deal ends tonight — don't miss out 👀&#10;I wish I knew about this sooner…&#10;…"></textarea></label>
+    <div class="hint" id="atAddHint">Duplicates are skipped automatically; longer lines are trimmed to {{ max_len }} characters.</div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary" type="submit" id="atAddGo">＋ Add</button></div>
   </form>
 </div>
 
-<div class="card">
+<div class="card" style="padding:0;overflow:hidden;">
   {% if rows %}
   <table class="data">
     <thead><tr>
@@ -28,12 +25,8 @@
     </tr></thead>
     <tbody>
     {% for r in rows %}
-      <tr>
-        <td>
-          <form id="txf{{ r.id }}" method="post" action="/ad-texts/{{ r.id }}/update"></form>
-          <input form="txf{{ r.id }}" type="text" name="text" value="{{ r.text }}" maxlength="{{ max_len }}"
-                 style="width:100%;min-width:320px;" {{ 'readonly' if r.status == 'used' }}>
-        </td>
+      <tr class="at-row" data-id="{{ r.id }}" data-text="{{ r.text }}">
+        <td style="max-width:640px;"><span class="clip" title="{{ r.text }}">{{ r.text }}</span></td>
         <td>
           {% if r.status == 'available' %}<span class="pill ok">Available</span>
           {% else %}<span class="pill dim">Used</span>{% endif %}
@@ -46,10 +39,10 @@
         </td>
         <td class="num" style="white-space:nowrap;">
           {% if r.status == 'available' %}
-          <button form="txf{{ r.id }}" class="btn sm" type="submit">Save</button>
-          <form method="post" action="/ad-texts/{{ r.id }}/delete" style="display:inline;"
-                onsubmit="return confirm('Delete this text?');">
-            <button class="btn sm danger" type="submit">✕</button>
+          <form method="post" action="/ad-texts/{{ r.id }}/update" hidden><input type="hidden" name="text" value=""></form>
+          <button type="button" class="btn sm at-edit">✎ Edit</button>
+          <form method="post" action="/ad-texts/{{ r.id }}/delete" style="display:inline;" data-confirm="Delete this text?" data-confirm-text="“{{ r.text[:90] }}{% if r.text|length > 90 %}…{% endif %}”" data-ok-label="Delete" data-danger>
+            <button class="btn sm ghost danger" type="submit">✕</button>
           </form>
           {% endif %}
         </td>
@@ -58,7 +51,34 @@
     </tbody>
   </table>
   {% else %}
-  <div class="empty"><div class="empty-title">No ad texts yet</div>Paste a list above — one line per text. Presets set to “Unique text per launch” pull the next available one, so every campaign gets its own copy.</div>
+  <div class="empty"><div class="empty-title">No ad texts yet</div>Hit <b>＋ Add texts</b> and paste a list — one line per text. Presets set to “Unique text per launch” pull the next available one, so every campaign gets its own copy.</div>
   {% endif %}
 </div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  var MAX = {{ max_len }};
+  var box = document.getElementById("atAddBox"), btn = document.getElementById("atAddBtn");
+  btn.addEventListener("click", function () {
+    var node = box.firstElementChild; box.hidden = false;
+    UI.modal({ title: "Add ad texts", body: node, onClose: function () { box.appendChild(node); box.hidden = true; } });
+  });
+  var ta = document.querySelector("#atAddForm textarea"), hint = document.getElementById("atAddHint"), go = document.getElementById("atAddGo");
+  ta.addEventListener("input", function () {
+    var lines = ta.value.split("\n").map(function (l) { return l.trim(); }).filter(Boolean), long = lines.filter(function (l) { return l.length > MAX; }).length;
+    hint.textContent = lines.length ? lines.length + " text" + (lines.length === 1 ? "" : "s") + (long ? " · " + long + " over " + MAX + " characters (will be trimmed)" : "") : "Duplicates are skipped automatically; longer lines are trimmed to " + MAX + " characters.";
+    go.textContent = lines.length ? "＋ Add " + lines.length : "＋ Add";
+  });
+  if (/[?&]new=1/.test(location.search)) btn.click();
+  document.addEventListener("click", function (e) {
+    var ed = e.target.closest(".at-edit"); if (!ed) return;
+    var row = ed.closest("tr"), f = row.querySelector('form[action$="/update"]');
+    var p = UI.popover(ed, '<div style="font-weight:700;margin-bottom:6px;">Edit text</div><textarea rows="4" maxlength="' + MAX + '" style="width:min(420px,80vw);font-family:var(--font-sans);font-size:13px;"></textarea><div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;"><span class="muted" data-n style="font-size:11.5px;"></span><button type="button" class="btn sm primary">Save</button></div>', { alignRight: true });
+    var t = p.querySelector("textarea"), n = p.querySelector("[data-n]"); t.value = row.dataset.text;
+    function cnt() { n.textContent = t.value.length + " / " + MAX; } t.addEventListener("input", cnt); cnt();
+    p.querySelector(".primary").addEventListener("click", function () { var v = t.value.trim(); if (!v) return; f.text.value = v; f.submit(); });
+  });
+})();
+</script>
 {% endblock %}

@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import case, func
 
@@ -173,6 +173,27 @@ def _account_facts(db: Session, accounts: list, ctx: dict) -> dict:
                                   "roas": (rv / spend) if spend else 0.0, "last": last_launch.get(a.advertiser_id),
                                   "state": info["state"], "reason": info.get("reason", "")}
     return facts
+
+
+@router.get("/accounts/bc/{bc_id}/detail")
+def bc_detail(bc_id: str, db: Session = Depends(get_db)):
+    """One Business Center for the Home drawer: its accounts with state, spend, profit — no page change."""
+    from . import super_launcher as sl
+    from .. import balances as bal_mod
+    b = db.query(models.BusinessCenter).filter_by(bc_id=bc_id).first()
+    accounts = [a for a in db.query(models.AdAccount).filter(models.AdAccount.owner_bc_id == bc_id).order_by(models.AdAccount.advertiser_name) if a.status != "ACCESS_LOST"]
+    if not b and not accounts:
+        return JSONResponse({"error": "No such Business Center."}, status_code=404)
+    ctx = sl.account_picker_context(db, accounts)
+    facts = _account_facts(db, accounts, ctx)
+    rows = [{"id": a.advertiser_id, "name": a.advertiser_name or a.advertiser_id, "enabled": bool(a.enabled), "balance": a.balance,
+             **{k: facts[a.advertiser_id][k] for k in ("state", "spend", "revenue", "profit", "active", "total")}} for a in accounts]
+    rows.sort(key=lambda r: (-r["profit"], 0 if r["state"] == "fresh" else 1, r["name"].lower()))
+    st = [r["state"] for r in rows]
+    return {"bc_id": bc_id, "name": (b.name if b else "") or bc_id, "balance": (b.balance if b else None), "currency": (b.currency if b else "") or "$",
+            "threshold": bal_mod.bc_threshold(b) if b else 0.0, "portal": bal_mod.bc_portal_url(bc_id) if b else "", "block": sl.bc_block(b) if b else "",
+            "n": len(rows), "fresh": st.count("fresh"), "live": st.count("active"), "blocked": st.count("blocked") + st.count("cooldown"),
+            "spend": sum(r["spend"] for r in rows), "revenue": sum(r["revenue"] for r in rows), "rows": rows}
 
 
 @router.get("/accounts/{advertiser_id}/detail")

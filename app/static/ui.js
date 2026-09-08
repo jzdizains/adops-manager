@@ -95,6 +95,29 @@
     return p;
   };
 
+  // ---- "see the whole thing": any .clip[title] / [data-expand] opens its full text in a popover ----
+  UI.expand = function (anchor, text, title) {
+    var p = UI.popover(anchor, '<div class="pop-expand"><div class="pop-expand-t"></div><div class="pop-expand-b"></div><div class="pop-expand-f"><button type="button" class="btn sm" data-copy>Copy</button></div></div>');
+    p.querySelector(".pop-expand-t").textContent = title || ""; if (!title) p.querySelector(".pop-expand-t").remove();
+    p.querySelector(".pop-expand-b").textContent = text;
+    p.querySelector("[data-copy]").addEventListener("click", function () { var b = this; (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject()).then(function () { b.textContent = "Copied"; }, function () { b.textContent = "Select + copy"; }); });
+    return p;
+  };
+  document.addEventListener("click", function (e) {
+    var t = e.target.closest && e.target.closest("[data-expand], .clip[title]");
+    if (!t || e.target.closest("a, button, input, select, textarea, label")) return;
+    var text = t.dataset.expand != null && t.dataset.expand !== "" ? t.dataset.expand : t.getAttribute("title");
+    if (!text) return;
+    e.preventDefault(); UI.expand(t, text, t.dataset.expandTitle || "");
+  });
+  // ---- form[data-confirm]: styled confirm instead of the browser's; data-ok = button label, data-danger ----
+  document.addEventListener("submit", function (e) {
+    var f = e.target; if (!f.matches || !f.matches("form[data-confirm]") || f.dataset.ok === "1") return;
+    e.preventDefault();
+    UI.confirm({ title: f.dataset.confirm, text: f.dataset.confirmText || "", ok: f.dataset.okLabel || "Confirm", danger: f.dataset.danger != null })
+      .then(function (y) { if (!y) return; f.dataset.ok = "1"; var b = f.querySelector("button[type=submit], button:not([type])"); if (b) b.disabled = true; f.submit(); });
+  }, true);
+
   // ---- undo toast: "Paused 3 campaigns  [Undo · 8s]" -------------------------
   var undoCur = null;
   UI.undo = function (text, onUndo, secs) {
@@ -133,7 +156,17 @@
     img.addEventListener("click", function () { show(i + 1); });
     host.tabIndex = 0;
     host.addEventListener("keydown", function (e) { if (e.key === "ArrowLeft") { show(i - 1); e.preventDefault(); } if (e.key === "ArrowRight") { show(i + 1); e.preventDefault(); } });
-    show(0);
+    show(o.start || 0);
+  };
+  // full-size pop-up viewer for a carousel: UI.slidesPopup(ids, {title, start})
+  UI.slidesPopup = function (ids, o) {
+    o = o || {};
+    var host = el('<div class="dw-phone sl-big"></div>');
+    var m = UI.modal({ title: o.title || "Carousel", body: host });
+    m.el.classList.add("sl-modal");
+    UI.slides(host, ids, { start: o.start || 0 });
+    setTimeout(function () { try { host.focus(); } catch (e) {} }, 30);
+    return m;
   };
 
   // ---- keyboard help (?) ------------------------------------------------------

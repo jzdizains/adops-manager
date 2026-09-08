@@ -22,16 +22,14 @@
         <td class="muted">{{ copies.get(p.name, 0) }} of {{ accounts|length }}</td>
         <td class="num">
           {% if accounts|length > 1 %}
-          <form method="post" action="/instant-pages/clone" style="display:flex;gap:6px;justify-content:flex-end;align-items:center;">
+          <form method="post" action="/instant-pages/clone" hidden>
             <input type="hidden" name="page_id" value="{{ p.page_id }}">
             <input type="hidden" name="from_advertiser_id" value="{{ p.owner_advertiser_id }}">
-            <select name="to_advertiser_id" style="width:auto;font-size:12px;padding:4px 8px;" {{ 'disabled' if not web_ready }}>
-              {% for a in accounts %}{% if a.advertiser_id != p.owner_advertiser_id %}
-                <option value="{{ a.advertiser_id }}">{{ a.advertiser_name or a.advertiser_id }}</option>
-              {% endif %}{% endfor %}
+            <select name="to_advertiser_id">
+              {% for a in accounts %}{% if a.advertiser_id != p.owner_advertiser_id %}<option value="{{ a.advertiser_id }}">{{ a.advertiser_name or a.advertiser_id }}</option>{% endif %}{% endfor %}
             </select>
-            <button class="btn sm" type="submit" {{ 'disabled' if not web_ready }} title="{{ 'Copies the page through the TikTok web session (undocumented by TikTok — may stop working).' if web_ready else 'Needs the ads.tiktok.com cookies from the TikTok Cookies page.' }}">⧉ Clone</button>
           </form>
+          <button class="btn sm ip-clone" type="button" data-name="{{ p.name }}" {{ 'disabled' if not web_ready }} title="{{ 'Copies the page through the TikTok web session (undocumented by TikTok — may stop working).' if web_ready else 'Needs the ads.tiktok.com cookies from the TikTok Cookies page.' }}">⧉ Clone to…</button>
           {% endif %}
         </td>
       </tr>
@@ -44,4 +42,16 @@
   </div>
   {% else %}<div class="empty"><div class="empty-title">No instant pages yet</div>Hit “Sync from accounts” to read the custom Instant Pages your ad accounts have. If an account's sync fails, the reason is shown at the top.</div>{% endif %}
 </div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest(".ip-clone"); if (!b || b.disabled) return;
+    var f = b.parentElement.querySelector("form"), sel = f.querySelector("select");
+    var p = UI.popover(b, '<div style="font-weight:700;margin-bottom:6px;">Clone “' + UI.esc(b.dataset.name) + '” to</div><div style="display:flex;gap:6px;"><select style="flex:1;">' + sel.innerHTML + '</select><button type="button" class="btn sm primary">Clone</button></div><div class="hint" style="margin-top:6px;">Copies the page through the TikTok web session.</div>', { alignRight: true });
+    p.querySelector(".primary").addEventListener("click", function () { sel.value = p.querySelector("select").value; this.disabled = true; this.textContent = "Cloning…"; f.submit(); });
+  });
+})();
+</script>
 {% endblock %}

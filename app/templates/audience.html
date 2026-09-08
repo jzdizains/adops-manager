@@ -103,14 +103,14 @@
 {% for sec in sections %}
   <div class="card aud-card" id="sec-{{ sec.key }}">
     <div class="card-header"><span class="card-title">{{ sec.title }}</span>
-      <span class="card-meta">{{ sec.n }} row{{ '' if sec.n == 1 else 's' }}{% if sec.n > 40 %} · top 40 shown{% endif %} · ${{ '%.2f'|format(sec.spend) }}</span></div>
+      <span class="card-meta">{{ sec.n }} row{{ '' if sec.n == 1 else 's' }}{% if sec.n > 40 %} · <button type="button" class="linkish aud-more" data-sec="{{ sec.key }}">top 40 shown · show all</button>{% endif %} · ${{ '%.2f'|format(sec.spend) }}</span></div>
     {% if sec.rows %}
     <div class="table-scroll">
     <table class="data dense aud">
       <thead><tr><th>{{ sec.title }}</th><th>Share</th><th class="num">Spend</th><th class="num">Impr.</th><th class="num">Clicks</th><th class="num">CTR</th><th class="num">CPC</th><th class="num">Conv.</th><th class="num">CPA</th></tr></thead>
       <tbody>
       {% for r in sec.rows %}
-        <tr>
+        <tr{% if loop.index > 40 %} hidden class="aud-extra"{% endif %}>
           <td class="clip" style="max-width:118px;" title="{{ r.label }}{% if r.key != r.label %} ({{ r.key }}){% endif %}">{{ r.label }}</td>
           <td><div class="share"><div class="share-track"><div class="share-bar" style="width:{{ '%.1f'|format(r.share) }}%;"></div></div><span class="share-n">{{ '%.1f'|format(r.share) }}%</span></div></td>
           <td class="num">${{ '%.2f'|format(r.spend) }}</td>
@@ -140,6 +140,7 @@
 </div>
 <script>
 (function () {
+  document.querySelectorAll(".aud-more").forEach(function (b) { b.addEventListener("click", function () { var card = document.getElementById("sec-" + b.dataset.sec); card.querySelectorAll(".aud-extra").forEach(function (r) { r.hidden = false; }); b.remove(); }); });
   var bc = document.getElementById("audBc");
   if (bc) bc.addEventListener("change", function () { document.getElementById("audFilter").submit(); });
   var rng = document.getElementById("audRange"), custom = document.getElementById("audCustom"), tb = document.getElementById("audTodayBox");

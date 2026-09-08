@@ -8,7 +8,7 @@
     <a class="btn" href="/campaigns/source-check{{ '' if show_all else '?all=1' }}">{{ 'Running only' if show_all else 'Include paused' }}</a>
     <a class="btn" href="/campaigns/source-check{{ '?all=1' if show_all else '' }}">↻ Re-check</a>
     {% if counts.missing or counts['unsafe-name'] %}
-    <form method="post" action="/campaigns/source-fix" onsubmit="return confirm('Fix {{ counts.missing + counts['unsafe-name'] }} running campaign(s)? Their ads get the source added to the landing URL (TikTok re-reviews an ad whose URL changes) and campaigns with unsafe names are renamed URL-safe.');">
+    <form method="post" action="/campaigns/source-fix" data-confirm="Fix {{ counts.missing + counts['unsafe-name'] }} running campaign(s)?" data-confirm-text="Their ads get the source added to the landing URL (TikTok re-reviews an ad whose URL changes) and campaigns with unsafe names are renamed URL-safe." data-ok-label="Fix all">
       <input type="hidden" name="all" value="1">
       <button class="btn primary" type="submit">🔧 Fix all broken ({{ counts.missing + counts['unsafe-name'] }})</button>
     </form>
@@ -44,7 +44,7 @@
           {% elif w == 'no-url' %}<span class="pill dim">no landing URL</span>
           {% else %}<span class="pill warn">couldn't read</span>{% endif %}
         </td>
-        <td><div style="font-weight:600;"><a href="/campaigns/{{ r.advertiser_id }}/{{ r.campaign_id }}/edit" style="color:inherit;">{{ r.campaign_name or r.campaign_id }}</a></div>
+        <td><div style="font-weight:600;"><a href="/status?state=all&open={{ r.campaign_id }}" style="color:inherit;">{{ r.campaign_name or r.campaign_id }}</a></div>
           <div class="muted" style="font-size:10.5px;">{{ 'running' if r.status == 'ENABLE' else 'paused' }} · joins P&amp;L as <span class="mono">{{ r.source or '—' }}</span></div></td>
         <td class="muted" style="white-space:nowrap;">{{ acct_link(r.advertiser_id, r.advertiser_name) }}</td>
         <td class="num">{{ r.spend|money }}</td>
@@ -61,7 +61,7 @@
         <td class="num" style="white-space:nowrap;">
           {% if r.test_url %}<a class="btn sm" href="{{ r.test_url }}" target="_blank" rel="noopener" title="Open the real landing URL as a click from this campaign would">Test click ↗</a>{% endif %}
           {% if w in ('missing', 'unsafe-name') %}
-          <form method="post" action="/campaigns/source-fix" style="display:inline;" onsubmit="return confirm('Fix “{{ r.campaign_name }}”? Its ads get ?{{ param }}= added to the landing URL (TikTok re-reviews them){% if w == 'unsafe-name' %} and the campaign is renamed URL-safe{% endif %}.');">
+          <form method="post" action="/campaigns/source-fix" style="display:inline;" data-confirm="Fix “{{ r.campaign_name }}”?" data-confirm-text="Its ads get ?{{ param }}= added to the landing URL (TikTok re-reviews them){% if w == 'unsafe-name' %} and the campaign is renamed URL-safe{% endif %}." data-ok-label="Fix">
             <input type="hidden" name="advertiser_id" value="{{ r.advertiser_id }}"><input type="hidden" name="campaign_id" value="{{ r.campaign_id }}">
             <button class="btn sm primary" type="submit">🔧 Fix</button>
           </form>

@@ -362,4 +362,7 @@
       refreshInPlace("refresh");
     }, 60000);
   }
+  // arrived with ?open=<campaign id> (Source check, Jobs, Creatives) → that campaign's drawer opens at once
+  var openCid = new URLSearchParams(location.search).get("open");
+  if (openCid) { var orow = $$(".camp-row").filter(function (r) { return r.dataset.cid === openCid; })[0]; if (orow) { openDrawer(orow); orow.scrollIntoView({ block: "center" }); } }
 })();

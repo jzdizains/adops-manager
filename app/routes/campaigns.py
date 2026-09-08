@@ -1830,6 +1830,14 @@ def launch_result(request: Request, batch_ref: str, db: Session = Depends(get_db
             total = len(_json.loads(job.payload or "{}").get("advertiser_ids") or [])
         except ValueError:
             total = 0
+    if request.headers.get("x-requested-with") == "fetch":     # Queue's result drawer
+        camp_names = {c.campaign_id: c.campaign_name for c in db.query(models.CampaignRecord).filter(
+            models.CampaignRecord.campaign_id.in_([l.campaign_id for l in logs if l.campaign_id]))} if logs else {}
+        return JSONResponse({"batch_ref": batch_ref, "ok": ok, "failed": len(logs) - ok, "running": bool(job), "total": total or len(logs),
+                             "template": logs[0].template_name if logs else "",
+                             "rows": [{"advertiser_id": l.advertiser_id, "account": l.advertiser_name or l.advertiser_id, "ok": bool(l.ok),
+                                       "campaign_id": l.campaign_id or "", "campaign": camp_names.get(l.campaign_id, "") or l.campaign_id or "",
+                                       "error": l.error_message or l.error_code or ""} for l in logs]})
     return render(request, "launch_result.html", {
         "logs": logs, "batch_ref": batch_ref, "ok_count": ok,
         "fail_count": len(logs) - ok, "can_retry": has_recipe and not job,
@@ -1868,25 +1876,9 @@ def retry_failed(request: Request, batch_ref: str, db: Session = Depends(get_db)
 
 
 @router.get("/campaigns/{advertiser_id}/{campaign_id}/edit")
-def edit_campaign(request: Request, advertiser_id: str, campaign_id: str,
-                  db: Session = Depends(get_db)):
-    """Manual budget & cost-cap editor for one campaign."""
-    acct = db.query(models.AdAccount).filter_by(advertiser_id=advertiser_id).first()
-    rec = (db.query(models.CampaignRecord)
-           .filter_by(advertiser_id=advertiser_id, campaign_id=campaign_id).first())
-    adgroups, err = [], ""
-    if acct and acct.access_token:
-        try:
-            data = tiktok_api.list_adgroups(acct.access_token, advertiser_id, [campaign_id])
-            adgroups = data.get("list", [])
-        except tiktok_api.TikTokError as e:
-            err = f"Couldn't load ad groups (code {e.code}): {e.message}"
-    return render(request, "campaign_edit.html", {
-        "title": "Edit campaign", "acct": acct, "rec": rec, "adgroups": adgroups,
-        "advertiser_id": advertiser_id, "campaign_id": campaign_id,
-        "err": err or request.query_params.get("err", ""),
-        "ok": request.query_params.get("ok", ""),
-    })
+def campaign_edit_redirect(advertiser_id: str, campaign_id: str):
+    """The old edit page is gone — the Campaigns console drawer does it in place (old job links + bookmarks land there)."""
+    return RedirectResponse(f"/status?state=all&open={campaign_id}", status_code=303)
 
 
 @router.post("/campaigns/{advertiser_id}/{campaign_id}/edit")
@@ -1905,17 +1897,16 @@ def apply_campaign_edit(request: Request, advertiser_id: str, campaign_id: str,
     if not acct or not acct.access_token:
         if wants_json:
             return JSONResponse({"ok": False, "error": "account not connected"}, status_code=400)
-        return RedirectResponse(
-            f"/campaigns/{advertiser_id}/{campaign_id}/edit?err=no+token", status_code=303)
+        return RedirectResponse(f"/status?state=all&open={campaign_id}&err=account+not+connected", status_code=303)
     if not any(str(v).strip() for v in (campaign_name, campaign_budget, adgroup_budget_all, cost_cap_all)):
         if wants_json:
             return JSONResponse({"ok": False, "error": "nothing to change"}, status_code=400)
-        return RedirectResponse(f"/campaigns/{advertiser_id}/{campaign_id}/edit?err=no+changes+applied", status_code=303)
+        return RedirectResponse(f"/status?state=all&open={campaign_id}&err=no+changes+applied", status_code=303)
     rec = db.query(models.CampaignRecord).filter_by(advertiser_id=advertiser_id, campaign_id=campaign_id).first()
     job = jobs.enqueue(db, "campaign_edit", f"Edit {rec.campaign_name if rec else campaign_id}",
                        {"advertiser_id": advertiser_id, "campaign_id": campaign_id, "campaign_name": campaign_name,
                         "campaign_budget": campaign_budget, "adgroup_budget_all": adgroup_budget_all, "cost_cap_all": cost_cap_all},
-                       href=f"/campaigns/{advertiser_id}/{campaign_id}/edit")
+                       href=f"/status?state=all&open={campaign_id}")
     changes = []
     if campaign_name.strip():
         changes.append(f"name → {campaign_name.strip()[:60]}")
@@ -1929,7 +1920,7 @@ def apply_campaign_edit(request: Request, advertiser_id: str, campaign_id: str,
                     " · ".join(changes), request=request, advertiser_id=advertiser_id)
     if wants_json:
         return JSONResponse({"ok": True, "queued": True, "job_id": job.id, "changes": changes})
-    return RedirectResponse(f"/campaigns/{advertiser_id}/{campaign_id}/edit?ok=Applying+in+the+background+—+you%27ll+get+a+notification.", status_code=303)
+    return RedirectResponse(f"/status?state=all&open={campaign_id}&ok=Applying+in+the+background+—+you%27ll+get+a+notification.", status_code=303)
 
 
 def apply_edit(db: Session, advertiser_id: str, campaign_id: str, campaign_name: str = "",

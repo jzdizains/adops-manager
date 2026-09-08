@@ -33,7 +33,7 @@
         <td class="jb-status">{% if j.status == 'done' %}<span class="pill ok">done</span>{% elif j.status == 'error' %}<span class="pill err">failed</span>
             {% elif j.status == 'running' %}<span class="pill warn">{{ 'stopping' if j.cancel_requested else 'running' }}{% if j.progress %} · {{ j.progress }}{% endif %}</span>
             {% elif j.status == 'cancelled' %}<span class="pill dim">cancelled</span>{% else %}<span class="pill dim">queued</span>{% endif %}</td>
-        <td style="max-width:560px;font-size:12px;" class="jb-detail">{{ j.detail }}</td>
+        <td style="max-width:560px;font-size:12px;"><span class="clip jb-detail" title="{{ j.detail }}">{{ j.detail }}</span></td>
         <td class="num muted" style="white-space:nowrap;">{% if j.started_at and j.finished_at %}{{ "%.0f"|format((j.finished_at - j.started_at).total_seconds()) }} s{% elif j.started_at %}{{ j.started_at|ago }}{% else %}—{% endif %}</td>
         <td style="text-align:right;white-space:nowrap;">{% if j.status == 'queued' %}<button type="button" class="btn sm jb-cancel" data-mode="remove">Remove</button>{% elif j.status == 'running' and not j.cancel_requested %}<button type="button" class="btn sm jb-cancel" data-mode="stop" data-title="{{ j.title }}">Stop</button>{% endif %}</td>
       </tr>

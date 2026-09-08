@@ -12,11 +12,8 @@
     <form method="post" action="/appeals/scan">{{ keep() }}<button class="btn" type="submit" title="Re-read every account's ads from TikTok now">🔍 Scan now</button></form>
     {% if waiting %}<form method="post" action="/appeals/refresh">{{ keep() }}<button class="btn" type="submit" title="Ask TikTok whether the open appeals were answered">↻ Check answers</button></form>{% endif %}
     {% if open_rows %}
-    <form method="post" action="/appeals/file-selected" id="selForm" onsubmit="return confirm('File an appeal for the ' + document.querySelectorAll('.apSel:checked').length + ' ticked ad group(s)? TikTok allows one appeal per rejection — this uses it.');" style="display:flex;gap:6px;align-items:center;">
-      {{ keep() }}
-      <input type="text" name="reason" id="selReason" placeholder="reason for these (empty = Settings template)" style="width:260px;font-size:12px;padding:6px 8px;">
-      <button class="btn primary" type="submit" id="selBtn" disabled>Appeal selected (0)</button>
-    </form>
+    <form method="post" action="/appeals/file-selected" id="selForm" hidden>{{ keep() }}<input type="hidden" name="reason" id="selReason" value=""></form>
+    <button class="btn primary" type="button" id="selBtn" disabled>Appeal selected (0)</button>
     {% endif %}
   </div>
 </div>
@@ -77,7 +74,7 @@
 {% macro acct(r) -%}
   {{ acct_link(r.advertiser_id, r.advertiser_name, True) }}
   {% set b = bc_of.get(r.advertiser_id, '') %}
-  <div class="muted clip" style="font-size:10.5px;max-width:170px;" title="Business Center">{{ bc_names.get(b, b) if b else 'no Business Center' }}</div>
+  <div class="muted clip" style="font-size:10.5px;max-width:170px;">{{ bc_names.get(b, b) if b else 'no Business Center' }}</div>
 {%- endmacro %}
 {% macro what(r) -%}
   <div style="font-weight:600;" class="clip" title="{{ r.ad_name }}">{{ r.ad_name or ('ad group ' ~ r.adgroup_id) }}</div>
@@ -106,10 +103,8 @@
           <span class="muted" style="font-size:11.5px;margin-left:8px;">{{ g.rows|length }} rejected ad group{{ '' if g.rows|length == 1 else 's' }} · {{ g.n_accounts }} account{{ '' if g.n_accounts == 1 else 's' }} · {{ g.bc_label }}{% if g.created %} · <span title="campaign created {{ g.created|local('%Y-%m-%d %H:%M') }} ({{ TZ_NAME }})">created {{ g.created|ago }}</span>{% endif %}</span>
         </td>
         <td class="num" style="white-space:nowrap;">
-          <form method="post" action="/appeals/file-campaign" class="grpForm" style="display:inline;" onsubmit="this.reason.value = document.getElementById('selReason').value; return confirm('Appeal all {{ g.rows|length }} rejected ad group(s) of “{{ g.key|e }}” across {{ g.n_accounts }} account(s)? TikTok allows one appeal per rejection — this uses it for every one of them.');">
-            {{ keep() }}<input type="hidden" name="campaign" value="{{ g.key }}"><input type="hidden" name="reason" value="">
-            <button class="btn sm primary" type="submit" title="File an appeal for every rejected ad group in this campaign, on every account shown">Appeal all {{ g.rows|length }}</button>
-          </form>
+          <form method="post" action="/appeals/file-campaign" class="grpForm" hidden>{{ keep() }}<input type="hidden" name="campaign" value="{{ g.key }}"><input type="hidden" name="reason" value=""></form>
+          <button class="btn sm primary ap-all" type="button" data-n="{{ g.rows|length }}" data-accounts="{{ g.n_accounts }}" data-name="{{ g.key }}" title="File an appeal for every rejected ad group in this campaign, on every account shown">Appeal all {{ g.rows|length }}</button>
         </td>
       </tr>
     {% for r in g.rows %}
@@ -125,17 +120,9 @@
           <div class="muted" style="font-size:10.5px;margin-top:2px;">seen {{ r.last_seen_at|ago if r.last_seen_at else r.created_at|ago }}</div>
         </td>
         <td class="num" style="white-space:nowrap;vertical-align:top;">
-          <details style="text-align:left;">
-            <summary class="btn sm primary" style="display:inline-block;list-style:none;cursor:pointer;">Appeal…</summary>
-            <form method="post" action="/appeals/{{ r.id }}/file" style="margin-top:6px;min-width:280px;">
-              {{ keep() }}
-              <textarea name="reason" rows="4" style="width:100%;font-size:12px;" maxlength="512" placeholder="Reason sent to TikTok (empty = the template from Settings)">{{ r.appeal_reason if r.status == 'error' else '' }}</textarea>
-              <div style="display:flex;gap:6px;justify-content:flex-end;margin-top:4px;">
-                <button class="btn sm primary" type="submit">File appeal</button>
-              </div>
-            </form>
-          </details>
-          <form method="post" action="/appeals/{{ r.id }}/dismiss" style="display:inline;margin-top:4px;" onsubmit="return confirm('Dismiss without appealing? Use this when you fixed or deleted the ad yourself.');">
+          <form method="post" action="/appeals/{{ r.id }}/file" hidden id="apf{{ r.id }}">{{ keep() }}<input type="hidden" name="reason" value=""></form>
+          <button class="btn sm primary ap-one" type="button" data-id="{{ r.id }}" data-name="{{ r.ad_name or ('ad group ' ~ r.adgroup_id) }}" data-initial="{{ r.appeal_reason if r.status == 'error' else '' }}">Appeal…</button>
+          <form method="post" action="/appeals/{{ r.id }}/dismiss" style="display:inline;" data-confirm="Dismiss without appealing?" data-confirm-text="Use this when you fixed or deleted the ad yourself — it stops being tracked here." data-ok-label="Dismiss">
             {{ keep() }}
             <button class="btn sm" type="submit" title="Handled another way — stop tracking it">Dismiss</button>
           </form>
@@ -249,6 +236,31 @@
   grps.forEach(function (g) { g.addEventListener("change", function () { inGroup(g.getAttribute("data-key")).forEach(function (b) { b.checked = g.checked; }); sync(); }); });
   all.addEventListener("change", function () { boxes.forEach(function (b) { b.checked = all.checked; }); sync(); });
   sync();
+
+  // ---- one appeal box for everything: what's being appealed + the reason, then File ----
+  var PREVIEW = {{ preview|tojson }};
+  function appealBox(o) {
+    var body = UI.el('<div><div class="ap-box-what"></div><label class="field" style="margin:10px 0 0;"><span class="field-label">Reason sent to TikTok</span><textarea rows="4" maxlength="512" style="font-size:12.5px;font-family:var(--font-sans);" placeholder="Leave empty to use the template from Settings"></textarea></label><div class="hint" id="apPreview"></div><div class="hint" style="margin-top:6px;">TikTok allows <b>one appeal per rejection</b> — this uses it.</div></div>');
+    body.querySelector(".ap-box-what").innerHTML = o.what;
+    var ta = body.querySelector("textarea"), pv = body.querySelector("#apPreview"); ta.value = o.initial || "";
+    function syncPv() { pv.textContent = ta.value.trim() ? ta.value.length + " / 512" : "Template: “" + PREVIEW + "”"; }
+    ta.addEventListener("input", syncPv); syncPv();
+    var m = UI.modal({ title: o.title, body: body, footer: '<button type="button" class="btn" data-close>Cancel</button><button type="button" class="btn primary" id="apGo">' + o.ok + '</button>' });
+    m.el.querySelector("#apGo").addEventListener("click", function () { this.disabled = true; this.textContent = "Filing…"; o.file(ta.value.trim()); });
+  }
+  btn.addEventListener("click", function () {
+    var n = boxes.filter(function (b) { return b.checked; }).length; if (!n) return;
+    appealBox({ title: "Appeal " + n + " selected ad group" + (n === 1 ? "" : "s") + "?", ok: "File " + n + " appeal" + (n === 1 ? "" : "s"), what: '<div class="muted">The ticked rows above, each with the reason below.</div>',
+      file: function (reason) { document.getElementById("selReason").value = reason; document.getElementById("selForm").submit(); } });
+  });
+  document.addEventListener("click", function (e) {
+    var g = e.target.closest(".ap-all");
+    if (g) { var f = g.previousElementSibling; appealBox({ title: "Appeal all " + g.dataset.n + " in “" + g.dataset.name + "”?", ok: "File " + g.dataset.n + " appeals", what: '<div><b>' + UI.esc(g.dataset.name || "(no campaign name)") + '</b><div class="muted">' + g.dataset.n + " rejected ad group" + (g.dataset.n === "1" ? "" : "s") + " across " + g.dataset.accounts + " account" + (g.dataset.accounts === "1" ? "" : "s") + "</div></div>",
+      file: function (reason) { f.reason.value = reason; f.submit(); } }); return; }
+    var o = e.target.closest(".ap-one");
+    if (o) { var f2 = document.getElementById("apf" + o.dataset.id), row = o.closest("tr"), why = row.querySelector("td:nth-child(4)"); appealBox({ title: "Appeal this rejection?", ok: "File appeal", initial: o.dataset.initial, what: '<div><b>' + UI.esc(o.dataset.name) + '</b><div class="muted" style="margin-top:2px;">TikTok said: ' + UI.esc((why && why.innerText || "").trim().slice(0, 300)) + '</div></div>',
+      file: function (reason) { f2.reason.value = reason; f2.submit(); } }); }
+  });
 })();
 </script>
 {% endif %}

@@ -8,7 +8,7 @@
   <div class="actions">
     {% if fail_count and can_retry %}
     <form method="post" action="/campaigns/result/{{ batch_ref }}/retry" style="display:inline;"
-          onsubmit="return confirm('Re-launch the {{ fail_count }} failed account(s) with the same settings?');">
+          data-confirm="Re-launch the {{ fail_count }} failed account(s)?" data-confirm-text="Same preset, creative and settings as this batch." data-ok-label="Re-launch">
       <button class="btn" type="submit" style="border-color:var(--err);color:var(--err);">↻ Retry failed ({{ fail_count }})</button>
     </form>
     {% endif %}

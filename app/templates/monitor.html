@@ -24,7 +24,7 @@
 {% endif %}
 
 {# ======================= ISSUES ======================= #}
-{% if view == 'issues' %}
+<section class="stab" data-tab="issues" {{ "hidden" if view != "issues" }}>
 <div class="filterbar" style="margin-bottom:12px;">
   <div class="seg" id="hlLevel"><button type="button" data-l="" class="on">All <span class="n">{{ counts.total }}</span></button><button type="button" data-l="err">Errors <span class="n">{{ counts.err }}</span></button><button type="button" data-l="warn">Warnings <span class="n">{{ counts.warn }}</span></button><button type="button" data-l="info">Info <span class="n">{{ counts.info }}</span></button></div>
   <div id="hlKinds" style="display:flex;gap:6px;flex-wrap:wrap;">{% for k, n in kinds %}<button type="button" class="chip" data-k="{{ k }}">{{ KIND_LABEL.get(k, k) }} <span class="n">{{ n }}</span></button>{% endfor %}</div>
@@ -39,7 +39,7 @@
     {% for it in items %}
     <tr class="hl-row" data-id="{{ it.id }}" data-level="{{ it.level }}" data-kind="{{ it.kind }}" data-search="{{ (it.title ~ ' ' ~ it.message ~ ' ' ~ it.where)|lower }}">
       <td><span class="pill {{ {'err':'err','warn':'warn','info':'dim'}[it.level] }}">{{ {'err':'error','warn':'warning','info':'info'}[it.level] }}</span></td>
-      <td><div style="font-weight:600;">{{ it.title }}</div><div class="muted" style="font-size:11.5px;max-width:640px;">{{ it.message }}</div></td>
+      <td><div style="font-weight:600;">{{ it.title }}</div><div class="muted clip" style="font-size:11.5px;max-width:640px;" title="{{ it.message }}">{{ it.message }}</div></td>
       <td class="muted" style="font-size:12px;">{{ it.where or '—' }}</td>
       <td class="muted" style="white-space:nowrap;font-size:12px;">{% if it.at %}<span title="{{ it.at|local('%Y-%m-%d %H:%M') }}">{{ it.at|ago }}</span>{% else %}now{% endif %}</td>
       <td style="white-space:nowrap;text-align:right;">{% for a in it.fix %}<a class="btn sm" href="{{ a.href }}" {% if a.ext %}target="_blank" rel="noopener"{% endif %}>{{ a.label }}</a> {% endfor %}{% if it.ack %}<button type="button" class="btn sm ghost hl-dismiss" title="Dismiss">✕</button>{% endif %}</td>
@@ -54,7 +54,8 @@
 <div class="muted" style="font-size:11px;margin-top:8px;">Notices (wallet, rule actions) can be dismissed. TikTok-side issues clear on the next scan once fixed; failed launches age out after 24 h.</div>
 
 {# ======================= BALANCES ======================= #}
-{% elif view == 'balances' %}
+</section>
+<section class="stab" data-tab="balances" {{ "hidden" if view != "balances" }}>
 <div class="card" style="padding:10px 14px;margin-bottom:12px;display:flex;gap:22px;align-items:center;flex-wrap:wrap;font-size:12.5px;">
   <span><span class="muted">In BC wallets</span> <b>{{ money0(btotals.wallet) }}</b></span>
   <span><span class="muted">In ad accounts</span> <b>{{ money0(btotals.in_accounts) }}</b></span>
@@ -84,7 +85,8 @@
 <div class="muted" style="font-size:11px;margin-top:8px;">Wallets are topped up on TikTok's Business Center site (no API). Money moves wallet → ad account automatically when Auto top-up is on, or by hand from the Accounts page.</div>
 
 {# ======================= AUTOMATION ======================= #}
-{% elif view == 'automation' %}
+</section>
+<section class="stab" data-tab="automation" {{ "hidden" if view != "automation" }}>
 <div class="card" style="padding:0;overflow:hidden;margin-bottom:12px;">
   <div style="display:flex;align-items:center;gap:8px;padding:11px 14px;border-bottom:1px solid var(--border-soft);"><b>Rules</b><span class="muted" style="font-size:12px;">checked every {{ s.sweep_interval_sec }} s · every action below can be undone</span><a class="btn sm" href="/settings" style="margin-left:auto;">Edit rules</a></div>
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));">
@@ -97,7 +99,7 @@
 </div>
 <div class="card" style="padding:0;overflow:hidden;margin-bottom:12px;">
   <div style="display:flex;align-items:center;gap:8px;padding:11px 14px;border-bottom:1px solid var(--border-soft);"><b>Rule actions</b><span class="muted" style="font-size:12px;">latest {{ actions|length }} · {{ today_pauses if today_pauses is defined else strip.today_pauses }} pause{{ 's' if strip.today_pauses != 1 }} today</span>
-    {% if still_paused %}<form method="post" action="/automation/resume-all" style="margin-left:auto;" data-confirm="Resume every campaign the rules paused ({{ still_paused|length }})?"><button class="btn sm" type="submit">▶ Resume all {{ still_paused|length }} still paused</button></form>{% endif %}</div>
+    {% if still_paused %}<form method="post" action="/automation/resume-all" style="margin-left:auto;" data-confirm="Resume every campaign the rules paused ({{ still_paused|length }})?" data-ok-label="Resume all"><button class="btn sm" type="submit">▶ Resume all {{ still_paused|length }} still paused</button></form>{% endif %}</div>
   {% if actions %}
   <div class="table-scroll"><table class="data dense">
     <thead><tr><th style="width:90px;">When</th><th>Campaign</th><th>Account</th><th>Rule</th><th class="num">Value</th><th>Result</th><th></th></tr></thead>
@@ -109,8 +111,8 @@
       <td class="muted" style="white-space:nowrap;">{{ acct_link(a.advertiser_id, (names.get(a.advertiser_id) or a.advertiser_id)[:26]) }}</td>
       <td><span class="pill {{ 'warn' if a.action == 'pause' else 'dim' }}">{{ a.action }}</span> <span class="mono" style="font-size:11px;">{{ a.rule }}</span></td>
       <td class="num">{{ "%.2f"|format(a.metric_value) if a.metric_value else "—" }}</td>
-      <td>{% if a.ok %}<span class="pill ok">ok</span>{% else %}<span class="pill err" title="{{ a.detail }}">failed</span>{% endif %}</td>
-      <td style="text-align:right;">{% if a.action == 'pause' and a.ok and a.campaign_id in paused_ids %}<form method="post" action="/automation/resume" style="display:inline;"><input type="hidden" name="advertiser_id" value="{{ a.advertiser_id }}"><input type="hidden" name="campaign_id" value="{{ a.campaign_id }}"><button class="btn sm" type="submit" title="Undo — resume this campaign on TikTok">▶ Resume</button></form>{% endif %}</td>
+      <td>{% if a.ok %}<span class="pill ok">ok</span>{% else %}<span class="pill err" data-expand="{{ a.detail }}" data-expand-title="Why it failed">failed</span>{% endif %}</td>
+      <td style="text-align:right;">{% if a.action == 'pause' and a.ok and a.campaign_id in paused_ids %}<form method="post" action="/automation/resume" style="display:inline;" data-confirm="Resume this campaign?" data-confirm-text="It was paused by a rule — it starts spending again on TikTok right away." data-ok-label="Resume"><input type="hidden" name="advertiser_id" value="{{ a.advertiser_id }}"><input type="hidden" name="campaign_id" value="{{ a.campaign_id }}"><button class="btn sm" type="submit" title="Undo — resume this campaign on TikTok">▶ Resume</button></form>{% endif %}</td>
     </tr>
     {% endfor %}
     </tbody></table></div>
@@ -127,12 +129,13 @@
       <td class="mono muted" style="font-size:11px;">{{ t.bc_id }}</td>
       <td class="num"><b>{{ t.amount|money }}</b></td>
       <td>{% if t.ok %}<span class="pill ok">sent</span>{% else %}<span class="pill err">failed</span>{% endif %}</td>
-      <td class="muted" style="font-size:11.5px;max-width:420px;">{{ t.detail }}</td></tr>{% endfor %}</tbody></table></div>
+      <td style="max-width:420px;"><span class="muted clip" style="font-size:11.5px;" title="{{ t.detail }}">{{ t.detail }}</span></td></tr>{% endfor %}</tbody></table></div>
   {% else %}<div class="empty"><div class="empty-title">No top-ups yet</div>{% if s.topup_enabled %}Transfers happen on the slow sweep when an account drops below ${{ s.topup_below }}.{% else %}Switch auto top-ups on in <a href="/settings#rules">Settings → Rules</a>, or transfer by hand from the Accounts page.{% endif %}</div>{% endif %}
 </div>
 
 {# ======================= SYSTEM ======================= #}
-{% elif view == 'system' %}
+</section>
+<section class="stab" data-tab="system" {{ "hidden" if view != "system" }}>
 <div class="card" style="padding:10px 14px;margin-bottom:12px;display:flex;gap:22px;align-items:center;flex-wrap:wrap;font-size:12.5px;" id="sysLine">
   <span><span class="muted">TikTok token</span> <b style="color:var({{ '--ok' if token_ok else '--err' }});">{{ 'connected' if token_ok else 'missing' }}</b> <span class="muted">· {{ accounts_count }} accounts</span></span>
   <span><span class="muted">Campaign sync</span> <b>{{ strip.synced_ago }}</b> <span class="muted">· every {{ s.sweep_interval_sec }} s</span></span>
@@ -154,13 +157,28 @@
     <form method="post" action="/oauth/sync-accounts" style="display:inline;"><button class="btn sm" type="submit">⇄ Re-sync accounts</button></form>
   </div>
 </div>
-{% endif %}
+</section>
 {% endblock %}
 {% block scripts %}
 <script>
 (function () {
+  // ---- the four views are all on the page: switch without a reload (top tabs, KPI tiles, fix links) ----
+  var TITLES = { issues: "Issues", balances: "Balances", automation: "Automation", system: "System" };
+  function showView(v, push) {
+    if (!TITLES[v]) v = "issues";
+    document.querySelectorAll(".stab[data-tab]").forEach(function (s) { s.hidden = s.dataset.tab !== v; });
+    document.querySelectorAll("[data-section-tabs] a").forEach(function (a) { var m = (a.getAttribute("href") || "").match(/^\/monitor(?:\?view=(\w+))?$/); if (m) a.classList.toggle("on", (m[1] || "issues") === v); });
+    if (push) history.replaceState(null, "", v === "issues" ? "/monitor" : "/monitor?view=" + v);
+    document.title = "Health · " + TITLES[v];
+  }
+  document.addEventListener("click", function (e) {
+    var a = e.target.closest("a[href]"); if (!a || a.target === "_blank") return;
+    var m = a.getAttribute("href").match(/^\/monitor(?:\?view=(\w+))?$/); if (!m) return;
+    e.preventDefault(); showView(m[1] || "issues", true); window.scrollTo({ top: 0 });
+  });
+})();
+(function () {
   var $ = function (s, r) { return (r || document).querySelector(s); }, $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
-  $$("form[data-confirm]").forEach(function (f) { f.addEventListener("submit", function (e) { if (f.dataset.ok) return; e.preventDefault(); UI.confirm({ title: f.dataset.confirm, ok: "Resume all" }).then(function (y) { if (y) { f.dataset.ok = "1"; f.submit(); } }); }); });
   var rows = $$(".hl-row"); if (!rows.length) return;
   var lvl = "", kinds = {}, q = "";
   function apply() {

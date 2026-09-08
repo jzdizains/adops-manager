@@ -125,7 +125,7 @@
           {% if r.partner_status == 'error' or r.invite_status == 'error' or r.assign_status in ('error', 'waiting') %}
           <form method="post" action="/partners/{{ r.id }}/retry" style="display:inline;"><button class="btn sm primary" type="submit" title="Run the steps that aren't done yet">↻ Retry</button></form>
           {% endif %}
-          <form method="post" action="/partners/{{ r.id }}/delete" style="display:inline;" onsubmit="return confirm('Remove this setup from the list? Nothing changes on TikTok.');"><button class="btn sm" type="submit">Remove</button></form>
+          <form method="post" action="/partners/{{ r.id }}/delete" style="display:inline;" data-confirm="Remove this setup from the list?" data-confirm-text="Nothing changes on TikTok." data-ok-label="Remove"><button class="btn sm" type="submit">Remove</button></form>
         </td>
       </tr>
     {% endfor %}

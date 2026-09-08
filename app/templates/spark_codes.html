@@ -30,7 +30,7 @@
       <tr class="sp-row" data-id="{{ c.id }}" data-name="{{ c.name or c.code[:14] }}" data-code="{{ c.code }}" data-url="{{ c.tiktok_post_url or '' }}" data-source="{{ c.source or '' }}" data-creator="{{ r.creator }}" data-type="{{ c.media_type }}">
         <td><input type="checkbox" class="spchk"></td>
         <td><div style="display:flex;align-items:center;gap:9px;min-width:0;">
-          {% if c.thumbnail_url %}<img src="{{ c.thumbnail_url }}" alt="" loading="lazy" style="width:30px;height:40px;object-fit:cover;border-radius:6px;flex:none;">{% else %}<span style="width:30px;height:40px;border-radius:6px;background:var(--panel-hover);display:grid;place-items:center;flex:none;color:var(--text-dim);font-size:11px;">✦</span>{% endif %}
+          {% if c.thumbnail_url %}<img src="{{ c.thumbnail_url }}" alt="" loading="lazy" class="sp-thumb" data-src="{{ c.thumbnail_url }}" title="Click to view" style="width:36px;height:48px;object-fit:cover;border-radius:6px;flex:none;cursor:zoom-in;">{% else %}<span style="width:30px;height:40px;border-radius:6px;background:var(--panel-hover);display:grid;place-items:center;flex:none;color:var(--text-dim);font-size:11px;">✦</span>{% endif %}
           <div style="min-width:0;"><div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px;">{{ c.name or c.code[:18] }}</div><div class="muted" style="font-size:10.5px;">{{ c.media_type|lower }} · added {{ c.created_at|ago }}{% if c.last_used_at %} · last launch {{ c.last_used_at|ago }}{% endif %}</div></div></div></td>
         <td>{% if r.creator %}<a href="/spark-codes?creator={{ r.creator|urlencode }}" style="color:inherit;">{{ r.creator }}</a>{% if r.mine %} <span class="pill ok" style="font-size:9.5px;">mine</span>{% endif %}{% else %}<span class="muted">—</span>{% endif %}</td>
         <td>{% if c.status == 'active' %}<span class="pill ok">active</span>{% elif c.status == 'used' %}<span class="pill mute">used</span>{% else %}<span class="pill err">{{ c.status }}</span>{% endif %}{% if r.live %} <span class="muted" style="font-size:11px;">{{ r.live }} live</span>{% endif %}</td>
@@ -92,6 +92,14 @@ Slides1, #SD93QJYXLZVH3jCUI09AWIYt2CfB…, carousel"></textarea>
     if (k === "launch") { location.href = "/super-launcher?spark=" + s[0].dataset.id; return; }
     if (k === "delete") { UI.confirm({ title: "Delete " + s.length + " code" + (s.length > 1 ? "s" : "") + "?", text: "Campaigns already launched with them keep running.", ok: "Delete", danger: true }).then(function (y) { if (!y) return; Promise.all(s.map(function (r) { return fetch("/spark-codes/" + r.dataset.id + "/delete", { method: "POST", credentials: "same-origin" }); })).then(function () { location.reload(); }); }); return; }
     if (k === "source") { var p = UI.popover(b, '<div style="font-weight:700;margin-bottom:6px;">Source for ' + s.length + '</div><div style="display:flex;gap:6px;"><input type="text" placeholder="src-…" style="flex:1;"><button type="button" class="btn sm primary">Set</button></div>'); p.querySelector(".primary").addEventListener("click", function () { var v = p.querySelector("input").value.trim(); if (!v) return; p.close(); Promise.all(s.map(function (r) { return fetch("/spark-codes/" + r.dataset.id + "/source", { method: "POST", credentials: "same-origin", body: new URLSearchParams({ source: v }) }); })).then(function () { location.reload(); }); }); }
+  });
+  // thumbnail → pop-up preview of the post
+  document.addEventListener("click", function (e) {
+    var t = e.target.closest(".sp-thumb"); if (!t) return; e.stopPropagation();
+    var d = t.closest(".sp-row").dataset;
+    var body = UI.el('<div><div class="dw-phone" style="max-width:260px;"><img alt=""></div><div style="text-align:center;margin-top:10px;font-size:12.5px;"><b></b><div class="muted" data-sub></div></div></div>');
+    body.querySelector("img").src = t.dataset.src; body.querySelector("b").textContent = d.name; body.querySelector("[data-sub]").textContent = (d.type || "").toLowerCase() + (d.creator ? " · " + d.creator : "") + (d.source ? " · " + d.source : "");
+    UI.modal({ title: "Spark post", body: body, footer: (d.url ? '<a class="btn" href="' + UI.esc(d.url) + '" target="_blank" rel="noopener">Open on TikTok ↗</a>' : "") + '<a class="btn primary" href="/super-launcher?spark=' + d.id + '">🚀 Launch with this spark</a>' });
   });
   // row menu
   document.addEventListener("click", function (e) {

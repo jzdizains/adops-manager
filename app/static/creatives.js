@@ -141,6 +141,13 @@
     });
   }
   document.addEventListener("click", function (e) {
+    var cz = e.target.closest && e.target.closest(".cz-row");
+    if (cz) {
+      if (e.target.closest("a, .cz-del")) return;
+      var im = e.target.closest(".cz-mini img, .cz-mini .cz-more");
+      if (im) { var ids = (cz.dataset.slides || "").split(",").filter(Boolean); UI.slidesPopup(ids, { title: cz.dataset.name, start: im.dataset.k ? +im.dataset.k : 0 }); return; }   // a slide → full-size pop-up, starting on that slide
+      openDrawer(cz.dataset.cid); return;   // the rest of the row → details drawer
+    }
     var t = e.target.closest && e.target.closest(".cr-tile");
     if (!t || e.target.closest("input, label, a, button, .cr-play")) return;
     if (t.closest(".selmode")) return;                       // Select mode: the tile click toggled the box instead
