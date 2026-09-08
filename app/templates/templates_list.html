@@ -1,61 +1,67 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="page-head">
-  <div><h1>Presets</h1><div class="muted">A preset is everything a campaign needs — goal, budget, targeting, creative source. Launch it to any number of accounts without retyping.</div></div>
+{% macro money0(v) -%}{{ '−' if v < 0 }}${{ "%.0f"|format(v|abs) if v|abs >= 100 else "%.2f"|format(v|abs) }}{%- endmacro %}
+<div class="page-head" style="margin-bottom:10px;">
+  <div><h1>Presets</h1><div class="muted" style="font-size:12.5px;">{{ rows|length }} preset{{ 's' if rows|length != 1 }} · everything a campaign needs — goal, destination, targeting, budget, creative — launched to any number of accounts without retyping. Sorted by today's profit.</div></div>
   <div class="actions"><a class="btn primary" href="/presets/new">＋ New preset</a></div>
 </div>
 
+{% if rows %}
+<div class="filterbar" style="margin-bottom:12px;">
+  <div class="search-wrap" style="max-width:260px;"><input type="text" id="prQ" placeholder="Name, goal, destination, URL…"></div>
+  <div class="seg" id="prCreative"><button type="button" data-c="" class="on">All</button><button type="button" data-c="spark">Spark</button><button type="button" data-c="library">Library video</button><button type="button" data-c="carousel">Carousel</button></div>
+  <span class="muted" style="margin-left:auto;font-size:12px;" id="prShown"></span>
+</div>
 <div class="card" style="padding:0;overflow:hidden;">
-  {% if rows %}
-  <div class="table-scroll">
-  <table class="data dense">
-    <thead><tr>
-      <th>Preset</th><th>Goal</th><th>Destination</th><th>Creative</th><th>Budget</th><th>CTA</th>
-      <th class="num">Ad groups</th><th class="num">Launches</th><th>Last used</th><th class="num">Actions</th>
-    </tr></thead>
+  <div class="table-scroll"><table class="data dense" id="prTable">
+    <thead><tr><th>Preset</th><th>Goal · destination</th><th>Creative</th><th>Budget</th><th class="num">Ad groups</th><th class="num">Live</th><th class="num">Spend today</th><th class="num">Profit</th><th class="num">ROAS</th><th class="num">Launches</th><th style="width:150px;"></th></tr></thead>
     <tbody>
-    {% for row in rows %}
-      {% set t = row.t %}{% set blob = row.blob %}{% set u = usage.get(t.name) %}
-      {% set cs = blob.get('creative_source', 'spark') %}
-      <tr>
-        <td><a href="/presets/{{ t.id }}/edit" style="font-weight:600;color:inherit;">{{ t.name }}</a>
-          {% if blob.get('smart_plus') %} <span class="pill dim" title="Smart+ campaign">S+</span>{% endif %}
-          {% if blob.get('landing_page_url') %}<div class="muted clip" style="font-size:10.5px;max-width:260px;" title="{{ blob.get('landing_page_url') }}">{{ blob.get('landing_page_url') }}</div>{% endif %}</td>
-        <td class="muted">{{ objective_labels.get(t.objective_type, t.objective_type.replace('_',' ')|title) }}</td>
-        <td class="muted">{{ blob.get('destination_type', 'website').replace('_',' ')|title }}
-          {% if blob.get('destination_type') == 'pixel' and blob.get('optimization_event') %}
-            · {{ blob.get('optimization_event') }}{% endif %}</td>
-        <td>{% if cs == 'carousel' %}🖼 Carousel{% elif cs == 'library' %}🎬 Library video{% else %}✦ Spark code{% endif %}
-          {% if blob.get('smart_creative') %}<div class="muted" style="font-size:10.5px;">Smart Creative</div>{% endif %}</td>
-        <td>
-          {% if t.campaign_budget_mode == 'ABO' %}
-            <span class="pill dim">ABO</span> <span class="muted num">${{ "%.0f"|format(blob.get('adgroup_budget', 0)) }}/ad group</span>
-          {% else %}
-            <span class="pill warn">CBO</span> <span class="muted num">${{ "%.0f"|format(t.campaign_budget or 0) }}{{ '/day' if t.campaign_budget_mode == 'BUDGET_MODE_DAY' else ' total' }}</span>
-          {% endif %}
-        </td>
-        <td class="muted">{% if blob.get('call_to_action') == 'AUTO' %}Auto{% else %}{{ (blob.get('call_to_action') or '—').replace('_',' ')|lower|capitalize }}{% endif %}</td>
+    {% for row in rows %}{% set t = row.t %}{% set blob = row.blob %}{% set u = usage.get(t.name) %}{% set pf = perf.get(t.name) %}{% set cs = blob.get('creative_source', 'spark') %}
+      <tr class="pr-row" data-id="{{ t.id }}" data-name="{{ t.name }}" data-creative="{{ cs }}" data-search="{{ (t.name ~ ' ' ~ objective_labels.get(t.objective_type, t.objective_type) ~ ' ' ~ blob.get('destination_type', '') ~ ' ' ~ blob.get('landing_page_url', ''))|lower }}">
+        <td><a href="/presets/{{ t.id }}/edit" style="font-weight:600;color:inherit;">{{ t.name }}</a>{% if blob.get('smart_plus') %} <span class="pill dim" title="Smart+ campaign">S+</span>{% endif %}
+          {% if blob.get('landing_page_url') %}<div class="muted clip" style="font-size:10.5px;max-width:240px;" title="{{ blob.get('landing_page_url') }}">{{ blob.get('landing_page_url') }}</div>{% endif %}</td>
+        <td class="muted" style="font-size:12px;">{{ objective_labels.get(t.objective_type, t.objective_type.replace('_',' ')|title) }}<div style="font-size:11px;">{{ blob.get('destination_type', 'website').replace('_',' ')|title }}{% if blob.get('destination_type') == 'pixel' and blob.get('optimization_event') %} · {{ blob.get('optimization_event') }}{% endif %}</div></td>
+        <td style="font-size:12px;">{% if cs == 'carousel' %}🖼 Carousel{% elif cs == 'library' %}🎬 Library video{% else %}✦ Spark{% endif %}{% if blob.get('smart_creative') %}<div class="muted" style="font-size:10.5px;">Smart Creative</div>{% endif %}{% if blob.get('video_creative_id') or blob.get('carousel_id') %}<div class="muted" style="font-size:10.5px;">pinned</div>{% endif %}</td>
+        <td style="font-size:12px;">{% if t.campaign_budget_mode == 'ABO' %}<span class="pill dim">ABO</span> ${{ "%.0f"|format(blob.get('adgroup_budget', 0)) }}/ad group{% else %}<span class="pill warn">CBO</span> ${{ "%.0f"|format(t.campaign_budget or 0) }}{{ '/day' if t.campaign_budget_mode == 'BUDGET_MODE_DAY' else ' total' }}{% endif %}</td>
         <td class="num">{{ blob.get('cost_cap_ladder')|length if blob.get('cost_cap_ladder') else blob.get('duplicates', 1) }}</td>
-        <td class="num">{% if u %}<a href="/status?q={{ t.name|urlencode }}&origin=all" style="color:inherit;" title="{{ u.ok }} succeeded of {{ u.n }}">{{ u.ok }}{% if u.n > u.ok %}<span class="muted"> / {{ u.n }}</span>{% endif %}</a>{% else %}—{% endif %}</td>
-        <td class="muted" title="{{ u.last|local('%Y-%m-%d %H:%M') if u and u.last else '' }}">{{ u.last|ago if u and u.last else 'never' }}</td>
-        <td class="num" style="white-space:nowrap;">
-          <a class="btn sm" href="/super-launcher?preset={{ t.id }}" title="Open the Super Launcher with this preset picked">🚀 Launch</a>
-          <a class="btn sm" href="/presets/{{ t.id }}/edit">✎ Edit</a>
-          <form method="post" action="/presets/{{ t.id }}/duplicate" style="display:inline;">
-            <button class="btn sm" type="submit" title="Make a copy to tweak">⧉ Copy</button></form>
-          <form method="post" action="/presets/{{ t.id }}/delete" style="display:inline;"
-                onsubmit="return confirm('Delete preset “{{ t.name }}”? Launched campaigns are not affected.');">
-            <button class="btn sm danger" type="submit" title="Delete">✕</button></form>
-        </td>
+        <td class="num">{% if pf and pf.live %}<a href="/status?q={{ t.name|urlencode }}" style="color:inherit;">{{ pf.live }}</a>{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td class="num">{% if pf and pf.spend %}{{ money0(pf.spend) }}{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td class="num">{% if pf and (pf.spend or pf.revenue) %}<span class="profit-cell {{ 'pos' if pf.profit >= 0 else 'neg' }}">{{ '+' if pf.profit > 0 }}{{ money0(pf.profit) }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td class="num">{% if pf and pf.spend and pf.revenue %}<span class="roas-pill {{ 'g' if pf.roas >= 1.3 else ('w' if pf.roas >= 0.9 else 'r') }}">{{ "%.2f"|format(pf.roas) }}×</span>{% else %}<span class="roas-pill n">—</span>{% endif %}</td>
+        <td class="num">{% if u %}<a href="/status?q={{ t.name|urlencode }}&origin=all" style="color:inherit;" title="{{ u.ok }} succeeded of {{ u.n }}">{{ u.ok }}</a>{% if u.n > u.ok %}<span class="muted"> / {{ u.n }}</span>{% endif %}<div class="muted" style="font-size:10.5px;">{{ u.last|ago if u.last else '' }}</div>{% else %}<span class="muted">never</span>{% endif %}</td>
+        <td style="text-align:right;white-space:nowrap;"><a class="btn sm primary" href="/super-launcher?preset={{ t.id }}">🚀 Launch</a> <button type="button" class="btn sm pr-menu">···</button></td>
       </tr>
     {% endfor %}
-    </tbody>
-  </table>
-  </div>
-  {% else %}
-  <div class="empty"><div class="empty-title">No presets yet</div>
-    Build one once — goal, budget, targeting, creative source — then launch it to any number of accounts.
-    <br><a class="btn primary" href="/presets/new">＋ Create your first preset</a></div>
-  {% endif %}
+    </tbody></table></div>
+  <div class="empty" id="prEmpty" hidden>No preset matches.</div>
 </div>
+{% else %}
+<div class="card"><div class="empty"><div class="empty-title">No presets yet</div>Build one once — goal, budget, targeting, creative source — then launch it to any number of accounts.<br><a class="btn primary" href="/presets/new" style="margin-top:10px;">＋ Create your first preset</a></div></div>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  var $ = function (s, r) { return (r || document).querySelector(s); }, $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
+  var rows = $$(".pr-row"), c = "", q = "";
+  function apply() { var n = 0; rows.forEach(function (r) { var ok = (!c || r.dataset.creative === c) && (!q || r.dataset.search.indexOf(q) >= 0); r.hidden = !ok; if (ok) n++; }); var e = $("#prEmpty"); if (e) e.hidden = n > 0; var s = $("#prShown"); if (s) s.textContent = n === rows.length ? "" : n + " of " + rows.length; }
+  $$("#prCreative button").forEach(function (b) { b.addEventListener("click", function () { $$("#prCreative button").forEach(function (o) { o.classList.remove("on"); }); b.classList.add("on"); c = b.dataset.c; apply(); }); });
+  var qi = $("#prQ"); if (qi) qi.addEventListener("input", function () { q = this.value.trim().toLowerCase(); apply(); });
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest(".pr-menu"); if (!b) return; e.stopPropagation();
+    var r = b.closest(".pr-row"), d = r.dataset;
+    var p = UI.popover(b, '<div style="display:flex;flex-direction:column;gap:2px;min-width:200px;">' +
+      '<a class="btn sm ghost" href="/presets/' + d.id + '/edit" style="justify-content:flex-start;">✎ Edit</a>' +
+      '<a class="btn sm ghost" href="/status?q=' + encodeURIComponent(d.name) + '&origin=all" style="justify-content:flex-start;">Its campaigns</a>' +
+      '<button type="button" class="btn sm ghost" data-act="copy" style="justify-content:flex-start;">⧉ Duplicate</button>' +
+      '<button type="button" class="btn sm ghost danger" data-act="delete" style="justify-content:flex-start;">Delete</button></div>', { alignRight: true });
+    p.addEventListener("click", function (ev) {
+      var a = ev.target.closest("[data-act]"); if (!a) return; p.close();
+      var post = function (url) { var f = document.createElement("form"); f.method = "post"; f.action = url; document.body.appendChild(f); f.submit(); };
+      if (a.dataset.act === "copy") post("/presets/" + d.id + "/duplicate");
+      else UI.confirm({ title: "Delete “" + d.name + "”?", text: "Campaigns already launched with it keep running. This cannot be undone.", ok: "Delete", danger: true }).then(function (y) { if (y) post("/presets/" + d.id + "/delete"); });
+    });
+  });
+})();
+</script>
 {% endblock %}

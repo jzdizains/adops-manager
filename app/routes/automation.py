@@ -16,32 +16,9 @@ router = APIRouter()
 
 
 @router.get("/automation")
-def automation_page(request: Request, db: Session = Depends(get_db)):
-    actions = (db.query(models.RuleAction)
-               .order_by(models.RuleAction.created_at.desc()).limit(200).all())
-    topups = (db.query(models.TopUp)
-              .order_by(models.TopUp.created_at.desc()).limit(100).all())
-    # which paused campaigns are still paused (offer Resume)
-    paused_ids = {r.campaign_id for r in
-                  db.query(models.CampaignRecord)
-                  .filter(models.CampaignRecord.operation_status == "DISABLE")}
-    names = {a.advertiser_id: a.advertiser_name for a in db.query(models.AdAccount).all()}
-    still_paused_count = sum(
-        1 for a in actions
-        if a.action == "pause" and a.ok and a.campaign_id in paused_ids)
-    from ..settings_store import get_settings
-    from .. import timeutil
-    s = get_settings(db)
-    day_start = timeutil.local_midnight_utc(0).replace(tzinfo=None)
-    today_pauses = sum(1 for a in actions if a.action == "pause" and a.created_at and a.created_at >= day_start)
-    today_topups = sum(float(t.amount or 0) for t in topups if t.ok and t.created_at and t.created_at >= day_start)
-    return render(request, "automation.html", {
-        "title": "Automation", "actions": actions, "topups": topups, "s": s,
-        "today_pauses": today_pauses, "today_topups": today_topups,
-        "paused_ids": paused_ids, "names": names,
-        "still_paused_count": still_paused_count,
-        "ok": request.query_params.get("ok", ""), "err": request.query_params.get("err", ""),
-    })
+def automation_page(request: Request):
+    """Merged into Health → Automation; keep the old URL working."""
+    return RedirectResponse("/monitor?view=automation", status_code=303)
 
 
 def _resume(db: Session, advertiser_id: str, campaign_id: str) -> str | None:
@@ -70,8 +47,8 @@ def resume_one(advertiser_id: str = Form(...), campaign_id: str = Form(...),
                db: Session = Depends(get_db)):
     err = _resume(db, advertiser_id, campaign_id)
     if err:
-        return RedirectResponse(f"/automation?err={err[:150]}", status_code=303)
-    return RedirectResponse("/automation?ok=Campaign+resumed", status_code=303)
+        return RedirectResponse(f"/monitor?view=automation&err={err[:150]}", status_code=303)
+    return RedirectResponse("/monitor?view=automation&ok=Campaign+resumed", status_code=303)
 
 
 @router.post("/automation/resume-all")
@@ -96,7 +73,7 @@ def resume_all(db: Session = Depends(get_db)):
     msg = f"Resumed+{done}+campaign(s)"
     if failed:
         msg += f"&err={failed}+failed"
-    return RedirectResponse(f"/automation?ok={msg}", status_code=303)
+    return RedirectResponse(f"/monitor?view=automation&ok={msg}", status_code=303)
 
 
 # ---------------------------------------------------------------------------

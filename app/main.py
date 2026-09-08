@@ -10,8 +10,8 @@ from starlette.middleware.sessions import SessionMiddleware
 from . import background, config
 from .database import init_db
 from .routes import (
-    ad_texts, alerts, appeals_page, audience, auth, automation, campaigns, jobs_page, partners_page, cookies_admin, creatives, dashboard, display_cards,
-    inbox, instant_pages, issues_page, lead_forms, locations, monitor, notes, oauth,
+    ad_texts, alerts, appeals_page, assistant_page, audience, auth, automation, campaigns, jobs_page, partners_page, cookies_admin, creatives, dashboard, display_cards,
+    inbox, instant_pages, issues_page, lead_forms, locations, monitor, notes, oauth, pnl_page,
     performance, pixels, postback, security, settings_page, spark_codes, escape_test,
     status, super_launcher, templates_routes,
 )
@@ -203,5 +203,5 @@ for r in (auth.router, security.router, oauth.router, dashboard.router,
           settings_page.router, postback.router, pixels.router,
           automation.router, issues_page.router, creatives.router,
           ad_texts.router, locations.router, escape_test.router,
-          appeals_page.router, partners_page.router, jobs_page.router, audience.router, display_cards.router, notes.router):
+          appeals_page.router, partners_page.router, jobs_page.router, audience.router, display_cards.router, notes.router, pnl_page.router, assistant_page.router):
     app.include_router(r)

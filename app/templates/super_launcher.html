@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="page-head">
-  <div><h1>Super Launcher</h1>
-    <div class="muted">Pick accounts + a preset → one click launches everywhere.</div></div>
+  <div><h1>Launch</h1><div class="muted" style="font-size:12.5px;">preset + creatives + accounts → one click, hundreds of campaigns</div></div>
+  <div class="actions"><a class="btn" href="/queue">Queue</a><a class="btn" href="/presets">Presets</a></div>
 </div>
 
 {% if request.query_params.get('err') == 'noeligible' %}
@@ -79,28 +79,30 @@
         {% endfor %}
       </select></label>
 
-    <label class="field"><span class="field-label">Creatives (optional override)</span>
-      <select name="creative_mode" id="slCreative">
-        <option value="">— use preset default —</option>
-        <option value="library" {{ 'disabled' if not creatives_available }}>
-          Library videos — pull unused ones ({{ creatives_available }} available)</option>
-        <option value="carousel" {{ 'disabled' if not carousels_available }}>
-          Library carousels — pull unused ones ({{ carousels_available }} available)</option>
+    <div class="field"><span class="field-label">Creatives</span>
+      <div class="seg" id="slCreativeSeg" style="display:inline-flex;flex-wrap:wrap;">
+        <button type="button" class="on" data-mode="">Preset default</button>
+        <button type="button" data-mode="library" {{ 'disabled' if not creatives_available }} title="Next unused library videos, one per account">Fresh videos <span class="n">{{ creatives_available }}</span></button>
+        <button type="button" data-mode="carousel" {{ 'disabled' if not carousels_available }} title="Next unused library carousels">Fresh carousels <span class="n">{{ carousels_available }}</span></button>
+        <button type="button" data-mode="pick">Pick specific…</button>
+      </div>
+      <select name="creative_mode" id="slCreative" hidden>
+        <option value="">— use preset default —</option><option value="library">library</option><option value="carousel">carousel</option><option value="pick">pick</option>
       </select>
-      <span class="hint">Pick ONE override at most. Library mode pulls creatives from the Creatives
-        page — the preset needs a landing page URL &amp; ad text.</span></label>
+      <div id="slPicked" class="pk-chips" style="margin-top:8px;" hidden></div>
+      <div id="slPickedInputs"></div>
+      <span class="hint" id="slCreativeHint">Library creatives need a landing URL &amp; ad text on the preset. Each creative launches to its own accounts — nothing runs twice.</span>
+    </div>
 
-    <div id="slLibOpts" style="display:none;border-left:2px solid var(--accent-soft);padding-left:12px;margin-bottom:10px;">
+    <div id="slLibOpts" style="display:none;margin-bottom:10px;">
       <div class="form-row-3">
-        <label class="field"><span class="field-label">How many creatives</span>
+        <label class="field" id="slCountField"><span class="field-label">How many creatives</span>
           <input type="number" name="creatives_count" min="0" value="0" style="width:90px;">
           <span class="hint">0 = as many as needed.</span></label>
         <label class="field"><span class="field-label">Accounts per creative</span>
           <input type="number" name="accounts_per_creative" min="1" value="1" style="width:90px;">
           <span class="hint">1 creative → this many accounts.</span></label>
-        <div class="field"><span class="field-label">&nbsp;</span>
-          <span class="hint">E.g. 10 creatives × 5 accounts = 50 launches. Each creative can repeat
-            across its group; leave both at defaults for one unique creative per account.</span></div>
+        <div class="field"><span class="field-label">&nbsp;</span><span class="hint" id="slAssignHint">Auto-assign: creatives are spread round-robin over the selected accounts.</span></div>
       </div>
     </div>
 
@@ -121,6 +123,7 @@
       Launch via background queue (retries transient errors; watch progress on the Queue page)
     </label>
     <div class="sl-summary" id="slSummary">Pick a preset and at least one account.</div>
+    <div class="muted" id="slAssignSummary" style="font-size:12px;margin:-4px 0 8px;text-align:center;"></div>
     <button class="btn primary" type="submit" id="slLaunch"
             style="width:100%;justify-content:center;font-size:15px;padding:12px;">
       🚀 Launch</button>
@@ -139,7 +142,7 @@
   var CREATIVE_LABELS = { spark: "Spark code (creator post)", library: "Library video — next unused", carousel: "Library carousel — next unused" };
   var preset = document.getElementById("slPreset"), dest = document.getElementById("slDest");
   var autoBox = document.getElementById("slAuto"), autoRow = document.getElementById("slAutoRow");
-  var summary = document.getElementById("slSummary"), launchBtn = document.getElementById("slLaunch");
+  var summary = document.getElementById("slSummary"), launchBtn = document.getElementById("slLaunch"), slForm = document.getElementById("slForm");
   var picker = window.AccountPicker.init({ onChange: function () { if (picker) syncSummary(); } });   // (init fires once before `picker` exists; syncPreset() below covers that)
   var boxes = picker.boxes;
 
@@ -174,19 +177,72 @@
       (dup > 1 ? " with " + dup + " ad groups each" : "") + (p.budget ? " · $" + p.budget + "/day per ad group" : "");
     summary.classList.add("ready");
     launchBtn.textContent = "🚀 Launch to " + n + " account" + (n === 1 ? "" : "s");
+    var as = document.getElementById("slAssignSummary"), m = slCreative.value;
+    if (m === "pick" || m === "library" || m === "carousel") {
+      var per = parseInt(document.querySelector('[name="accounts_per_creative"]').value, 10) || 1;
+      var k = m === "pick" ? picked.length : (parseInt(document.querySelector('[name="creatives_count"]').value, 10) || Math.ceil(n / per));
+      var covered = Math.min(n, k * per);
+      as.textContent = k ? (k + " creative" + (k === 1 ? "" : "s") + " × " + per + " account" + (per === 1 ? "" : "s") + " each → " + covered + " launch" + (covered === 1 ? "" : "es") + (covered < n ? " (" + (n - covered) + " selected accounts left out — add creatives or raise accounts per creative)" : "")) : "Pick at least one creative.";
+    } else as.textContent = "";
   }
   preset.addEventListener("change", syncPreset);
   document.querySelector('[name="duplicates"]').addEventListener("input", syncSummary);
   var autoCount = document.getElementById("slAutoCount"); if (autoCount) autoCount.addEventListener("input", syncSummary);
 
-  // spark vs library override are mutually exclusive — picking one clears the other
+  // creatives: preset default / fresh videos / fresh carousels / pick specific (pop-up)
   var slSpark = document.getElementById("slSpark"), slCreative = document.getElementById("slCreative");
-  slSpark.addEventListener("change", function () { if (slSpark.value) slCreative.value = ""; });
-  var slLibOpts = document.getElementById("slLibOpts");
-  function syncLibOpts() { slLibOpts.style.display = (slCreative.value === "library" || slCreative.value === "carousel") ? "" : "none"; }
-  slCreative.addEventListener("change", function () { if (slCreative.value) slSpark.value = ""; syncLibOpts(); });
-  slSpark.addEventListener("change", syncLibOpts);
-  syncLibOpts();
+  var slLibOpts = document.getElementById("slLibOpts"), seg = document.getElementById("slCreativeSeg"), pickedBox = document.getElementById("slPicked"), pickedInputs = document.getElementById("slPickedInputs");
+  var picked = [];
+  function renderPicked() {
+    pickedBox.hidden = slCreative.value !== "pick";
+    pickedBox.innerHTML = picked.length ? picked.map(function (c) { return '<span class="pk-chip" data-id="' + c.id + '"><img src="' + UI.esc(c.poster || ("/creatives/" + c.id + "/poster")) + '" alt=""><span>' + UI.esc(c.name) + '</span><button type="button" title="Remove">✕</button></span>'; }).join("") + '<button type="button" class="btn sm" id="slPickMore">+ Add</button>' : '<button type="button" class="btn sm primary" id="slPickMore">Choose creatives…</button>';
+    pickedInputs.innerHTML = picked.map(function (c) { return '<input type="hidden" name="creative_ids" value="' + c.id + '">'; }).join("");
+    document.getElementById("slCountField").style.display = slCreative.value === "pick" ? "none" : "";
+    syncSummary();
+  }
+  function openPicker() {
+    var kind = picked.length ? picked[0].kind : "video";
+    UI.pickCreatives({ multi: true, kind: kind, kinds: ["video", "carousel"], selected: picked.map(function (c) { return c.id; }), title: "Pick creatives to launch", hint: "One creative per account unless you set accounts-per-creative." }).then(function (res) {
+      if (!res) { if (!picked.length) setMode(""); return; }
+      picked = res; renderPicked();
+    });
+  }
+  pickedBox.addEventListener("click", function (e) {
+    if (e.target.closest("#slPickMore")) { openPicker(); return; }
+    var x = e.target.closest(".pk-chip button"); if (x) { var id = x.closest(".pk-chip").dataset.id; picked = picked.filter(function (c) { return String(c.id) !== id; }); renderPicked(); }
+  });
+  function setMode(m) {
+    slCreative.value = m;
+    seg.querySelectorAll("button").forEach(function (b) { b.classList.toggle("on", b.dataset.mode === m); });
+    slLibOpts.style.display = (m === "library" || m === "carousel" || m === "pick") ? "" : "none";
+    if (m) slSpark.value = "";
+    renderPicked();
+  }
+  seg.addEventListener("click", function (e) { var b = e.target.closest("[data-mode]"); if (!b || b.disabled) return; setMode(b.dataset.mode); if (b.dataset.mode === "pick" && !picked.length) openPicker(); });
+  slSpark.addEventListener("change", function () { if (slSpark.value) setMode(""); });
+  document.querySelector('[name="accounts_per_creative"]').addEventListener("input", syncSummary);
+  document.querySelector('[name="creatives_count"]').addEventListener("input", syncSummary);
+  setMode("");
+  // arrived from Creatives with ?creatives=1,2 → those are picked already
+  var pre = (new URLSearchParams(location.search).get("creatives") || "").split(",").filter(Boolean);
+  if (pre.length) Promise.all(pre.map(function (id) { return UI.get("/creatives/" + id + "/detail"); })).then(function (ds) {
+    picked = ds.filter(function (d) { return d && d.id; }).map(function (d) { return { id: d.id, name: d.name, kind: d.kind, poster: d.poster }; });
+    if (picked.length) setMode("pick");
+  });
+  // arrived from Accounts with ?accounts=id,id (tick those) or ?bc=Name&state=fresh (tick every fresh account of that BC)
+  var qs = new URLSearchParams(location.search), preAcc = (qs.get("accounts") || "").split(",").filter(Boolean), preBc = qs.get("bc") || "", preState = qs.get("state") || "";
+  if (preAcc.length || preBc) {
+    var want = {}; preAcc.forEach(function (id) { want[id] = 1; });
+    picker.selectRows(function (row) {
+      var box = row.querySelector(".sl-acct"); if (!box || box.disabled) return false;
+      if (preAcc.length) return !!want[box.value];
+      return row.getAttribute("data-bc") === preBc && (!preState || row.getAttribute("data-state") === preState);
+    });
+    syncSummary();
+  }
+  // arrived from Sparks with ?spark=ID → that spark is the override
+  var preSpark = new URLSearchParams(location.search).get("spark");
+  if (preSpark && slSpark.querySelector('option[value="' + preSpark + '"]')) { slSpark.value = preSpark; setMode(""); syncSummary(); }
   var modeField = document.getElementById("slMode");
   autoBox.addEventListener("change", function () {
     autoRow.style.display = autoBox.checked ? "" : "none";
@@ -207,8 +263,14 @@
       label = n + " selected account(s)";
       if (!n) { e.preventDefault(); alert("Pick at least one account (or use auto-pick)."); return; }
     }
-    if (!confirm("Launch “" + preset.options[preset.selectedIndex].text + "” to " + label + "?")) { e.preventDefault(); return; }
-    launchBtn.disabled = true; launchBtn.textContent = "Starting…";
+    if (slCreative.value === "pick" && !picked.length) { e.preventDefault(); openPicker(); return; }
+    if (!e.isTrusted || slForm.dataset.ok === "1") { launchBtn.disabled = true; launchBtn.textContent = "Starting…"; return; }
+    e.preventDefault();
+    var p = PRESETS[preset.value] || {}, m = slCreative.value;
+    var cre = m === "pick" ? picked.length + " picked creative(s)" : (m === "library" ? "fresh library videos" : (m === "carousel" ? "fresh library carousels" : (slSpark.value ? "spark override" : "the preset's creative")));
+    UI.confirm({ title: "Launch to " + label + "?", html: true, ok: "Launch now",
+      text: "<b>" + UI.esc(preset.options[preset.selectedIndex].text) + "</b><br>" + UI.esc(cre) + (p.budget ? " · $" + p.budget + "/day per ad group" : "") + "<br>" + UI.esc(document.getElementById("slAssignSummary").textContent || "") + "<br><span style='color:var(--text-dim)'>Runs in the background; the results page opens at once and you get a notification when every account is done.</span>" })
+      .then(function (yes) { if (!yes) return; slForm.dataset.ok = "1"; launchBtn.disabled = true; launchBtn.textContent = "Starting…"; slForm.submit(); });
   });
   syncPreset();
 </script>

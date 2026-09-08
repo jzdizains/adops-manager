@@ -19,6 +19,7 @@
   <!-- topnav.css = the app shell (sidebar / top bar / mobile bar); loads after style.css -->
   <link rel="stylesheet" href="/static/topnav.css?v={{ STATIC_V }}">
   <script src="/static/ui.js?v={{ STATIC_V }}"></script>
+  <script src="/static/picker.js?v={{ STATIC_V }}" defer></script>
 </head>
 <body>
 {# ---- icon set: inline SVG (crisp at any size, inherits currentColor) ---- #}
@@ -101,6 +102,7 @@
     <div class="right">
       <a href="/jobs" class="jr-top" id="jobsRunning" hidden title="Background jobs running — click for the list"><span class="jr-dot"></span><span class="jr-t">running</span></a>
       <button type="button" class="gsearch" id="cmdkOpen" title="Search or jump to a page (⌘K)">{{ ic('search') }}<span>Search or jump to…</span><kbd>⌘K</kbd></button>
+      <a href="/assistant" class="iconbtn {{ 'on' if request.url.path.startswith('/assistant') }}" title="Assistant — ask about your numbers, get changes proposed">{{ ic('sparkle') }}</a>
       <a href="/inbox" class="iconbtn" title="Inbox">{{ ic('bell') }}<span class="badge" data-inbox-badge hidden></span></a>
       <button type="button" class="avatar" id="userBtn" title="{{ me_email or 'Account' }}" aria-haspopup="true">{{ me_initials }}</button>
     </div>

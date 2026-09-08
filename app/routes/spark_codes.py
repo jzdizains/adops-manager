@@ -24,27 +24,65 @@ router = APIRouter()
 
 @router.get("/spark-codes")
 def spark_list(request: Request, db: Session = Depends(get_db)):
+    """One table for every spark, with what it earned: tests (launches), spend,
+    revenue, profit and ROAS all-time, plus creator and status filters."""
+    from sqlalchemy import func as _f
+    from .. import pnl_data, timeutil
     q = request.query_params.get("q", "").strip().lower()
     mine_only = request.query_params.get("mine", "") == "1"
-    groups = db.query(models.SparkCodeGroup).order_by(models.SparkCodeGroup.name).all()
-    my_creators = {s.creator_handle for s in
-                   db.query(models.SparkSetting).filter_by(is_mine=True).all()}
-    out_groups = []
-    for g in groups:
-        if mine_only and my_creators and g.name not in my_creators:
-            continue
-        codes = [c for c in g.codes
-                 if not q or q in (c.name or "").lower() or q in (c.code or "").lower()]
-        if codes or not q:
-            out_groups.append({"g": g, "codes": codes})
-    ungrouped = (db.query(models.SparkCode).filter(models.SparkCode.group_id.is_(None))
-                 .order_by(models.SparkCode.created_at.desc()).all())
-    if q:
-        ungrouped = [c for c in ungrouped
-                     if q in (c.name or "").lower() or q in (c.code or "").lower()]
+    state = request.query_params.get("state", "all")
+    creator = request.query_params.get("creator", "").strip()
+    groups = {g.id: g for g in db.query(models.SparkCodeGroup).all()}
+    my_creators = {s.creator_handle for s in db.query(models.SparkSetting).filter_by(is_mine=True).all()}
+    codes = db.query(models.SparkCode).order_by(models.SparkCode.created_at.desc()).all()
+    # launches + P&L per spark (all time, DB only)
+    logs = db.query(models.LaunchLog).filter(models.LaunchLog.spark_code_id.isnot(None), models.LaunchLog.ok == True).all()   # noqa: E712
+    by_spark: dict[int, list] = {}
+    for lg in logs:
+        by_spark.setdefault(lg.spark_code_id, []).append(lg)
+    cids = [lg.campaign_id for lg in logs if lg.campaign_id]
+    spend_by_cid = {c: float(v or 0) for c, v in db.query(models.SpendSnapshot.campaign_id, _f.sum(models.SpendSnapshot.spend))
+                    .filter(models.SpendSnapshot.campaign_id.in_(cids)).group_by(models.SpendSnapshot.campaign_id)} if cids else {}
+    src_map = pnl_data.campaign_source_map(db)
+    pb = pnl_data.revenue_by_source(db, timeutil.local_midnight_utc(-365), timeutil.local_midnight_utc(1))
+    camp_names = {c.campaign_id: c for c in db.query(models.CampaignRecord).filter(models.CampaignRecord.campaign_id.in_(cids)).all()} if cids else {}
+    rows = []
+    creators: dict[str, int] = {}
+    for c in codes:
+        g = groups.get(c.group_id) if c.group_id else None
+        cname = g.name if g else ""
+        if cname:
+            creators[cname] = creators.get(cname, 0) + 1
+        lgs = by_spark.get(c.id, [])
+        spend = sum(spend_by_cid.get(lg.campaign_id, 0.0) for lg in lgs)
+        srcs = {src_map.get(lg.campaign_id, "") or (lg.source or "") for lg in lgs} - {""}
+        revenue = sum(float(pb.get(sx, {}).get("revenue", 0.0)) for sx in srcs)
+        live = sum(1 for lg in lgs if lg.campaign_id in camp_names and camp_names[lg.campaign_id].operation_status == "ENABLE")
+        rows.append({"c": c, "creator": cname, "mine": cname in my_creators, "tests": len(lgs), "live": live, "spend": spend, "revenue": revenue,
+                     "profit": revenue - spend, "roas": (revenue / spend) if spend else 0.0, "has": bool(srcs)})
+    def _ok(r):
+        c = r["c"]
+        if mine_only and my_creators and r["creator"] not in my_creators:
+            return False
+        if creator and r["creator"] != creator:
+            return False
+        if state == "active" and c.status != "active":
+            return False
+        if state == "used" and not c.use_count:
+            return False
+        if state == "unused" and c.use_count:
+            return False
+        if q and q not in (c.name or "").lower() and q not in (c.code or "").lower() and q not in r["creator"].lower() and q not in (c.source or "").lower():
+            return False
+        return True
+    shown = [r for r in rows if _ok(r)]
+    shown.sort(key=lambda r: (r["profit"], r["c"].created_at or 0), reverse=True)
+    counts = {"all": len(rows), "active": sum(1 for r in rows if r["c"].status == "active"), "used": sum(1 for r in rows if r["c"].use_count),
+              "unused": sum(1 for r in rows if not r["c"].use_count)}
     return render(request, "spark_codes.html", {
-        "groups": out_groups, "ungrouped": ungrouped, "q": q, "mine_only": mine_only,
-        "my_creators": my_creators, "title": "Spark Codes",
+        "rows": shown, "counts": counts, "creators": sorted(creators.items(), key=lambda kv: (-kv[1], kv[0])), "creator": creator,
+        "q": q, "mine_only": mine_only, "state": state, "my_creators": my_creators, "title": "Sparks",
+        "tot": {"spend": sum(r["spend"] for r in shown), "profit": sum(r["profit"] for r in shown), "tests": sum(r["tests"] for r in shown)},
         "ok": request.query_params.get("ok", ""), "err": request.query_params.get("err", ""),
     })
 

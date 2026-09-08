@@ -182,11 +182,12 @@
       '<button type="button" class="btn sm ghost" data-act="bid" style="justify-content:flex-start;">Set cost cap…</button>' +
       '<button type="button" class="btn sm ghost" data-act="toggle" style="justify-content:flex-start;">' + (row.dataset.status === "ENABLE" ? "Pause" : "Resume") + '</button>' +
       '<a class="btn sm ghost" href="https://ads.tiktok.com/i18n/dashboard?aadvid=' + esc(row.dataset.adv) + '" target="_blank" rel="noopener" style="justify-content:flex-start;">Open in Ads Manager ↗</a>' +
-      '<a class="btn sm ghost" href="/campaigns/' + esc(row.dataset.adv) + '/' + esc(row.dataset.cid) + '/edit" style="justify-content:flex-start;">Full edit page</a></div>';
+      '<button type="button" class="btn sm ghost" data-act="rename" style="justify-content:flex-start;">Rename…</button></div>';
     var p = UI.popover(b, html, { alignRight: true });
     p.addEventListener("click", function (ev) {
       var a = ev.target.closest("[data-act]"); if (!a) return; p.close();
       if (a.dataset.act === "open") openDrawer(row);
+      else if (a.dataset.act === "rename") renamePop(b, row);
       else if (a.dataset.act === "budget") budgetPop(b, [row]);
       else if (a.dataset.act === "bid") bidPop(b, [row]);
       else if (a.dataset.act === "toggle") toggleRows([row], row.dataset.status === "ENABLE" ? "DISABLE" : "ENABLE");
@@ -195,6 +196,18 @@
 
   // ---- drawer --------------------------------------------------------------------------
   var drawer = null;
+  function renamePop(anchor, row) {
+    var p = UI.popover(anchor, '<div style="font-weight:700;margin-bottom:6px;">Rename campaign</div><div style="display:flex;gap:6px;"><input type="text" value="' + esc(row.dataset.name) + '" style="flex:1;min-width:260px;"><button type="button" class="btn sm primary">Save</button></div><div class="muted" style="font-size:11px;margin-top:4px;">Renames it on TikTok in the background. In campaign-name source mode the ?source= keeps the OLD name — postbacks still match.</div>', { alignRight: true });
+    function go() {
+      var v = p.querySelector("input").value.trim(); if (!v || v === row.dataset.name) { p.close(); return; }
+      UI.post("/campaigns/" + row.dataset.adv + "/" + row.dataset.cid + "/edit", { campaign_name: v }).then(function (r) {
+        p.close(); adopsToast && adopsToast(r.ok ? "ok" : "err", r.ok ? "Rename queued: " + v : (r.error || "failed"));
+        if (r.ok) { row.dataset.name = v; var n = row.querySelector(".cname a"); if (n) n.textContent = v; if (drawer) drawer.setTitle(v, null); }
+      });
+    }
+    p.querySelector(".primary").addEventListener("click", go);
+    p.querySelector("input").addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); go(); } });
+  }
   function openDrawer(row) {
     if (drawer) drawer.close();
     var adv = row.dataset.adv, cid = row.dataset.cid;
@@ -216,12 +229,13 @@
         '<div class="seg" style="margin-top:6px;"><button type="button" class="on" data-series="spend">Spend</button><button type="button" data-series="revenue">Revenue</button><button type="button" data-series="conversions">Conv</button><button type="button" data-series="clicks">Clicks</button></div></div>' +
         '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px 10px;font-size:12px;">' + [["Revenue", has ? money(m.revenue) : "—"], ["Conversions", m.conversions], ["CPA", m.conversions ? money(m.cpa) : "—"], ["Impressions", m.impressions.toLocaleString()], ["Clicks", m.clicks.toLocaleString()], ["CTR", m.ctr.toFixed(2) + "%"], ["CPC", m.clicks ? money(m.cpc) : "—"], ["CPM", m.impressions ? money(m.cpm) : "—"], ["PB clicks", has ? Math.round(m.pb_clicks) : "—"]].map(function (x) { return '<div><div class="muted" style="font-size:10.5px;">' + x[0] + '</div><div style="font-weight:600;">' + x[1] + "</div></div>"; }).join("") + "</div>" +
         (m.shared_n > 1 ? '<div class="muted" style="font-size:11px;">Source <span class="mono">' + esc(c.source) + "</span> is shared by " + m.shared_n + " campaigns — revenue split by spend share (" + Math.round(m.share * 100) + "%).</div>" : "") +
-        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;"><div><div class="drawer-sec">Daily budget</div><div style="display:flex;gap:6px;"><input type="text" inputmode="decimal" id="dwBudget" value="' + (c.budget ? c.budget.toFixed(2) : "") + '" placeholder="25.00"><button type="button" class="btn sm" id="dwBudgetSave">Save</button></div></div>' +
+        (c.budget_mode && c.budget_mode !== "BUDGET_MODE_INFINITE" && c.budget ? '<div><div class="drawer-sec">Campaign budget (CBO · ' + (c.budget_mode === "BUDGET_MODE_TOTAL" ? "total" : "daily") + ')</div><div style="display:flex;gap:6px;"><input type="text" inputmode="decimal" id="dwCbo" value="' + c.budget.toFixed(2) + '"><button type="button" class="btn sm" id="dwCboSave">Save</button></div></div>' : "") +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;"><div><div class="drawer-sec">Ad group budgets (each)</div><div style="display:flex;gap:6px;"><input type="text" inputmode="decimal" id="dwBudget" value="' + (c.budget ? c.budget.toFixed(2) : "") + '" placeholder="25.00"><button type="button" class="btn sm" id="dwBudgetSave">Save</button></div></div>' +
         '<div><div class="drawer-sec">Cost cap</div><div style="display:flex;gap:6px;"><input type="text" inputmode="decimal" id="dwCap" placeholder="9.50"><button type="button" class="btn sm" id="dwCapSave">Save</button></div><div class="muted" id="dwCapCur" style="font-size:10.5px;margin-top:3px;">reading…</div></div></div>' +
         (d.creative ? '<div style="display:flex;gap:10px;align-items:center;"><span class="thumb previewBtn" style="width:34px;height:46px;border-radius:6px;background:var(--accent-soft);display:grid;place-items:center;color:var(--accent-ink);cursor:pointer;flex:none;" data-src="' + esc(d.creative.file) + '" data-name="' + esc(d.creative.name) + '">▶</span><div style="min-width:0;font-size:12px;"><b>' + esc(d.creative.name) + '</b><div class="muted" style="font-size:11px;">library ' + esc(d.creative.kind) + ' · <a href="/creatives?view=performance">performance</a></div></div></div>' : (d.spark ? '<div style="font-size:12px;"><b>✦ ' + esc(d.spark) + '</b> <span class="muted">spark code</span></div>' : "")) +
         '<div><div class="drawer-sec">Note</div><textarea id="dwNote" rows="2" style="min-height:52px;font-family:var(--font-sans);font-size:12.5px;" placeholder="Why you scaled it, what to watch…">' + esc(d.note) + '</textarea><div class="muted" id="dwNoteSt" style="font-size:10.5px;margin-top:2px;">saves on its own</div></div>' +
         '<div><div class="drawer-sec">Timeline</div>' + (d.timeline.length ? d.timeline.map(function (t) { return '<div style="display:flex;gap:8px;font-size:12px;padding:3px 0;border-bottom:1px solid var(--border-soft);"><span class="muted" style="flex:none;width:64px;">' + esc(t.ago) + '</span><span style="min-width:0;"><b>' + esc(t.action) + "</b> " + esc(t.detail) + (t.who ? ' <span class="muted">· ' + esc(t.who) + "</span>" : "") + "</span></div>"; }).join("") : '<div class="muted">Nothing yet.</div>') + "</div>" +
-        '<div style="display:flex;gap:8px;flex-wrap:wrap;"><button type="button" class="btn sm" id="dwToggle">' + (c.status === "ENABLE" ? "Pause" : "Resume") + '</button><a class="btn sm" href="' + esc(c.ads_manager_url) + '" target="_blank" rel="noopener">Ads Manager ↗</a><a class="btn sm" href="/status?account=' + esc(adv) + '">This account</a><a class="btn sm ghost" href="/campaigns/' + esc(adv) + "/" + esc(cid) + '/edit">Full edit</a></div>';
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;"><button type="button" class="btn sm" id="dwToggle">' + (c.status === "ENABLE" ? "Pause" : "Resume") + '</button><a class="btn sm" href="' + esc(c.ads_manager_url) + '" target="_blank" rel="noopener">Ads Manager ↗</a><a class="btn sm" href="/status?account=' + esc(adv) + '">This account</a><button type="button" class="btn sm ghost" id="dwRename">Rename…</button></div>';
       drawer.body.innerHTML = html;
       // chart
       var H = d.hourly, cur = "spend";
@@ -251,6 +265,11 @@
         UI.post("/notes/campaign/" + cid, { text: nt.value }).then(function (r) { last = nt.value; $("#dwNoteSt").textContent = r.ok ? "saved" : "couldn't save"; var badge = row.querySelector(".cname"); if (badge && r.ok) { var old = badge.querySelector("[title]"); if (nt.value.trim() && !old) badge.insertAdjacentHTML("beforeend", ' <span title="' + esc(nt.value.slice(0, 200)) + '" style="font-size:11px;">📝</span>'); else if (!nt.value.trim() && old) old.remove(); } });
       }, 700); });
       $("#dwToggle").addEventListener("click", function () { var op = row.dataset.status === "ENABLE" ? "DISABLE" : "ENABLE"; toggleRows([row], op); this.textContent = op === "ENABLE" ? "Pause" : "Resume"; });
+      var cboBtn = $("#dwCboSave"); if (cboBtn) cboBtn.addEventListener("click", function () {
+        var v = parseFloat(String($("#dwCbo").value).replace(",", ".")); if (!(v > 0)) return;
+        UI.post("/campaigns/" + adv + "/" + cid + "/edit", { campaign_budget: v.toFixed(2) }).then(function (r) { adopsToast && adopsToast(r.ok ? "ok" : "err", r.ok ? "Campaign budget $" + v.toFixed(2) + " queued" : (r.error || "failed")); });
+      });
+      $("#dwRename").addEventListener("click", function () { renamePop(this, row); });
     });
   }
   document.addEventListener("click", function (e) {

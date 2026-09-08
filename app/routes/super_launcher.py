@@ -232,10 +232,13 @@ async def launch(request: Request, db: Session = Depends(get_db)):
 
     use_queue = form.get("use_queue") is not None
     spark_id = int(spark_code_id) if spark_code_id else None
-    use_library = (not spark_id) and creative_mode in ("library", "carousel")
+    picked_ids = [int(x) for x in form.getlist("creative_ids") if str(x).isdigit()]
+    if creative_mode == "pick" and not picked_ids:
+        return RedirectResponse("/super-launcher?err=Pick+at+least+one+creative.", status_code=303)
+    use_library = (not spark_id) and creative_mode in ("library", "carousel", "pick")
     # creative → account mapping (library only): 1 creative per N accounts
     per_creative = max(_int("accounts_per_creative", 1), 1)
-    creatives_count = _int("creatives_count")         # 0 = as many as needed
+    creatives_count = len(picked_ids) if creative_mode == "pick" else _int("creatives_count")   # 0 = as many as needed
     assign_mode = use_library and (per_creative > 1 or creatives_count > 0)
 
     # the creative→account assignment needs a fixed account list up front, so it
@@ -271,9 +274,13 @@ async def launch(request: Request, db: Session = Depends(get_db)):
         accounts = [by_id[i] for i in ordered if i in by_id]
 
     if assign_mode:
-        avail = (db.query(models.Creative)
-                 .filter_by(status="available", kind=("carousel" if creative_mode == "carousel" else "video"))
-                 .order_by(models.Creative.id).all())
+        if creative_mode == "pick":
+            by_cid = {c.id: c for c in db.query(models.Creative).filter(models.Creative.id.in_(picked_ids))}
+            avail = [by_cid[i] for i in picked_ids if i in by_cid]
+        else:
+            avail = (db.query(models.Creative)
+                     .filter_by(status="available", kind=("carousel" if creative_mode == "carousel" else "video"), archived=False)
+                     .order_by(models.Creative.id).all())
         import math
         needed = creatives_count if creatives_count > 0 else math.ceil(len(accounts) / per_creative)
         creatives = avail[:needed]

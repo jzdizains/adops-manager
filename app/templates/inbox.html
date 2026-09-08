@@ -1,50 +1,65 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="page-head">
+<div class="page-head" style="margin-bottom:10px;">
   <div><h1>Inbox</h1>
-    <div class="muted" style="font-size:12.5px;">Everything that needs attention, in one place — wallets, account errors, failed launches, TikTok-side issues, rule actions.</div></div>
+    <div class="muted" style="font-size:12.5px;">{% if counts.total %}<span style="color:var(--err);font-weight:600;">{{ counts.err }} error{{ 's' if counts.err != 1 }}</span> · {{ counts.warn }} warning{{ 's' if counts.warn != 1 }} · {{ counts.info }} info{% else %}Nothing needs your attention{% endif %} — wallets, blocks, failed launches, rejections, rule actions, in one feed.</div></div>
   <div class="actions">
-    {% if items|selectattr('ack')|list %}
-    <form method="post" action="/inbox/dismiss"><input type="hidden" name="id" value="all"><input type="hidden" name="next" value="/inbox?level={{ level }}">
-      <button class="btn" type="submit">Dismiss all notices</button></form>
-    {% endif %}
-    <form method="post" action="/issues/scan"><button class="btn primary" type="submit">🔍 Re-scan TikTok</button></form>
+    {% if items|selectattr('ack')|list %}<button type="button" class="btn" id="ibDismissAll">Dismiss all notices</button>{% endif %}
+    <form method="post" action="/issues/scan" style="display:inline;"><button class="btn primary" type="submit">🔍 Scan TikTok</button></form>
   </div>
 </div>
 
-<div class="filterbar" style="margin-bottom:14px;">
-  <a class="btn sm {{ 'primary' if level == 'all' }}" href="/inbox">All <span class="mono">{{ counts.total }}</span></a>
-  <a class="btn sm {{ 'primary' if level == 'err' }}" href="/inbox?level=err">Errors <span class="mono">{{ counts.err }}</span></a>
-  <a class="btn sm {{ 'primary' if level == 'warn' }}" href="/inbox?level=warn">Warnings <span class="mono">{{ counts.warn }}</span></a>
-  <a class="btn sm {{ 'primary' if level == 'info' }}" href="/inbox?level=info">Info <span class="mono">{{ counts.info }}</span></a>
+<div class="filterbar" style="margin-bottom:12px;">
+  <div class="seg" id="ibLevel"><button type="button" data-l="" class="{{ 'on' if level == 'all' }}">All <span class="n">{{ counts.total }}</span></button><button type="button" data-l="err" class="{{ 'on' if level == 'err' }}">Errors <span class="n">{{ counts.err }}</span></button><button type="button" data-l="warn" class="{{ 'on' if level == 'warn' }}">Warnings <span class="n">{{ counts.warn }}</span></button><button type="button" data-l="info" class="{{ 'on' if level == 'info' }}">Info <span class="n">{{ counts.info }}</span></button></div>
+  <div class="search-wrap" style="max-width:240px;"><input type="text" id="ibSearch" placeholder="Account, campaign, text…"></div>
+  <span class="muted" style="margin-left:auto;font-size:12px;">grouped by type · newest first</span>
 </div>
 
-<div class="card" style="padding:0;overflow:hidden;">
-  {% if items %}
-  {% for it in items %}
-  <div class="inbox-row lvl-{{ it.level }}">
+<div id="ibGroups" style="display:flex;flex-direction:column;gap:12px;">
+{% for g in groups %}
+<div class="card ib-group" style="padding:0;overflow:hidden;">
+  <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border-soft);">
+    <span class="pill {{ {'err':'err','warn':'warn','info':'dim'}[g.level] }}">{{ {'err':'error','warn':'warning','info':'info'}[g.level] }}</span>
+    <b style="font-size:13px;">{{ g.label }}</b><span class="muted ib-n" style="font-size:12px;">{{ g.rows|length }}</span>
+    {% if g.fix and g.rows|length > 1 %}<a class="btn sm" href="{{ g.fix.href }}" {% if g.fix.ext %}target="_blank" rel="noopener"{% endif %} style="margin-left:auto;">{{ g.fix.label }}</a>{% endif %}
+  </div>
+  {% for it in g.rows %}
+  <div class="inbox-row lvl-{{ it.level }} ib-row" data-id="{{ it.id }}" data-level="{{ it.level }}" data-search="{{ (it.title ~ ' ' ~ it.message ~ ' ' ~ it.where)|lower }}" style="padding:9px 14px;">
     <span class="inbox-dot"></span>
-    <div class="inbox-body">
-      <div class="inbox-title">{{ it.title }}{% if it.where %} <span class="muted">· {{ it.where }}</span>{% endif %}</div>
-      <div class="inbox-msg">{{ it.message }}</div>
-    </div>
-    <div class="inbox-when muted">{% if it.at %}{{ it.at.strftime('%b %d %H:%M') }}{% else %}now{% endif %}</div>
-    <div class="inbox-acts">
-      {% if it.href %}<a class="btn sm" href="{{ it.href }}" {% if it.external %}target="_blank" rel="noopener"{% endif %}>{{ 'Open ↗' if it.external else 'View →' }}</a>{% endif %}
-      {% if it.ack %}
-      <form method="post" action="/inbox/dismiss" style="display:inline;"><input type="hidden" name="id" value="{{ it.id }}"><input type="hidden" name="next" value="/inbox?level={{ level }}">
-        <button class="btn sm" type="submit" title="Dismiss">✕</button></form>
-      {% endif %}
-    </div>
+    <div class="inbox-body"><div class="inbox-title">{{ it.title }}{% if it.where %} <span class="muted">· {{ it.where }}</span>{% endif %}</div><div class="inbox-msg">{{ it.message }}</div></div>
+    <div class="inbox-when muted" title="{{ it.at|local('%Y-%m-%d %H:%M') if it.at else '' }}">{% if it.at %}{{ it.at|ago }}{% else %}now{% endif %}</div>
+    <div class="inbox-acts">{% for a in it.fix %}<a class="btn sm" href="{{ a.href }}" {% if a.ext %}target="_blank" rel="noopener"{% endif %}>{{ a.label }}</a>{% endfor %}{% if it.ack %}<button type="button" class="btn sm ghost ib-dismiss" title="Dismiss">✕</button>{% endif %}</div>
   </div>
   {% endfor %}
-  {% else %}
-  <div class="empty" style="padding:48px 0;">
-    <div style="font-size:30px;margin-bottom:6px;color:var(--ok);">✓</div>
-    <div style="font-weight:650;">Inbox zero</div>
-    <div class="muted" style="margin-top:3px;">Nothing needs your attention right now.</div>
-  </div>
-  {% endif %}
 </div>
-<div class="muted" style="font-size:11px;margin-top:8px;">Notices (wallet, rule actions) can be dismissed. TikTok-side issues clear themselves on the next scan once fixed; failed launches age out after 24h.</div>
+{% endfor %}
+{% if not groups %}
+<div class="card"><div class="empty" style="padding:48px 0;"><div style="font-size:30px;margin-bottom:6px;color:var(--ok);">✓</div><div style="font-weight:650;">Inbox zero</div><div class="muted" style="margin-top:3px;">Nothing needs your attention right now.</div></div></div>
+{% endif %}
+<div class="empty" id="ibEmpty" hidden>Nothing matches.</div>
+</div>
+<div class="muted" style="font-size:11px;margin-top:8px;">Notices (wallet, rule actions) can be dismissed. TikTok-side issues clear on the next scan once fixed; failed launches age out after 24 h.</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  var $ = function (s, r) { return (r || document).querySelector(s); }, $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
+  var rows = $$(".ib-row"), lvl = {{ level|tojson }}, q = ""; if (lvl === "all") lvl = "";
+  function apply() {
+    var n = 0;
+    rows.forEach(function (r) { var ok = (!lvl || r.dataset.level === lvl) && (!q || r.dataset.search.indexOf(q) >= 0); r.hidden = !ok; if (ok) n++; });
+    $$(".ib-group").forEach(function (g) { var vis = $$(".ib-row", g).filter(function (r) { return !r.hidden; }).length; g.hidden = vis === 0; $(".ib-n", g).textContent = vis; });
+    $("#ibEmpty").hidden = n > 0 || !rows.length;
+  }
+  $$("#ibLevel button").forEach(function (b) { b.addEventListener("click", function () { $$("#ibLevel button").forEach(function (o) { o.classList.remove("on"); }); b.classList.add("on"); lvl = b.dataset.l; history.replaceState(null, "", lvl ? "/inbox?level=" + lvl : "/inbox"); apply(); }); });
+  $("#ibSearch").addEventListener("input", function () { q = this.value.trim().toLowerCase(); apply(); });
+  apply();
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest(".ib-dismiss"); if (!b) return;
+    var r = b.closest(".ib-row");
+    UI.post("/inbox/dismiss", { id: r.dataset.id, next: "/inbox" }).then(function () { r.remove(); rows = rows.filter(function (x) { return x !== r; }); apply(); adopsToast && adopsToast("ok", "Dismissed"); });
+  });
+  var da = $("#ibDismissAll"); if (da) da.addEventListener("click", function () { UI.confirm({ title: "Dismiss every notice?", text: "TikTok-side issues stay until the next scan clears them; only notices (wallet, rule actions) are dismissed.", ok: "Dismiss all" }).then(function (y) { if (y) UI.post("/inbox/dismiss", { id: "all", next: "/inbox" }).then(function () { location.reload(); }); }); });
+})();
+</script>
 {% endblock %}

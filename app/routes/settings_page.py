@@ -34,7 +34,7 @@ def settings_page(request: Request, db: Session = Depends(get_db)):
     from .. import background
     pass_script = (Path(__file__).resolve().parent.parent / "static" / "pass-source.js").read_text()
     return render(request, "settings.html", {
-        "title": "Settings", "s": s,
+        "title": "Settings", "s": s, "has_anthropic_key": bool(config.ANTHROPIC_API_KEY),
         "postback_template": postback_template, "pass_script": pass_script,
         "ok": request.query_params.get("ok", ""),
         "tz": config.BUSINESS_TZ,

@@ -172,7 +172,41 @@ def list_presets(request: Request, db: Session = Depends(get_db)):
         except json.JSONDecodeError:
             blob = {}
         rows.append({"t": p, "blob": blob})
-    # how much each preset has been used (launch logs carry the preset name)
+    usage = _usage(db)
+    # what each preset earned: its campaigns' spend today + revenue via source (spend-share split)
+    from .. import pnl_data, timeutil
+    src_map = pnl_data.campaign_source_map(db)
+    pb = pnl_data.revenue_by_source(db, timeutil.local_midnight_utc(0), timeutil.local_midnight_utc(1))
+    camps = {c.campaign_id: c for c in db.query(models.CampaignRecord).all()}
+    by_src: dict[str, list] = {}
+    for cid, src in src_map.items():
+        by_src.setdefault(src, []).append(cid)
+    perf: dict[str, dict] = {}
+    for lg in db.query(models.LaunchLog).filter(models.LaunchLog.ok == True, models.LaunchLog.campaign_id != ""):  # noqa: E712
+        c = camps.get(lg.campaign_id)
+        if not c:
+            continue
+        p = perf.setdefault(lg.template_name, {"spend": 0.0, "revenue": 0.0, "live": 0})
+        sp = float(c.spend_today or 0)
+        p["spend"] += sp
+        p["live"] += 1 if c.operation_status == "ENABLE" else 0
+        src = src_map.get(lg.campaign_id, "")
+        if src and src in pb:
+            sib = by_src.get(src, [])
+            tot = sum(float((camps.get(x).spend_today if camps.get(x) else 0) or 0) for x in sib)
+            share = (sp / tot) if tot else (1.0 / len(sib) if sib else 0)
+            p["revenue"] += float(pb[src].get("revenue", 0.0)) * share
+    for p in perf.values():
+        p["profit"] = p["revenue"] - p["spend"]
+        p["roas"] = (p["revenue"] / p["spend"]) if p["spend"] else 0.0
+    rows.sort(key=lambda r: perf.get(r["t"].name, {}).get("profit", 0.0), reverse=True)
+    from .launch import OBJECTIVE_OPTIONS
+    return render(request, "templates_list.html", {"rows": rows, "title": "Presets", "usage": usage, "perf": perf,
+                                                   "objective_labels": dict(OBJECTIVE_OPTIONS)})
+
+
+def _usage(db: Session) -> dict:
+    """How much each preset has been used (launch logs carry the preset name)."""
     from sqlalchemy import case, func
     usage = {}
     for name, n, ok, last in (db.query(models.LaunchLog.template_name, func.count(models.LaunchLog.id),
@@ -181,15 +215,13 @@ def list_presets(request: Request, db: Session = Depends(get_db)):
                                        func.max(models.LaunchLog.created_at))
                               .group_by(models.LaunchLog.template_name)):
         usage[name] = {"n": int(n or 0), "ok": int(ok or 0), "last": last}
-    from .launch import OBJECTIVE_OPTIONS
-    return render(request, "templates_list.html", {"rows": rows, "title": "Presets", "usage": usage,
-                                                   "objective_labels": dict(OBJECTIVE_OPTIONS)})
+    return usage
 
 
 @router.get("/presets/new")
 def new_preset(request: Request, db: Session = Depends(get_db)):
     return render(request, "template_form.html", {
-        "t": None, "blob": {}, "title": "New preset", **_form_ctx(db)})
+        "t": None, "blob": {}, "title": "New preset", "usage": None, **_form_ctx(db)})
 
 
 @router.get("/presets/{preset_id}/edit")
@@ -202,7 +234,7 @@ def edit_preset(request: Request, preset_id: int, db: Session = Depends(get_db))
     except json.JSONDecodeError:
         blob = {}
     return render(request, "template_form.html", {
-        "t": t, "blob": blob, "title": f"Edit · {t.name}", **_form_ctx(db)})
+        "t": t, "blob": blob, "title": f"Edit · {t.name}", "usage": _usage(db).get(t.name), **_form_ctx(db)})
 
 
 @router.post("/presets/save")

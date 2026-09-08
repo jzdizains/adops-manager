@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="as-wrap">
+  <aside class="card as-side">
+    <form method="post" action="/assistant/new"><button class="btn primary" type="submit" style="width:100%;justify-content:center;">＋ New chat</button></form>
+    <div class="as-list">
+      {% for c in chats %}<a href="/assistant?chat={{ c.id }}" class="as-chat {{ 'on' if chat and c.id == chat.id }}" data-id="{{ c.id }}"><span class="as-chat-t">{{ c.title }}</span><button type="button" class="as-del" title="Delete chat">✕</button></a>{% endfor %}
+      {% if not chats %}<div class="muted" style="font-size:12px;padding:8px 10px;">Your chats show up here.</div>{% endif %}
+    </div>
+    <div class="muted as-foot">
+      <div style="display:flex;align-items:center;gap:8px;"><span class="tog on"></span>Asks before changing anything</div>
+      <div style="margin-top:8px;">Model <span class="mono">{{ model }}</span> · <a href="/settings#assistant">change</a></div>
+      {% if not has_key %}<div style="margin-top:8px;color:var(--warn);">No API key yet — set <span class="mono">ANTHROPIC_API_KEY</span> on the server (Render → Environment) and redeploy.</div>{% endif %}
+    </div>
+  </aside>
+  <section class="card as-main">
+    <div class="as-log" id="asLog" data-chat="{{ chat.id if chat else '' }}">
+      {% if not chat or not blocks %}
+      <div class="as-empty">
+        <div style="font-size:15px;font-weight:700;">What do you want to know?</div>
+        <div class="muted" style="font-size:12.5px;margin:4px 0 12px;">I read the same numbers as the dashboard — P&L, campaigns, accounts, creatives, inbox, hour by hour — and propose changes for you to approve.</div>
+        <div class="as-sugg">{% for s in suggestions %}<button type="button" class="chip" data-sugg>{{ s }}</button>{% endfor %}</div>
+      </div>
+      {% endif %}
+    </div>
+    <form class="as-composer" id="asForm">
+      <textarea id="asText" rows="1" placeholder="Ask about today's profit, a creative, an account… or tell me what to pause" {{ 'disabled' if not chat }}></textarea>
+      <button class="btn primary" type="submit" id="asSend" {{ 'disabled' if not chat }}>Send</button>
+    </form>
+  </section>
+</div>
+<script type="application/json" id="asBlocks">{{ blocks|tojson }}</script>
+{% endblock %}
+{% block scripts %}<script src="/static/assistant.js?v={{ STATIC_V }}"></script>{% endblock %}

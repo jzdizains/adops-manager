@@ -60,6 +60,9 @@ schema_additions: dict[str, dict[str, str]] = {
         "is_smart_plus": "BOOLEAN DEFAULT 0",
     },
     "creatives": {
+        "archived": "BOOLEAN DEFAULT 0",
+        "favorite": "BOOLEAN DEFAULT 0",
+        "labels": "TEXT DEFAULT ''",
         "freshen": "BOOLEAN DEFAULT 0",
         "freshen_intensity": "TEXT DEFAULT ''",
         "freshen_mirror": "BOOLEAN DEFAULT 0",

@@ -56,28 +56,67 @@ def creatives_page(request: Request, db: Session = Depends(get_db)):
             tp_error = e.message
     # ---- Performance view: which creative is making money -------------------
     from .. import creative_perf, timeutil
-    view = request.query_params.get("view", "library")
-    if view not in ("library", "performance", "carousels"):
-        view = "library"
-    range_key = request.query_params.get("range", "7d")
-    if range_key not in ("today", "yesterday", "7d", "30d", "mtd"):
-        range_key = "7d"
-    sort = request.query_params.get("sort", "roas")
-    if sort not in creative_perf.SORTS:
-        sort = "roas"
-    perf, fams = [], []
+    view = request.query_params.get("view", "results")
     if view == "performance":
+        view = "results"
+    if view not in ("results", "library", "images", "carousels", "archive"):
+        view = "results"
+    range_key = request.query_params.get("range", "today")
+    if range_key not in ("today", "yesterday", "7d", "30d", "mtd"):
+        range_key = "today"
+    sort = request.query_params.get("sort", "profit")
+    if sort not in creative_perf.SORTS:
+        sort = "profit"
+    perf, fams = [], []
+    if view == "results":
         s_utc, e_utc = timeutil.range_bounds(range_key)
         perf = creative_perf.rows(db, s_utc, e_utc, today=(range_key == "today"))
+        perf = [x for x in perf if x["spend"] > 0 or x["revenue"] > 0]
         perf.sort(key=creative_perf.SORTS[sort], reverse=True)
         fams = creative_perf.families(perf)
+        for f in fams:
+            f["cls"] = "learning" if f["spend"] < 5 else ("winner" if f["roas"] >= 1.3 else ("losing" if f["roas"] < 0.9 else "learning"))
+            f["accounts"] = len({x["c"].used_advertiser_id for x in f["rows"]})
+            f["clicks"] = sum(x["clicks"] for x in f["rows"])
+            f["epc"] = (f["revenue"] / f["clicks"]) if f["clicks"] else 0.0
+            f["thumb"] = f["best"]["c"] if f.get("best") else f["rows"][0]["c"]
+            f["active"] = sum(1 for x in f["rows"] if x["active"])
+        gk = {"profit": lambda f: f["profit"], "roas": lambda f: f["roas"], "spend": lambda f: f["spend"], "revenue": lambda f: f["revenue"],
+              "conversions": lambda f: sum(x["conversions"] for x in f["rows"]), "ctr": lambda f: f["roas"]}[sort]
+        fams.sort(key=gk, reverse=True)
     # library cross-links: creative -> its campaign's cached record
     camp_by_id = {c.campaign_id: c for c in db.query(models.CampaignRecord).all()}
 
     # images (separate shelf; never part of the video launch pool) + AI editing
     from .. import nanobanana
+    archived_rows = [r for r in rows if r.archived]
+    rows = [r for r in rows if not r.archived]
     videos = [r for r in rows if (r.kind or "video") == "video"]
     images = [r for r in rows if r.kind == "image"]
+    from .. import activity as _activity
+    notes = _activity.notes_for(db, "creative", [str(r.id) for r in rows + archived_rows])
+    lib_q = request.query_params.get("q", "").strip().lower()
+    lib_state = request.query_params.get("state", "all")
+    lib_label = request.query_params.get("label", "").strip().lower()
+    lib_fav = request.query_params.get("fav") == "1"
+    def _lib_ok(r):
+        if lib_state == "fresh" and r.status != "available":
+            return False
+        if lib_state == "used" and r.status != "used":
+            return False
+        if lib_fav and not r.favorite:
+            return False
+        if lib_label and lib_label not in (r.labels or "").split(","):
+            return False
+        if lib_q and lib_q not in (r.name or "").lower() and lib_q not in (r.source or "").lower() and lib_q not in notes.get(str(r.id), "").lower():
+            return False
+        return True
+    lib_videos = [r for r in videos if _lib_ok(r)]
+    all_labels: dict[str, int] = {}
+    for r in videos:
+        for l in (r.labels or "").split(","):
+            if l:
+                all_labels[l] = all_labels.get(l, 0) + 1
     available = sum(1 for r in videos if r.status == "available")
     processing = sum(1 for r in rows if r.status == "processing")
     nb_models = [{"id": mid, "label": lbl, "prices": prices}
@@ -156,6 +195,9 @@ def creatives_page(request: Request, db: Session = Depends(get_db)):
         "uniquify_ok": video_freshen.available(),
         "view": view, "range_key": range_key, "sort": sort,
         "perf": perf, "families": fams, "camp_by_id": camp_by_id,
+        "lib_videos": lib_videos, "lib_q": lib_q, "lib_state": lib_state, "lib_label": lib_label, "lib_fav": lib_fav,
+        "all_labels": sorted(all_labels.items(), key=lambda kv: (-kv[1], kv[0])), "notes": notes,
+        "archived_rows": archived_rows, "n_videos": len(videos), "n_fresh": sum(1 for r in videos if r.status == "available"),
         "title": "Creatives",
     })
 
@@ -282,7 +324,7 @@ async def upload_images(request: Request, db: Session = Depends(get_db)):
     q = f"ok={saved}+image(s)+uploaded" if saved else "ok=nothing+uploaded"
     if skipped:
         q += "&err=" + "+·+".join(skipped)[:300].replace(" ", "+")
-    return RedirectResponse(f"/creatives?{q}#images", status_code=303)
+    return RedirectResponse(f"/creatives?view=images&{q}", status_code=303)
 
 
 def _ai_job_rows(db: Session, *, prompt: str, model: str, size: str, aspect: str,
@@ -385,7 +427,7 @@ async def ai_edit(creative_id: int, request: Request, db: Session = Depends(get_
     threading.Thread(target=_run_ai_jobs, args=(ids, row.id, model, size, aspect),
                      name="nanobanana-edit", daemon=True).start()
     est = nanobanana.price(model, size) * variants
-    return RedirectResponse(f"/creatives?ok={variants}+AI+edit(s)+started+(≈${est:.2f})#images",
+    return RedirectResponse(f"/creatives?view=images&ok={variants}+AI+edit(s)+started+(≈${est:.2f})",
                             status_code=303)
 
 
@@ -407,7 +449,7 @@ async def ai_generate(request: Request, db: Session = Depends(get_db)):
     threading.Thread(target=_run_ai_jobs, args=(ids, None, model, size, aspect),
                      name="nanobanana-gen", daemon=True).start()
     est = nanobanana.price(model, size) * variants
-    return RedirectResponse(f"/creatives?ok={variants}+image(s)+generating+(≈${est:.2f})#images",
+    return RedirectResponse(f"/creatives?view=images&ok={variants}+image(s)+generating+(≈${est:.2f})",
                             status_code=303)
 
 
@@ -555,7 +597,7 @@ async def upload_creatives(request: Request, db: Session = Depends(get_db)):
     q = "ok=" + (", ".join(parts).replace(" ", "+") or "nothing+to+do")
     if skipped:
         q += "&err=" + "+·+".join(skipped)[:300].replace(" ", "+")
-    return RedirectResponse(f"/creatives?{q}" + ("#images" if images and not saved and not queued else ""), status_code=303)
+    return RedirectResponse(f"/creatives?view={'images' if (images and not saved and not queued) else 'library'}&{q}", status_code=303)
 
 
 @router.post("/creatives/{creative_id}/update")
@@ -575,7 +617,7 @@ async def update_creative(creative_id: int, request: Request,
     if str(form.get("name") or "").strip():
         row.name = str(form.get("name")).strip()[:120]
     db.commit()
-    return RedirectResponse("/creatives?ok=saved", status_code=303)
+    return RedirectResponse("/creatives?view=library&ok=saved", status_code=303)
 
 
 def _image_delete_block(db: Session, row: models.Creative) -> str:
@@ -624,7 +666,7 @@ async def bulk_delete_images(request: Request, db: Session = Depends(get_db)):
     q = f"ok={done}+image(s)+deleted" if done else "ok=nothing+deleted"
     if skipped:
         q += "&err=kept+" + "+·+".join(skipped)[:300].replace(" ", "+")
-    return RedirectResponse(f"/creatives?{q}#images", status_code=303)
+    return RedirectResponse(f"/creatives?view=images&{q}", status_code=303)
 
 
 @router.post("/creatives/{creative_id}/delete")
@@ -654,7 +696,7 @@ def delete_creative(creative_id: int, db: Session = Depends(get_db)):
     db.query(models.CreativeUpload).filter_by(creative_id=row.id).delete()
     db.delete(row)
     db.commit()
-    return RedirectResponse("/creatives?ok=deleted", status_code=303)
+    return RedirectResponse("/creatives?view=library&ok=deleted", status_code=303)
 
 
 # ============================================================================
@@ -694,7 +736,7 @@ async def add_text(creative_id: int, request: Request, db: Session = Depends(get
         return RedirectResponse("/creatives?err=pick+an+image", status_code=303)
     import json as _json
     form = await request.form()
-    back = "/creatives?view=carousels" if form.get("back") == "carousels" else "/creatives"
+    back = "/creatives?view=carousels" if form.get("back") == "carousels" else "/creatives?view=images"
     sep = "&" if "?" in back else "?"
     try:
         spec = text_overlay.clean(dict(form))
@@ -872,3 +914,212 @@ def music_search(request: Request, db: Session = Depends(get_db)):
     info = data.get("page_info") or {}
     return {"ok": True, "musics": musics, "account": acct.advertiser_name or acct.advertiser_id,
             "total": info.get("total_number", len(musics)), "page": info.get("page", 1), "pages": info.get("total_page", 1)}
+
+
+# ---- shared creative picker (Launch, Presets, Creatives) --------------------
+@router.get("/creatives/{creative_id}/poster")
+def creative_poster(creative_id: int, db: Session = Depends(get_db)):
+    """First-frame JPEG for a video creative (ffmpeg, made once, cached on disk).
+    Images redirect to /thumb; carousels use their first slide."""
+    import subprocess
+    from pathlib import Path
+    from fastapi.responses import FileResponse
+    from .. import video_freshen
+    row = db.get(models.Creative, creative_id)
+    if not row:
+        return RedirectResponse("/static/no-poster.svg", status_code=303)
+    if row.kind == "image":
+        return RedirectResponse(f"/creatives/{row.id}/thumb", status_code=303)
+    if row.kind == "carousel":
+        import json as _json
+        try:
+            first = int((_json.loads(row.carousel_images or "[]") or [0])[0])
+        except (ValueError, TypeError, IndexError):
+            first = 0
+        return RedirectResponse(f"/creatives/{first}/thumb" if first else "/static/no-poster.svg", status_code=303)
+    if not row.file_path:
+        return RedirectResponse("/static/no-poster.svg", status_code=303)
+    src = Path(row.file_path).resolve()
+    try:
+        src.relative_to(CREATIVES_DIR.resolve())
+    except ValueError:
+        return RedirectResponse("/static/no-poster.svg", status_code=303)
+    THUMB_DIR.mkdir(parents=True, exist_ok=True)
+    out = THUMB_DIR / f"v{row.id}_{(row.md5 or 'x')[:12]}.jpg"
+    if not out.exists() and src.exists():
+        try:
+            subprocess.run([video_freshen.ffmpeg_exe(), "-y", "-loglevel", "error", "-ss", "0.5", "-i", str(src),
+                            "-frames:v", "1", "-vf", "scale=270:-2", "-q:v", "5", str(out)], timeout=20, check=False,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:  # noqa: BLE001
+            pass
+    if not out.exists():
+        return RedirectResponse("/static/no-poster.svg", status_code=303)
+    return FileResponse(str(out), media_type="image/jpeg", headers={"Cache-Control": "private, max-age=86400"})
+
+
+@router.get("/creatives/pick.json")
+def creatives_pick(request: Request, db: Session = Depends(get_db)):
+    """The picker's data: creatives of a kind with state, upload time, note,
+    labels, all-time P&L. ?kind=video|carousel|image&state=fresh|used|all&q="""
+    from fastapi.responses import JSONResponse
+    from .. import activity, creative_perf, timeutil
+    kind = request.query_params.get("kind", "video")
+    if kind not in ("video", "carousel", "image"):
+        kind = "video"
+    state = request.query_params.get("state", "all")
+    q = request.query_params.get("q", "").strip().lower()
+    rows = (db.query(models.Creative).filter(models.Creative.kind == kind, models.Creative.status != "processing",
+                                             (models.Creative.error == "") | (models.Creative.error.is_(None)))
+            .order_by(models.Creative.id.desc()).all())
+    # all-time results per creative (DB only)
+    start = timeutil.local_midnight_utc(-365); end = timeutil.local_midnight_utc(1)
+    perf = {r["c"].id: r for r in creative_perf.rows(db, start, end)}
+    fam_ct: dict[str, int] = {}
+    for r in rows:
+        fam_ct[r.source_md5 or r.md5 or ""] = fam_ct.get(r.source_md5 or r.md5 or "", 0) + 1
+    notes = activity.notes_for(db, "creative", [str(r.id) for r in rows])
+    out = []
+    for r in rows:
+        st = "used" if r.status == "used" else "fresh"
+        if state == "fresh" and st != "fresh":
+            continue
+        if state == "used" and st != "used":
+            continue
+        if q and q not in (r.name or "").lower() and q not in (r.source or "").lower() and q not in (notes.get(str(r.id), "") or "").lower():
+            continue
+        p = perf.get(r.id)
+        item = {"id": r.id, "name": r.name, "kind": r.kind, "state": st, "source": r.source or "",
+                "uploaded_at": (r.uploaded_at.isoformat() + "Z") if r.uploaded_at else "",
+                "uploaded_ago": _ago(r.uploaded_at), "size_mb": round((r.size_bytes or 0) / 1e6, 1),
+                "poster": f"/creatives/{r.id}/poster", "file": f"/creatives/{r.id}/file" if r.kind != "carousel" else "",
+                "variants": fam_ct.get(r.source_md5 or r.md5 or "", 1), "variant": bool(r.freshen or r.uniquify),
+                "note": notes.get(str(r.id), ""), "music": r.music_name or "",
+                "slides": len(_slides_of(r)) if r.kind == "carousel" else 0,
+                "spend": round(p["spend"], 2) if p else 0.0, "revenue": round(p["revenue"], 2) if p else 0.0,
+                "profit": round(p["profit"], 2) if p else 0.0, "roas": round(p["roas"], 2) if p else 0.0,
+                "used_in": (p["campaign_name"] if p else ""), "used_account": (p["account_name"] if p else "")}
+        out.append(item)
+    return JSONResponse({"items": out, "kind": kind, "state": state,
+                         "counts": {"fresh": sum(1 for r in rows if r.status != "used"), "used": sum(1 for r in rows if r.status == "used")}})
+
+
+def _slides_of(row) -> list:
+    import json as _json
+    try:
+        return [int(x) for x in _json.loads(row.carousel_images or "[]")]
+    except (ValueError, TypeError):
+        return []
+
+
+def _ago(dt):
+    from ..templating import _ago as _f
+    return _f(dt)
+
+
+# ---- library organisation: archive / favourite / labels / bulk --------------
+def _wants_json(request: Request) -> bool:
+    return request.headers.get("x-requested-with") == "fetch" or "application/json" in request.headers.get("accept", "")
+
+
+@router.post("/creatives/bulk")
+async def creatives_bulk(request: Request, db: Session = Depends(get_db)):
+    """action=archive|restore|favorite|unfavorite|label|unlabel|delete, ids=1,2,3[, label=x]."""
+    from fastapi.responses import JSONResponse
+    from .. import activity
+    form = await request.form()
+    action = form.get("action", "")
+    ids = [int(x) for x in str(form.get("ids", "")).replace(" ", "").split(",") if x.isdigit()]
+    label = str(form.get("label", "")).strip().lower()[:40]
+    rows = db.query(models.Creative).filter(models.Creative.id.in_(ids)).all() if ids else []
+    n = 0
+    for r in rows:
+        if action == "archive":
+            r.archived = True; n += 1
+        elif action == "restore":
+            r.archived = False; n += 1
+        elif action == "favorite":
+            r.favorite = True; n += 1
+        elif action == "unfavorite":
+            r.favorite = False; n += 1
+        elif action in ("label", "unlabel") and label:
+            cur = [x for x in (r.labels or "").split(",") if x]
+            if action == "label" and label not in cur:
+                cur.append(label)
+            if action == "unlabel" and label in cur:
+                cur.remove(label)
+            r.labels = ",".join(cur); n += 1
+        elif action == "delete":
+            block = _image_delete_block(db, r) if r.kind == "image" else ""
+            if block:
+                continue
+            _delete_row(db, r); n += 1
+    db.commit()
+    if n:
+        activity.record(db, "creative", ",".join(str(i) for i in ids[:20]), action, f"{n} creative(s)" + (f" · {label}" if label else ""), request=request)
+    if _wants_json(request):
+        return JSONResponse({"ok": True, "n": n, "action": action})
+    back = str(form.get("back") or "/creatives")
+    return RedirectResponse(back if back.startswith("/") else "/creatives", status_code=303)
+
+
+@router.get("/creatives/labels.json")
+def creatives_labels(db: Session = Depends(get_db)):
+    from fastapi.responses import JSONResponse
+    counts: dict[str, int] = {}
+    for (labels,) in db.query(models.Creative.labels).filter(models.Creative.labels != "", models.Creative.labels.isnot(None)):
+        for l in (labels or "").split(","):
+            if l:
+                counts[l] = counts.get(l, 0) + 1
+    return JSONResponse({"labels": sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))})
+
+
+@router.get("/creatives/{creative_id}/detail")
+def creative_detail(creative_id: int, db: Session = Depends(get_db)):
+    """Everything the creative side panel shows: results (today / all time,
+    per account), where it ran, variants, note, labels, upload time."""
+    from fastapi.responses import JSONResponse
+    from .. import activity, creative_perf, timeutil
+    r = db.get(models.Creative, creative_id)
+    if not r:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    fam = r.source_md5 or r.md5 or ""
+    variants = db.query(models.Creative).filter((models.Creative.source_md5 == fam) | (models.Creative.md5 == fam)).all() if fam else [r]
+    vids = {v.id for v in variants}
+    t0, t1 = timeutil.range_bounds("today")
+    a0, a1 = timeutil.local_midnight_utc(-365), timeutil.local_midnight_utc(1)
+    today = [x for x in creative_perf.rows(db, t0, t1, today=True) if x["c"].id in vids]
+    alltime = [x for x in creative_perf.rows(db, a0, a1) if x["c"].id in vids]
+    def _sum(rows):
+        sp = sum(x["spend"] for x in rows); rv = sum(x["revenue"] for x in rows); cl = sum(x["clicks"] for x in rows)
+        return {"spend": round(sp, 2), "revenue": round(rv, 2), "profit": round(rv - sp, 2), "roas": round(rv / sp, 2) if sp else 0.0,
+                "epc": round(rv / cl, 2) if cl else 0.0, "tests": len(rows), "conversions": sum(x["conversions"] for x in rows)}
+    by_acct = sorted(({"account": x["account_name"], "campaign": x["campaign_name"], "advertiser_id": x["c"].used_advertiser_id, "campaign_id": x["c"].used_campaign_id,
+                       "spend": round(x["spend"], 2), "profit": round(x["profit"], 2), "roas": round(x["roas"], 2), "active": x["active"]} for x in alltime),
+                     key=lambda x: -x["profit"])
+    note = activity.get_note(db, "creative", str(r.id))
+    return JSONResponse({
+        "id": r.id, "name": r.name, "kind": r.kind or "video", "status": r.status, "archived": bool(r.archived), "favorite": bool(r.favorite),
+        "labels": [x for x in (r.labels or "").split(",") if x], "source": r.source or "", "size_mb": round((r.size_bytes or 0) / 1e6, 1),
+        "uploaded_at": (r.uploaded_at.isoformat() + "Z") if r.uploaded_at else "", "uploaded_ago": _ago(r.uploaded_at),
+        "uploaded_str": r.uploaded_at.strftime("%d %b %Y · %H:%M") if r.uploaded_at else "",
+        "poster": f"/creatives/{r.id}/poster", "file": f"/creatives/{r.id}/file" if r.kind != "carousel" else "",
+        "music": r.music_name or "", "slides": len(_slides_of(r)) if r.kind == "carousel" else 0,
+        "variants": [{"id": v.id, "name": v.name, "status": v.status, "archived": bool(v.archived)} for v in variants if v.id != r.id][:30],
+        "today": _sum(today), "alltime": _sum(alltime), "by_account": by_acct[:40], "note": note.text if note else "",
+        "used_in": r.used_campaign_id or "", "used_account": r.used_advertiser_id or "",
+    })
+
+
+@router.post("/creatives/{creative_id}/rename")
+async def creative_rename(request: Request, creative_id: int, db: Session = Depends(get_db)):
+    from fastapi.responses import JSONResponse
+    form = await request.form()
+    r = db.get(models.Creative, creative_id)
+    if not r:
+        return JSONResponse({"ok": False, "error": "not found"}, status_code=404)
+    name = str(form.get("name", "")).strip()[:120]
+    if name:
+        r.name = name
+        db.commit()
+    return JSONResponse({"ok": True, "name": r.name})

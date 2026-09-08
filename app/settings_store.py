@@ -82,6 +82,8 @@ DEFAULTS: dict = {
     # --- audience page refresh ------------------------------------------------
     "audience_hours_every_min": 10,      # today's hour-by-hour delivery (basic report, near real-time): accounts with active campaigns
     "audience_breakdown_every_min": 60,  # today+yesterday audience breakdowns (TikTok publishes them 10–12 h late): active accounts
+    # --- assistant ------------------------------------------------------------
+    "assistant_model": "claude-sonnet-5",   # model id used by the Assistant page (API key comes from the ANTHROPIC_API_KEY env var)
 }
 AUDIENCE_HOURS_MIN = 5          # floor: one report call per active account per run
 AUDIENCE_BREAKDOWN_MIN = 15     # floor: ~8 calls per active account per run

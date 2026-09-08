@@ -5,7 +5,7 @@ joined to sources through LaunchLog (campaign -> source).
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -29,7 +29,7 @@ def spend_by_source(db: Session, start_utc: datetime, end_utc: datetime) -> dict
     if not camp_source:
         return {}
     start_day = timeutil.local_date_str(start_utc)
-    end_day = timeutil.local_date_str(end_utc)
+    end_day = timeutil.local_date_str(end_utc - timedelta(seconds=1))   # [start, end) — end is the next midnight
     out: dict[str, float] = {}
     rows = (db.query(models.SpendSnapshot)
             .filter(models.SpendSnapshot.campaign_id.in_(list(camp_source)),
@@ -117,7 +117,7 @@ def overall_totals(db: Session, start_utc: datetime, end_utc: datetime) -> dict:
     """Range KPIs for the Overview: spend is ALL spend (snapshots, sourced or
     not); revenue/clicks/conversions from all postbacks."""
     start_day = timeutil.local_date_str(start_utc)
-    end_day = timeutil.local_date_str(end_utc)
+    end_day = timeutil.local_date_str(end_utc - timedelta(seconds=1))   # [start, end) — end is the next midnight
     spend = float(db.query(func.coalesce(func.sum(models.SpendSnapshot.spend), 0.0))
                   .filter(models.SpendSnapshot.day >= start_day,
                           models.SpendSnapshot.day <= end_day).scalar() or 0)

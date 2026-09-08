@@ -1,292 +1,184 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="page-head">
+{% macro money0(v) -%}{{ '−' if v < 0 }}${{ "%.0f"|format(v|abs) if v|abs >= 100 else "%.2f"|format(v|abs) }}{%- endmacro %}
+<div class="page-head" style="margin-bottom:10px;">
   <div><h1>Health</h1>
-    <div class="muted" style="font-size:12.5px;">Business Centers, accounts, balances and every TikTok-side problem · synced {{ synced_ago }}</div></div>
+    <div class="muted" style="font-size:12.5px;">{% if counts.total %}<span style="color:var(--err);font-weight:600;">{{ counts.err }} error{{ 's' if counts.err != 1 }}</span> · {{ counts.warn }} warning{{ 's' if counts.warn != 1 }} · {{ counts.info }} info{% else %}Nothing needs attention{% endif %} · campaigns synced {{ strip.synced_ago }}{% if scanned_at %} · TikTok scan {{ scanned_at[:16].replace('T', ' ') }}{% endif %}</div></div>
   <div class="actions">
-    <form method="post" action="/issues/scan"><button class="btn" type="submit">🔍 Scan issues</button></form>
-    <form method="post" action="/balances/sync"><button class="btn primary" type="submit">↻ Sync balances & metrics</button></form>
+    <form method="post" action="/balances/sync" style="display:inline;"><button class="btn" type="submit" title="Refresh every BC wallet and account balance now">↻ Balances</button></form>
+    <form method="post" action="/issues/scan" style="display:inline;"><button class="btn primary" type="submit" title="Scan every account on TikTok for blocks, rejections, payment problems">🔍 Scan TikTok</button></form>
   </div>
 </div>
 
-{# ---- system status strip ------------------------------------------------ #}
-<div class="kpis" style="grid-template-columns:repeat(6,1fr);">
-  <div class="kpi"><div class="lab">TikTok API</div>
-    <div class="val {{ 'good' if token_ok else 'bad' }}" style="font-size:15px;">{{ 'Connected' if token_ok else 'Not connected' }}</div>
-    <div class="sub">{% if not token_ok %}<a href="/oauth/connect">Connect →</a>{% else %}token OK{% endif %}</div></div>
-  <div class="kpi"><div class="lab">Web cookies</div>
-    <div class="val" style="font-size:15px;" id="cookieVerdict">checking…</div>
-    <div class="sub"><a href="/cookies">Manage →</a></div></div>
-  <div class="kpi"><div class="lab">Ad accounts</div><div class="val">{{ accounts_count }}</div><div class="sub">synced</div></div>
-  <div class="kpi"><div class="lab">Fresh accounts</div><div class="val good">{{ inventory.fresh }}</div><div class="sub">never launched</div></div>
-  <div class="kpi"><div class="lab">Running</div><div class="val">{{ inventory.active }}</div>
-    <div class="sub">{% if inventory.cooling %}<span style="color:var(--warn);">{{ inventory.cooling }} cooling down</span>{% else %}0 cooling down{% endif %}</div></div>
-  <div class="kpi"><div class="lab">Issues</div>
-    <div class="val {{ 'bad' if issue_total else 'good' }}">{{ issue_total }}</div>
-    <div class="sub">{% if low_count %}<span style="color:var(--err);">{{ low_count }} wallet(s) low</span>{% else %}last scan {{ scanned_at }}{% endif %}</div></div>
-</div>
-
-<div style="display:flex;gap:6px;margin-bottom:16px;">
-  <a class="btn {{ 'primary' if view == 'accounts' else '' }}" href="/monitor">Accounts & campaigns</a>
-  <a class="btn {{ 'primary' if view == 'balances' else '' }}" href="/monitor?view=balances">💰 Balances</a>
-  <a class="btn {{ 'primary' if view == 'issues' else '' }}" href="/monitor?view=issues">⚠ Issues{% if issue_total %} <span class="mono">{{ issue_total }}</span>{% endif %}</a>
+<div class="kpis" style="margin-bottom:12px;">
+  <a class="kpi" href="/accounts?state=blocked" style="text-decoration:none;color:inherit;"><div class="lab">Blocked accounts</div><div class="val {{ 'bad' if strip.blocked }}">{{ strip.blocked }}</div><div class="sub">{% if strip.blocked_by_bc %}{% for n, c in strip.blocked_by_bc %}{{ c }} in {{ n }}{{ ' · ' if not loop.last }}{% endfor %}{% else %}none{% endif %}{% if strip.cooling %} · {{ strip.cooling }} cooling{% endif %}</div></a>
+  <a class="kpi" href="/appeals" style="text-decoration:none;color:inherit;"><div class="lab">Rejected ads</div><div class="val {{ 'bad' if strip.rejected }}">{{ strip.rejected }}</div><div class="sub">{% if strip.rejected %}not appealed yet{% else %}none open{% endif %}{% if strip.appealing %} · {{ strip.appealing }} appealing{% endif %}</div></a>
+  <a class="kpi" href="/monitor?view=balances" style="text-decoration:none;color:inherit;"><div class="lab">BC wallets</div><div class="val {{ 'bad' if strip.low_bcs }}">{{ strip.low_bcs|length }} low</div><div class="sub">{% if strip.low_bcs %}{% for r in strip.low_bcs[:2] %}{{ r.name }} ${{ "%.0f"|format(r.wallet) }}{{ ' · ' if not loop.last }}{% endfor %}{% else %}all {{ strip.n_bc }} above the floor{% endif %}</div></a>
+  <a class="kpi" href="/monitor?view=system" style="text-decoration:none;color:inherit;"><div class="lab">TikTok API</div><div class="val {{ 'good' if strip.token_ok else 'bad' }}">{{ 'ok' if strip.token_ok else 'off' }}</div><div class="sub">{% if strip.token_ok %}synced {{ strip.synced_ago }}{% else %}not connected{% endif %}</div></a>
+  <a class="kpi" href="/monitor?view=automation" style="text-decoration:none;color:inherit;"><div class="lab">Auto-pauses today</div><div class="val">{{ strip.today_pauses }}</div><div class="sub">{% if still_paused %}{{ still_paused|length }} still paused · undo{% else %}{{ 'rules on' if s.rules_enabled or s.profit_rules_enabled else 'rules off' }}{% endif %}</div></a>
+  <a class="kpi" href="/monitor?view=automation" style="text-decoration:none;color:inherit;"><div class="lab">Auto top-ups today</div><div class="val">{{ money0(strip.today_topups) }}</div><div class="sub">{{ 'on' if s.topup_enabled else 'off' }} · wallet → account</div></a>
 </div>
 
 {% if sync_reports %}
-<div class="flash err" style="font-size:12.5px;">
-  ⚠️ The last sync hit problems — numbers below may be stale or incomplete:
-  <ul style="margin:6px 0 0 18px;padding:0;">
-    {% for rep in sync_reports %}
-      {% for e in rep.get('errors', []) %}<li>{{ e }}</li>{% endfor %}
-      {% if rep.get('complete') is false %}<li>account list fetch was incomplete — no accounts were retired this pass</li>{% endif %}
-    {% endfor %}
-  </ul>
-  Retries with backoff are built in — if this persists, TikTok is rate-limiting the token; raise the sweep interval in Settings.
-</div>
+<div class="flash err" style="font-size:12.5px;margin-bottom:12px;">⚠️ The last sync hit problems — numbers may be stale: {% for rep in sync_reports %}{% for e in rep.get('errors', []) %}{{ e }}{{ ' · ' if not loop.last }}{% endfor %}{% if rep.get('complete') is false %} · account list fetch was incomplete{% endif %}{% endfor %} <a href="/monitor?view=system">Details</a></div>
 {% endif %}
 
-{% if view == 'balances' %}
-<div class="card">
-  <div class="card-header">
-    <span class="card-title">Balance per Business Center</span>
-    <span class="card-meta">wallet + money already in ad accounts</span>
-  </div>
-  {% if balance_rows %}
-  <table class="data">
-    <thead><tr>
-      <th>Business Center</th><th class="num">Wallet</th><th class="num">In ad accounts</th>
-      <th class="num">Total available</th><th class="num">Accounts</th>
-      <th class="num">Spend today</th><th class="num">Runway</th><th class="num"></th>
-    </tr></thead>
+{# ======================= ISSUES ======================= #}
+{% if view == 'issues' %}
+<div class="filterbar" style="margin-bottom:12px;">
+  <div class="seg" id="hlLevel"><button type="button" data-l="" class="on">All <span class="n">{{ counts.total }}</span></button><button type="button" data-l="err">Errors <span class="n">{{ counts.err }}</span></button><button type="button" data-l="warn">Warnings <span class="n">{{ counts.warn }}</span></button><button type="button" data-l="info">Info <span class="n">{{ counts.info }}</span></button></div>
+  <div id="hlKinds" style="display:flex;gap:6px;flex-wrap:wrap;">{% for k, n in kinds %}<button type="button" class="chip" data-k="{{ k }}">{{ KIND_LABEL.get(k, k) }} <span class="n">{{ n }}</span></button>{% endfor %}</div>
+  <div class="search-wrap" style="max-width:220px;margin-left:auto;"><input type="text" id="hlSearch" placeholder="Account, campaign, text…"></div>
+  {% if items|selectattr('ack')|list %}<button type="button" class="btn sm" id="hlDismissAll">Dismiss all notices</button>{% endif %}
+</div>
+<div class="card" style="padding:0;overflow:hidden;">
+  {% if items %}
+  <div class="table-scroll"><table class="data dense" id="hlTable">
+    <thead><tr><th style="width:96px;">Level</th><th>What</th><th style="width:200px;">Where</th><th style="width:90px;">When</th><th style="width:230px;"></th></tr></thead>
     <tbody>
-    {% for r in balance_rows %}
-      <tr>
-        <td>
-          {{ r.name }}
-          {% if r.low %}<span class="pill err">LOW</span>{% endif %}
-          {% if r.bc_id %}<div class="mono muted" style="font-size:10px;">{{ r.bc_id }}</div>{% endif %}
-        </td>
-        <td class="num" {% if r.low %}style="color:var(--err);font-weight:700;"{% endif %}>
-          {{ r.currency }} {{ "%.2f"|format(r.wallet) }}</td>
-        <td class="num">{{ "%.2f"|format(r.in_accounts) }}</td>
-        <td class="num" style="font-weight:700;">{{ "%.2f"|format(r.total) }}</td>
-        <td class="num">{{ r.accounts }}</td>
-        <td class="num">{{ "%.2f"|format(r.spend_today) }}</td>
-        <td class="num">
-          {% if r.runway is not none %}
-            {% if r.runway < 2 %}<span style="color:var(--err);font-weight:700;">{{ "%.1f"|format(r.runway) }}d</span>
-            {% elif r.runway < 5 %}<span style="color:var(--warn);font-weight:700;">{{ "%.1f"|format(r.runway) }}d</span>
-            {% else %}{{ "%.1f"|format(r.runway) }}d{% endif %}
-          {% else %}<span class="muted">—</span>{% endif %}
-        </td>
-        <td class="num">
-          {% if r.bc_id %}
-          <a class="btn sm" target="_blank" rel="noopener"
-             href="https://business.tiktok.com/manage/overview?org_id={{ r.bc_id }}">Open BC ↗</a>
-          {% endif %}
-        </td>
-      </tr>
+    {% for it in items %}
+    <tr class="hl-row" data-id="{{ it.id }}" data-level="{{ it.level }}" data-kind="{{ it.kind }}" data-search="{{ (it.title ~ ' ' ~ it.message ~ ' ' ~ it.where)|lower }}">
+      <td><span class="pill {{ {'err':'err','warn':'warn','info':'dim'}[it.level] }}">{{ {'err':'error','warn':'warning','info':'info'}[it.level] }}</span></td>
+      <td><div style="font-weight:600;">{{ it.title }}</div><div class="muted" style="font-size:11.5px;max-width:640px;">{{ it.message }}</div></td>
+      <td class="muted" style="font-size:12px;">{{ it.where or '—' }}</td>
+      <td class="muted" style="white-space:nowrap;font-size:12px;">{% if it.at %}<span title="{{ it.at|local('%Y-%m-%d %H:%M') }}">{{ it.at|ago }}</span>{% else %}now{% endif %}</td>
+      <td style="white-space:nowrap;text-align:right;">{% for a in it.fix %}<a class="btn sm" href="{{ a.href }}" {% if a.ext %}target="_blank" rel="noopener"{% endif %}>{{ a.label }}</a> {% endfor %}{% if it.ack %}<button type="button" class="btn sm ghost hl-dismiss" title="Dismiss">✕</button>{% endif %}</td>
+    </tr>
     {% endfor %}
-      <tr style="border-top:2px solid var(--border-strong);">
-        <td style="font-weight:700;">Total</td>
-        <td class="num" style="font-weight:700;">{{ "%.2f"|format(btotals.wallet) }}</td>
-        <td class="num" style="font-weight:700;">{{ "%.2f"|format(btotals.in_accounts) }}</td>
-        <td class="num" style="font-weight:700;">{{ "%.2f"|format(btotals.total) }}</td>
-        <td class="num"></td>
-        <td class="num" style="font-weight:700;">{{ "%.2f"|format(btotals.spend_today) }}</td>
-        <td class="num" colspan="2"></td>
-      </tr>
-    </tbody>
-  </table>
-  <div class="hint" style="margin-top:10px;">Runway = total available ÷ today's spend — how many
-    days the money lasts at today's pace. Red under 2 days, amber under 5.</div>
+    </tbody></table></div>
+  <div class="empty" id="hlEmpty" hidden>Nothing matches.</div>
   {% else %}
-  <div class="empty">
-    No Business Centers synced yet.<br>
-    <form method="post" action="/oauth/sync-accounts" style="display:inline;">
-      <button class="btn primary sm" type="submit" style="margin-top:10px;">⇄ Sync accounts & BCs now</button>
-    </form>
-    <div class="hint" style="margin-top:8px;">This re-pulls your Business Centers and account
-      mapping with the stored TikTok connection. It also runs automatically every few minutes.</div>
-  </div>
+  <div class="empty" style="padding:48px 0;"><div style="font-size:30px;margin-bottom:6px;color:var(--ok);">✓</div><div style="font-weight:650;">All clear</div><div class="muted" style="margin-top:3px;">No blocks, rejections, failed launches or low wallets right now.</div></div>
   {% endif %}
 </div>
-{% endif %}
+<div class="muted" style="font-size:11px;margin-top:8px;">Notices (wallet, rule actions) can be dismissed. TikTok-side issues clear on the next scan once fixed; failed launches age out after 24 h.</div>
 
-{% if view == 'issues' %}
-{% if not issue_groups %}
-<div class="card">
-  <div class="empty" style="padding:48px 0;">
-    <div style="font-size:32px;margin-bottom:8px;color:var(--ok);">✓</div>
-    <div style="font-weight:650;font-size:15px;">No issues found</div>
-    <div class="muted" style="margin-top:4px;">The last scan ({{ scanned_at }}) came back clean. Scans also run automatically on the slow sweep.</div>
-  </div>
+{# ======================= BALANCES ======================= #}
+{% elif view == 'balances' %}
+<div class="card" style="padding:10px 14px;margin-bottom:12px;display:flex;gap:22px;align-items:center;flex-wrap:wrap;font-size:12.5px;">
+  <span><span class="muted">In BC wallets</span> <b>{{ money0(btotals.wallet) }}</b></span>
+  <span><span class="muted">In ad accounts</span> <b>{{ money0(btotals.in_accounts) }}</b></span>
+  <span><span class="muted">Total available</span> <b style="font-size:14px;">{{ money0(btotals.total) }}</b></span>
+  <span><span class="muted">Spend today</span> <b>{{ money0(btotals.spend_today) }}</b></span>
+  <span class="muted" style="margin-left:auto;">{% if btotals.spend_today %}≈ <b style="color:var(--text);">{{ "%.1f"|format(btotals.total / btotals.spend_today) }} days</b> of runway at today's pace{% else %}no spend yet today{% endif %}</span>
 </div>
-{% endif %}
-{% for g in issue_groups %}
-<div class="card">
-  <div class="card-header">
-    <span class="card-title">{{ g.icon }} {{ g.label }}</span>
-    <span class="card-meta">{{ g.rows|length }} issue(s)</span>
-  </div>
-  <table class="data">
-    <thead><tr><th style="width:26%;">Where</th><th>Problem</th><th class="num">Fix</th></tr></thead>
+<div class="card" style="padding:0;overflow:hidden;">
+  <div class="table-scroll"><table class="data dense">
+    <thead><tr><th>Business Center</th><th class="num">Wallet</th><th class="num">In accounts</th><th class="num">Total</th><th class="num">Spend today</th><th class="num">Runway</th><th class="num">Accounts</th><th></th></tr></thead>
     <tbody>
-    {% for i in g.rows %}
-      <tr>
-        <td>
-          {% if i.advertiser_id %}
-            {{ acct_link(i.advertiser_id, i.advertiser_name, True) }}
-          {% else %}{{ i.advertiser_name or "—" }}{% endif %}
-        </td>
-        <td>
-          <span style="color:var(--{{ 'err' if i.level == 'err' else 'warn' }});">●</span>
-          {{ i.message }}
-          {% if i.detail %}
-          <details style="margin-top:4px;">
-            <summary class="muted" style="cursor:pointer;font-size:11px;">raw TikTok detail</summary>
-            <span class="mono" style="font-size:11px;color:var(--text-dim);word-break:break-all;">{{ i.detail }}</span>
-          </details>
-          {% endif %}
-        </td>
-        <td class="num" style="white-space:nowrap;">
-          {% if g.key == 'bc' %}
-            <a class="btn sm" target="_blank" rel="noopener" href="https://business.tiktok.com/manage/overview?org_id={{ i.ref }}">Open BC ↗</a>
-          {% elif i.advertiser_id %}
-            <a class="btn sm" target="_blank" rel="noopener" href="https://ads.tiktok.com/i18n/dashboard?aadvid={{ i.advertiser_id }}">Open account ↗</a>
-          {% endif %}
-          {% if g.key == 'spark' %}<a class="btn sm" href="/spark-codes">Spark codes</a>{% endif %}
-        </td>
-      </tr>
+    {% for r in balance_rows %}
+    <tr>
+      <td><div style="font-weight:600;">{{ r.name }}{% if r.low %} <span class="pill err">low</span>{% endif %}</div><div class="mono muted" style="font-size:10.5px;">{{ r.bc_id or '—' }}{% if r.synced %} · synced {{ r.synced|ago }}{% endif %}</div></td>
+      <td class="num"><b style="{{ 'color:var(--err);' if r.low }}">{{ r.currency }} {{ "%.0f"|format(r.wallet) }}</b>{% if r.threshold %}<div class="muted" style="font-size:10px;">floor ${{ "%.0f"|format(r.threshold) }}</div>{% endif %}</td>
+      <td class="num">{{ money0(r.in_accounts) }}{% if r.low_accounts %}<div style="font-size:10px;color:var(--warn);">{{ r.low_accounts }} account{{ 's' if r.low_accounts != 1 }} under ${{ "%.0f"|format(s.topup_below) }}</div>{% endif %}</td>
+      <td class="num"><b>{{ money0(r.total) }}</b></td>
+      <td class="num">{{ money0(r.spend_today) if r.spend_today else '—' }}</td>
+      <td class="num">{% if r.runway is not none %}<span style="{{ 'color:var(--err);font-weight:700;' if r.runway < 2 else ('color:var(--warn);' if r.runway < 5) }}">{{ "%.1f"|format(r.runway) }} d</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+      <td class="num">{{ r.accounts }}</td>
+      <td style="text-align:right;white-space:nowrap;">{% if r.portal %}<a class="btn sm {{ 'primary' if r.low }}" href="{{ r.portal }}" target="_blank" rel="noopener">{{ 'Top up ↗' if r.low else 'Portal ↗' }}</a> {% endif %}<a class="btn sm" href="/accounts">Accounts</a></td>
+    </tr>
     {% endfor %}
-    </tbody>
-  </table>
+    {% if not balance_rows %}<tr><td colspan="8"><div class="empty">No Business Centers synced yet — <a href="/accounts?connect=1">connect TikTok</a>.</div></td></tr>{% endif %}
+    </tbody></table></div>
 </div>
-{% endfor %}
-{% endif %}
+<div class="muted" style="font-size:11px;margin-top:8px;">Wallets are topped up on TikTok's Business Center site (no API). Money moves wallet → ad account automatically when Auto top-up is on, or by hand from the Accounts page.</div>
 
-{% if view == 'accounts' %}
-
-{% macro metric(v, money=False, pct=False) -%}
-  {%- if v is none or v == 0 -%}<span class="muted">—</span>
-  {%- elif money -%}${{ "%.2f"|format(v) }}
-  {%- elif pct -%}{{ "%.2f"|format(v) }}%
-  {%- else -%}{{ "%.2f"|format(v) }}{%- endif -%}
-{%- endmacro %}
-
-{% macro bc_section(title, rows, bc=None, low=False, spend=0) %}
-<div class="card bc-section">
-  <div class="card-header">
-    <span class="card-title">
-      {% if bc %}
-        <a href="https://business.tiktok.com/manage/overview?org_id={{ bc.bc_id }}"
-           target="_blank" rel="noopener" title="Open this Business Center on TikTok"
-           style="color:inherit;">{{ title }} ↗</a>
-        {% if low %}<span class="pill err">wallet {{ bc.currency }} {{ "%.2f"|format(bc.balance or 0) }} — LOW</span>
-        {% else %}<span class="pill ok">wallet {{ bc.currency }} {{ "%.2f"|format(bc.balance or 0) }}</span>{% endif %}
-        {% if bc.status and 'ENABLE' not in bc.status|upper %}<span class="pill warn">{{ bc.status }}</span>{% endif %}
-      {% else %}
-        {{ title }}
-      {% endif %}
-    </span>
-    <span class="card-meta num">{{ rows|length }} account(s) · ${{ "%.2f"|format(spend) }} today</span>
+{# ======================= AUTOMATION ======================= #}
+{% elif view == 'automation' %}
+<div class="card" style="padding:0;overflow:hidden;margin-bottom:12px;">
+  <div style="display:flex;align-items:center;gap:8px;padding:11px 14px;border-bottom:1px solid var(--border-soft);"><b>Rules</b><span class="muted" style="font-size:12px;">checked every {{ s.sweep_interval_sec }} s · every action below can be undone</span><a class="btn sm" href="/settings" style="margin-left:auto;">Edit rules</a></div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));">
+    {% for r in rules %}
+    <a href="/settings#{{ r.tab }}" style="display:flex;gap:10px;align-items:flex-start;padding:12px 14px;border-right:1px solid var(--border-soft);border-bottom:1px solid var(--border-soft);text-decoration:none;color:inherit;">
+      <span class="tog {{ 'on' if r.on }}" style="flex:none;margin-top:2px;"></span>
+      <span style="min-width:0;"><span style="font-weight:600;font-size:12.5px;">{{ r.name }}</span><span class="muted" style="display:block;font-size:11px;">{{ r.sub }}</span></span></a>
+    {% endfor %}
   </div>
-  {% if rows %}
-  <div class="table-scroll">
-  <table class="data">
-    <thead><tr>
-      <th>Account</th><th>Status</th><th class="num">Balance</th>
-      <th>Campaign</th><th class="num">Spend</th><th class="num">CPM</th>
-      <th class="num">CPC</th><th class="num">CPA</th><th class="num">CTR</th>
-      <th>Launched</th><th>Last error</th>
-    </tr></thead>
+</div>
+<div class="card" style="padding:0;overflow:hidden;margin-bottom:12px;">
+  <div style="display:flex;align-items:center;gap:8px;padding:11px 14px;border-bottom:1px solid var(--border-soft);"><b>Rule actions</b><span class="muted" style="font-size:12px;">latest {{ actions|length }} · {{ today_pauses if today_pauses is defined else strip.today_pauses }} pause{{ 's' if strip.today_pauses != 1 }} today</span>
+    {% if still_paused %}<form method="post" action="/automation/resume-all" style="margin-left:auto;" data-confirm="Resume every campaign the rules paused ({{ still_paused|length }})?"><button class="btn sm" type="submit">▶ Resume all {{ still_paused|length }} still paused</button></form>{% endif %}</div>
+  {% if actions %}
+  <div class="table-scroll"><table class="data dense">
+    <thead><tr><th style="width:90px;">When</th><th>Campaign</th><th>Account</th><th>Rule</th><th class="num">Value</th><th>Result</th><th></th></tr></thead>
     <tbody>
-    {% for r in rows %}
-      {% set a = r.a %}
-      {% if r.campaigns %}
-        {% for c in r.campaigns %}
-        <tr>
-          {% if loop.first %}
-          <td rowspan="{{ r.campaigns|length }}">
-            <a href="https://ads.tiktok.com/i18n/dashboard?aadvid={{ a.advertiser_id }}"
-               target="_blank" rel="noopener" style="color:inherit;"
-               title="Open in TikTok Ads Manager">{{ a.advertiser_name or a.advertiser_id }} ↗</a>
-            <div class="mono muted" style="font-size:10px;">{{ a.advertiser_id }}</div></td>
-          <td rowspan="{{ r.campaigns|length }}">
-            {% if a.status and 'ENABLE' in a.status %}<span class="pill ok">OK</span>
-            {% elif a.status %}<span class="pill err">{{ a.status.replace('STATUS_','') }}</span>
-            {% else %}<span class="muted">—</span>{% endif %}
-            {% if not a.enabled %}<span class="pill dim">hidden</span>{% endif %}</td>
-          <td rowspan="{{ r.campaigns|length }}" class="num
-            {%- if a.balance is not none and a.balance < 50 %}" style="color:var(--err);font-weight:700;{% endif %}">
-            ${{ "%.2f"|format(a.balance or 0) }}</td>
-          {% endif %}
-          <td>
-            {% if c.operation_status == 'ENABLE' %}<span class="pill ok">▶</span>
-            {% else %}<span class="pill warn">⏸</span>{% endif %}
-            <a href="/campaigns/{{ a.advertiser_id }}/{{ c.campaign_id }}/edit" style="color:inherit;" title="Open campaign">{{ c.campaign_name[:34] }}</a>
-          </td>
-          <td class="num">{{ metric(c.spend_today, money=True) }}</td>
-          <td class="num">{{ metric(c.cpm, money=True) }}</td>
-          <td class="num">{{ metric(c.cpc, money=True) }}</td>
-          <td class="num">{{ metric(c.cpa, money=True) }}</td>
-          <td class="num">{{ metric(c.ctr, pct=True) }}</td>
-          <td class="muted" style="white-space:nowrap;" title="{{ c.launched_at|local('%Y-%m-%d %H:%M') if c.launched_at else '' }}">{{ c.launched_at|ago if c.launched_at else "—" }}</td>
-          {% if loop.first %}
-          <td rowspan="{{ r.campaigns|length }}" style="max-width:260px;">
-            {% if r.err %}
-              <span class="clip" style="color:var(--err);font-size:12px;" title="{{ r.err.error_message }} — {{ r.err.error_technical }}">{{ r.err.error_message }}</span>
-              {% if r.err.batch_ref %}<a href="/campaigns/result/{{ r.err.batch_ref }}" style="font-size:11px;">see result →</a>{% endif %}
-            {% else %}<span class="muted">—</span>{% endif %}</td>
-          {% endif %}
-        </tr>
-        {% endfor %}
-      {% else %}
-        <tr>
-          <td>
-            <a href="https://ads.tiktok.com/i18n/dashboard?aadvid={{ a.advertiser_id }}"
-               target="_blank" rel="noopener" style="color:inherit;"
-               title="Open in TikTok Ads Manager">{{ a.advertiser_name or a.advertiser_id }} ↗</a>
-            <div class="mono muted" style="font-size:10px;">{{ a.advertiser_id }}</div></td>
-          <td>{% if a.status and 'ENABLE' in a.status %}<span class="pill ok">OK</span>
-            {% elif a.status %}<span class="pill err">{{ a.status.replace('STATUS_','') }}</span>
-            {% else %}<span class="muted">—</span>{% endif %}</td>
-          <td class="num {%- if a.balance is not none and a.balance < 50 %}" style="color:var(--err);font-weight:700;{% endif %}">
-            ${{ "%.2f"|format(a.balance or 0) }}</td>
-          <td colspan="7" class="muted">no campaigns</td>
-          <td style="max-width:260px;">{% if r.err %}<span class="clip" style="color:var(--err);font-size:12px;" title="{{ r.err.error_message }} — {{ r.err.error_technical }}">{{ r.err.error_message }}</span>{% if r.err.batch_ref %}<a href="/campaigns/result/{{ r.err.batch_ref }}" style="font-size:11px;">see result →</a>{% endif %}{% else %}<span class="muted">—</span>{% endif %}</td>
-        </tr>
-      {% endif %}
+    {% for a in actions %}
+    <tr>
+      <td class="muted" style="white-space:nowrap;"><span title="{{ a.created_at|local('%Y-%m-%d %H:%M:%S') }}">{{ a.created_at|ago }}</span></td>
+      <td><a href="/status?q={{ (a.campaign_name or a.campaign_id)|urlencode }}" style="color:inherit;font-weight:600;">{{ a.campaign_name[:44] or a.campaign_id }}</a>{% if a.campaign_id in paused_ids and a.action == 'pause' %} <span class="pill warn">still paused</span>{% endif %}</td>
+      <td class="muted" style="white-space:nowrap;">{{ acct_link(a.advertiser_id, (names.get(a.advertiser_id) or a.advertiser_id)[:26]) }}</td>
+      <td><span class="pill {{ 'warn' if a.action == 'pause' else 'dim' }}">{{ a.action }}</span> <span class="mono" style="font-size:11px;">{{ a.rule }}</span></td>
+      <td class="num">{{ "%.2f"|format(a.metric_value) if a.metric_value else "—" }}</td>
+      <td>{% if a.ok %}<span class="pill ok">ok</span>{% else %}<span class="pill err" title="{{ a.detail }}">failed</span>{% endif %}</td>
+      <td style="text-align:right;">{% if a.action == 'pause' and a.ok and a.campaign_id in paused_ids %}<form method="post" action="/automation/resume" style="display:inline;"><input type="hidden" name="advertiser_id" value="{{ a.advertiser_id }}"><input type="hidden" name="campaign_id" value="{{ a.campaign_id }}"><button class="btn sm" type="submit" title="Undo — resume this campaign on TikTok">▶ Resume</button></form>{% endif %}</td>
+    </tr>
     {% endfor %}
-    </tbody>
-  </table>
-  </div>
-  {% else %}<div class="empty">No accounts under this Business Center.</div>{% endif %}
+    </tbody></table></div>
+  {% else %}<div class="empty"><div class="empty-title">No rule actions yet</div>{% if s.rules_enabled or s.profit_rules_enabled %}Every pause will be logged here with an undo button.{% else %}Rules are off — switch them on in <a href="/settings#rules">Settings → Rules</a>.{% endif %}</div>{% endif %}
 </div>
-{% endmacro %}
+<div class="card" style="padding:0;overflow:hidden;">
+  <div style="display:flex;align-items:center;gap:8px;padding:11px 14px;border-bottom:1px solid var(--border-soft);"><b>Top-ups</b><span class="muted" style="font-size:12px;">wallet → ad account transfers, automatic and by hand</span></div>
+  {% if topups %}
+  <div class="table-scroll"><table class="data dense">
+    <thead><tr><th style="width:90px;">When</th><th>Account</th><th>BC</th><th class="num">Amount</th><th>Result</th><th>Why</th></tr></thead>
+    <tbody>{% for t in topups %}<tr>
+      <td class="muted" style="white-space:nowrap;"><span title="{{ t.created_at|local('%Y-%m-%d %H:%M:%S') }}">{{ t.created_at|ago }}</span></td>
+      <td style="white-space:nowrap;">{{ acct_link(t.advertiser_id, (names.get(t.advertiser_id) or t.advertiser_id)[:26]) }}</td>
+      <td class="mono muted" style="font-size:11px;">{{ t.bc_id }}</td>
+      <td class="num"><b>{{ t.amount|money }}</b></td>
+      <td>{% if t.ok %}<span class="pill ok">sent</span>{% else %}<span class="pill err">failed</span>{% endif %}</td>
+      <td class="muted" style="font-size:11.5px;max-width:420px;">{{ t.detail }}</td></tr>{% endfor %}</tbody></table></div>
+  {% else %}<div class="empty"><div class="empty-title">No top-ups yet</div>{% if s.topup_enabled %}Transfers happen on the slow sweep when an account drops below ${{ s.topup_below }}.{% else %}Switch auto top-ups on in <a href="/settings#rules">Settings → Rules</a>, or transfer by hand from the Accounts page.{% endif %}</div>{% endif %}
+</div>
 
-{% for g in groups %}
-  {{ bc_section((g.bc.name or g.bc.bc_id), g.rows, bc=g.bc, low=g.low, spend=g.spend) }}
-{% endfor %}
-
-{% if orphans %}
-  {{ bc_section("No Business Center", orphans, spend=orphans|sum(attribute='spend')) }}
+{# ======================= SYSTEM ======================= #}
+{% elif view == 'system' %}
+<div class="card" style="padding:10px 14px;margin-bottom:12px;display:flex;gap:22px;align-items:center;flex-wrap:wrap;font-size:12.5px;" id="sysLine">
+  <span><span class="muted">TikTok token</span> <b style="color:var({{ '--ok' if token_ok else '--err' }});">{{ 'connected' if token_ok else 'missing' }}</b> <span class="muted">· {{ accounts_count }} accounts</span></span>
+  <span><span class="muted">Campaign sync</span> <b>{{ strip.synced_ago }}</b> <span class="muted">· every {{ s.sweep_interval_sec }} s</span></span>
+  <span><span class="muted">Balance sync</span> <b>{% if last_bal %}{{ last_bal|ago }}{% else %}never{% endif %}</b> <span class="muted">· every {{ s.slow_every_n_sweeps }}th sweep</span></span>
+  <span><span class="muted">Background jobs</span> <b id="sysJobs">{{ running_jobs }}</b> <span class="muted">queued or running · <a href="/jobs">Jobs</a></span></span>
+</div>
+<div class="card" style="margin-bottom:12px;">
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><b>Sync reports</b><span class="muted" style="font-size:12px;">problems the sync paths hit — never silent</span></div>
+  {% if sync_reports %}
+    {% for rep in sync_reports %}<div class="flash err" style="font-size:12.5px;margin-bottom:6px;"><b>{{ rep.key.replace('_', ' ') }}</b>{% for e in rep.get('errors', []) %}<div>· {{ e }}</div>{% endfor %}{% if rep.get('complete') is false %}<div>· account list fetch was incomplete — no accounts were retired this pass</div>{% endif %}</div>{% endfor %}
+    <div class="muted" style="font-size:11.5px;">Retries with backoff are built in — if this persists TikTok is rate-limiting the token; raise the sweep interval in <a href="/settings#launch">Settings</a>.</div>
+  {% else %}<div class="muted" style="font-size:12.5px;">The last account, balance and campaign syncs finished without errors.</div>{% endif %}
+</div>
+<div class="card">
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><b>Quick checks</b></div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;">
+    <a class="btn sm" href="/cookies">Cookies & login</a><a class="btn sm" href="/campaigns/source-check">Source check</a><a class="btn sm" href="/escape-test">Escape test</a><a class="btn sm" href="/settings#security">Security & 2FA</a><a class="btn sm" href="/settings#users">Users & access</a>
+    <form method="post" action="/oauth/refresh" style="display:inline;"><button class="btn sm" type="submit">↻ Refresh TikTok token</button></form>
+    <form method="post" action="/oauth/sync-accounts" style="display:inline;"><button class="btn sm" type="submit">⇄ Re-sync accounts</button></form>
+  </div>
+</div>
 {% endif %}
-
-{% if not groups and not orphans %}
-<div class="card"><div class="empty"><div class="empty-title">Nothing to monitor yet</div>Connect TikTok and sync — every Business Center, account and campaign shows up here.<br><a class="btn primary" href="/oauth/connect">Connect TikTok</a></div></div>
-{% endif %}
-{% endif %}{# end accounts view #}
 {% endblock %}
-
 {% block scripts %}
 <script>
-  fetch("/admin/cookie-check").then(function (r) { return r.json(); }).then(function (h) {
-    var v = document.getElementById("cookieVerdict");
-    var map = { live: ["good", "Live"], live_no_permission: ["good", "Live (scoped)"],
-                expired: ["bad", "Expired"], missing: ["", "Not set"], unknown: ["", "Unknown"] };
-    var m = map[h.verdict] || map.unknown;
-    v.className = "val " + m[0]; v.style.fontSize = "15px"; v.textContent = m[1];
-  }).catch(function () {});
+(function () {
+  var $ = function (s, r) { return (r || document).querySelector(s); }, $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
+  $$("form[data-confirm]").forEach(function (f) { f.addEventListener("submit", function (e) { if (f.dataset.ok) return; e.preventDefault(); UI.confirm({ title: f.dataset.confirm, ok: "Resume all" }).then(function (y) { if (y) { f.dataset.ok = "1"; f.submit(); } }); }); });
+  var rows = $$(".hl-row"); if (!rows.length) return;
+  var lvl = "", kinds = {}, q = "";
+  function apply() {
+    var anyK = Object.keys(kinds).some(function (k) { return kinds[k]; }), n = 0;
+    rows.forEach(function (r) { var ok = (!lvl || r.dataset.level === lvl) && (!anyK || kinds[r.dataset.kind]) && (!q || r.dataset.search.indexOf(q) >= 0); r.hidden = !ok; if (ok) n++; });
+    $$("#hlKinds .chip").forEach(function (c) { c.classList.toggle("on", !!kinds[c.dataset.k]); });
+    $("#hlEmpty").hidden = n > 0;
+  }
+  $$("#hlLevel button").forEach(function (b) { b.addEventListener("click", function () { $$("#hlLevel button").forEach(function (o) { o.classList.remove("on"); }); b.classList.add("on"); lvl = b.dataset.l; apply(); }); });
+  $$("#hlKinds .chip").forEach(function (c) { c.addEventListener("click", function () { kinds[c.dataset.k] = !kinds[c.dataset.k]; apply(); }); });
+  $("#hlSearch").addEventListener("input", function () { q = this.value.trim().toLowerCase(); apply(); });
+  var preL = new URLSearchParams(location.search).get("level"); if (preL) { var lb = $('#hlLevel [data-l="' + preL + '"]'); if (lb) lb.click(); }
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest(".hl-dismiss"); if (!b) return;
+    var r = b.closest(".hl-row");
+    UI.post("/inbox/dismiss", { id: r.dataset.id, next: "/monitor" }).then(function () { r.remove(); rows = rows.filter(function (x) { return x !== r; }); apply(); adopsToast && adopsToast("ok", "Dismissed"); });
+  });
+  var da = $("#hlDismissAll"); if (da) da.addEventListener("click", function () { UI.confirm({ title: "Dismiss every notice?", text: "TikTok-side issues stay until the next scan clears them; only notices (wallet, rule actions) are dismissed.", ok: "Dismiss all" }).then(function (y) { if (y) UI.post("/inbox/dismiss", { id: "all", next: "/monitor" }).then(function () { location.reload(); }); }); });
+})();
 </script>
 {% endblock %}

@@ -16,29 +16,38 @@ router = APIRouter()
 
 
 @router.get("/jobs/data")
-def jobs_data(db: Session = Depends(get_db)):
+def jobs_data(request: Request, db: Session = Depends(get_db)):
     """Unseen finished jobs (→ notifications) + what's running. Marks the
-    returned finished jobs as seen so each is announced once."""
-    done = (db.query(models.Job)
-            .filter(models.Job.status.in_(("done", "error")), models.Job.seen == False)  # noqa: E712
-            .order_by(models.Job.finished_at).limit(20).all())
+    returned finished jobs as seen so each is announced once — unless
+    ?peek=1 (the Jobs page polling), which must not eat the notifications."""
+    from sqlalchemy import func
+    peek = request.query_params.get("peek") == "1"
     items = []
-    for j in done:
-        items.append({"id": j.id, "kind": j.kind, "title": j.title, "status": j.status,
-                      "detail": j.detail or "", "href": j.href or "/jobs"})
-        j.seen = True
+    if not peek:
+        done = (db.query(models.Job)
+                .filter(models.Job.status.in_(("done", "error")), models.Job.seen == False)  # noqa: E712
+                .order_by(models.Job.finished_at).limit(20).all())
+        for j in done:
+            items.append({"id": j.id, "kind": j.kind, "title": j.title, "status": j.status,
+                          "detail": j.detail or "", "href": j.href or "/jobs"})
+            j.seen = True
     running = (db.query(models.Job).filter(models.Job.status.in_(("queued", "running")))
                .order_by(models.Job.id).all())
+    done_count = db.query(func.count(models.Job.id)).filter(models.Job.status.in_(("done", "error", "cancelled"))).scalar() or 0
     db.commit()
-    return JSONResponse({"done": items,
+    return JSONResponse({"done": items, "done_count": done_count,
                          "running": [{"id": j.id, "kind": j.kind, "title": j.title, "status": j.status,
                                       "progress": j.progress or ""} for j in running]})
 
 
 @router.get("/jobs")
 def jobs_page(request: Request, db: Session = Depends(get_db)):
+    from .. import timeutil
     rows = db.query(models.Job).order_by(models.Job.id.desc()).limit(150).all()
-    return render(request, "jobs.html", {"title": "Background jobs", "rows": rows, "summary": jobs.summary(db), "slow_kinds": jobs.SLOW_KINDS})
+    day_start = timeutil.local_midnight_utc(0).replace(tzinfo=None)
+    today = [j for j in rows if j.finished_at and j.finished_at >= day_start]
+    return render(request, "jobs.html", {"title": "Jobs", "rows": rows, "summary": jobs.summary(db), "slow_kinds": jobs.SLOW_KINDS,
+                                         "done_today": sum(1 for j in today if j.status == "done"), "failed_today": sum(1 for j in today if j.status == "error")})
 
 
 def _safe_next(nxt: str) -> str:
@@ -46,14 +55,18 @@ def _safe_next(nxt: str) -> str:
 
 
 @router.post("/jobs/{job_id}/cancel")
-def cancel_job(job_id: int, next: str = Form("/jobs"), db: Session = Depends(get_db)):
+def cancel_job(request: Request, job_id: int, next: str = Form("/jobs"), db: Session = Depends(get_db)):
     """Queued → removed from the queue. Running → asked to stop at its next checkpoint."""
     ok, msg = jobs.cancel(db, job_id)
+    if request.headers.get("x-requested-with") == "fetch":
+        return JSONResponse({"ok": ok, "msg": msg})
     return RedirectResponse(_safe_next(next) + ("?ok=" if ok else "?err=") + quote(msg), status_code=303)
 
 
 @router.post("/jobs/cancel-queued")
-def cancel_queued(next: str = Form("/jobs"), db: Session = Depends(get_db)):
+def cancel_queued(request: Request, next: str = Form("/jobs"), db: Session = Depends(get_db)):
     n = jobs.cancel_queued(db)
+    if request.headers.get("x-requested-with") == "fetch":
+        return JSONResponse({"ok": True, "n": n})
     return RedirectResponse(_safe_next(next) + "?ok=" + quote(f"Removed {n} queued job(s)." if n else "The queue was already empty."),
                             status_code=303)

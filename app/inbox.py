@@ -30,7 +30,7 @@ def _alert_href(a: models.Alert) -> tuple[str, bool]:
     if a.kind == "bc_low_balance" and a.ref_id:
         return balances.bc_portal_url(a.ref_id), True
     if a.kind == "rule_action":
-        return "/automation", False
+        return "/monitor?view=automation", False
     if a.kind in ("account_error", "inventory_low"):
         return "/monitor", False
     return "", False

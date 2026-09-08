@@ -148,6 +148,10 @@ class Creative(Base):
     tp_job_id = Column(String, default="")                 # TensorPix job id for this variant
     tp_cost = Column(Float, default=0.0)                   # job cost (USD) from TensorPix
     tp_checked_at = Column(DateTime, nullable=True)        # poll throttle
+    # library organisation (Creatives page): archived rows leave the pickers
+    archived = Column(Boolean, default=False, index=True)
+    favorite = Column(Boolean, default=False)
+    labels = Column(String, default="")                     # comma-separated, lower-case
 
 
 class CreativeUpload(Base):
@@ -847,3 +851,28 @@ class ActivityEvent(Base):
     detail = Column(Text, default="")
     by_email = Column(String, default="")
     at = Column(DateTime, default=utcnow, index=True)
+
+
+# ---------------------------------------------------------------------------
+# Assistant (Claude) — chats + messages, stored as the API sees them so a
+# conversation can be resumed with its tool calls intact
+# ---------------------------------------------------------------------------
+
+class AssistantChat(Base):
+    __tablename__ = "assistant_chats"
+
+    id = Column(Integer, primary_key=True)
+    user_email = Column(String, index=True, default="")
+    title = Column(String, default="New chat")
+    created_at = Column(DateTime, default=utcnow, index=True)
+    updated_at = Column(DateTime, default=utcnow)
+
+
+class AssistantMessage(Base):
+    __tablename__ = "assistant_messages"
+
+    id = Column(Integer, primary_key=True)
+    chat_id = Column(Integer, ForeignKey("assistant_chats.id"), index=True, nullable=False)
+    role = Column(String, default="user")            # user | assistant
+    content = Column(Text, default="[]")             # JSON list of API content blocks
+    created_at = Column(DateTime, default=utcnow, index=True)

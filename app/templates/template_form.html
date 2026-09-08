@@ -1,18 +1,25 @@
 {% extends "base.html" %}
-{% block page_width %}narrow{% endblock %}
 {% block content %}
-<div class="page-head">
-  <h1>{{ "Edit preset" if t else "New preset" }}</h1>
-  <div class="actions"><a class="btn" href="/presets">← Back to presets</a></div>
+<div class="page-head" style="margin-bottom:10px;">
+  <div><h1>{{ t.name if t else "New preset" }}</h1><div class="muted" style="font-size:12.5px;">{% if t %}Edit preset{% if usage %} · {{ usage.ok }} launch{{ 'es' if usage.ok != 1 }}{% if usage.last %} · last {{ usage.last|ago }}{% endif %}{% endif %}{% else %}A preset is everything a campaign needs — goal, destination, targeting, budget, creative. Build it once, launch it to any number of accounts.{% endif %}</div></div>
+  <div class="actions">{% if t %}<a class="btn" href="/super-launcher?preset={{ t.id }}">🚀 Launch</a>{% endif %}<a class="btn" href="/presets">Cancel</a><button class="btn primary" type="submit" form="presetForm" id="presetSave">Save preset</button></div>
 </div>
 
-<nav class="section-nav" aria-label="Sections">
-  <a href="#campaign">Campaign</a><a href="#location">Destination</a><a href="#placements">Placements</a><a href="#targeting">Targeting</a>
-  <a href="#budget">Budget</a><a href="#bidding">Bidding</a><a href="#advanced">Advanced</a><a href="#ad">Ad &amp; creative</a><a href="#addons">Add-ons</a>
+<div class="settings-wrap">
+<nav class="settings-nav" id="pfNav" aria-label="Steps">
+  <a href="#campaign" data-tab="campaign"><span class="pf-no">1</span>Campaign</a>
+  <a href="#location" data-tab="location"><span class="pf-no">2</span>Destination</a>
+  <a href="#targeting" data-tab="targeting"><span class="pf-no">3</span>Targeting</a>
+  <a href="#budget" data-tab="budget"><span class="pf-no">4</span>Budget &amp; bidding</a>
+  <a href="#ad" data-tab="ad"><span class="pf-no">5</span>Ad &amp; creative</a>
+  <a href="#addons" data-tab="addons"><span class="pf-no">6</span>Add-ons</a>
+  <div class="muted" style="font-size:11.5px;padding:14px 12px;line-height:1.5;">Every step is optional except a name, goal and destination. Empty targeting = TikTok's broadest defaults.</div>
 </nav>
-<form method="post" action="/presets/save">
+<div style="min-width:0;">
+<form method="post" action="/presets/save" id="presetForm" novalidate>
   {% if t %}<input type="hidden" name="preset_id" value="{{ t.id }}">{% endif %}
 
+<section class="stab" data-tab="campaign" hidden>
   {# ============================ CAMPAIGN ================================= #}
   <div class="card" id="campaign">
     <div class="card-header"><span class="card-title">Campaign</span>
@@ -59,6 +66,8 @@
     </div>
   </div>
 
+  <div class="pf-foot"><span></span><button type="button" class="btn" data-next="location">Next · Destination →</button></div></section>
+<section class="stab" data-tab="location" hidden>
   {# ==================== OPTIMIZATION LOCATION & PIXEL ===================== #}
   <div class="card" id="location">
     <div class="card-header"><span class="card-title">Optimization location</span>
@@ -121,6 +130,8 @@
     </div>
   </div>
 
+  <div class="pf-foot"><button type="button" class="btn ghost" data-next="campaign">← Campaign</button><button type="button" class="btn" data-next="targeting">Next · Targeting →</button></div></section>
+<section class="stab" data-tab="targeting" hidden>
   {# ============================= PLACEMENTS =============================== #}
   <div class="card" id="placements">
     <div class="card-header"><span class="card-title">Placements</span></div>
@@ -195,6 +206,8 @@
     </div>
   </div>
 
+  <div class="pf-foot"><button type="button" class="btn ghost" data-next="location">← Destination</button><button type="button" class="btn" data-next="budget">Next · Budget &amp; bidding →</button></div></section>
+<section class="stab" data-tab="budget" hidden>
   {# ========================== BUDGET & SCHEDULE =========================== #}
   <div class="card" id="budget">
     <div class="card-header"><span class="card-title">Budget & schedule</span></div>
@@ -300,6 +313,8 @@
   </div>
 
   {# ================================== AD ================================== #}
+  <div class="pf-foot"><button type="button" class="btn ghost" data-next="targeting">← Targeting</button><button type="button" class="btn" data-next="ad">Next · Ad &amp; creative →</button></div></section>
+<section class="stab" data-tab="ad" hidden>
   <div class="card" id="ad">
     <div class="card-header"><span class="card-title">Ad</span>
       <span class="card-meta">spark creative · text · CTA</span></div>
@@ -311,22 +326,18 @@
           <option value="carousel" {{ 'selected' if blob.get('creative_source') == 'carousel' }}>Creative library — next unused carousel (images + music)</option>
         </select>
         <span class="hint" id="libraryHint" style="display:none;">Each launch consumes ONE unused creative from the <a href="/creatives">library</a> (unless Smart Creative is on).</span>
-        <label class="field" id="videoPick" style="display:none;margin-top:8px;"><span class="field-label">Which video</span>
-          <select name="video_creative_id">
-            <option value="">Next unused — automatic (each launch consumes one)</option>
-            {% for v in videos %}
-              <option value="{{ v.id }}" {{ 'selected' if blob.get('video_creative_id') == v.id }}>{{ v.name }}{% if v.status != 'available' %} (launched — reusable){% endif %}</option>
-            {% endfor %}
-          </select>
-          <span class="hint">Pin one video and this preset puts it on <b>every</b> account it launches to (each account uploads its own copy). Leave on automatic to use a fresh video per launch. Manage videos on the <a href="/creatives">Creatives</a> page.</span></label>
-        <label class="field" id="carouselPick" style="display:none;margin-top:8px;"><span class="field-label">Which carousel</span>
-          <select name="carousel_id">
-            <option value="">Next unused — automatic (each launch consumes one)</option>
-            {% for cz in carousels %}
-              <option value="{{ cz.id }}" {{ 'selected' if blob.get('carousel_id') == cz.id }}>{{ cz.name }} · 🎵 {{ cz.music_name or cz.music_id }}{% if cz.status != 'available' %} (launched — reusable){% endif %}</option>
-            {% endfor %}
-          </select>
-          <span class="hint">Pin one carousel and this preset puts it on <b>every</b> account it launches to (each account uploads its own copies). Manage carousels on the <a href="/creatives?view=carousels">Creatives → Carousels</a> tab.</span></label>
+        <div class="field" id="videoPick" style="display:none;margin-top:8px;"><span class="field-label">Which video</span>
+          {% set pv = (videos|selectattr('id', 'equalto', blob.get('video_creative_id'))|list)[0] if blob.get('video_creative_id') else None %}
+          <input type="hidden" name="video_creative_id" id="videoId" value="{{ pv.id if pv else '' }}">
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><span class="pk-chip" id="videoChip" data-kind="video" {{ 'hidden' if not pv }}><img src="{{ '/creatives/' ~ pv.id ~ '/poster' if pv else '' }}" alt="" style="width:20px;height:28px;object-fit:cover;border-radius:4px;"><span id="videoChipName">{{ pv.name if pv else '' }}</span><button type="button" title="Unpin" data-unpin="video">✕</button></span>
+            <button type="button" class="btn sm" data-pick="video">{{ 'Change…' if pv else 'Pin a specific video…' }}</button><span class="muted" style="font-size:11.5px;" id="videoAuto" {{ 'hidden' if pv }}>Automatic — each launch takes the next unused video</span></div>
+          <span class="hint">Pinned = every account this preset launches to gets that video (each uploads its own copy). Automatic = a fresh video per launch. Manage videos on <a href="/creatives?view=library">Creatives</a>.</span></div>
+        <div class="field" id="carouselPick" style="display:none;margin-top:8px;"><span class="field-label">Which carousel</span>
+          {% set pc = (carousels|selectattr('id', 'equalto', blob.get('carousel_id'))|list)[0] if blob.get('carousel_id') else None %}
+          <input type="hidden" name="carousel_id" id="carouselId" value="{{ pc.id if pc else '' }}">
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><span class="pk-chip" id="carouselChip" data-kind="carousel" {{ 'hidden' if not pc }}><img src="{{ '/creatives/' ~ pc.id ~ '/poster' if pc else '' }}" alt="" style="width:20px;height:28px;object-fit:cover;border-radius:4px;"><span id="carouselChipName">{{ pc.name if pc else '' }}</span><button type="button" title="Unpin" data-unpin="carousel">✕</button></span>
+            <button type="button" class="btn sm" data-pick="carousel">{{ 'Change…' if pc else 'Pin a specific carousel…' }}</button><span class="muted" style="font-size:11.5px;" id="carouselAuto" {{ 'hidden' if pc }}>Automatic — each launch takes the next unused carousel</span></div>
+          <span class="hint">Pinned = every account gets that carousel (each uploads its own copies). Manage carousels on <a href="/creatives?view=carousels">Creatives → Carousels</a>.</span></div>
         <label id="smartCreativeToggle" style="display:none;align-items:center;gap:6px;font-size:12px;color:var(--text-soft);cursor:pointer;margin-top:8px;">
           <input type="checkbox" name="smart_creative" id="smartCreative" value="1" style="width:auto;"
                  {{ 'checked' if blob.get('smart_creative') }}> 🧠 Use Smart Creative to create ads — auto-combines several videos + texts into one self-optimising ad
@@ -373,6 +384,8 @@
     </div>
   </div>
 
+  <div class="pf-foot"><button type="button" class="btn ghost" data-next="budget">← Budget &amp; bidding</button><button type="button" class="btn" data-next="addons">Next · Add-ons →</button></div></section>
+<section class="stab" data-tab="addons" hidden>
   <div class="card" id="addons">
     <div class="card-header"><span class="card-title">Interactive add-ons</span>
       <span class="card-meta">display card</span></div>
@@ -399,12 +412,9 @@
     </div>
   </div>
 
-  <div class="save-bar">
-    <button class="btn primary" type="submit" style="font-size:14px;padding:10px 22px;">Save preset</button>
-    <a class="btn" href="/presets">Cancel</a>
-    <span class="hint" style="margin:0;">Presets are reusable — launches never change them.</span>
-  </div>
+  <div class="pf-foot"><button type="button" class="btn ghost" data-next="ad">← Ad &amp; creative</button><button class="btn primary" type="submit">Save preset</button></div></section>
 </form>
+</div></div>
 {# the delete form can't sit inside the preset form (browsers drop a nested <form>, which broke the page script) — the button targets it via form="…" #}
 <form method="post" id="displayCardDelForm" action="" hidden></form>
 {% endblock %}
@@ -509,6 +519,48 @@
         document.getElementById("displayCardFile").value = ""; document.getElementById("displayCardName").value = "";
       })
       .catch(function () { btn.disabled = false; dcMsg.textContent = "Upload failed — check the connection and try again."; });
+  });
+
+  // ---- stepped builder: one step at a time, remembered per preset; invalid fields pull you to their step
+  (function () {
+    var tabs = Array.prototype.slice.call(document.querySelectorAll("#pfNav a[data-tab]")), key = "adops-preset-step-" + ({{ t.id if t else 0 }});
+    function show(k) {
+      if (!document.querySelector('.stab[data-tab="' + k + '"]')) k = "campaign";
+      document.querySelectorAll(".stab").forEach(function (sct) { sct.hidden = sct.dataset.tab !== k; });
+      tabs.forEach(function (a) { a.classList.toggle("on", a.dataset.tab === k); });
+      try { sessionStorage.setItem(key, k); } catch (e) {}
+      if (location.hash !== "#" + k) history.replaceState(null, "", "#" + k);
+      window.scrollTo(0, 0);
+    }
+    tabs.forEach(function (a) { a.addEventListener("click", function (e) { e.preventDefault(); show(a.dataset.tab); }); });
+    document.addEventListener("click", function (e) { var b = e.target.closest("[data-next]"); if (b) show(b.dataset.next); });
+    var start = (location.hash || "").slice(1); if (!start) { try { start = sessionStorage.getItem(key) || ""; } catch (e) {} }
+    show(start || "campaign");
+    document.getElementById("presetForm").addEventListener("submit", function (e) {
+      var f = this; if (f.checkValidity()) return;
+      e.preventDefault();
+      var bad = f.querySelector(":invalid"), sct = bad && bad.closest(".stab");
+      if (sct) show(sct.dataset.tab);
+      if (bad) { bad.reportValidity(); bad.focus(); }
+    });
+  })();
+  // ---- pin a specific library creative through the picker pop-up
+  document.querySelectorAll("[data-pick]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var kind = b.dataset.pick, cur = document.getElementById(kind + "Id").value;
+      UI.pickCreatives({ kind: kind, kinds: [kind], multi: false, state: "all", selected: cur ? [Number(cur)] : [], title: "Pin a " + kind, hint: "Every account this preset launches to gets this one." }).then(function (items) {
+        if (!items || !items.length) return;
+        var it = items[0], chip = document.getElementById(kind + "Chip");
+        document.getElementById(kind + "Id").value = it.id; chip.hidden = false; chip.querySelector("img").src = it.poster || "/creatives/" + it.id + "/poster";
+        document.getElementById(kind + "ChipName").textContent = it.name; document.getElementById(kind + "Auto").hidden = true; b.textContent = "Change…";
+      });
+    });
+  });
+  document.querySelectorAll("[data-unpin]").forEach(function (x) {
+    x.addEventListener("click", function () {
+      var kind = x.dataset.unpin; document.getElementById(kind + "Id").value = ""; document.getElementById(kind + "Chip").hidden = true;
+      document.getElementById(kind + "Auto").hidden = false; document.querySelector('[data-pick="' + kind + '"]').textContent = "Pin a specific " + kind + "…";
+    });
   });
 
   var modeSel = document.getElementById("budgetMode"), cbo = document.getElementById("cboBudgetField");

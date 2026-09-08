@@ -1,47 +1,82 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="page-head">
-  <div><h1>Background jobs</h1>
-    <div class="muted">Every launch, bid change, appeal, sync and partner step runs here so no page has to wait. Finished ones pop up bottom-right on whatever page you're on.</div></div>
+<div class="page-head" style="margin-bottom:10px;">
+  <div><h1>Jobs</h1>
+    <div class="muted" style="font-size:12.5px;">Launches, bid changes, appeals, scans and syncs run here in the background — finished ones pop up bottom-right wherever you are.</div></div>
   <div class="actions">
-    {% if summary.queued %}<form method="post" action="/jobs/cancel-queued" onsubmit="return confirm('Remove all {{ summary.queued }} queued job(s)? Running ones keep going.');"><input type="hidden" name="next" value="/jobs"><button class="btn" type="submit" title="Drop everything still waiting; running jobs are not touched">✕ Clear queue ({{ summary.queued }})</button></form>{% endif %}
-    <a class="btn" href="/jobs">↻ Refresh</a></div>
+    {% if summary.queued %}<button type="button" class="btn" id="jbClear" data-n="{{ summary.queued }}" title="Drop everything still waiting; running jobs are not touched">✕ Clear queue ({{ summary.queued }})</button>{% endif %}
+  </div>
 </div>
 
-<div class="kpis kpis-4">
-  <div class="kpi accent"><div class="lab">Running</div><div class="val">{{ summary.running }}</div><div class="sub">working right now</div></div>
-  <div class="kpi"><div class="lab">Queued</div><div class="val">{{ summary.queued }}</div><div class="sub">two lanes: launches & edits never wait behind a scan</div></div>
-  <div class="kpi"><div class="lab">Shown</div><div class="val">{{ rows|length }}</div><div class="sub">most recent, newest first</div></div>
+<div class="kpis kpis-4" style="margin-bottom:12px;">
+  <div class="kpi {{ 'accent' if summary.running }}"><div class="lab">Running</div><div class="val" id="jbRunning">{{ summary.running }}</div><div class="sub">working right now</div></div>
+  <div class="kpi"><div class="lab">Queued</div><div class="val" id="jbQueued">{{ summary.queued }}</div><div class="sub">launches & edits never wait behind a scan</div></div>
+  <div class="kpi"><div class="lab">Done today</div><div class="val">{{ done_today }}</div><div class="sub">{{ failed_today }} failed</div></div>
   <div class="kpi"><div class="lab">Kept</div><div class="val">14 d</div><div class="sub">older jobs are pruned</div></div>
 </div>
+
+<div class="filterbar" style="margin-bottom:12px;">
+  <div class="seg" id="jbFilter"><button type="button" data-f="" class="on">All <span class="n">{{ rows|length }}</span></button><button type="button" data-f="active">Active <span class="n">{{ summary.running + summary.queued }}</span></button><button type="button" data-f="error">Failed <span class="n">{{ rows|selectattr('status', 'equalto', 'error')|list|length }}</span></button></div>
+  <div class="search-wrap" style="max-width:240px;"><input type="text" id="jbSearch" placeholder="Job, kind, result…"></div>
+  <span class="muted" style="margin-left:auto;font-size:12px;" id="jbLive">live · refreshes on its own</span>
+</div>
+
 <div class="card" style="padding:0;overflow:hidden;">
   {% if rows %}
-  <div class="table-scroll">
-  <table class="data dense">
-    <thead><tr><th>When</th><th>Job</th><th>Status</th><th>Result</th><th class="num">Took</th><th></th></tr></thead>
+  <div class="table-scroll"><table class="data dense" id="jbTable">
+    <thead><tr><th style="width:90px;">When</th><th>Job</th><th style="width:130px;">Status</th><th>Result</th><th class="num" style="width:70px;">Took</th><th style="width:80px;"></th></tr></thead>
     <tbody>
     {% for j in rows %}
-      <tr>
-        <td style="white-space:nowrap;"><span title="{{ j.created_at|local('%Y-%m-%d %H:%M:%S') }}">{{ j.created_at|ago }}</span></td>
-        <td><div style="font-weight:600;">{% if j.href %}<a href="{{ j.href }}" style="color:inherit;">{{ j.title }}</a>{% else %}{{ j.title }}{% endif %}</div>
-          <div class="mono muted" style="font-size:10.5px;">{{ j.kind }}</div></td>
-        <td>{% if j.status == 'done' %}<span class="pill ok">done</span>{% elif j.status == 'error' %}<span class="pill err">error</span>
+      <tr class="jb-row" data-id="{{ j.id }}" data-status="{{ j.status }}" data-search="{{ (j.title ~ ' ' ~ j.kind ~ ' ' ~ (j.detail or ''))|lower }}">
+        <td class="muted" style="white-space:nowrap;"><span title="{{ j.created_at|local('%Y-%m-%d %H:%M:%S') }}">{{ j.created_at|ago }}</span></td>
+        <td><div style="font-weight:600;">{% if j.href %}<a href="{{ j.href }}" style="color:inherit;">{{ j.title }}</a>{% else %}{{ j.title }}{% endif %}</div><div class="mono muted" style="font-size:10.5px;">{{ j.kind }}{% if j.status == 'queued' %} · {{ 'slow lane' if j.kind in slow_kinds else 'fast lane' }}{% endif %}</div></td>
+        <td class="jb-status">{% if j.status == 'done' %}<span class="pill ok">done</span>{% elif j.status == 'error' %}<span class="pill err">failed</span>
             {% elif j.status == 'running' %}<span class="pill warn">{{ 'stopping' if j.cancel_requested else 'running' }}{% if j.progress %} · {{ j.progress }}{% endif %}</span>
-            {% elif j.status == 'cancelled' %}<span class="pill dim" title="Removed from the queue before it started">cancelled</span>
-            {% else %}<span class="pill dim">queued</span> <span class="muted" style="font-size:10.5px;">{{ 'slow lane' if j.kind in slow_kinds else 'fast lane' }}</span>{% endif %}</td>
-        <td style="max-width:560px;font-size:12px;">{{ j.detail }}</td>
-        <td class="num muted" style="white-space:nowrap;">{% if j.started_at and j.finished_at %}{{ "%.0f"|format((j.finished_at - j.started_at).total_seconds()) }} s{% elif j.started_at %}<span title="running for">{{ j.started_at|ago }}</span>{% else %}—{% endif %}</td>
-        <td class="num" style="white-space:nowrap;">
-          {% if j.status == 'queued' %}<form method="post" action="/jobs/{{ j.id }}/cancel" style="display:inline;"><input type="hidden" name="next" value="/jobs"><button class="btn sm" type="submit" title="Remove from the queue — it will not run">Remove</button></form>
-          {% elif j.status == 'running' and not j.cancel_requested %}<form method="post" action="/jobs/{{ j.id }}/cancel" style="display:inline;" onsubmit="return confirm('Stop “{{ j.title|e }}”? Long scans stop after the account they are on; a launch in progress finishes the campaign it is creating first.');"><input type="hidden" name="next" value="/jobs"><button class="btn sm" type="submit" title="Ask it to stop at its next checkpoint">Stop</button></form>{% endif %}
-        </td>
+            {% elif j.status == 'cancelled' %}<span class="pill dim">cancelled</span>{% else %}<span class="pill dim">queued</span>{% endif %}</td>
+        <td style="max-width:560px;font-size:12px;" class="jb-detail">{{ j.detail }}</td>
+        <td class="num muted" style="white-space:nowrap;">{% if j.started_at and j.finished_at %}{{ "%.0f"|format((j.finished_at - j.started_at).total_seconds()) }} s{% elif j.started_at %}{{ j.started_at|ago }}{% else %}—{% endif %}</td>
+        <td style="text-align:right;white-space:nowrap;">{% if j.status == 'queued' %}<button type="button" class="btn sm jb-cancel" data-mode="remove">Remove</button>{% elif j.status == 'running' and not j.cancel_requested %}<button type="button" class="btn sm jb-cancel" data-mode="stop" data-title="{{ j.title }}">Stop</button>{% endif %}</td>
       </tr>
     {% endfor %}
-    </tbody>
-  </table>
-  </div>
+    </tbody></table></div>
+  <div class="empty" id="jbEmpty" hidden>Nothing matches.</div>
   {% else %}
-  <div class="empty"><div class="empty-title">Nothing yet</div>Launch something, change a bid or run a sync — it shows up here and finishes in the background.</div>
+  <div class="empty"><div class="empty-title">Nothing yet</div>Launch something, change a bid or run a scan — it shows up here and finishes in the background.</div>
   {% endif %}
 </div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  var $ = function (s, r) { return (r || document).querySelector(s); }, $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
+  var rows = $$(".jb-row"), f = "", q = "";
+  function apply() {
+    var n = 0;
+    rows.forEach(function (r) { var st = r.dataset.status, ok = (!f || (f === "active" ? (st === "queued" || st === "running") : st === f)) && (!q || r.dataset.search.indexOf(q) >= 0); r.hidden = !ok; if (ok) n++; });
+    var e = $("#jbEmpty"); if (e) e.hidden = n > 0;
+  }
+  $$("#jbFilter button").forEach(function (b) { b.addEventListener("click", function () { $$("#jbFilter button").forEach(function (o) { o.classList.remove("on"); }); b.classList.add("on"); f = b.dataset.f; apply(); }); });
+  var s = $("#jbSearch"); if (s) s.addEventListener("input", function () { q = this.value.trim().toLowerCase(); apply(); });
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest(".jb-cancel"); if (!b) return;
+    var r = b.closest(".jb-row"), id = r.dataset.id;
+    var go = function () { UI.post("/jobs/" + id + "/cancel", { next: "/jobs" }).then(function (d) { adopsToast && adopsToast(d.ok === false ? "err" : "ok", d.msg || "Done"); setTimeout(function () { location.reload(); }, 400); }); };
+    if (b.dataset.mode === "stop") UI.confirm({ title: "Stop “" + b.dataset.title + "”?", text: "Long scans stop after the account they are on; a launch in progress finishes the campaign it is creating first.", ok: "Stop" }).then(function (y) { if (y) go(); });
+    else go();
+  });
+  var clr = $("#jbClear"); if (clr) clr.addEventListener("click", function () { UI.confirm({ title: "Remove all " + clr.dataset.n + " queued job(s)?", text: "Running ones keep going.", ok: "Clear queue", danger: true }).then(function (y) { if (y) UI.post("/jobs/cancel-queued", { next: "/jobs" }).then(function () { location.reload(); }); }); });
+  // live: when anything finishes or the running set changes, reload the list (cheap — server renders it)
+  var lastSig = null;
+  function poll() {
+    UI.get("/jobs/data?peek=1").then(function (d) {
+      var sig = (d.running || []).map(function (j) { return j.id + ":" + j.status + ":" + j.progress; }).join("|") + "#" + (d.done_count || 0);
+      if (lastSig !== null && sig !== lastSig) { location.reload(); return; }
+      lastSig = sig;
+      $("#jbRunning").textContent = (d.running || []).filter(function (j) { return j.status === "running"; }).length;
+      $("#jbQueued").textContent = (d.running || []).filter(function (j) { return j.status === "queued"; }).length;
+    }).catch(function () {});
+  }
+  setInterval(poll, 5000); poll();
+})();
+</script>
 {% endblock %}

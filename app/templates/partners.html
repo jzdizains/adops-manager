@@ -1,10 +1,11 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="page-head">
+<div class="page-head" style="margin-bottom:10px;">
   <div><h1>Partners</h1>
-    <div class="muted">Set up a new partner Business Center in one go: add it as a partner, share ad accounts, invite your email, assign the TikTok account — then tick off the two steps TikTok only offers on its website.</div></div>
+    <div class="muted" style="font-size:12.5px;">{{ rows|length }} setup{{ 's' if rows|length != 1 }} · a new partner Business Center in one go: add it as a partner, share ad accounts, invite your email, assign the TikTok account — then tick off the two steps TikTok only offers on its website.</div></div>
   <div class="actions">
     <a class="btn" href="/pixels" title="Pixel inventory — transfer to BC, link to accounts">Pixels</a>
+    <button type="button" class="btn primary" id="newPartnerBtn">＋ New partner setup</button>
   </div>
 </div>
 
@@ -14,9 +15,7 @@
 <div class="flash err">TikTok didn't answer <span class="mono">/bc/get/</span> just now, so I can't tell which Business Centers you're Admin of. The form still works — TikTok will refuse a step if the role is missing.</div>
 {% endif %}
 
-<div class="card" id="newPartner">
-  <div class="card-header"><span class="card-title">Set up a new partner</span>
-    <span class="card-meta">runs immediately · each step is recorded with TikTok's answer</span></div>
+<div id="newPartner" hidden>
   <form method="post" action="/partners/create" id="partnerForm">
     <div class="form-row">
       <div>
@@ -76,8 +75,8 @@
       </div>
     </div>
     <div style="display:flex;gap:12px;align-items:center;margin-top:8px;">
-      <button class="btn primary" type="submit" id="runBtn">Run setup</button>
-      <span class="hint" style="margin:0;">3 · Pixel + TikTok profile sharing with the partner is website-only — the row below gives you the link and a checklist.</span>
+      <button class="btn primary" type="submit" id="runBtn" style="white-space:nowrap;flex:none;">Run setup</button>
+      <span class="hint" style="margin:0;">Runs immediately; each step is recorded with TikTok's answer. Pixel + TikTok profile sharing with the partner is website-only — the setup row gives you the link and a checklist.</span>
     </div>
   </form>
 </div>
@@ -155,6 +154,15 @@
 .pick .pick-tools a { cursor:pointer; }
 </style>
 <script>
+(function () {
+  // the setup form lives in a pop-up; the page itself is the list of setups
+  var box = document.getElementById("newPartner"), btn = document.getElementById("newPartnerBtn");
+  btn.addEventListener("click", function () {
+    var node = box.firstElementChild; box.hidden = false;
+    UI.modal({ title: "Set up a new partner", body: node, wide: true, onClose: function () { box.appendChild(node); box.hidden = true; } });
+  });
+  if (/[?&]new=1/.test(location.search) || location.hash === "#newPartner") btn.click();
+})();
 (function () {
   var mainBc = document.getElementById("mainBc"), partnerId = document.getElementById("partnerId"), inviteBc = document.getElementById("inviteBc");
   var ttSelect = document.getElementById("ttSelect"), ttId = document.getElementById("ttId"), ttName = document.getElementById("ttName");

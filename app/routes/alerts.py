@@ -16,7 +16,7 @@ def _alert_href(a: models.Alert) -> str:
     if a.kind == "bc_low_balance" and a.ref_id:
         return balances.bc_portal_url(a.ref_id)      # straight to the BC (new tab)
     if a.kind == "rule_action":
-        return "/automation"
+        return "/monitor?view=automation"
     if a.kind == "account_error" or a.kind == "inventory_low":
         return "/monitor"
     return ""

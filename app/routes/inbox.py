@@ -14,13 +14,27 @@ router = APIRouter()
 
 @router.get("/inbox")
 def inbox_page(request: Request, db: Session = Depends(get_db)):
+    """Grouped by kind (blocked accounts, rejections, failed launches…), each
+    item with the buttons that fix it. Level filter + search happen in the
+    browser; ?level= only picks the starting filter."""
+    from .monitor import KIND_LABEL, _fix_actions
     level = request.query_params.get("level", "all")        # all | err | warn | info
+    if level not in ("err", "warn", "info"):
+        level = "all"
     items = inbox_mod.build(db)
     counts = inbox_mod.counts(items)
-    if level in ("err", "warn", "info"):
-        items = [i for i in items if i["level"] == level]
+    groups: dict[str, dict] = {}
+    for it in items:
+        it["fix"] = _fix_actions(it)
+        g = groups.setdefault(it["kind"], {"kind": it["kind"], "label": KIND_LABEL.get(it["kind"], it["title"]), "level": it["level"], "rows": [], "fix": None})
+        g["rows"].append(it)
+        if it["level"] == "err":
+            g["level"] = "err"
+        if g["fix"] is None and it["fix"] and not it["fix"][0].get("ext"):
+            g["fix"] = it["fix"][0]
+    ordered = sorted(groups.values(), key=lambda g: ({"err": 0, "warn": 1, "info": 2}[g["level"]], -len(g["rows"])))
     return render(request, "inbox.html", {
-        "title": "Inbox", "items": items, "counts": counts, "level": level,
+        "title": "Inbox", "items": items, "counts": counts, "level": level, "groups": ordered,
     })
 
 
@@ -38,4 +52,7 @@ async def dismiss(request: Request, db: Session = Depends(get_db)):
         if a:
             a.acknowledged = True
             db.commit()
+    if request.headers.get("x-requested-with") == "fetch":
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"ok": True})
     return RedirectResponse(nxt, status_code=303)

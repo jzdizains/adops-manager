@@ -25,7 +25,7 @@ P&L joins revenue-per-source (postbacks) against spend-per-source
 """
 from __future__ import annotations
 
-from datetime import timezone as dt_timezone
+from datetime import timedelta, timezone as dt_timezone
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
@@ -261,7 +261,7 @@ def _spend_by_source(db: Session, start_utc, end_utc) -> dict[str, float]:
     if not camp_source:
         return {}
     start_day = timeutil.local_date_str(start_utc)
-    end_day = timeutil.local_date_str(end_utc)
+    end_day = timeutil.local_date_str(end_utc - timedelta(seconds=1))   # [start, end) — end is the next midnight
     out: dict[str, float] = {}
     rows = (db.query(models.SpendSnapshot)
             .filter(models.SpendSnapshot.campaign_id.in_(list(camp_source)),
@@ -289,94 +289,3 @@ def _goals_by_source(db: Session, sources: list[str]) -> dict[str, str]:
     return out
 
 
-@router.get("/pnl")
-def pnl(request: Request, db: Session = Depends(get_db)):
-    range_key = request.query_params.get("range", "today")
-    start = request.query_params.get("start")
-    end = request.query_params.get("end")
-    start_utc, end_utc = timeutil.range_bounds(range_key, start, end)
-    s_naive, e_naive = start_utc.replace(tzinfo=None), end_utc.replace(tzinfo=None)
-
-    rev_rows = (db.query(models.PostbackEvent.source,
-                         func.sum(models.PostbackEvent.revenue).label("revenue"),
-                         func.sum(models.PostbackEvent.conversions).label("conversions"),
-                         func.sum(models.PostbackEvent.clicks).label("clicks"))
-                .filter(models.PostbackEvent.created_at >= s_naive,
-                        models.PostbackEvent.created_at < e_naive)
-                .group_by(models.PostbackEvent.source).all())
-    spend_by_src = _spend_by_source(db, start_utc, end_utc)
-
-    sparks = db.query(models.SparkCode).filter(models.SparkCode.source != "").all()
-    spark_by_src = {}
-    for sp in sparks:
-        spark_by_src.setdefault(sp.source, sp)
-
-    sources = []
-    seen = set()
-    for r in rev_rows:
-        seen.add(r.source)
-        spend = spend_by_src.get(r.source, 0.0)
-        revenue = float(r.revenue or 0)
-        sp = spark_by_src.get(r.source)
-        sources.append({"source": r.source, "revenue": revenue, "spend": spend,
-                        "profit": revenue - spend,
-                        "conversions": int(r.conversions or 0),
-                        "clicks": int(r.clicks or 0),
-                        "spark": sp.name if sp else "—"})
-    for src, spend in spend_by_src.items():   # spend with no revenue yet
-        if src not in seen:
-            sp = spark_by_src.get(src)
-            sources.append({"source": src, "revenue": 0.0, "spend": spend,
-                            "profit": -spend, "conversions": 0, "clicks": 0,
-                            "spark": sp.name if sp else "—"})
-    sources.sort(key=lambda x: x["profit"], reverse=True)
-
-    # roll up per spark code
-    by_spark: dict[str, dict] = {}
-    for row in sources:
-        key = row["spark"]
-        agg = by_spark.setdefault(key, {"spark": key, "revenue": 0.0, "spend": 0.0,
-                                        "profit": 0.0, "sources": 0})
-        agg["revenue"] += row["revenue"]
-        agg["spend"] += row["spend"]
-        agg["profit"] += row["profit"]
-        agg["sources"] += 1
-    spark_rows = sorted(by_spark.values(), key=lambda x: x["profit"], reverse=True)
-
-    totals = {"revenue": sum(r["revenue"] for r in sources),
-              "spend": sum(r["spend"] for r in sources)}
-    totals["profit"] = totals["revenue"] - totals["spend"]
-    totals["roas"] = (totals["revenue"] / totals["spend"]) if totals["spend"] else 0
-
-    recent = (db.query(models.PostbackEvent)
-              .order_by(models.PostbackEvent.created_at.desc()).limit(25).all())
-    # does each postback's source join to a launched campaign? (the #1 reason a
-    # conversion "doesn't show" on the Campaigns page is a source that matches nothing)
-    import difflib
-    known: dict[str, models.LaunchLog] = {}
-    for lg in (db.query(models.LaunchLog).filter(models.LaunchLog.ok == True,          # noqa: E712
-                                                 models.LaunchLog.source != "")
-               .order_by(models.LaunchLog.id.desc()).all()):
-        known.setdefault(lg.source, lg)
-    names = {r.campaign_id: r.campaign_name for r in db.query(models.CampaignRecord).all()}
-    match: dict[int, dict] = {}
-    for e in recent:
-        if e.source == UNATTRIBUTED:
-            match[e.id] = {"state": "unattributed"}
-        elif e.source in known:
-            lg = known[e.source]
-            match[e.id] = {"state": "ok", "advertiser_id": lg.advertiser_id, "campaign_id": lg.campaign_id,
-                           "name": names.get(lg.campaign_id) or lg.source}
-        else:
-            close = difflib.get_close_matches(e.source, list(known), n=1, cutoff=0.6)
-            match[e.id] = {"state": "nomatch", "closest": close[0] if close else ""}
-    return render(request, "pnl.html", {
-        "match": match,
-        "title": "P&L", "range_key": range_key, "start": start or "", "end": end or "",
-        "sources": sources, "spark_rows": spark_rows, "totals": totals,
-        "recent": recent,
-        # spark-code roll-up only means something in static-source mode
-        "has_spark": any(r["spark"] != "—" for r in sources),
-        # which pixel event each source's campaign optimises for (split-test view)
-        "goal_by_src": _goals_by_source(db, [r["source"] for r in sources]),
-    })

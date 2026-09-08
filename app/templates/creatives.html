@@ -1,137 +1,53 @@
 {% extends "base.html" %}
 {% block content %}
 {% set range_labels = {'today': 'Today', 'yesterday': 'Yesterday', '7d': 'Last 7 days', '30d': 'Last 30 days', 'mtd': 'This month'} %}
-<div class="page-head">
-  <div>
-    <h1>Creatives</h1>
-    <div class="muted" style="font-size:12.5px;">{{ available }} available · {{ rows|length - available - processing }} launched{% if processing %} · {{ processing }} enhancing…{% endif %} — each creative launches exactly once.</div>
-  </div>
+{% macro roas_pill(r, has) -%}{% if has and r %}<span class="roas-pill {{ 'g' if r >= 1.3 else ('w' if r >= 0.9 else 'r') }}">{{ "%.2f"|format(r) }}×</span>{% else %}<span class="roas-pill n">—</span>{% endif %}{%- endmacro %}
+{% macro money0(v) -%}{{ '−' if v < 0 }}${{ "%.0f"|format(v|abs) if v|abs >= 100 else "%.2f"|format(v|abs) }}{%- endmacro %}
+<div class="page-head" style="margin-bottom:10px;">
+  <div><h1>Creatives</h1>
+    <div class="muted" style="font-size:12.5px;">{{ n_fresh }} fresh · {{ n_videos - n_fresh }} launched{% if processing %} · {{ processing }} enhancing…{% endif %} · {{ images|length }} images · {{ carousels|length }} carousels{% if archived_rows %} · {{ archived_rows|length }} archived{% endif %}</div></div>
   <div class="actions">
-    <a class="btn {{ 'primary' if view == 'library' }}" href="/creatives">Library</a>
-    <a class="btn" href="/creatives#images" title="Jump to the image shelf (upload, edit, add text)">🖼 Images{% if images %} <span class="mono">{{ images|length }}</span>{% endif %}</a>
-    <a class="btn {{ 'primary' if view == 'carousels' }}" href="/creatives?view=carousels">🖼 Carousels{% if carousels %} <span class="mono">{{ carousels|length }}</span>{% endif %}</a>
-    <a class="btn {{ 'primary' if view == 'performance' }}" href="/creatives?view=performance">📈 Performance</a>
+    <button type="button" class="btn" id="uploadBtn">⬆ Upload</button>
+    <a class="btn primary" href="/creatives?view=carousels#czBuilder">+ New carousel</a>
   </div>
 </div>
-
-{% if view == 'performance' %}
-{# ======================= PERFORMANCE: which creative wins ======================= #}
-<div class="card" style="margin-bottom:14px;padding:12px 14px;">
-  <div class="filterbar">
-    <div class="fsel" data-fsel>
-      <button type="button"><span class="k">Range</span> <span class="v">{{ range_labels[range_key] }}</span> <span class="chev">▾</span></button>
-      <div class="fmenu">{% for k, lbl in range_labels.items() %}<a href="/creatives?view=performance&range={{ k }}&sort={{ sort }}" class="{{ 'sel' if range_key == k }}">{{ lbl }}</a>{% endfor %}</div>
-    </div>
-    <div class="fsel" data-fsel>
-      <button type="button"><span class="k">Sort</span> <span class="v">{{ {'roas':'ROAS','revenue':'Revenue','profit':'Profit','spend':'Spend','conversions':'Conversions','ctr':'CTR'}[sort] }}</span> <span class="chev">▾</span></button>
-      <div class="fmenu">{% for k, lbl in [('roas','ROAS'),('revenue','Revenue'),('profit','Profit'),('spend','Spend'),('conversions','Conversions'),('ctr','CTR')] %}<a href="/creatives?view=performance&range={{ range_key }}&sort={{ k }}" class="{{ 'sel' if sort == k }}">{{ lbl }}</a>{% endfor %}</div>
-    </div>
-    <span class="hint">Spend · revenue · profit · ROAS are range-aware (TikTok snapshots + Glitchy postbacks by source). Impr · clicks · conv · CTR are the linked campaign's latest sync.</span>
-  </div>
+<div class="seg" style="margin-bottom:12px;">
+  <a class="{{ 'on' if view == 'results' }}" href="/creatives" style="display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:999px;font-size:12px;font-weight:600;color:inherit;text-decoration:none;">📈 Results</a>
+  <a class="{{ 'on' if view == 'library' }}" href="/creatives?view=library" style="display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:999px;font-size:12px;font-weight:600;color:inherit;text-decoration:none;">Videos <span class="n">{{ n_videos }}</span></a>
+  <a class="{{ 'on' if view == 'images' }}" href="/creatives?view=images" style="display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:999px;font-size:12px;font-weight:600;color:inherit;text-decoration:none;">Images <span class="n">{{ images|length }}</span></a>
+  <a class="{{ 'on' if view == 'carousels' }}" href="/creatives?view=carousels" style="display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:999px;font-size:12px;font-weight:600;color:inherit;text-decoration:none;">Carousels <span class="n">{{ carousels|length }}</span></a>
+  <a class="{{ 'on' if view == 'archive' }}" href="/creatives?view=archive" style="display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:999px;font-size:12px;font-weight:600;color:inherit;text-decoration:none;">Archive <span class="n">{{ archived_rows|length }}</span></a>
 </div>
 
-{% if perf %}
-<div class="perf-grid">
-  {# ---- leaderboard ---- #}
-  <div class="card" style="padding:0;overflow:hidden;margin:0;">
-    <div class="table-scroll">
-    <table class="data dense" id="perfTable">
-      <thead><tr>
-        <th>#</th><th>Creative</th><th>Campaign · account</th>
-        <th class="num col-money grp-start">Spend</th><th class="num col-money">Revenue</th>
-        <th class="num col-money">Profit</th><th class="num col-money grp-end">ROAS</th>
-        <th class="num">Conv.</th><th class="num">CTR</th><th class="num">Impr.</th>
-      </tr></thead>
-      <tbody>
-      {% for r in perf %}
-        {% set c = r.c %}
-        <tr class="perf-row" data-id="{{ c.id }}" data-src="/creatives/{{ c.id }}/file" data-name="{{ c.name }}" data-kind="{{ c.kind or 'video' }}" data-slides="{{ r.slides|join(',') if r.slides else '' }}"
-            data-spend="{{ '%.2f'|format(r.spend) }}" data-rev="{{ '%.2f'|format(r.revenue) }}" data-profit="{{ '%.2f'|format(r.profit) }}"
-            data-roas="{{ '%.2f'|format(r.roas) }}" data-conv="{{ r.conversions }}" data-ctr="{{ '%.2f'|format(r.ctr) }}" data-impr="{{ r.impressions }}"
-            data-campaign="{{ r.campaign_name }}" data-account="{{ r.account_name }}" data-source="{{ c.source }}"
-            data-edit="/campaigns/{{ c.used_advertiser_id }}/{{ c.used_campaign_id }}/edit" data-active="{{ '1' if r.active else '0' }}">
-          <td class="mono muted">{{ loop.index }}</td>
-          <td>
-            <div style="display:flex;align-items:center;gap:8px;min-width:0;">
-              <button type="button" class="btn sm playBtn" title="Show in the side panel" style="padding:3px 8px;">{{ '🖼' if c.kind == 'carousel' else '▶' }}</button>
-              <div style="min-width:0;">
-                <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px;">{{ c.name }}{% if c.freshen %} <span title="variant">✨</span>{% endif %}</div>
-                <div class="muted" style="font-size:10.5px;">{% if c.source %}<span class="mono">{{ c.source }}</span>{% else %}no source{% endif %}</div>
-              </div>
-            </div>
-          </td>
-          <td style="min-width:150px;">
-            <div style="display:flex;align-items:center;gap:6px;">
-              <span class="dot {{ 'on' if r.active else 'off' }}"></span>
-              <a href="/campaigns/{{ c.used_advertiser_id }}/{{ c.used_campaign_id }}/edit" style="color:inherit;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:170px;display:inline-block;">{{ r.campaign_name[:36] }}</a>
-            </div>
-            <div class="muted" style="font-size:10.5px;"><a href="/status?account={{ c.used_advertiser_id }}" style="color:inherit;">{{ r.account_name[:26] }}</a></div>
-          </td>
-          <td class="num col-money grp-start">${{ "%.2f"|format(r.spend) }}</td>
-          <td class="num col-money"><span style="color:var(--ok);font-weight:600;">${{ "%.2f"|format(r.revenue) }}</span></td>
-          <td class="num col-money {{ 'pos' if r.profit >= 0 else 'neg' }}">{{ '−' if r.profit < 0 }}${{ "%.2f"|format(r.profit|abs) }}</td>
-          <td class="num col-money grp-end"><span class="roas"><span class="x {{ 'g' if r.roas >= 1 else ('r' if r.spend else 'n') }}">{% if r.spend %}{{ "%.2f"|format(r.roas) }}×{% else %}—{% endif %}</span></span></td>
-          <td class="num">{{ r.conversions }}</td>
-          <td class="num">{{ "%.2f"|format(r.ctr) }}%</td>
-          <td class="num">{{ "{:,}".format(r.impressions) }}</td>
-        </tr>
-      {% endfor %}
-      </tbody>
-    </table>
+{% if view == 'results' %}
+{# ============================== RESULTS BOARD ============================== #}
+{% set nw = families|selectattr('cls', 'equalto', 'winner')|list|length %}{% set nl = families|selectattr('cls', 'equalto', 'losing')|list|length %}{% set ng = families|length - nw - nl %}
+<div class="filterbar" style="margin-bottom:12px;">
+  <div class="seg">{% for k, lbl in range_labels.items() %}<a class="{{ 'on' if range_key == k }}" href="/creatives?range={{ k }}&sort={{ sort }}" style="display:inline-flex;align-items:center;padding:5px 11px;border-radius:999px;font-size:12px;font-weight:600;color:inherit;text-decoration:none;">{{ lbl }}</a>{% endfor %}</div>
+  <div class="fsel" data-fsel><button type="button"><span class="k">Sort</span> <span class="v">{{ sort }}</span> <span class="chev">▾</span></button>
+    <div class="fmenu">{% for k in ['profit', 'roas', 'spend', 'revenue', 'conversions'] %}<a href="/creatives?range={{ range_key }}&sort={{ k }}" class="{{ 'sel' if sort == k }}">{{ k }}</a>{% endfor %}</div></div>
+  <span class="seg" id="rsFilter"><button type="button" class="on" data-cls="">All <span class="n">{{ families|length }}</span></button><button type="button" data-cls="winner" style="color:var(--ok);">Winners <span class="n">{{ nw }}</span></button><button type="button" data-cls="learning">Learning <span class="n">{{ ng }}</span></button><button type="button" data-cls="losing" style="color:var(--err);">Losing <span class="n">{{ nl }}</span></button></span>
+  <span class="muted" style="margin-left:auto;font-size:12.5px;">{% if perf %}{{ families|length }} creative{{ 's' if families|length != 1 }} · {{ perf|length }} test{{ 's' if perf|length != 1 }} · ${{ "%.0f"|format(perf|map(attribute='spend')|sum) }} spend · <span class="profit-cell {{ 'pos' if (perf|map(attribute='profit')|sum) >= 0 else 'neg' }}">{{ '+' if (perf|map(attribute='profit')|sum) > 0 }}{{ money0(perf|map(attribute='profit')|sum) }}</span>{% endif %}</span>
+</div>
+{% if families %}
+<div class="sel-bar" id="rsSel" hidden><span class="cnt" id="rsSelCount">0 selected</span>
+  <button type="button" class="btn sm" data-rs="pause">Pause campaigns</button><button type="button" class="btn sm" data-rs="fav">★ Favourite</button><button type="button" class="btn sm" data-rs="label">Label…</button><button type="button" class="btn sm" data-rs="archive">Archive</button><button type="button" class="btn sm ghost" data-rs="clear">Clear</button></div>
+<div class="cr-grid" id="rsGrid">
+  {% for f in families %}
+  {% set c = f.thumb %}
+  <div class="cr-tile cr-{{ f.cls }}" data-cid="{{ c.id }}" data-cls="{{ f.cls }}" data-cids="{{ f.rows|map(attribute='c')|map(attribute='id')|join(',') }}" data-camps="{{ f.rows|map(attribute='c')|map(attribute='used_campaign_id')|join(',') }}" data-advs="{{ f.rows|map(attribute='c')|map(attribute='used_advertiser_id')|join(',') }}">
+    <div class="cr-thumb"><img loading="lazy" src="/creatives/{{ c.id }}/poster" alt=""><span class="pill {{ 'ok' if f.cls == 'winner' else ('err' if f.cls == 'losing' else 'dim') }} cr-badge">{{ f.cls }}</span><label class="cr-chk"><input type="checkbox" class="rschk"></label>{% if c.kind == 'carousel' %}<span class="cr-dur">{{ f.rows[0].slides|length }} slides</span>{% endif %}{% if c.favorite %}<span class="cr-fav">★</span>{% endif %}</div>
+    <div class="cr-meta">
+      <div class="cr-name" title="{{ f.name }}">{{ f.name }}</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-top:3px;"><span class="profit-cell {{ 'pos' if f.profit >= 0 else 'neg' }}">{{ '+' if f.profit > 0 }}{{ money0(f.profit) }}</span>{{ roas_pill(f.roas, true) }}</div>
+      <div class="muted" style="font-size:10.5px;margin-top:2px;">{{ f.n }} test{{ 's' if f.n != 1 }} · {{ f.accounts }} acct{{ 's' if f.accounts != 1 }} · ${{ "%.0f"|format(f.spend) }}{% if f.clicks %} · EPC ${{ "%.2f"|format(f.epc) }}{% endif %}{% if f.active %} · <span class="pos">{{ f.active }} live</span>{% endif %}</div>
+      {% if c.labels %}<div class="cr-labels">{% for l in c.labels.split(',') if l %}<span>{{ l }}</span>{% endfor %}</div>{% endif %}
     </div>
   </div>
-
-  {# ---- sticky player + metrics ---- #}
-  <div class="card perf-player" style="margin:0;">
-    <div id="ppEmpty" class="empty" style="padding:40px 10px;">Pick a creative to play it here and see its numbers side by side.</div>
-    <div id="ppBody" style="display:none;">
-      <video id="ppVideo" controls playsinline preload="metadata" style="width:100%;max-height:52vh;border-radius:8px;background:#000;display:block;"></video>
-      <div id="ppSlides" class="cz-strip" style="display:none;"></div>
-      <div style="margin-top:10px;">
-        <div id="ppName" style="font-weight:650;font-size:13.5px;"></div>
-        <div class="muted" style="font-size:11.5px;margin-top:2px;"><span class="dot" id="ppDot"></span> <a id="ppCampaign" href="#" style="color:inherit;"></a> · <span id="ppAccount"></span></div>
-        <div class="muted mono" style="font-size:11px;margin-top:2px;" id="ppSource"></div>
-      </div>
-      <div class="pp-metrics">
-        <div><div class="lab">Spend</div><div class="val" id="ppSpend"></div></div>
-        <div><div class="lab">Revenue</div><div class="val good" id="ppRev"></div></div>
-        <div><div class="lab">Profit</div><div class="val" id="ppProfit"></div></div>
-        <div><div class="lab">ROAS</div><div class="val" id="ppRoas"></div></div>
-        <div><div class="lab">Conv.</div><div class="val" id="ppConv"></div></div>
-        <div><div class="lab">CTR</div><div class="val" id="ppCtr"></div></div>
-      </div>
-      <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">
-        <a class="btn sm" id="ppEdit" href="#">Edit campaign ✎</a>
-        <a class="btn sm" id="ppPrev" href="#">← Prev</a><a class="btn sm" id="ppNext" href="#">Next →</a>
-      </div>
-    </div>
-  </div>
+  {% endfor %}
 </div>
-
-{% if families|length > 1 or (families and families[0].n > 1) %}
-<div class="card" style="margin-top:14px;">
-  <div class="card-header"><span class="card-title">By original upload</span>
-    <span class="card-meta">variants rolled up — which source video wins overall</span></div>
-  <table class="data dense">
-    <thead><tr><th>Original</th><th class="num">Variants</th><th class="num">Spend</th><th class="num">Revenue</th><th class="num">Profit</th><th class="num">ROAS</th><th>Best variant</th></tr></thead>
-    <tbody>
-    {% for f in families %}
-      <tr>
-        <td style="font-weight:600;">{{ f.name[:48] }}</td>
-        <td class="num">{{ f.n }}</td>
-        <td class="num">${{ "%.2f"|format(f.spend) }}</td>
-        <td class="num"><span style="color:var(--ok);font-weight:600;">${{ "%.2f"|format(f.revenue) }}</span></td>
-        <td class="num {{ 'pos' if f.profit >= 0 else 'neg' }}">{{ '−' if f.profit < 0 }}${{ "%.2f"|format(f.profit|abs) }}</td>
-        <td class="num"><span class="roas"><span class="x {{ 'g' if f.roas >= 1 else ('r' if f.spend else 'n') }}">{% if f.spend %}{{ "%.2f"|format(f.roas) }}×{% else %}—{% endif %}</span></span></td>
-        <td class="muted">{% if f.best and f.best.spend %}{{ f.best.c.name[:30] }} · {{ "%.2f"|format(f.best.roas) }}×{% else %}—{% endif %}</td>
-      </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-</div>
-{% endif %}
 {% else %}
-<div class="card"><div class="empty"><div class="empty-title">No launched creatives in this range</div>Once library videos or carousels launch, they show up here ranked by what they earn, with a player beside the numbers.</div></div>
+<div class="card"><div class="empty"><div class="empty-title">No results {{ range_labels[range_key]|lower }}</div>Creatives show up here as soon as a campaign using them spends or earns. <a href="/creatives?view=library">Open the library →</a></div></div>
 {% endif %}
 
 {% elif view == 'carousels' %}
@@ -228,8 +144,10 @@
 </div>
 
 {% else %}
+{% if view in ('library', 'archive') %}
 {# ============================== LIBRARY ============================== #}
-<div class="card" style="margin-bottom:14px;">
+<div id="uploadBox" hidden>
+<div class="card" style="margin-bottom:0;box-shadow:none;background:transparent;padding:0;">
   <div class="card-header"><span class="card-title">Upload videos &amp; images</span>
     <span class="card-meta">videos: mp4 · mov · webm up to 500MB — images: png · jpg · webp up to 25MB (they land on the <a href="#images">image shelf</a>)</span></div>
   <form method="post" action="/creatives/upload" enctype="multipart/form-data"
@@ -286,71 +204,41 @@
   </form>
 </div>
 
-<div class="card" style="padding:0;overflow:hidden;">
-  {% if rows %}
-  <div class="table-scroll">
-  <table class="data">
-    <thead><tr>
-      <th>Creative</th><th>Source</th><th>Status</th><th>Launched in</th>
-      <th class="num">Size</th><th class="num">Actions</th>
-    </tr></thead>
-    <tbody>
-    {% for r in rows %}
-      {% set camp = camp_by_id.get(r.used_campaign_id) if r.used_campaign_id else none %}
-      <tr id="c{{ r.id }}">
-        <td>
-          <form id="cf{{ r.id }}" method="post" action="/creatives/{{ r.id }}/update"></form>
-          <div style="display:flex;align-items:center;gap:6px;">
-            {% if r.status in ('available', 'used') and r.file_path %}
-            <button type="button" class="btn sm previewBtn" title="Preview video"
-                    data-src="/creatives/{{ r.id }}/file" data-name="{{ r.name }}"
-                    style="padding:4px 8px;">▶</button>
-            {% else %}
-            <span style="width:26px;display:inline-block;"></span>
-            {% endif %}
-            <input form="cf{{ r.id }}" type="text" name="name" value="{{ r.name }}" style="width:200px;">
-          </div>
-        </td>
-        <td>
-          <input form="cf{{ r.id }}" type="text" name="source" value="{{ r.source }}" placeholder="source for P&L"
-                 style="width:150px;" {{ 'readonly' if r.status == 'used' and r.source }}>
-        </td>
-        <td>
-          {% if r.status == 'available' %}<span class="pill ok">Available{% if r.freshen %} ✨{% endif %}</span>
-          {% elif r.status == 'processing' %}<span class="pill dim">Enhancing…</span>
-          {% elif r.status == 'error' %}<span class="pill err" title="{{ r.error }}">Error</span>
-          {% else %}<span class="pill dim">Launched{% if r.freshen %} ✨{% endif %}</span>{% endif %}
-        </td>
-        <td class="muted" style="font-size:12px;">
-          {% if r.used_campaign_id %}
-            <div style="display:flex;align-items:center;gap:6px;">
-              {% if camp %}<span class="dot {{ 'on' if camp.operation_status == 'ENABLE' else 'off' }}"></span>{% endif %}
-              <a href="/campaigns/{{ r.used_advertiser_id }}/{{ r.used_campaign_id }}/edit" style="color:inherit;font-weight:600;">{{ (camp.campaign_name if camp else r.used_campaign_id)[:30] }}</a>
-            </div>
-            <div style="font-size:11px;"><a href="/status?account={{ r.used_advertiser_id }}" style="color:inherit;">{{ accounts.get(r.used_advertiser_id, r.used_advertiser_id)[:26] }}</a>{% if r.used_at %} · {{ r.used_at.strftime('%b %d %H:%M') }}{% endif %}</div>
-            <div style="font-size:11px;"><a href="/creatives?view=performance">📈 performance →</a></div>
-          {% else %}—{% endif %}
-        </td>
-        <td class="num">{{ "%.1f"|format((r.size_bytes or 0) / 1048576) }} MB</td>
-        <td class="num" style="white-space:nowrap;">
-          <button form="cf{{ r.id }}" class="btn sm" type="submit">Save</button>
-          {% if r.status in ('available', 'error') %}
-          <form method="post" action="/creatives/{{ r.id }}/delete" style="display:inline;"
-                onsubmit="return confirm('Delete this creative?');">
-            <button class="btn sm danger" type="submit">✕</button>
-          </form>
-          {% endif %}
-        </td>
-      </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  </div>
-  {% else %}
-  <div class="empty"><div class="empty-title">No videos yet</div>Upload videos above. Presets set to “Creative library” pull the next unused one automatically — each video launches exactly once.</div>
-  {% endif %}
 </div>
-
+{% set grid_rows = archived_rows if view == 'archive' else lib_videos %}
+{% if view == 'library' %}
+<form method="get" action="/creatives" class="filterbar" style="margin-bottom:12px;" id="libFilter">
+  <input type="hidden" name="view" value="library">
+  <div class="search-wrap" style="max-width:240px;"><input type="text" name="q" value="{{ lib_q }}" placeholder="Search name, source, note…"></div>
+  <div class="seg">{% for k, lbl in [('all', 'All'), ('fresh', 'Fresh'), ('used', 'Launched')] %}<a class="{{ 'on' if lib_state == k }}" href="/creatives?view=library&state={{ k }}&q={{ lib_q|urlencode }}&label={{ lib_label|urlencode }}{% if lib_fav %}&fav=1{% endif %}" style="display:inline-flex;align-items:center;padding:5px 11px;border-radius:999px;font-size:12px;font-weight:600;color:inherit;text-decoration:none;">{{ lbl }}{% if k == 'fresh' %} <span class="n">{{ n_fresh }}</span>{% elif k == 'used' %} <span class="n">{{ n_videos - n_fresh }}</span>{% endif %}</a>{% endfor %}</div>
+  <a class="chip {{ 'on' if lib_fav }}" href="/creatives?view=library&state={{ lib_state }}&q={{ lib_q|urlencode }}&label={{ lib_label|urlencode }}{% if not lib_fav %}&fav=1{% endif %}" style="text-decoration:none;">★ Favourites</a>
+  {% if all_labels %}<div class="fsel" data-fsel><button type="button"><span class="k">Label</span> <span class="v">{{ lib_label or 'any' }}</span> <span class="chev">▾</span></button>
+    <div class="fmenu"><a href="/creatives?view=library&state={{ lib_state }}&q={{ lib_q|urlencode }}{% if lib_fav %}&fav=1{% endif %}" class="{{ 'sel' if not lib_label }}">any</a>{% for l, n in all_labels %}<a href="/creatives?view=library&state={{ lib_state }}&q={{ lib_q|urlencode }}&label={{ l|urlencode }}{% if lib_fav %}&fav=1{% endif %}" class="{{ 'sel' if lib_label == l }}">{{ l }} <span class="muted">{{ n }}</span></a>{% endfor %}</div></div>{% endif %}
+  <span class="muted" style="margin-left:auto;font-size:12.5px;">{{ grid_rows|length }} of {{ n_videos }}</span>
+  <div class="seg" id="libSize"><button type="button" data-size="s">S</button><button type="button" class="on" data-size="m">M</button><button type="button" data-size="l">L</button></div>
+</form>
+{% endif %}
+{% if processing %}<div class="flash ok" style="margin-bottom:10px;">{{ processing }} creative(s) still rendering variations — they appear here when done.</div>{% endif %}
+<div class="sel-bar" id="libSel" hidden><span class="cnt" id="libSelCount">0 selected</span>
+  {% if view == 'archive' %}<button type="button" class="btn sm" data-lib="restore">Restore</button><button type="button" class="btn sm danger" data-lib="delete">Delete for good</button>{% else %}<button type="button" class="btn sm" data-lib="launch">Launch…</button><button type="button" class="btn sm" data-lib="fav">★ Favourite</button><button type="button" class="btn sm" data-lib="label">Label…</button><button type="button" class="btn sm" data-lib="archive">Archive</button>{% endif %}<button type="button" class="btn sm ghost" data-lib="clear">Clear</button></div>
+{% if grid_rows %}
+<div class="cr-grid" id="libGrid" data-size="m">
+  {% for r in grid_rows %}
+  <div class="cr-tile" data-cid="{{ r.id }}" data-kind="{{ r.kind or 'video' }}" data-name="{{ r.name }}">
+    <div class="cr-thumb"><img loading="lazy" src="/creatives/{{ r.id }}/poster" alt=""><span class="pill {{ 'ok' if r.status == 'available' else ('dim' if r.status == 'processing' else ('err' if r.status == 'error' else 'mute')) }} cr-badge">{{ 'fresh' if r.status == 'available' else ('rendering' if r.status == 'processing' else r.status) }}</span><label class="cr-chk"><input type="checkbox" class="libchk"></label>{% if r.kind == 'carousel' %}<span class="cr-dur">carousel</span>{% elif r.kind == 'image' %}<span class="cr-dur">image</span>{% endif %}{% if r.favorite %}<span class="cr-fav">★</span>{% endif %}{% if r.file_path and r.kind == 'video' %}<button type="button" class="cr-play previewBtn" data-src="/creatives/{{ r.id }}/file" data-name="{{ r.name }}" title="Play">▶</button>{% endif %}</div>
+    <div class="cr-meta">
+      <div class="cr-name" title="{{ r.name }}">{{ r.name }}{% if r.freshen %} ✨{% endif %}</div>
+      <div class="muted" style="font-size:10.5px;margin-top:2px;">{{ r.uploaded_at|ago if r.uploaded_at else '—' }}{% if r.source %} · {{ r.source[:18] }}{% endif %}{% if notes.get(r.id|string) %} · 📝{% endif %}{% if r.used_campaign_id %} · <a href="/status?q={{ (camp_by_id.get(r.used_campaign_id).campaign_name if camp_by_id.get(r.used_campaign_id) else r.used_campaign_id)|urlencode }}" style="color:inherit;">in {{ accounts.get(r.used_advertiser_id, r.used_advertiser_id)[:16] }}</a>{% endif %}</div>
+      {% if r.labels %}<div class="cr-labels">{% for l in r.labels.split(',') if l %}<span>{{ l }}</span>{% endfor %}</div>{% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card"><div class="empty">{% if view == 'archive' %}<div class="empty-title">Nothing archived</div>Archived creatives leave the launch pool and the pickers, and can be restored here.{% else %}<div class="empty-title">{% if lib_q or lib_label or lib_fav or lib_state != 'all' %}Nothing matches{% else %}No videos yet{% endif %}</div>{% if not (lib_q or lib_label or lib_fav or lib_state != 'all') %}Upload videos — presets set to “Creative library” pull the next fresh one automatically; each launches once.<br><button type="button" class="btn primary" style="margin-top:10px;" onclick="document.getElementById('uploadBtn').click()">⬆ Upload</button>{% endif %}{% endif %}</div></div>
+{% endif %}
+{% endif %}
+{% if view == 'images' %}
 {# ============================== IMAGES ============================== #}
 <div class="card" id="images" style="margin-top:14px;">
   <div class="card-header"><span class="card-title">🖼 Images</span>
@@ -445,6 +333,7 @@
   {% endif %}
   <div class="hint" style="margin-top:8px;">Images live on their own shelf: the video launcher never picks them. Name and source save as soon as you leave the field. Text and AI edits keep the original and add a new copy (badged T / ✨); the ✎ on a text copy reopens the editor with its text so you can change it. Tick images to delete several at once.</div>
 </div>
+{% endif %}
 
 {# ---- Text editor modal (shared by Library + Carousels) ---- #}
 <div id="txtModal" class="txt-modal" style="display:none;">
@@ -538,6 +427,7 @@
 </div>
 {% endblock %}
 {% block scripts %}
+<script src="/static/creatives.js?v={{ STATIC_V }}"></script>
 <script>
 (function () {
   // ---- chip dropdowns (links, no form) ----

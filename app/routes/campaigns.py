@@ -1180,7 +1180,7 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                 if carousel.status != "available" and not (reuse and carousel.status == "used"):
                     raise ConfigError(f"Carousel “{carousel.name}” has already launched.")
             else:
-                carousel = (db.query(models.Creative).filter_by(status="available", kind="carousel")
+                carousel = (db.query(models.Creative).filter_by(status="available", kind="carousel", archived=False)
                             .order_by(models.Creative.id).first())
                 if not carousel:
                     raise ConfigError("No available carousels — build one on the Creatives page (Carousels tab).")
@@ -1229,7 +1229,7 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                                       "(each creative launches once) — pick another, or "
                                       "leave the launcher on automatic.")
             else:
-                creative = (db.query(models.Creative).filter_by(status="available", kind="video")
+                creative = (db.query(models.Creative).filter_by(status="available", kind="video", archived=False)
                             .order_by(models.Creative.id).first())
             if not creative:
                 raise ConfigError("No available creatives left in the library — upload "
@@ -1282,7 +1282,7 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                 n_txt = max(int(fields.get("smart_creative_texts") or 5), 1)
                 sc_creatives = [creative]
                 while len(sc_creatives) < n_vids:
-                    nxt = (db.query(models.Creative).filter_by(status="available", kind="video")
+                    nxt = (db.query(models.Creative).filter_by(status="available", kind="video", archived=False)
                            .order_by(models.Creative.id).first())
                     if not nxt:
                         break                       # use however many we have
@@ -1650,13 +1650,15 @@ def run_batch_assigned(db: Session, pairs: list, base_fields: dict,
 
     from .. import rules as rules_mod
     batch_ref = batch_ref or error_messages.new_ref()
-    _remember_batch(db, batch_ref, {**base_fields, "creative_source": "library"})
+    kinds = {c.id: c.kind for c in db.query(models.Creative).filter(models.Creative.id.in_([cid for _, cid in pairs if cid]))} if pairs else {}
+    first_kind = next((kinds.get(cid) for _, cid in pairs if cid), None)
+    _remember_batch(db, batch_ref, {**base_fields, "creative_source": "carousel" if first_kind == "carousel" else "library"})
     pace = _launch_pace(db)
     for i, (acct, cid) in enumerate(pairs):
         if i and pace:
             _time.sleep(pace)
         fields = dict(base_fields)
-        fields["creative_source"] = "library"
+        fields["creative_source"] = "carousel" if kinds.get(cid) == "carousel" else "library"
         if cid is not None:
             fields["creative_id"] = cid
             fields["allow_creative_reuse"] = True
@@ -1749,9 +1751,9 @@ def launch_form(request: Request, db: Session = Depends(get_db)):
     accounts = (db.query(models.AdAccount).filter(models.AdAccount.enabled == True)  # noqa: E712
                 .order_by(models.AdAccount.advertiser_name).all())
     sparks = db.query(models.SparkCode).filter_by(status="active").order_by(models.SparkCode.name).all()
-    creatives = (db.query(models.Creative).filter_by(status="available", kind="video")
+    creatives = (db.query(models.Creative).filter_by(status="available", kind="video", archived=False)
                  .order_by(models.Creative.name).all())
-    carousels = (db.query(models.Creative).filter_by(status="available", kind="carousel")
+    carousels = (db.query(models.Creative).filter_by(status="available", kind="carousel", archived=False)
                  .order_by(models.Creative.name).all())
     from .super_launcher import account_picker_context, preset_facts
     return render(request, "campaign_launch.html", {
