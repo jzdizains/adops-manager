@@ -101,17 +101,6 @@
       </select>
       <span class="hint">Runs a creator's post as the ad on every account instead of the preset's creative.</span></label>
 
-    <details class="pb-more" style="margin-top:6px;">
-      <summary class="muted" style="cursor:pointer;font-size:12.5px;font-weight:600;">Advanced · ad groups &amp; ads per campaign</summary>
-      <div class="form-row" style="margin-top:10px;">
-        <label class="field"><span class="field-label">Ad groups per campaign</span>
-          <input type="number" name="duplicates" min="0" value="0" style="width:90px;">
-          <span class="hint">0 = use the preset's setting. Overrides it otherwise (a cost-cap ladder multiplies this).</span></label>
-        <label class="field"><span class="field-label">Ads per ad group</span>
-          <input type="number" name="ads_per_group" min="0" value="0" style="width:90px;">
-          <span class="hint">0 = one ad (default). Duplicates the ad within each ad group.</span></label>
-      </div>
-    </details>
   </div>
   <div class="pf-foot"><button type="button" class="btn ghost" data-next="preset">← Preset</button><button type="button" class="btn" data-next="accounts">Next · Accounts →</button></div>
 </section>
@@ -152,9 +141,18 @@
     <div class="sl-summary" id="slSummary">Pick a preset and at least one account.</div>
     <div class="muted" id="slAssignSummary" style="font-size:12px;margin:-4px 0 10px;text-align:center;"></div>
     <div class="kpis kpis-3" id="slTiles" style="margin:0 0 12px;gap:8px;">
-      <div class="kpi" style="padding:10px 12px;"><div class="lab">Accounts</div><div class="val" style="font-size:17px;" data-t="acc">0</div><div class="sub" data-t="accSub">none selected</div></div>
-      <div class="kpi" style="padding:10px 12px;"><div class="lab">Ad groups</div><div class="val" style="font-size:17px;" data-t="groups">0</div><div class="sub" data-t="groupsSub">—</div></div>
+      <div class="kpi" style="padding:10px 12px;"><div class="lab">Accounts <button type="button" class="linkish sl-tile-edit" data-next="accounts">change</button></div><div class="val" style="font-size:17px;" data-t="acc">0</div><div class="sub" data-t="accSub">none selected</div></div>
+      <div class="kpi" style="padding:10px 12px;"><div class="lab">Ad groups <button type="button" class="linkish sl-tile-edit" id="slDupEdit">change</button></div><div class="val" style="font-size:17px;" data-t="groups">0</div><div class="sub" data-t="groupsSub">—</div></div>
       <div class="kpi" style="padding:10px 12px;"><div class="lab">Daily budget</div><div class="val" style="font-size:17px;" data-t="budget">$0</div><div class="sub" data-t="budgetSub">if every ad group spends</div></div>
+    </div>
+    <div id="slDupRow" style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap;padding:10px 12px;margin:0 0 12px;border:1px solid var(--border);border-radius:12px;background:var(--surface-2);">
+      <label class="field" style="margin:0;"><span class="field-label">Ad groups per campaign</span>
+        <input type="number" name="duplicates" min="0" max="50" value="0" style="width:90px;">
+        <span class="hint" style="display:block;" id="slDupHint">0 = the preset's setting</span></label>
+      <label class="field" style="margin:0;"><span class="field-label">Ads per ad group</span>
+        <input type="number" name="ads_per_group" min="0" max="20" value="0" style="width:90px;">
+        <span class="hint" style="display:block;">0 = one ad · more duplicates the ad inside each ad group</span></label>
+      <div class="hint" style="flex-basis:100%;margin:0;">A cost-cap ladder on the preset multiplies the ad groups — the tile above already counts that.</div>
     </div>
     <label class="sw" style="margin-bottom:12px;"><input type="checkbox" name="use_queue"><span class="tog"></span><span><b>Launch via the background queue</b><span class="muted" style="display:block;font-size:11.5px;">Retries transient TikTok errors on its own; watch progress on the Queue page.</span></span></label>
     <button class="btn primary" type="submit" id="slLaunch" style="width:100%;justify-content:center;font-size:15px;padding:12px;">🚀 Launch</button>
@@ -231,7 +229,7 @@
   }
   function syncSummary() {
     var name = preset && preset.value ? preset.options[preset.selectedIndex].text : "";
-    var x = numbers(), n = x.n, p = x.p;
+    var x = numbers(), n = x.n, p = x.p, dupOv = parseInt(document.querySelector('[name="duplicates"]').value, 10) || 0;
     // rail subtitles
     wiz.sub("preset", name || "not chosen"); wiz.sub("creative", preset && preset.value ? creativeText() : "");
     wiz.sub("accounts", n ? n + (autoBox.checked ? " auto-picked" : " selected") : "none yet"); wiz.sub("review", "");
@@ -254,7 +252,8 @@
     } else as.textContent = "";
     var t = function (k, v) { var el = document.querySelector('#slTiles [data-t="' + k + '"]'); if (el) el.textContent = v; };
     t("acc", n); t("accSub", n ? (autoBox.checked ? "auto-picked by policy" : "selected by hand") : "none selected");
-    t("groups", n * x.perCamp); t("groupsSub", x.perCamp + " per campaign" + (p.caps > 1 ? " · " + p.caps + " caps" : "") + (x.dup > 1 ? " × " + x.dup : ""));
+    t("groups", n * x.perCamp); t("groupsSub", x.perCamp + " per campaign" + (p.caps > 1 ? " · " + p.caps + " caps" : "") + (x.dup > 1 ? " × " + x.dup : "") + (dupOv ? " · overridden" : ""));
+    var dh = document.getElementById("slDupHint"); if (dh) dh.textContent = dupOv ? "overrides the preset (" + (p.duplicates || 1) + ")" : "0 = the preset's setting (" + (p.duplicates || 1) + ")";
     t("budget", UI.money(x.daily, 0)); t("budgetSub", p.budget_mode === "ABO" ? "$" + (p.budget || 0) + " per ad group, if all spend" : (p.campaign_budget ? "CBO $" + p.campaign_budget + " per campaign" : "—"));
     // side summary
     var row = function (l, v) { return '<div class="pb-row"><span class="muted">' + l + '</span><b>' + v + '</b></div>'; };
@@ -266,6 +265,7 @@
   }
   if (preset) preset.addEventListener("change", syncPreset);
   document.querySelector('[name="duplicates"]').addEventListener("input", syncSummary);
+  document.getElementById("slDupEdit").addEventListener("click", function () { var i = document.querySelector('[name="duplicates"]'); i.focus(); i.select(); });
   var autoCount = document.getElementById("slAutoCount"); if (autoCount) autoCount.addEventListener("input", syncSummary);
 
   // creatives: preset default / fresh videos / fresh carousels / pick specific (pop-up)

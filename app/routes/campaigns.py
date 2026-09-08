@@ -1808,6 +1808,14 @@ async def launch_submit(request: Request, db: Session = Depends(get_db)):
         overrides["creative_id"] = int(creative_id)
         picked = db.get(models.Creative, int(creative_id))
         overrides["creative_source"] = "carousel" if (picked and picked.kind == "carousel") else "library"
+    # duplication overrides from the Review step (0 / empty = the preset's own settings)
+    for key, cap in (("duplicates", 50), ("ads_per_group", 20)):
+        try:
+            v = int(str(form.get(key) or "0"))
+        except ValueError:
+            v = 0
+        if v > 0:
+            overrides[key] = min(v, cap)
     fields = launch_mod.synthesize(template, overrides)
     batch_ref = queue_launch(db, f"Launch {template.name} → {len(accts)} account(s)",
                              [a.advertiser_id for a in accts], fields)

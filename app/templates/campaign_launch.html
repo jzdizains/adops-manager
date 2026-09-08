@@ -103,9 +103,17 @@
     <div class="card-header"><span class="card-title">4 · Review &amp; launch</span><span class="card-meta">check, then go</span></div>
     <div class="sl-summary" id="clSummary">Pick a preset and an account.</div>
     <div class="kpis kpis-3" id="clTiles" style="margin:0 0 12px;gap:8px;">
-      <div class="kpi" style="padding:10px 12px;"><div class="lab">Accounts</div><div class="val" style="font-size:17px;" data-t="acc">0</div><div class="sub" data-t="accSub">none selected</div></div>
-      <div class="kpi" style="padding:10px 12px;"><div class="lab">Ad groups</div><div class="val" style="font-size:17px;" data-t="groups">0</div><div class="sub" data-t="groupsSub">—</div></div>
+      <div class="kpi" style="padding:10px 12px;"><div class="lab">Accounts <button type="button" class="linkish sl-tile-edit" data-next="accounts">change</button></div><div class="val" style="font-size:17px;" data-t="acc">0</div><div class="sub" data-t="accSub">none selected</div></div>
+      <div class="kpi" style="padding:10px 12px;"><div class="lab">Ad groups <button type="button" class="linkish sl-tile-edit" id="clDupEdit">change</button></div><div class="val" style="font-size:17px;" data-t="groups">0</div><div class="sub" data-t="groupsSub">—</div></div>
       <div class="kpi" style="padding:10px 12px;"><div class="lab">Daily budget</div><div class="val" style="font-size:17px;" data-t="budget">$0</div><div class="sub" data-t="budgetSub">if every ad group spends</div></div>
+    </div>
+    <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap;padding:10px 12px;margin:0 0 12px;border:1px solid var(--border);border-radius:12px;background:var(--surface-2);">
+      <label class="field" style="margin:0;"><span class="field-label">Ad groups per campaign</span>
+        <input type="number" name="duplicates" min="0" max="50" value="0" style="width:90px;">
+        <span class="hint" style="display:block;" id="clDupHint">0 = the preset's setting</span></label>
+      <label class="field" style="margin:0;"><span class="field-label">Ads per ad group</span>
+        <input type="number" name="ads_per_group" min="0" max="20" value="0" style="width:90px;">
+        <span class="hint" style="display:block;">0 = one ad · more duplicates the ad inside each ad group</span></label>
     </div>
     <button class="btn primary" type="submit" id="clLaunch" style="width:100%;justify-content:center;font-size:14px;padding:11px;">🚀 Launch</button>
   </div>
@@ -200,11 +208,13 @@
       summary.classList.add("ready");
       launchBtn.textContent = "🚀 Launch " + k + " campaign" + (k === 1 ? "" : "s");
     }
-    var perCamp = p.smart_plus ? 1 : Math.max(1, p.caps || 1) * Math.max(1, p.duplicates || 1);
+    var dupOv = parseInt($('[name="duplicates"]').value, 10) || 0, dup = dupOv || p.duplicates || 1;
+    var perCamp = p.smart_plus ? 1 : Math.max(1, p.caps || 1) * Math.max(1, dup);
     var daily = p.budget_mode === "ABO" ? (parseFloat(p.budget) || 0) * perCamp * k : (parseFloat(p.campaign_budget) || 0) * k;
     var t = function (key, v) { var el = $('#clTiles [data-t="' + key + '"]'); if (el) el.textContent = v; };
     t("acc", k); t("accSub", k ? "selected by hand" : "none selected");
-    t("groups", k * perCamp); t("groupsSub", perCamp + " per campaign" + (p.caps > 1 ? " · " + p.caps + " caps" : "") + (p.duplicates > 1 ? " × " + p.duplicates : ""));
+    t("groups", k * perCamp); t("groupsSub", perCamp + " per campaign" + (p.caps > 1 ? " · " + p.caps + " caps" : "") + (dup > 1 ? " × " + dup : "") + (dupOv ? " · overridden" : ""));
+    $("#clDupHint").textContent = dupOv ? "overrides the preset (" + (p.duplicates || 1) + ")" : "0 = the preset's setting (" + (p.duplicates || 1) + ")";
     t("budget", UI.money(daily, 0)); t("budgetSub", p.budget_mode === "ABO" ? "$" + (p.budget || 0) + " per ad group, if all spend" : (p.campaign_budget ? "CBO $" + p.campaign_budget + " per campaign" : "—"));
     var row = function (l, v) { return '<div><span class="muted">' + l + '</span><b>' + v + '</b></div>'; };
     $("#clSumm").innerHTML = row("Preset", name ? UI.esc(name) : "—") + row("Creative", name ? UI.esc(creativeText()) : "—") + row("Accounts", k || "—") + row("Ad groups each", perCamp) + row("Daily budget", k ? UI.money(daily, 0) : "—");
@@ -212,6 +222,8 @@
     wiz.refresh();
   }
   if (preset) preset.addEventListener("change", syncPreset);
+  $('[name="duplicates"]').addEventListener("input", syncSummary);
+  $("#clDupEdit").addEventListener("click", function () { var i = $('[name="duplicates"]'); i.focus(); i.select(); });
   form.addEventListener("submit", function (e) {
     if (form.dataset.ok) return;
     e.preventDefault();

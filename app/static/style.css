@@ -1079,3 +1079,4 @@ table.data.aud thead th:first-child { white-space: nowrap; }
 .pop-expand-b { white-space: pre-wrap; word-break: break-word; max-height: 50vh; overflow: auto; font-size: 12.5px; line-height: 1.5; }
 .pop-expand-f { display: flex; justify-content: flex-end; margin-top: 8px; }
 .linkish { font: inherit; background: none; border: none; padding: 0; color: var(--accent-ink); cursor: pointer; text-decoration: underline dotted; }
+.sl-tile-edit { margin-left: 6px; font-size: 11px; font-weight: 600; text-decoration: none; opacity: .75; } .sl-tile-edit:hover { opacity: 1; text-decoration: underline; }
