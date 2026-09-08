@@ -6,7 +6,7 @@
 {% macro dpct(d) -%}{% if d is not none %}<span style="color:var({{ '--ok' if d >= 0 else '--err' }});">{{ '+' if d >= 0 }}{{ "%.0f"|format(d) }}%</span> vs prior{% endif %}{%- endmacro %}
 <div class="page-head" style="margin-bottom:10px;">
   <div><h1>P&L</h1><div class="muted" style="font-size:12.5px;">{{ range_label }} · Glitchy revenue vs TikTok spend · {{ n_sources }} source{{ 's' if n_sources != 1 }}, {{ winners }} in profit{% if slices.unsourced_spend %} · <span title="Campaigns launched without a ?source= — their spend counts, their revenue can't be matched">{{ money0(slices.unsourced_spend) }} spent without a source</span>{% endif %}</div></div>
-  <div class="actions"><div data-daterange></div><a class="btn" id="pnlExport" href="/pnl/export.csv?{{ qs }}&by={{ tab if tab != 'postbacks' else 'source' }}">⇓ CSV</a></div>
+  <div class="actions"><div data-daterange></div><a class="btn" id="pnlExport" href="/pnl/export.csv?{{ qs }}&by={{ tab if tab not in ('postbacks', 'clicks') else 'source' }}">⇓ CSV</a></div>
 </div>
 
 <div class="kpis kpis-5" style="margin-bottom:12px;">
@@ -26,7 +26,7 @@
 
 <div class="card" style="padding:0;overflow:hidden;">
   <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border-soft);flex-wrap:wrap;">
-    <div class="seg" id="pnlTabs">{% for k, lbl, n in [('source', 'By source', slices.source|length), ('bc', 'Business Center', slices.bc|length), ('account', 'Account', slices.account|length), ('creative', 'Creative', slices.creative|length), ('spark', 'Spark', slices.spark|length), ('postbacks', 'Postbacks', recent|length)] %}<button type="button" data-tab="{{ k }}" class="{{ 'on' if tab == k }}">{{ lbl }} <span class="n">{{ n }}</span></button>{% endfor %}</div>
+    <div class="seg" id="pnlTabs">{% for k, lbl, n in [('source', 'By source', slices.source|length), ('bc', 'Business Center', slices.bc|length), ('account', 'Account', slices.account|length), ('creative', 'Creative', slices.creative|length), ('spark', 'Spark', slices.spark|length), ('postbacks', 'Postbacks', recent|length), ('clicks', 'Clicks', clicks|length)] %}<button type="button" data-tab="{{ k }}" class="{{ 'on' if tab == k }}">{{ lbl }} <span class="n">{{ n }}</span></button>{% endfor %}</div>
     <div class="search-wrap" style="max-width:220px;margin-left:auto;"><input type="text" id="pnlQ" placeholder="Filter rows…"></div>
     <span class="muted" style="font-size:12px;">sorted by profit</span>
   </div>
@@ -73,13 +73,33 @@
         <td class="num" style="color:var(--ok);font-weight:600;">{{ money0(e.revenue) }}</td>
         <td class="num">{{ e.conversions }}</td><td class="num">{{ e.clicks }}</td>
         <td class="mono muted" style="font-size:11px;">{{ (e.txn or "—")[:14] }}</td>
-        <td class="mono muted" style="font-size:11px;" title="{{ e.ttclid }}">{% if e.ttclid %}{{ e.ttclid[:10] }}…{% else %}—{% endif %}</td>
+        <td class="mono muted" style="font-size:11px;">{% if e.click_id %}<span class="clip" style="display:inline;" title="click {{ e.click_id }} → TikTok click id {{ e.ttclid or '(none)' }}">{{ e.click_id }}</span>{% elif e.ttclid %}<span class="clip" style="display:inline;" title="{{ e.ttclid }}">{{ e.ttclid[:10] }}…</span>{% else %}—{% endif %}</td>
         <td>{% if e.forward_status and e.forward_status.startswith('sent') %}<span class="pill ok" title="{{ e.forward_status }}">sent</span>{% elif e.forward_status and e.forward_status.startswith('error') %}<span class="pill err" title="{{ e.forward_status }}">error</span>{% elif e.forward_status %}<span class="pill dim" title="{{ e.forward_status }}">skipped</span>{% else %}<span class="muted">—</span>{% endif %}</td>
         <td style="text-align:right;">{% if e.raw_query %}<button type="button" class="btn sm ghost pnl-raw" data-raw="{{ e.raw_query }}">raw</button>{% endif %}</td>
       </tr>
       {% endfor %}
       </tbody></table></div>
     {% else %}<div class="empty"><div class="empty-title">No postbacks received yet</div>Paste the postback URL from <a href="/settings#tracking">Settings</a> into Glitchy — the first conversion shows up here within seconds.</div>{% endif %}
+  </div>
+  <div class="pnl-tab" data-tab="clicks" {{ 'hidden' if tab != 'clicks' }}>
+    {% if clicks %}
+    <div class="table-scroll"><table class="data dense">
+      <thead><tr><th style="width:90px;">When</th><th>Click id</th><th>Campaign (source)</th><th>Account</th><th>TikTok ids</th><th>ttclid</th><th>Via</th><th class="num">Revenue</th></tr></thead>
+      <tbody>
+      {% for k in clicks %}
+      <tr class="pnl-row" data-search="{{ (k.source ~ ' ' ~ k.click_id ~ ' ' ~ acct_names.get(k.advertiser_id, ''))|lower }}">
+        <td class="muted" style="white-space:nowrap;"><span title="{{ k.created_at|local('%Y-%m-%d %H:%M:%S') }}">{{ k.created_at|ago }}</span></td>
+        <td class="mono" style="font-size:11.5px;">{{ k.click_id }}</td>
+        <td class="mono" style="font-size:12px;">{{ k.source or '—' }}</td>
+        <td style="font-size:12px;">{{ acct_names.get(k.advertiser_id, k.advertiser_id or '—') }}</td>
+        <td class="mono muted" style="font-size:10.5px;">{% if k.tt_campaign_id %}c {{ k.tt_campaign_id }}{% endif %}{% if k.tt_adgroup_id %} · ag {{ k.tt_adgroup_id }}{% endif %}{% if k.tt_ad_id %} · ad {{ k.tt_ad_id }}{% endif %}{% if not (k.tt_campaign_id or k.tt_adgroup_id) %}—{% endif %}</td>
+        <td>{% if k.ttclid %}<span class="pill ok clip" style="display:inline-block;" title="{{ k.ttclid }}">yes</span>{% else %}<span class="pill warn" title="No ttclid on this click — not from a TikTok ad, or the lander lost the parameter">none</span>{% endif %}</td>
+        <td class="muted" style="font-size:11.5px;">{{ k.how }}<div class="clip" style="max-width:220px;font-size:10.5px;" title="{{ k.url }}">{{ k.url }}</div></td>
+        <td class="num">{% if k.converted_at %}<span style="color:var(--ok);font-weight:600;">{{ money0(k.revenue) }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+      </tbody></table></div>
+    {% else %}<div class="empty"><div class="empty-title">No clicks registered yet</div>Install the lander script or switch to redirect links in <a href="/settings#tracking">Settings → Tracking</a>, then click one of your own ads — it shows up here at once.</div>{% endif %}
   </div>
   <div class="empty" id="pnlEmpty" hidden>Nothing matches.</div>
 </div>
@@ -115,7 +135,7 @@
     $$("#pnlTabs button").forEach(function (b) { b.classList.toggle("on", b.dataset.tab === k); });
     $$(".pnl-tab").forEach(function (t) { t.hidden = t.dataset.tab !== k; });
     var u = new URL(location.href); u.searchParams.set("by", k); history.replaceState(null, "", u.toString());
-    $("#pnlExport").href = "/pnl/export.csv?{{ qs }}&by=" + (k === "postbacks" ? "source" : k);
+    $("#pnlExport").href = "/pnl/export.csv?{{ qs }}&by=" + (k === "postbacks" || k === "clicks" ? "source" : k);
     filter();
   }
   $$("#pnlTabs button").forEach(function (b) { b.addEventListener("click", function () { show(b.dataset.tab); }); });

@@ -58,6 +58,10 @@ DEFAULTS: dict = {
     "postback_mode": "incremental",  # incremental = sum every postback;
                                      # snapshot = latest value per source per day
     # --- TikTok Events API (S2S postback → pixel) ------------------------------
+    "tracking_mode": "direct",     # direct = script on the lander registers the click (no redirect)
+                                   # redirect = the ad points at /t/c which records the click, then redirects
+                                   # clickflare = ClickFlare is the tracker; it postbacks every conversion here
+    "tracking_domain": "",         # public host the landers/ads reach this app on (empty = POSTBACK_HOST or this site)
     "events_api_enabled": False,   # forward postbacks with a ttclid to TikTok
     "events_pixel_code": "",       # pixel ID to fire to; empty = auto-resolve
                                    # from the source's launch (PixelCache)
@@ -126,6 +130,9 @@ def save_settings(db: Session, values: dict):
         clean["url_param"] = "source"
     if clean.get("source_mode") not in ("campaign", "static"):
         clean["source_mode"] = "campaign"
+    if clean.get("tracking_mode") not in ("direct", "redirect", "clickflare"):
+        clean["tracking_mode"] = "direct"
+    clean["tracking_domain"] = str(clean.get("tracking_domain") or "").strip().lower().replace("https://", "").replace("http://", "").strip("/")
     if clean.get("events_event_mode") not in ("campaign", "fixed"):
         clean["events_event_mode"] = "campaign"
     if not clean.get("appeal_reason"):

@@ -1080,3 +1080,10 @@ table.data.aud thead th:first-child { white-space: nowrap; }
 .pop-expand-f { display: flex; justify-content: flex-end; margin-top: 8px; }
 .linkish { font: inherit; background: none; border: none; padding: 0; color: var(--accent-ink); cursor: pointer; text-decoration: underline dotted; }
 .sl-tile-edit { margin-left: 6px; font-size: 11px; font-weight: 600; text-decoration: none; opacity: .75; } .sl-tile-edit:hover { opacity: 1; text-decoration: underline; }
+/* ---- tracking flow ---- */
+.tr-flow { display: flex; gap: 8px; align-items: stretch; flex-wrap: wrap; margin-bottom: 12px; }
+.tr-hop { flex: 1; min-width: 200px; display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); font-size: 12px; color: var(--text-soft); }
+.tr-hop b { color: var(--text); font-size: 12.5px; }
+.tr-arrow { align-self: center; color: var(--text-dim); font-size: 18px; }
+.tr-check { font-size: 12.5px; padding: 8px 10px; border-radius: 10px; background: var(--accent-soft); color: var(--accent-ink); }
+.pb-card { position: relative; }

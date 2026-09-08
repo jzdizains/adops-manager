@@ -457,8 +457,33 @@ class PostbackEvent(Base):
     ttclid = Column(String, default="")                # TikTok click id (Events API)
     event = Column(String, default="")                 # e.g. purchase
     forward_status = Column(String, default="")        # Events API: sent | skipped… | error…
+    click_id = Column(String, default="", index=True)  # our tracker click id, when the postback carried one
     raw_query = Column(Text, default="")
     created_at = Column(DateTime, default=utcnow, index=True)
+
+
+class Click(Base):
+    """One row per ad click that reached a lander — the tracker's click id
+    (RedTrack/ClickFlare model). Stores TikTok's ttclid + the ad ids at click
+    time; Glitchy only has to echo our SHORT click id back in the postback."""
+    __tablename__ = "clicks"
+
+    id = Column(Integer, primary_key=True)
+    click_id = Column(String, unique=True, index=True, nullable=False)   # 12 chars, a-z 0-9
+    source = Column(String, default="", index=True)       # campaign name (the P&L join key)
+    ttclid = Column(String, default="")                   # TikTok click id (Events API)
+    tt_campaign_id = Column(String, default="")           # __CAMPAIGN_ID__
+    tt_adgroup_id = Column(String, default="")            # __AID__
+    tt_ad_id = Column(String, default="")                 # __CID__ (creative) / __ADID_V2__
+    advertiser_id = Column(String, default="", index=True)
+    ip = Column(String, default="")
+    user_agent = Column(String, default="")
+    url = Column(Text, default="")                        # lander URL the click landed on
+    referrer = Column(Text, default="")
+    how = Column(String, default="")                      # direct | redirect
+    created_at = Column(DateTime, default=utcnow, index=True)
+    converted_at = Column(DateTime, nullable=True)
+    revenue = Column(Float, default=0.0)
 
 
 class SpendSnapshot(Base):

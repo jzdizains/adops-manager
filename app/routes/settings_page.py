@@ -22,6 +22,10 @@ def settings_page(request: Request, db: Session = Depends(get_db)):
     base_url = str(request.base_url).rstrip("/")
     if base_url.startswith("http://") and "localhost" not in base_url and "127.0.0.1" not in base_url:
         base_url = "https://" + base_url[len("http://"):]
+    try:   # remember the public host so background launches can build /t/c links without a request
+        queries.set_setting(db, "public_host", base_url.split("://", 1)[1].split("/")[0]); db.commit()
+    except Exception:
+        pass
     if config.POSTBACK_HOST:
         base_url = "https://" + config.POSTBACK_HOST       # the dedicated postback hostname
     postback_template = (
@@ -29,11 +33,29 @@ def settings_page(request: Request, db: Session = Depends(get_db)):
         "&source={source}&revenue={payout}&txn={transaction_id}"
         "&event=purchase"
     )   # no ttclid param: Glitchy has no macro for it — it rides inside {source}
+    # ClickFlare → this dashboard: its traffic-source S2S postback tokens (help.clickflare.com → "traffic source S2S postback URL")
+    clickflare_postback = (
+        f"{base_url}/postback?key={s['postback_key']}"
+        "&source={trackingField1}&revenue={payout}&txn={txid}&ttclid={external_id}&event=purchase"
+    )
     from pathlib import Path
 
     from .. import background
-    pass_script = (Path(__file__).resolve().parent.parent / "static" / "pass-source.js").read_text()
+    from .. import tracking
+    track_base = tracking.base_url(db, s) or base_url
+    pass_script = (Path(__file__).resolve().parent.parent / "static" / "pass-source.js").read_text().replace("__ADOPS_TRACK_HOST__", track_base)
+    ad_url_example = tracking.ad_url("https://your-prelander.com/", s["url_param"], "__CAMPAIGN_NAME__", s.get("tracking_mode", "direct"), track_base)
+    # round-trip check: did the click id actually survive Glitchy? (last 20 postbacks)
+    recent = db.query(models.PostbackEvent).order_by(models.PostbackEvent.id.desc()).limit(20).all()
+    with_id = [e for e in recent if e.ttclid]
+    lens = sorted(len(e.ttclid) for e in with_id)
+    roundtrip = {"n": len(recent), "with_id": len(with_id), "min_len": lens[0] if lens else 0, "max_len": lens[-1] if lens else 0,
+                 "sent": sum(1 for e in with_id if (e.forward_status or "").startswith("sent")),
+                 "rejected": sum(1 for e in with_id if (e.forward_status or "").startswith("error")),
+                 "last": (with_id[0].ttclid if with_id else "")}
     return render(request, "settings.html", {
+        "roundtrip": roundtrip, "tr": tracking.stats(db, 1), "clickflare_postback": clickflare_postback, "ad_url_example": ad_url_example, "track_base": track_base,
+        "track_host_hint": base_url.split("://", 1)[-1].split("/")[0], "postback_host": config.POSTBACK_HOST,
         "title": "Settings", "s": s, "has_anthropic_key": bool(config.ANTHROPIC_API_KEY),
         "postback_template": postback_template, "pass_script": pass_script,
         "ok": request.query_params.get("ok", ""),

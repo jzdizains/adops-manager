@@ -4,11 +4,13 @@ Postback URL (from /settings) — per-event style:
   /postback?key=<POSTBACK_KEY>&source={source}&revenue={payout}
            &txn={transaction_id}&event=purchase
 
-Glitchy only echoes {source} and {payout}, so the TikTok click id rides INSIDE
-the source: the lander script sends Glitchy  source=<campaign name>~<ttclid>
-and this endpoint splits it back — the name is what the P&L joins on, the
-ttclid is what the Events API needs. A plain `ttclid=` param (if a network
-ever offers one) still wins over the packed value.
+Glitchy only echoes {source} and {payout}, so our SHORT click id rides INSIDE
+the source (the RedTrack/ClickFlare model, see app/tracking.py): the lander
+script sends Glitchy  source=<campaign name>~<click id>  and this endpoint
+splits it back — the name is what the P&L joins on, the click id resolves to
+the stored TikTok click (ttclid, ip, user agent, ad ids) for the Events API.
+Older landers that packed the raw ttclid, a `clid=` sub-id, or a plain
+`ttclid=` param (if a network ever offers one) all still work.
 
 The old aggregate params (clicks/conversions/cvr) still work. Per-event
 behavior: `txn` dedupes retries (same transaction never counts twice), and
@@ -32,7 +34,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from .. import live_log, models, tiktok_api, timeutil
+from .. import live_log, models, tiktok_api, timeutil, tracking
 from ..database import get_db
 from ..settings_store import get_settings
 from ..templating import render
@@ -119,7 +121,7 @@ def _events_pixel_code(db: Session, source: str, settings: dict) -> tuple[str, s
     return token, pixel_code
 
 
-def _forward_to_tiktok(db: Session, event: models.PostbackEvent, s: dict) -> str:
+def _forward_to_tiktok(db: Session, event: models.PostbackEvent, s: dict, click: models.Click | None = None) -> str:
     """Fire the Events API for one stored postback. Returns a status string —
     never raises (a pixel hiccup must not bounce Glitchy's postback)."""
     if not s.get("events_api_enabled"):
@@ -145,7 +147,8 @@ def _forward_to_tiktok(db: Session, event: models.PostbackEvent, s: dict) -> str
             ttclid=event.ttclid, value=float(event.revenue or 0),
             currency=(s.get("events_currency") or "USD").strip(),
             test_event_code=(s.get("events_test_code") or "").strip(),
-            page_url=page_url_for(db, event.source, s))
+            ip=(click.ip if click else ""), user_agent=(click.user_agent if click else ""),    # better match rate, like the trackers send
+            page_url=(click.url if click and click.url else page_url_for(db, event.source, s)))
         return f"sent {event_name}"
     except tiktok_api.TikTokError as e:
         return f"error: code {e.code}: {(e.message or '')[:160]}"
@@ -193,8 +196,13 @@ async def postback(request: Request, db: Session = Depends(get_db)):
     s = get_settings(db)
     if q.get("key", "") != s["postback_key"]:
         return JSONResponse({"ok": False, "error": "bad key"}, status_code=403)
-    source, packed_ttclid = unpack_source(q.get("source") or "")
-    ttclid = _clean_ttclid(q.get("ttclid") or q.get("click_id") or "") or _clean_ttclid(packed_ttclid)
+    source, packed = unpack_source(q.get("source") or "")
+    # the packed part is our click id (tracker model) — or, from an older lander script, the raw ttclid
+    click_id = next((v for v in (q.get("clid") or "", q.get("clickid") or "", packed) if tracking.is_click_id(v)), "")
+    click = tracking.lookup(db, click_id) if click_id else None
+    ttclid = _clean_ttclid(q.get("ttclid") or q.get("click_id") or "") or (click.ttclid if click else "") or ("" if click_id else _clean_ttclid(packed))
+    if click and not source:
+        source = click.source
     if not source:
         # Glitchy fired but its {source} macro was EMPTY — the click that reached
         # Glitchy never carried ?source=. Keep the revenue (as unattributed) and
@@ -222,6 +230,7 @@ async def postback(request: Request, db: Session = Depends(get_db)):
         cvr=_num(q.get("cvr")),
         txn=txn,
         ttclid=ttclid,
+        click_id=click.click_id if click else "",
         event=(q.get("event") or "").strip()[:60],
         raw_query=str(request.url.query)[:2000],
     )
@@ -232,9 +241,12 @@ async def postback(request: Request, db: Session = Depends(get_db)):
            .filter(models.PostbackEvent.source == source,
                    models.PostbackEvent.created_at >= day_start).delete())
     db.add(event)
+    if click:
+        click.converted_at = click.converted_at or models.utcnow()
+        click.revenue = float(click.revenue or 0) + float(event.revenue or 0)
     db.commit()
     # server-side pixel event (Events API) — best-effort, never bounces Glitchy
-    status = _forward_to_tiktok(db, event, s)
+    status = _forward_to_tiktok(db, event, s, click)
     if status:
         event.forward_status = status
         db.commit()

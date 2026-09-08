@@ -1131,8 +1131,11 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
             fields = dict(fields)
             fields["_url_safe_names"] = True
             if fields.get("landing_page_url"):
-                fields["landing_page_url"] = apply_source_to_url(
-                    fields["landing_page_url"], settings["url_param"], CAMPAIGN_NAME_MACRO)
+                # + the campaign / ad group / ad id macros and, in redirect mode, the /t/c tracking link
+                from .. import tracking as _tracking
+                fields["landing_page_url"] = _tracking.ad_url(
+                    fields["landing_page_url"], settings["url_param"], CAMPAIGN_NAME_MACRO,
+                    settings.get("tracking_mode", "direct"), _tracking.base_url(db, settings))
                 log.landing_url = fields["landing_page_url"]
         if spark:
             log.spark_code_id = spark.id

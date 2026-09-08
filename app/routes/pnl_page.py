@@ -185,13 +185,15 @@ def pnl(request: Request, db: Session = Depends(get_db)):
             close = difflib.get_close_matches(e.source, list(known), n=1, cutoff=0.6)
             match[e.id] = {"state": "nomatch", "closest": close[0] if close else ""}
     tab = request.query_params.get("by", "source")
-    if tab not in ("source", "bc", "account", "creative", "spark", "postbacks"):
+    if tab not in ("source", "bc", "account", "creative", "spark", "postbacks", "clicks"):
         tab = "source"
+    clicks = db.query(models.Click).order_by(models.Click.id.desc()).limit(60).all()
+    acct_names = {a.advertiser_id: (a.advertiser_name or a.advertiser_id) for a in db.query(models.AdAccount)}
     return render(request, "pnl.html", {
         "title": "P&L", "range_key": range_key, "range_label": RANGE_LABELS.get(range_key, "Custom range"), "start": start or "", "end": end or "",
         "totals": totals, "prior": prior, "d_profit": delta(totals["profit"], prior["profit"]), "d_rev": delta(totals["revenue"], prior["revenue"]), "d_spend": delta(totals["spend"], prior["spend"]),
         "epc": (totals["revenue"] / totals["clicks"]) if totals["clicks"] else 0.0, "active_accounts": active_accounts, "best": best, "n_days": n_days,
-        "chart_json": json.dumps(chart), "slices": slices, "tab": tab, "recent": recent, "match": match,
+        "chart_json": json.dumps(chart), "slices": slices, "tab": tab, "recent": recent, "match": match, "clicks": clicks, "acct_names": acct_names,
         "winners": sum(1 for r in slices["source"] if r["profit"] > 0), "n_sources": len(slices["source"]),
         "qs": f"range={range_key}" + (f"&start={start}&end={end}" if start and end else ""),
     })

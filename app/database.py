@@ -39,6 +39,7 @@ schema_additions: dict[str, dict[str, str]] = {
         "ttclid": "TEXT DEFAULT ''",
         "event": "TEXT DEFAULT ''",
         "forward_status": "TEXT DEFAULT ''",
+        "click_id": "TEXT DEFAULT ''",
     },
     # Phase 2 (sources/P&L): new columns on live DBs
     "launch_logs": {

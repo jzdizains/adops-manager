@@ -1,49 +1,43 @@
-/* AdOps pass-through — put this on the PRELANDER and the LANDER (same script).
+/* Pass-through + click tracking — put this on the PRELANDER and the LANDER (same script).
  *
- * The ad sends the visitor to your prelander with ?source=<campaign name>
- * (plus ttclid etc.). This script carries those parameters through every hop
- * until they reach Glitchy's offer link, so Glitchy's {source} macro is filled:
- *
- *   ad → prelander?source=X&ttclid=T → lander?source=X~T → glitchy-offer?source=X~T
- *
- * TikTok's click id (ttclid, appended to the landing URL by TikTok) is PACKED
- * into the source as  <campaign name>~<ttclid>  — Glitchy only echoes {source}
- * back in its postback, so this is how the click id survives the round trip;
- * the dashboard splits it again (P&L on the name, Events API on the ttclid).
- * "~" never appears in a campaign name (they're limited to A-Z 0-9 _ -).
- *
- * How it works
- *   1. reads the query string of the current page (a packed source is unpacked)
- *   2. remembers it in sessionStorage (survives internal navigation / a second
- *      page in the same tab, e.g. a quiz step that drops the query string)
- *   3. rewrites every outbound link, form and late-injected button to carry it
- *      (source / ttclid from the ad always win over a hard-coded value in the link)
- *      and wraps window.open() so builder buttons that open a hard-coded URL
- *      (Lovable / Webflow / Framer "open link" actions) carry it too
+ * The ad lands on your prelander with ?source=<campaign name>&tt_cid=…&tt_aid=…&tt_ad=…
+ * (TikTok appends its own ttclid). This script:
+ *   1. registers the click with the dashboard (POST /t/click) and gets a short click id —
+ *      the same thing RedTrack / ClickFlare do with their "direct tracking" script
+ *   2. remembers everything in sessionStorage (survives a quiz step that drops the query)
+ *   3. rewrites every outbound link, form and late-injected button so the click into
+ *      Glitchy's offer link carries  source=<campaign name>~<click id>
+ *      → Glitchy echoes {source} back in its postback → the dashboard resolves the click id
+ *        to the TikTok click (ttclid, ip, user agent, ad ids) for the Events API + P&L.
  *   4. exposes window.passSource(url) for JS redirects: location.href = passSource(url)
  *
+ * Only a 12-character id has to survive the network round trip. If the dashboard can't be
+ * reached, the script falls back to packing the raw ttclid behind the source (older behaviour).
+ *
+ * TRACK_HOST is filled in by Settings → Tracking (or set window.ADOPS_TRACK before this script).
  * Install: <script src="pass-source.js"></script> just before </body> (or inline it).
- * Only same-tab, first-party — nothing is sent anywhere except in the links you already have.
  */
 (function () {
-  var KEY = "adops_pass", ALWAYS_WIN = { source: 1, ttclid: 1 }, SEP = "~";
+  var KEY = "adops_pass", ALWAYS_WIN = { source: 1, ttclid: 1, clid: 1 }, SEP = "~";
+  var TRACK_HOST = window.ADOPS_TRACK || "__ADOPS_TRACK_HOST__";
+  if (/__ADOPS/.test(TRACK_HOST)) { try { var cs = document.currentScript; TRACK_HOST = cs && /^https?:/.test(cs.src) ? cs.src.replace(/\/static\/.*$/, "") : ""; } catch (e) { TRACK_HOST = ""; } }
 
-  // source=X~T  →  source=X, ttclid=T (an explicit ttclid param wins). Safe to
-  // run on every hop, so a page that already received a packed source is fine.
+  // source=X~T  →  source=X plus the packed part: our click id (clid) or, from an older hop, a ttclid.
+  // Safe to run on every hop, so a page that already received a packed source is fine.
   function unpack(p) {
     var s = p.source, i = s ? s.indexOf(SEP) : -1;
     if (i < 0) return p;
     var t = s.slice(i + 1);
     p.source = s.slice(0, i);
-    if (!p.ttclid && t) p.ttclid = t;
+    if (t) { if (/^[a-z0-9]{12}$/.test(t)) { if (!p.clid) p.clid = t; } else if (!p.ttclid) p.ttclid = t; }
     if (!p.source) delete p.source;
     return p;
   }
-  // what goes into outbound links: the source with the ttclid packed in
+  // what goes into outbound links: the source with the click id packed in (ttclid until we have one)
   function outgoing(p) {
     var o = {};
-    for (var k in p) o[k] = p[k];
-    if (o.source && o.ttclid) o.source = o.source + SEP + o.ttclid;
+    for (var k in p) if (k !== "tt_cid" && k !== "tt_aid" && k !== "tt_ad") o[k] = p[k];
+    if (o.source && (o.clid || o.ttclid)) o.source = o.source + SEP + (o.clid || o.ttclid);
     return o;
   }
 
@@ -63,12 +57,23 @@
 
   // current URL beats what was remembered; remembered fills gaps
   var params = unpack(load()), fresh = unpack(parse(location.search));
-  // a NEW ad click (fresh source, no click id) must not inherit an old ttclid
-  if (fresh.source && !fresh.ttclid) delete params.ttclid;
+  // a NEW ad click (fresh source, no click id) must not inherit an old click / ttclid
+  if (fresh.source && !fresh.ttclid && !fresh.clid) { delete params.ttclid; delete params.clid; }
+  if (fresh.ttclid && fresh.ttclid !== params.ttclid && !fresh.clid) delete params.clid;
   for (var k in fresh) params[k] = fresh[k];
   save(params);
   if (!Object.keys(params).length) return;
   var out = outgoing(params);
+
+  // register the click once per ad click (a new ttclid / source) → short click id
+  function register() {
+    if (params.clid || !TRACK_HOST || !(params.source || params.ttclid) || !window.fetch) return;
+    var body = JSON.stringify({ source: params.source || "", ttclid: params.ttclid || "", tt_cid: params.tt_cid || "", tt_aid: params.tt_aid || "", tt_ad: params.tt_ad || "", url: location.href.slice(0, 900), ref: document.referrer.slice(0, 400) });
+    fetch(TRACK_HOST + "/t/click", { method: "POST", mode: "cors", credentials: "omit", keepalive: true, headers: { "Content-Type": "text/plain" }, body: body })
+      .then(function (r) { return r.json(); })
+      .then(function (d) { if (d && d.click_id) { params.clid = d.click_id; save(params); out = outgoing(params); refresh(); } })
+      .catch(function () {});   // unreachable → links keep the raw ttclid packed (still attributable)
+  }
 
   function withParams(url) {
     if (!url || /^(#|javascript:|mailto:|tel:)/i.test(url)) return url;
@@ -110,11 +115,15 @@
       if (method === "get") { f.action = withParams(f.action || location.href); return; }
       for (var k in out) {
         if (f.querySelector('[name="' + k + '"]')) continue;
-        var i = document.createElement("input"); i.type = "hidden"; i.name = k; i.value = out[k]; f.appendChild(i);
+        var i = document.createElement("input"); i.type = "hidden"; i.name = k; i.value = out[k]; i.dataset.passAdded = "1"; f.appendChild(i);
       }
     });
   }
-  function run() { fixLinks(document); }
+  function refresh() {
+    (document.querySelectorAll ? document.querySelectorAll("a[data-pass-done], form[data-pass-done]") : []).forEach(function (el) { el.removeAttribute("data-pass-done"); el.querySelectorAll && el.querySelectorAll("input[data-pass-added]").forEach(function (i) { i.remove(); }); });
+    fixLinks(document);
+  }
+  function run() { fixLinks(document); register(); }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", run); else run();
   // buttons/links injected later by the page's own scripts
   if (window.MutationObserver) {
