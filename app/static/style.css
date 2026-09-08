@@ -1020,3 +1020,8 @@ table.data.aud thead th:first-child { white-space: nowrap; }
 .pb-summ > div { display: flex; justify-content: space-between; gap: 10px; } .pb-summ b { text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%; font-weight: 600; }
 @media (max-width: 1240px) { .pb-wrap { grid-template-columns: 200px minmax(0, 1fr); } .pb-preview { display: none; } }
 .kpis.kpis-3 { grid-template-columns: repeat(3, 1fr); }
+.cr-grid.selmode .cr-chk { opacity: 1; }
+.cr-grid.selmode .cr-tile { cursor: pointer; }
+.cr-grid.selmode .cr-tile .cr-play { display: none; }
+.cr-tile.sel { outline: 2px solid var(--accent); outline-offset: -2px; }
+.cr-tile.sel .cr-thumb::after { content: ""; position: absolute; inset: 0; background: color-mix(in srgb, var(--accent) 22%, transparent); pointer-events: none; }

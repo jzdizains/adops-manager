@@ -28,9 +28,10 @@
     <div class="fmenu">{% for k in ['profit', 'roas', 'spend', 'revenue', 'conversions'] %}<a href="/creatives?range={{ range_key }}&sort={{ k }}" class="{{ 'sel' if sort == k }}">{{ k }}</a>{% endfor %}</div></div>
   <span class="seg" id="rsFilter"><button type="button" class="on" data-cls="">All <span class="n">{{ families|length }}</span></button><button type="button" data-cls="winner" style="color:var(--ok);">Winners <span class="n">{{ nw }}</span></button><button type="button" data-cls="learning">Learning <span class="n">{{ ng }}</span></button><button type="button" data-cls="losing" style="color:var(--err);">Losing <span class="n">{{ nl }}</span></button></span>
   <span class="muted" style="margin-left:auto;font-size:12.5px;">{% if perf %}{{ families|length }} creative{{ 's' if families|length != 1 }} · {{ perf|length }} test{{ 's' if perf|length != 1 }} · ${{ "%.0f"|format(perf|map(attribute='spend')|sum) }} spend · <span class="profit-cell {{ 'pos' if (perf|map(attribute='profit')|sum) >= 0 else 'neg' }}">{{ '+' if (perf|map(attribute='profit')|sum) > 0 }}{{ money0(perf|map(attribute='profit')|sum) }}</span>{% endif %}</span>
+  <button type="button" class="btn sm cr-selmode" data-grid="#rsGrid" title="Select several to pause, archive, label (shift-click selects a range)">☐ Select</button>
 </div>
 {% if families %}
-<div class="sel-bar" id="rsSel" hidden><span class="cnt" id="rsSelCount">0 selected</span>
+<div class="sel-bar" id="rsSel" hidden><span class="cnt" id="rsSelCount">0 selected</span><button type="button" class="btn sm ghost" data-rs="all">All shown</button>
   <button type="button" class="btn sm" data-rs="pause">Pause campaigns</button><button type="button" class="btn sm" data-rs="fav">★ Favourite</button><button type="button" class="btn sm" data-rs="label">Label…</button><button type="button" class="btn sm" data-rs="archive">Archive</button><button type="button" class="btn sm ghost" data-rs="clear">Clear</button></div>
 <div class="cr-grid" id="rsGrid">
   {% for f in families %}
@@ -215,12 +216,13 @@
   {% if all_labels %}<div class="fsel" data-fsel><button type="button"><span class="k">Label</span> <span class="v">{{ lib_label or 'any' }}</span> <span class="chev">▾</span></button>
     <div class="fmenu"><a href="/creatives?view=library&state={{ lib_state }}&q={{ lib_q|urlencode }}{% if lib_fav %}&fav=1{% endif %}" class="{{ 'sel' if not lib_label }}">any</a>{% for l, n in all_labels %}<a href="/creatives?view=library&state={{ lib_state }}&q={{ lib_q|urlencode }}&label={{ l|urlencode }}{% if lib_fav %}&fav=1{% endif %}" class="{{ 'sel' if lib_label == l }}">{{ l }} <span class="muted">{{ n }}</span></a>{% endfor %}</div></div>{% endif %}
   <span class="muted" style="margin-left:auto;font-size:12.5px;">{{ grid_rows|length }} of {{ n_videos }}</span>
+  <button type="button" class="btn sm cr-selmode" data-grid="#libGrid" title="Select several to archive, delete, label or launch (shift-click selects a range)">☐ Select</button>
   <div class="seg" id="libSize"><button type="button" data-size="s">S</button><button type="button" class="on" data-size="m">M</button><button type="button" data-size="l">L</button></div>
 </form>
 {% endif %}
 {% if processing %}<div class="flash ok" style="margin-bottom:10px;">{{ processing }} creative(s) still rendering variations — they appear here when done.</div>{% endif %}
-<div class="sel-bar" id="libSel" hidden><span class="cnt" id="libSelCount">0 selected</span>
-  {% if view == 'archive' %}<button type="button" class="btn sm" data-lib="restore">Restore</button><button type="button" class="btn sm danger" data-lib="delete">Delete for good</button>{% else %}<button type="button" class="btn sm" data-lib="launch">Launch…</button><button type="button" class="btn sm" data-lib="fav">★ Favourite</button><button type="button" class="btn sm" data-lib="label">Label…</button><button type="button" class="btn sm" data-lib="archive">Archive</button>{% endif %}<button type="button" class="btn sm ghost" data-lib="clear">Clear</button></div>
+<div class="sel-bar" id="libSel" hidden><span class="cnt" id="libSelCount">0 selected</span><button type="button" class="btn sm ghost" data-lib="all">All shown</button>
+  {% if view == 'archive' %}<button type="button" class="btn sm" data-lib="restore">Restore</button><button type="button" class="btn sm danger" data-lib="delete">Delete for good</button>{% else %}<button type="button" class="btn sm primary" data-lib="launch">🚀 Launch…</button><button type="button" class="btn sm" data-lib="fav">★ Favourite</button><button type="button" class="btn sm" data-lib="label">Label…</button><button type="button" class="btn sm" data-lib="archive">Archive</button><button type="button" class="btn sm danger" data-lib="delete">Delete</button>{% endif %}<button type="button" class="btn sm ghost" data-lib="clear">Clear</button><span class="hint-k">shift-click selects a range · Esc clears</span></div>
 {% if grid_rows %}
 <div class="cr-grid" id="libGrid" data-size="m">
   {% for r in grid_rows %}

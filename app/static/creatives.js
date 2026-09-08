@@ -41,12 +41,27 @@
     var g = $(gridSel), bar = $(barSel); if (!g || !bar) return;
     function selected() { return $$(".cr-tile", g).filter(function (t) { return t.querySelector(chk).checked; }); }
     function sync() { var s = selected(); bar.hidden = !s.length; $(countSel).textContent = s.length + " selected"; $$(".cr-tile", g).forEach(function (t) { t.classList.toggle("sel", t.querySelector(chk).checked); }); }
-    g.addEventListener("change", function (e) { if (e.target.matches(chk)) sync(); });
+    var last = null;
+    g.addEventListener("change", function (e) { if (e.target.matches(chk)) { last = e.target.closest(".cr-tile"); sync(); } });
+    // shift-click on a checkbox selects the range from the last one; in Select mode a click anywhere on the tile toggles it
+    g.addEventListener("click", function (e) {
+      var t = e.target.closest(".cr-tile"); if (!t || t.hidden) return;
+      var onBox = !!e.target.closest(chk);
+      if (!onBox && !g.classList.contains("selmode")) return;
+      if (!onBox) { if (e.target.closest("a, button, .cr-play")) return; e.preventDefault(); var c = t.querySelector(chk); c.checked = !c.checked; }
+      if (e.shiftKey && last && last !== t) {
+        var tiles = $$(".cr-tile", g).filter(function (x) { return !x.hidden; }), a = tiles.indexOf(last), b = tiles.indexOf(t), on = t.querySelector(chk).checked;
+        if (a >= 0 && b >= 0) tiles.slice(Math.min(a, b), Math.max(a, b) + 1).forEach(function (x) { x.querySelector(chk).checked = on; });
+      }
+      last = t; sync();
+    });
+    document.addEventListener("keydown", function (e) { if (e.key === "Escape" && selected().length && !document.querySelector(".layer-bg")) { $$(chk, g).forEach(function (c) { c.checked = false; }); sync(); } });
     function ids(s) { return s.map(function (t) { return t.dataset.cids || t.dataset.cid; }).join(","); }
     bar.addEventListener("click", function (e) {
       var b = e.target.closest("[" + attr + "]"); if (!b) return;
       var s = selected(), k = b.getAttribute(attr);
       if (k === "clear") { $$(chk, g).forEach(function (c) { c.checked = false; }); sync(); return; }
+      if (k === "all") { $$(".cr-tile", g).forEach(function (t) { if (!t.hidden) t.querySelector(chk).checked = true; }); sync(); return; }
       if (!s.length) return;
       if (k === "launch") { location.href = "/super-launcher?creatives=" + ids(s); return; }
       if (k === "pause") {
@@ -65,7 +80,7 @@
       if (k === "label") { labelPop(b, ids(s), function () { location.reload(); }); return; }
       var action = { fav: "favorite", archive: "archive", restore: "restore", delete: "delete" }[k];
       var go = function () { UI.post("/creatives/bulk", { action: action, ids: ids(s) }).then(function (d) { if (d.ok) { if (action === "archive") UI.undo("Archived " + d.n + " creative" + (d.n > 1 ? "s" : ""), function () { return UI.post("/creatives/bulk", { action: "restore", ids: ids(s) }).then(function () { location.reload(); }); }); setTimeout(function () { location.reload(); }, action === "archive" ? 900 : 0); } }); };
-      if (action === "delete") UI.confirm({ title: "Delete " + s.length + " for good?", text: "Files are removed from disk. Images used by a carousel stay.", ok: "Delete", danger: true }).then(function (y) { if (y) go(); });
+      if (action === "delete") UI.confirm({ title: "Delete " + s.length + " creative" + (s.length > 1 ? "s" : "") + " for good?", text: "Files are removed from disk; campaigns already launched with them keep running on TikTok. Images used by a carousel stay. Prefer Archive if you might want them back.", ok: "Delete " + s.length, danger: true }).then(function (y) { if (y) go(); });
       else go();
     });
   }
@@ -123,6 +138,14 @@
   document.addEventListener("click", function (e) {
     var t = e.target.closest && e.target.closest(".cr-tile");
     if (!t || e.target.closest("input, label, a, button, .cr-play")) return;
+    if (t.closest(".selmode")) return;                       // Select mode: the tile click toggled the box instead
     openDrawer(t.dataset.cid);
+  });
+  $$(".cr-selmode").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var g = $(b.dataset.grid); if (!g) return;
+      var on = !g.classList.contains("selmode"); g.classList.toggle("selmode", on); b.classList.toggle("primary", on); b.textContent = on ? "☑ Selecting" : "☐ Select";
+      if (!on) { $$("input[type=checkbox]", g).forEach(function (c) { c.checked = false; }); g.dispatchEvent(new Event("change", { bubbles: true })); var bar = $(g.id === "rsGrid" ? "#rsSel" : "#libSel"); if (bar) bar.hidden = true; $$(".cr-tile.sel", g).forEach(function (t) { t.classList.remove("sel"); }); }
+    });
   });
 })();
