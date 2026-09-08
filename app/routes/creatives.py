@@ -15,6 +15,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import FileResponse, RedirectResponse, Response
+from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 from sqlalchemy.orm import Session
 
@@ -739,7 +740,7 @@ async def text_preview(creative_id: int, request: Request, db: Session = Depends
     except ValueError:
         max_w = 600
     try:
-        data = text_overlay.render(row.file_path, dict(form), max_width=max_w, quality=82)
+        data = await run_in_threadpool(text_overlay.render, row.file_path, dict(form), max_width=max_w, quality=82)   # Pillow work off the loop
     except ValueError as e:
         return Response(str(e), status_code=422, media_type="text/plain")
     except OSError as e:
@@ -763,7 +764,7 @@ async def add_text(creative_id: int, request: Request, db: Session = Depends(get
     sep = "&" if "?" in back else "?"
     try:
         spec = text_overlay.clean(dict(form))
-        png = text_overlay.render(row.file_path, dict(form))
+        png = await run_in_threadpool(text_overlay.render, row.file_path, dict(form))
     except ValueError as e:
         return RedirectResponse(f"{back}{sep}err={quote(str(e))}", status_code=303)
     except OSError as e:

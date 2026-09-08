@@ -7,6 +7,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import FileResponse, RedirectResponse, Response
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from .. import config, models, queries, text_overlay, users
 from ..database import get_db
@@ -183,22 +184,27 @@ async def test_event(request: Request, db: Session = Depends(get_db)):
         return RedirectResponse("/settings?err=" + quote("Nothing sent — no token to fire with (connect TikTok or paste an Events API token)."), status_code=303)
     if not pixel_code:
         return RedirectResponse("/settings?err=" + quote("Nothing sent — no pixel to fire to. Set a Pixel ID in Events API settings or give a source that was launched."), status_code=303)
-    sent = 0
-    errors: list[str] = []
-    stamp = int(_time.time())
-    for i in range(count):
-        try:
-            tiktok_api.track_event(
-                token, pixel_code, event=event, event_id=f"test-{stamp}-{i + 1}",
-                ttclid=ttclid, value=value, currency=(s.get("events_currency") or "USD").strip(),
-                test_event_code=(s.get("events_test_code") or "").strip(), page_url=page_url)
-            sent += 1
-        except tiktok_api.TikTokError as e:
-            errors.append(f"code {e.code}: {(e.message or '')[:140]}")
-            if len(errors) >= 2:            # the same refusal N times helps nobody
-                break
-        if count > 1:
-            _time.sleep(0.25)
+    def _fire() -> tuple[int, list[str]]:
+        # runs in the thread pool: N TikTok calls + pacing must not stall other users' requests
+        sent = 0
+        errors: list[str] = []
+        stamp = int(_time.time())
+        for i in range(count):
+            try:
+                tiktok_api.track_event(
+                    token, pixel_code, event=event, event_id=f"test-{stamp}-{i + 1}",
+                    ttclid=ttclid, value=value, currency=(s.get("events_currency") or "USD").strip(),
+                    test_event_code=(s.get("events_test_code") or "").strip(), page_url=page_url)
+                sent += 1
+            except tiktok_api.TikTokError as e:
+                errors.append(f"code {e.code}: {(e.message or '')[:140]}")
+                if len(errors) >= 2:            # the same refusal N times helps nobody
+                    break
+            if count > 1:
+                _time.sleep(0.25)
+        return sent, errors
+
+    sent, errors = await run_in_threadpool(_fire)
     where = ("the pixel's Test Events tab (test code set)" if (s.get("events_test_code") or "").strip()
              else "Events Manager → the pixel's event overview (can take a few minutes)")
     if sent and not errors:
@@ -414,5 +420,6 @@ def user_delete(user_id: int, request: Request, db: Session = Depends(get_db)):
     email = u.email
     db.delete(u)
     db.commit()
+    users._forget_cached_sessions()
     queries.log(db, f"user deleted: {email}", level="warn", source="auth")
     return _back(ok=f"Deleted {email}.")

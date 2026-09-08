@@ -93,6 +93,16 @@ def create(db: Session, email: str, password: str, is_admin: bool = False, must_
     return u
 
 
+def _forget_cached_sessions() -> None:
+    """The login middleware remembers a session's user for a few seconds — a password change,
+    deactivation or sign-out-everywhere must take effect at once."""
+    try:
+        from . import main as _main
+        _main.auth_cache_clear()
+    except Exception:  # noqa: BLE001 — import cycle at startup / tests without the app
+        pass
+
+
 def set_password(db: Session, user: models.User, password: str, by_admin: bool = False) -> None:
     why = password_problem(password)
     if why:
@@ -101,12 +111,14 @@ def set_password(db: Session, user: models.User, password: str, by_admin: bool =
     user.session_version = (user.session_version or 0) + 1      # every session of this user ends
     user.must_change_password = bool(by_admin)
     db.commit()
+    _forget_cached_sessions()
     queries.log(db, f"password {'reset by an admin' if by_admin else 'changed'} for {user.email}", source="auth")
 
 
 def sign_out_everywhere(db: Session, user: models.User) -> None:
     user.session_version = (user.session_version or 0) + 1
     db.commit()
+    _forget_cached_sessions()
 
 
 def authenticate(db: Session, email: str, password: str) -> models.User | None:

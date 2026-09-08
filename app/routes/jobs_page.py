@@ -34,7 +34,8 @@ def jobs_data(request: Request, db: Session = Depends(get_db)):
     running = (db.query(models.Job).filter(models.Job.status.in_(("queued", "running")))
                .order_by(models.Job.id).all())
     done_count = db.query(func.count(models.Job.id)).filter(models.Job.status.in_(("done", "error", "cancelled"))).scalar() or 0
-    db.commit()
+    if items:
+        db.commit()      # only a write when something was marked seen — every tab polls this, and SQLite has one writer
     return JSONResponse({"done": items, "done_count": done_count,
                          "running": [{"id": j.id, "kind": j.kind, "title": j.title, "status": j.status,
                                       "progress": j.progress or ""} for j in running]})

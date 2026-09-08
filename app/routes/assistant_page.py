@@ -4,6 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from .. import assistant as asst, config, models
 from ..database import get_db
@@ -64,7 +65,8 @@ async def send(request: Request, chat_id: int, db: Session = Depends(get_db)):
         return JSONResponse({"ok": False, "error": "chat not found"}, status_code=404)
     form = await request.form()
     try:
-        res = asst.send(db, chat, str(form.get("text") or ""), get_settings(db)["assistant_model"])
+        # the Anthropic call takes seconds — off the event loop so other users keep browsing
+        res = await run_in_threadpool(asst.send, db, chat, str(form.get("text") or ""), get_settings(db)["assistant_model"])
     except asst.AssistantError as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
     return JSONResponse({"ok": True, "title": chat.title, **res})

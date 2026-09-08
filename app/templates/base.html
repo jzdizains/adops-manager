@@ -320,7 +320,8 @@
       }).catch(function () {});
     }
     poll();
-    setInterval(function () { if (!document.hidden) poll(); }, 4000);
+    setInterval(function () { if (!document.hidden) poll(); }, 5000);
+    document.addEventListener("adops:poll", poll);      // a page that just queued a job asks for an immediate check
     document.addEventListener("visibilitychange", function () { if (!document.hidden) poll(); });
   })();
 </script>

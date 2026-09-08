@@ -17,9 +17,26 @@ class Base(DeclarativeBase):
 
 engine = create_engine(
     config.DATABASE_URL,
-    connect_args={"check_same_thread": False} if config.DATABASE_URL.startswith("sqlite") else {},
+    connect_args={"check_same_thread": False, "timeout": 15} if config.DATABASE_URL.startswith("sqlite") else {},
 )
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+
+if config.DATABASE_URL.startswith("sqlite"):
+    from sqlalchemy import event as _event
+
+    @_event.listens_for(engine, "connect")
+    def _sqlite_tuning(dbapi_conn, _record):
+        """Several users + the background sweeps share one SQLite file. WAL lets pages
+        read while a sweep writes (the default journal makes every reader wait for the
+        writer), busy_timeout waits instead of failing, NORMAL sync is safe under WAL."""
+        cur = dbapi_conn.cursor()
+        try:
+            cur.execute("PRAGMA journal_mode=WAL")
+            cur.execute("PRAGMA synchronous=NORMAL")
+            cur.execute("PRAGMA busy_timeout=15000")
+            cur.execute("PRAGMA temp_store=MEMORY")
+        finally:
+            cur.close()
 
 
 # table -> {column: SQL type} — add new columns here when models grow.

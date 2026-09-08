@@ -278,7 +278,8 @@ async def account_transfer(request: Request, advertiser_id: str, db: Session = D
         return JSONResponse({"ok": False, "error": f"The {bc.name or bc.bc_id} wallet holds {bc.currency} {float(bc.balance or 0):.2f} — not enough for ${amount:.2f}."}, status_code=400)
     topup = models.TopUp(bc_id=bc.bc_id, advertiser_id=acct.advertiser_id, amount=amount, day=timeutil.local_date_str())
     try:
-        tiktok_api.bc_transfer(acct.access_token, bc.bc_id, acct.advertiser_id, amount, "RECHARGE")
+        from starlette.concurrency import run_in_threadpool
+        await run_in_threadpool(tiktok_api.bc_transfer, acct.access_token, bc.bc_id, acct.advertiser_id, amount, "RECHARGE")
     except tiktok_api.TikTokError as e:
         topup.ok = False; topup.detail = f"manual transfer FAILED: code={e.code} {e.message}"
         db.add(topup); db.commit()

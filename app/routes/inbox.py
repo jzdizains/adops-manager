@@ -52,6 +52,8 @@ async def dismiss(request: Request, db: Session = Depends(get_db)):
         if a:
             a.acknowledged = True
             db.commit()
+    from .alerts import bell_cache_clear
+    bell_cache_clear()
     if request.headers.get("x-requested-with") == "fetch":
         from fastapi.responses import JSONResponse
         return JSONResponse({"ok": True})

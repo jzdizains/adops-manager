@@ -2,6 +2,7 @@
 import os
 from pathlib import Path
 
+from starlette.concurrency import run_in_threadpool
 from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -39,6 +40,69 @@ SECURITY_HEADERS = {
 POSTBACK_ONLY_PATHS = ("/postback", "/health", "/t/escape", "/t/click", "/t/c", "/static")
 
 
+_AUTH_CACHE: dict = {}          # (uid, fp) -> (expires_at, User)  — a few seconds, cleared on logout/password change
+_AUTH_TTL_S = 8
+
+
+def _auth_user(request, uid, fp, ip: str, ua: str):
+    """Resolve the session's user (thread pool). Cached for a few seconds so the
+    4-second job poller and page assets don't each open a DB session."""
+    import time as _time
+    from . import auth_security as sec
+    from .database import SessionLocal as _SL
+    if not uid:
+        return None
+    key = (uid, fp)
+    hit = _AUTH_CACHE.get(key)
+    if hit and hit[0] > _time.time():
+        return hit[1]
+    d = _SL()
+    try:
+        user = auth.current_user(request, d)
+        if user is not None:
+            try:
+                sec.touch_seen(d, user, ip, ua)
+            except Exception:  # noqa: BLE001
+                d.rollback()
+            _AUTH_CACHE[key] = (_time.time() + _AUTH_TTL_S, user)
+        else:
+            _AUTH_CACHE.pop(key, None)
+        if len(_AUTH_CACHE) > 500:
+            _AUTH_CACHE.clear()
+        return user
+    finally:
+        d.close()
+
+
+def auth_cache_clear():
+    _AUTH_CACHE.clear()
+
+
+# ANY change to a user row (password, 2FA set up, deactivated, role, sign-out-everywhere,
+# deleted) empties the cache — no call site has to remember to.
+from sqlalchemy import event as _sa_event  # noqa: E402
+from . import models as _models  # noqa: E402
+
+
+@_sa_event.listens_for(_models.User, "after_update")
+@_sa_event.listens_for(_models.User, "after_insert")
+@_sa_event.listens_for(_models.User, "after_delete")
+def _user_changed(_mapper, _conn, _target):
+    _AUTH_CACHE.clear()
+
+
+def _record_probe(ip: str, path: str, ua: str) -> None:
+    from . import auth_security as sec
+    from .database import SessionLocal as _SL
+    d = _SL()
+    try:
+        sec.record_probe(d, ip, path, ua)
+    except Exception:  # noqa: BLE001
+        d.rollback()
+    finally:
+        d.close()
+
+
 def _not_found():
     from fastapi.responses import PlainTextResponse
     return PlainTextResponse("Not found", status_code=404)
@@ -64,17 +128,13 @@ async def require_login(request: Request, call_next):
     public = path.startswith(auth.PUBLIC_PATHS)
     if not public:
         import time as _time
-        from . import models as _models
-        from .database import SessionLocal as _SL
         sess = request.session
         if sess.get("authed"):
             # a changed password, a deactivated user, "sign out everywhere" or an
-            # expired session logs this device out
-            d = _SL()
-            try:
-                user = auth.current_user(request, d)
-            finally:
-                d.close()
+            # expired session logs this device out. The lookup runs OFF the event loop
+            # (a locked SQLite file must never stall every other user's request) and
+            # is remembered for a few seconds per session so pollers don't hit the DB.
+            user = await run_in_threadpool(_auth_user, request, sess.get("uid"), sess.get("fp"), sec.client_ip(request), request.headers.get("user-agent", ""))
             if user is None or _time.time() - float(sess.get("at") or 0) > config.SESSION_MAX_AGE_S:
                 sess.clear()
                 return RedirectResponse(f"{config.LOGIN_PATH}?err=expired", status_code=303)
@@ -82,23 +142,10 @@ async def require_login(request: Request, call_next):
             # 2FA is mandatory: until it's set up, only the setup page (and logout) is reachable
             if config.REQUIRE_2FA and not user.totp_secret and not (path.startswith("/login/2fa/setup") or path == "/logout"):
                 return RedirectResponse(f"{config.LOGIN_PATH}/2fa/setup", status_code=303)
-            d = _SL()
-            try:
-                sec.touch_seen(d, d.get(_models.User, user.id), sec.client_ip(request), request.headers.get("user-agent", ""))
-            except Exception:  # noqa: BLE001
-                d.rollback()
-            finally:
-                d.close()
         else:
             # someone who isn't logged in asked for a dashboard URL — remember who
             if not path.startswith(("/creatives/", "/static")) or path.count("/") < 3:
-                d = _SL()
-                try:
-                    sec.record_probe(d, sec.client_ip(request), path, request.headers.get("user-agent", ""))
-                except Exception:  # noqa: BLE001
-                    d.rollback()
-                finally:
-                    d.close()
+                await run_in_threadpool(_record_probe, sec.client_ip(request), path, request.headers.get("user-agent", ""))
             if hidden:
                 return _not_found()          # don't even hint that there is something to log in to
             return RedirectResponse(f"/login?next={path}", status_code=303)
