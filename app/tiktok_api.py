@@ -1067,15 +1067,17 @@ def create_spark_ad(access_token: str, advertiser_id: str, payload: dict) -> dic
 # Pixels, instant pages, lead forms
 # ---------------------------------------------------------------------------
 
-def list_pixels(access_token: str, advertiser_id: str, code: str | None = None) -> list[dict]:
-    """All pixels on an account (§9.7). ⚠ /pixel/list/ caps page_size at 20 —
-    paginate to collect everything."""
+def list_pixels(access_token: str, advertiser_id: str, code: str | None = None, pixel_id: str | None = None) -> list[dict]:
+    """All pixels on an account (§9.7), or one by `code` / `pixel_id` (the endpoint's own
+    filters). ⚠ /pixel/list/ caps page_size at 20 — paginate to collect everything."""
     out: list[dict] = []
     page = 1
     while True:
         params: dict = {"advertiser_id": advertiser_id, "page": page, "page_size": 20}
         if code:
             params["code"] = code
+        if pixel_id:
+            params["pixel_id"] = pixel_id
         data = api_get("/pixel/list/", access_token, params)
         batch = data.get("pixels", data.get("list", []))
         out.extend(batch)

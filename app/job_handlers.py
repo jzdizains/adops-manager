@@ -139,8 +139,18 @@ def _source_fix(db: Session, p: dict, job: models.Job) -> dict:
 @jobs.handler("pixels_sync")
 def _pixels_sync(db: Session, p: dict, job: models.Job) -> dict:
     from .routes import pixels
-    found, failed = pixels.sync_pixels_inventory(db)
-    return {"ok": failed == 0, "detail": f"{found} pixel(s) synced" + (f", {failed} account(s) failed" if failed else ""), "href": "/pixels"}
+    rep = pixels.sync_pixels_inventory(db, str(p.get("scope") or "all"))
+    n_fail = len(rep["failures"])
+    detail = f"{rep['pixels']} pixel(s) across {rep['ok_accounts']} of {rep['accounts']} account(s) ({rep['label']})"
+    if n_fail:
+        f0 = rep["failures"][0]
+        detail += f" — {n_fail} account(s) failed: {f0['account']}: {f0['friendly']}"
+        if n_fail > 1:
+            detail += " (see the Pixels page for all of them)"
+    if rep["accounts"] == 0:
+        return {"ok": False, "detail": "no enabled ad accounts to sync — connect TikTok first", "href": "/pixels"}
+    # partial failures are not a failed sync: the pixels that came back are in the list
+    return {"ok": rep["ok_accounts"] > 0, "detail": detail, "href": "/pixels"}
 
 
 @jobs.handler("pixel_link_all")

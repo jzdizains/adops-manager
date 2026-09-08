@@ -4,14 +4,36 @@
   <div><h1>Pixels</h1>
     <div class="muted">Your pixels across all accounts{% if synced_at %} · synced {{ synced_at|ago }}{% endif %}</div></div>
   <div class="actions">
-    <form method="post" action="/pixels/sync"><button class="btn" type="submit">↻ Sync pixels</button></form>
+    <form method="post" action="/pixels/sync" id="pxSyncForm"><input type="hidden" name="scope" value="all"><button class="btn" type="button" id="pxSyncBtn"{% if sync_pending %} disabled{% endif %}>{% if sync_pending %}↻ Syncing…{% else %}↻ Sync pixels{% endif %}</button></form>
+    <select id="pxScopeSrc" hidden>
+      <option value="all">Every connected account</option>
+      {% if bc_list %}<optgroup label="One Business Center">{% for b in bc_list %}<option value="bc:{{ b.bc_id }}">{{ b.name or b.bc_id }}</option>{% endfor %}</optgroup>{% endif %}
+      <optgroup label="One ad account">{% for a in accounts %}<option value="acct:{{ a.advertiser_id }}">{{ a.advertiser_name or a.advertiser_id }}</option>{% endfor %}</optgroup>
+    </select>
     <button class="btn primary" type="button" id="pxNewBtn">＋ New pixel</button>
   </div>
 </div>
 
+{% if sync_report and sync_report.failures %}
+<div class="card" id="pxSyncReport">
+  <div class="card-header"><span class="card-title">Last sync ({{ sync_report.label or 'every account' }}) — {{ sync_report.failures|length }} of {{ sync_report.accounts }} account(s) didn't answer</span>
+    <span class="card-meta">{{ sync_report.pixels }} pixel(s) from {{ sync_report.ok_accounts }} account(s) · {{ sync_report.at|ago }}</span>
+    <form method="post" action="/pixels/report/dismiss" style="margin-left:8px;"><input type="hidden" name="which" value="sync"><button class="btn sm ghost" type="submit" title="Hide this report">✕</button></form></div>
+  {% for f in sync_report.failures %}
+  <div class="attn-row">
+    <span class="attn-dot" style="color:var(--err);">●</span>
+    <span style="font-weight:600;">{{ f.account }}</span>
+    <span class="muted" style="font-size:12px;">{{ f.friendly }} {{ f.action }}</span>
+    <span class="clip mono" style="font-size:11px;max-width:260px;" title="TikTok said (code {{ f.code }}): {{ f.message }}">code {{ f.code }} · {{ f.message }}</span>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
 {% if provision_report %}
 <div class="card" id="pxReport">
-  <div class="card-header"><span class="card-title">Last run — “{{ provision_report.name }}”</span><span class="card-meta">{% if provision_report.pixel_id %}pixel {{ provision_report.pixel_id }}{% endif %}</span></div>
+  <div class="card-header"><span class="card-title">Last run — “{{ provision_report.name }}”</span><span class="card-meta">{% if provision_report.pixel_id %}pixel {{ provision_report.pixel_id }} · {% endif %}{{ provision_report.at|ago }}</span>
+    <form method="post" action="/pixels/report/dismiss" style="margin-left:8px;"><input type="hidden" name="which" value="provision"><button class="btn sm ghost" type="submit" title="Hide this report">✕</button></form></div>
   {% for s in provision_report.steps %}
   <div class="attn-row">
     <span class="attn-dot" style="color:var(--{{ 'ok' if s.ok else 'err' }});">●</span>
@@ -71,7 +93,21 @@
 </div>
 
 <div id="pxNewBox" hidden>
-  <form method="post" action="/pixels/provision" id="pxNewForm">
+  <div>
+  <div class="seg" id="pxMode" style="margin-bottom:14px;"><button type="button" class="on" data-mode="existing">Add existing pixel</button><button type="button" data-mode="new">Create a new one</button></div>
+  <form method="post" action="/pixels/add-existing" id="pxExistForm">
+    <label class="field"><span class="field-label">Pixel ID or pixel code</span>
+      <input type="text" name="pixel_ref" required placeholder="e.g. 7312345678901234567 or D1G8ABCDE7XYZ0…" autocomplete="off" class="mono">
+      <span class="hint">Ads Manager → Assets → Events → your pixel: the Pixel ID (digits) sits under its name; the pixel code is the short ID inside its base code snippet. Either works.</span></label>
+    <label class="field"><span class="field-label">Check it on</span>
+      <select name="advertiser_id">
+        <option value="">every connected account (finds where it lives)</option>
+        {% for a in accounts %}<option value="{{ a.advertiser_id }}">{{ a.advertiser_name or a.advertiser_id }}</option>{% endfor %}
+      </select>
+      <span class="hint">Nothing is created — the pixel is looked up on TikTok and added to this list, exactly like a sync would.</span></label>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary" type="submit">Add pixel</button></div>
+  </form>
+  <form method="post" action="/pixels/provision" id="pxNewForm" hidden>
     <label class="field"><span class="field-label">Pixel name</span>
       <input type="text" name="pixel_name" required placeholder="Main purchase pixel" autocomplete="off"></label>
     <div class="form-row">
@@ -88,17 +124,40 @@
     <input type="hidden" name="event_name" value="">
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary" type="submit">Create pixel</button></div>
   </form>
+  </div>
 </div>
 {% endblock %}
 {% block scripts %}
 <script>
 (function () {
   var box = document.getElementById("pxNewBox"), btn = document.getElementById("pxNewBtn");
+  var pxModal = null;
   btn.addEventListener("click", function () {
     var node = box.firstElementChild; box.hidden = false;
-    UI.modal({ title: "Create a new pixel", body: node, onClose: function () { box.appendChild(node); box.hidden = true; } });
+    pxModal = UI.modal({ title: "Add a pixel", body: node, onClose: function () { box.appendChild(node); box.hidden = true; pxModal = null; } });
+    setTimeout(function () { var f = node.querySelector("form:not([hidden]) input"); if (f) f.focus(); }, 30);
+  });
+  document.getElementById("pxMode").addEventListener("click", function (e) {
+    var b = e.target.closest("button[data-mode]"); if (!b) return;
+    this.querySelectorAll("button").forEach(function (x) { x.classList.toggle("on", x === b); });
+    var existing = b.dataset.mode === "existing";
+    document.getElementById("pxExistForm").hidden = !existing; document.getElementById("pxNewForm").hidden = existing;
+    var t = pxModal && pxModal.el && pxModal.el.querySelector(".modal-h span"); if (t) t.textContent = existing ? "Add a pixel" : "Create a new pixel";
   });
   if (/[?&]new=1/.test(location.search)) btn.click();
+  // Sync runs as a background job: show it running, and refresh the list the moment it finishes
+  var syncForm = document.getElementById("pxSyncForm"), syncBtn = document.getElementById("pxSyncBtn");
+  syncBtn.addEventListener("click", function () {
+    var p = UI.popover(syncBtn, '<div style="max-width:380px;"><div style="font-weight:700;margin-bottom:6px;">Pull pixels from</div><div style="display:flex;gap:6px;"><select style="flex:1;min-width:240px;">' + document.getElementById("pxScopeSrc").innerHTML + '</select><button type="button" class="btn sm primary">Sync</button></div><div class="hint" style="margin-top:6px;">Pixels already on TikTok (Ads Manager, Events Manager, a Business Center) are read into this list — nothing is created or changed.</div></div>', { alignRight: true });
+    p.querySelector(".primary").addEventListener("click", function () {
+      syncForm.scope.value = p.querySelector("select").value;
+      syncBtn.disabled = true; syncBtn.textContent = "↻ Syncing…"; syncForm.submit();
+    });
+  });
+  document.addEventListener("adops:job", function (e) {
+    var j = e.detail || {};
+    if (j.kind === "pixels_sync" || j.kind === "pixel_link_all") location.href = "/pixels?" + (j.status === "done" ? "ok" : "err") + "=" + encodeURIComponent(j.detail || (j.status === "done" ? "Pixels synced." : "Sync failed."));
+  });
   document.addEventListener("click", function (e) {
     var rn = e.target.closest(".px-rename");
     if (rn) {

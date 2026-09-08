@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
-from .. import models, queries, tiktok_api
+from .. import jobs, models, queries, tiktok_api
 from ..database import get_db
 from ..routes.launch import PIXEL_EVENTS
 from ..templating import render
@@ -45,6 +45,11 @@ def _link_pixel_to_bc_accounts(db: Session, token: str, bc_id: str,
     return ok_count, failed
 
 
+def _now_iso() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat()
+
+
 def _upsert(db: Session, pixel_id: str, name: str = "", code: str = "",
             owner_adv: str = "", owner_bc: str = "") -> models.PixelRecord:
     row = db.query(models.PixelRecord).filter_by(pixel_id=pixel_id).first()
@@ -60,6 +65,32 @@ def _upsert(db: Session, pixel_id: str, name: str = "", code: str = "",
     if owner_bc:
         row.owner_bc_id = owner_bc
     return row
+
+
+REPORT_TTL_H = 24
+
+
+def _fresh_report(raw: str) -> dict | None:
+    """A stored run report, if it is less than a day old (older ones — and the legacy
+    ones without a timestamp — are not shown; the row list is the truth anyway)."""
+    from datetime import datetime, timedelta, timezone
+    if not raw:
+        return None
+    try:
+        rep = json.loads(raw)
+        at = datetime.fromisoformat(rep.get("at", ""))
+    except (ValueError, TypeError, AttributeError):
+        return None
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=timezone.utc)
+    return rep if datetime.now(timezone.utc) - at < timedelta(hours=REPORT_TTL_H) else None
+
+
+@router.post("/pixels/report/dismiss")
+def dismiss_report(which: str = Form("provision"), db: Session = Depends(get_db)):
+    key = "pixel_sync_report" if which == "sync" else "pixel_provision_report"
+    queries.set_setting(db, key, "")
+    return RedirectResponse("/pixels", status_code=303)
 
 
 @router.get("/pixels")
@@ -97,39 +128,65 @@ def pixels_page(request: Request, db: Session = Depends(get_db)):
             "target_bc": target_bc,
         })
 
-    report = None
-    raw = queries.get_setting(db, "pixel_provision_report", "")
-    if raw:
-        try:
-            report = json.loads(raw)
-        except json.JSONDecodeError:
-            pass
+    # run reports are shown for a day (or until dismissed) — not forever
+    report = _fresh_report(queries.get_setting(db, "pixel_provision_report", ""))
+    sync_report = _fresh_report(queries.get_setting(db, "pixel_sync_report", ""))
     return render(request, "pixels.html", {
-        "title": "Pixels", "rows": rows, "accounts": accounts,
+        "title": "Pixels", "rows": rows, "accounts": accounts, "sync_report": sync_report,
+        "bc_list": sorted(bcs.values(), key=lambda b: (b.name or b.bc_id).lower()),
+        "sync_pending": jobs.pending(db, "pixels_sync") is not None,
         "pixel_events": PIXEL_EVENTS, "provision_report": report,
-        "synced_at": queries.get_setting(db, "pixels_synced_at", "")[:16].replace("T", " "),
+        "synced_at": queries.get_setting(db, "pixels_synced_at", ""),
         "ok": request.query_params.get("ok", ""), "err": request.query_params.get("err", ""),
     })
 
 
+def _scope(db: Session, scope: str) -> tuple[list[models.AdAccount], str]:
+    """`all` | `bc:<bc id>` | `acct:<advertiser id>` → the enabled accounts to pull from + a label."""
+    accounts = queries.enabled_accounts(db)
+    if scope.startswith("bc:"):
+        bc_id = scope[3:]
+        bc = db.query(models.BusinessCenter).filter_by(bc_id=bc_id).first()
+        return [a for a in accounts if a.owner_bc_id == bc_id], f"BC {(bc.name if bc else '') or bc_id}"
+    if scope.startswith("acct:"):
+        adv = scope[5:]
+        acct = next((a for a in accounts if a.advertiser_id == adv), None)
+        return ([acct] if acct else []), (acct.advertiser_name or adv) if acct else adv
+    return accounts, "every account"
+
+
 @router.post("/pixels/sync")
-def sync_pixels(db: Session = Depends(get_db)):
-    """Queue: pull every enabled account's pixels into the inventory."""
-    from .. import jobs
+def sync_pixels(scope: str = Form("all"), db: Session = Depends(get_db)):
+    """Queue: pull pixels from every enabled account, one Business Center's accounts, or one account."""
+    from urllib.parse import quote
     if not queries.any_access_token(db):
         return RedirectResponse("/pixels?err=Connect+TikTok+first", status_code=303)
-    job, created = jobs.enqueue_once(db, "pixels_sync", "Sync pixels from every account", {}, href="/pixels")
+    accounts, label = _scope(db, scope)
+    if not accounts:
+        return RedirectResponse("/pixels?err=" + quote(f"No enabled ad account under {label} to sync from."), status_code=303)
+    job, created = jobs.enqueue_once(db, "pixels_sync", f"Sync pixels — {label}", {"scope": scope}, href="/pixels")
     if not created:
         return RedirectResponse(f"/pixels?ok=A+sync+is+already+{job.status}+—+hold+on.", status_code=303)
-    return RedirectResponse("/pixels?ok=Syncing+in+the+background+—+you%27ll+get+a+notification.", status_code=303)
+    return RedirectResponse("/pixels?ok=" + quote(f"Syncing pixels from {label} ({len(accounts)} account(s)) — the list refreshes when it's done."), status_code=303)
 
 
-def sync_pixels_inventory(db: Session) -> tuple[int, int]:
-    """The pixel sync itself (runs in a job). Returns (found, failed_accounts)."""
+def sync_pixels_inventory(db: Session, scope: str = "all") -> dict:
+    """The pixel sync itself (runs in a job). Every enabled account's /pixel/list/ is
+    pulled; the result — distinct pixels, accounts that answered, and WHY any account
+    failed (TikTok's code + message, explained) — is saved as `pixel_sync_report` so
+    the Pixels page can show it instead of a bare "N failed"."""
     import time as _time
     from datetime import datetime, timezone
-    found, errors = 0, 0
-    for acct in queries.enabled_accounts(db):
+    from .. import error_messages
+    seen: set[str] = set()
+    ok_accounts, failures = 0, []
+    accounts, label = _scope(db, scope)
+    for acct in accounts:
+        if not acct.access_token:
+            failures.append({"account": acct.advertiser_name or acct.advertiser_id, "advertiser_id": acct.advertiser_id,
+                             "code": "no-token", "message": "no access token on this account — reconnect TikTok",
+                             "friendly": "Not connected.", "action": "Reconnect TikTok (Ad accounts → Connect)."})
+            continue
         try:
             for p in tiktok_api.list_pixels(acct.access_token, acct.advertiser_id):
                 pid = str(p.get("pixel_id", ""))
@@ -138,14 +195,20 @@ def sync_pixels_inventory(db: Session) -> tuple[int, int]:
                 _upsert(db, pid, name=p.get("pixel_name", ""),
                         code=p.get("pixel_code", ""),
                         owner_adv=acct.advertiser_id)
-                found += 1
-        except tiktok_api.TikTokError:
-            errors += 1
+                seen.add(pid)
+            ok_accounts += 1
+        except tiktok_api.TikTokError as e:
+            ex = error_messages.explain(e.code, e.message)
+            failures.append({"account": acct.advertiser_name or acct.advertiser_id, "advertiser_id": acct.advertiser_id,
+                             "code": str(e.code), "message": (e.message or "")[:300],
+                             "friendly": ex["friendly"], "action": ex["action"]})
         _time.sleep(0.1)
     db.commit()
-    queries.set_setting(db, "pixels_synced_at",
-                        datetime.now(timezone.utc).isoformat())
-    return found, errors
+    report = {"at": datetime.now(timezone.utc).isoformat(), "pixels": len(seen), "accounts": len(accounts),
+              "ok_accounts": ok_accounts, "failures": failures[:50], "scope": scope, "label": label}
+    queries.set_setting(db, "pixel_sync_report", json.dumps(report))
+    queries.set_setting(db, "pixels_synced_at", report["at"])
+    return report
 
 
 @router.post("/pixels/{record_id}/move-to-bc")
@@ -230,6 +293,52 @@ def remove(record_id: int, db: Session = Depends(get_db)):
 
 
 # ---------------------------------------------------------------------------
+# Add a pixel that already exists in Ads Manager — by Pixel ID or pixel code.
+# Checked against TikTok (/pixel/list/ with the id/code filter) on the chosen
+# account, or on every connected account, then stored like a synced one.
+# ---------------------------------------------------------------------------
+
+@router.post("/pixels/add-existing")
+def add_existing(pixel_ref: str = Form(""), advertiser_id: str = Form(""), db: Session = Depends(get_db)):
+    from urllib.parse import quote
+    from .. import error_messages
+    ref = (pixel_ref or "").strip()
+    if not ref or not ref.replace("_", "").replace("-", "").isalnum() or len(ref) > 64:
+        return RedirectResponse("/pixels?err=" + quote("Paste the Pixel ID (digits) or the pixel code from Ads Manager → Events."), status_code=303)
+    if db.query(models.PixelRecord).filter(
+            (models.PixelRecord.pixel_id == ref) | (models.PixelRecord.pixel_code == ref)).first():
+        return RedirectResponse("/pixels?ok=" + quote(f"{ref} is already in the list."), status_code=303)
+    accounts = queries.enabled_accounts(db)
+    if advertiser_id:
+        accounts = [a for a in accounts if a.advertiser_id == advertiser_id]
+    if not accounts:
+        return RedirectResponse("/pixels?err=" + quote("No connected ad account to check the pixel on — connect TikTok first."), status_code=303)
+    by_id = ref.isdigit()
+    errors: list[str] = []
+    for acct in accounts:
+        if not acct.access_token:
+            continue
+        try:
+            found = tiktok_api.list_pixels(acct.access_token, acct.advertiser_id, **({"pixel_id": ref} if by_id else {"code": ref}))
+        except tiktok_api.TikTokError as e:
+            ex = error_messages.explain(e.code, e.message)
+            errors.append(f"{acct.advertiser_name or acct.advertiser_id}: {ex['friendly']} (code {e.code})")
+            continue
+        for p in found:
+            pid, pcode = str(p.get("pixel_id", "")), str(p.get("pixel_code", ""))
+            if (by_id and pid == ref) or (not by_id and pcode.lower() == ref.lower()):
+                row = _upsert(db, pid, name=p.get("pixel_name", ""), code=pcode, owner_adv=acct.advertiser_id)
+                db.commit()
+                return RedirectResponse("/pixels?ok=" + quote(f"Added “{row.pixel_name or pid}” (pixel {pid}) from {acct.advertiser_name or acct.advertiser_id}."), status_code=303)
+    where = "that account" if advertiser_id else f"any of your {len(accounts)} connected account(s)"
+    msg = (f"TikTok doesn't list pixel {ref} on {where}. It lives on an ad account that isn't connected here, "
+           "or it's a Business Center pixel that isn't linked to these accounts yet (Business Center → Assets → Pixels → link).")
+    if errors:
+        msg += " Also: " + "; ".join(errors[:3])
+    return RedirectResponse("/pixels?err=" + quote(msg), status_code=303)
+
+
+# ---------------------------------------------------------------------------
 # Create (collapsed section) — pixel + chosen event, optional BC share
 # ---------------------------------------------------------------------------
 
@@ -258,7 +367,7 @@ def provision(pixel_name: str = Form(...), advertiser_id: str = Form(...),
         steps.append({"step": "Create pixel", "ok": False,
                       "detail": f"code {e.code}: {str(e.message)[:160]}"})
         queries.set_setting(db, "pixel_provision_report",
-                            json.dumps({"name": pixel_name, "steps": steps}))
+                            json.dumps({"name": pixel_name, "steps": steps, "at": _now_iso()}))
         return RedirectResponse("/pixels?err=Pixel+creation+failed+—+see+the+report", status_code=303)
 
     labels = dict(PIXEL_EVENTS)
@@ -295,5 +404,5 @@ def provision(pixel_name: str = Form(...), advertiser_id: str = Form(...),
                       "detail": "the account has no Business Center mapped — sync first"})
 
     queries.set_setting(db, "pixel_provision_report",
-                        json.dumps({"name": pixel_name, "pixel_id": pixel_id, "steps": steps}))
+                        json.dumps({"name": pixel_name, "pixel_id": pixel_id, "steps": steps, "at": _now_iso()}))
     return RedirectResponse("/pixels?ok=Pixel+created+—+see+the+step+report", status_code=303)
