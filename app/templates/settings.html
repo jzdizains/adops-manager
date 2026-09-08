@@ -180,8 +180,9 @@
   </div>
   <div id="trClickflare" {{ 'hidden' if s.tracking_mode != 'clickflare' }} style="margin-bottom:12px;padding:10px 12px;border:1px solid var(--border);border-radius:12px;background:var(--surface-2);font-size:12.5px;line-height:1.6;">
     <b>In ClickFlare, three things:</b><br>
-    <b>1.</b> Traffic source (TikTok) → URL parameters: map the parameter <span class="mono">{{ s.url_param }}</span> to <b>tracking field 1</b> (the launcher fills it with the campaign name — that's what the P&amp;L joins on) and <span class="mono">ttclid</span> as the <b>external id</b>. The launcher also sends <span class="mono">tt_cid / tt_aid / tt_ad</span> (campaign, ad group, creative ids) if you want them in further tracking fields.<br>
-    <b>2.</b> Traffic source → <b>Postback URL</b>: paste the ClickFlare postback below (step 3) and pick the conversion events it should fire on. Every conversion then lands here in real time with the campaign name, payout and TikTok click id.<br>
+    <b>1.</b> Traffic source (TikTok): ClickFlare's own TikTok template already has <span class="mono">campaign_name = __CAMPAIGN_NAME__</span> in tracking field <b>{{ s.clickflare_field }}</span> and <span class="mono">ttclid</span> as the <b>external id</b> — nothing to add. If your template puts the campaign name in a different field, change the number here:
+    <label style="display:inline-flex;align-items:center;gap:6px;margin-left:6px;">tracking field <input type="number" name="clickflare_field" value="{{ s.clickflare_field }}" min="1" max="20" style="width:64px;padding:4px 8px;"></label> (save, and the postback URL below updates).<br>
+    <b>2.</b> Traffic source → <b>Passing conversion info</b>: switch on <b>Traffic source postback URL</b>, paste the URL from step 3 and tick every conversion event it should fire on. The TikTok events themselves (CompleteRegistration, Download…) are mapped in <b>Conversion API Integrations</b> right under it, not in the parameter table. Every conversion then lands here in real time with the campaign name, payout and TikTok click id.<br>
     <b>3.</b> Use your ClickFlare campaign URL (or lander with <span class="mono">cpid=</span>) as the preset's landing URL — the launcher appends the parameters above. Leave <b>Events API</b> on the next tab <b>off</b> if ClickFlare already sends events to TikTok, or TikTok gets every purchase twice.
   </div>
   <div id="trOwn" {{ 'hidden' if s.tracking_mode == 'clickflare' }}>
@@ -204,7 +205,7 @@
     {% if s.tracking_mode == 'clickflare' %}
     <label class="field"><span class="field-label">ClickFlare → traffic source postback URL</span>
       <input type="text" readonly value="{{ clickflare_postback }}" onclick="this.select()" style="font-family:var(--font-mono);font-size:12px;background:var(--panel-hover);">
-      <span class="hint">These are ClickFlare's own tokens: <span class="mono">{trackingField1}</span> = the campaign name you mapped in step 1, <span class="mono">{payout}</span>, <span class="mono">{txid}</span> (dedupes retries), <span class="mono">{external_id}</span> = the TikTok click id. Change <span class="mono">event=purchase</span> per conversion type if you fire several. The <span class="mono">key</span> is this dashboard's postback password — keep the URL private.</span></label>
+      <span class="hint">These are ClickFlare's own tokens: <span class="mono">{trackingField{{ s.clickflare_field }}}</span> = the campaign name (step 1), <span class="mono">{payout}</span>, <span class="mono">{txid}</span> (dedupes retries), <span class="mono">{external_id}</span> = the TikTok click id. Change <span class="mono">event=purchase</span> per conversion type if you fire several. The <span class="mono">key</span> is this dashboard's postback password — keep the URL private.</span></label>
     {% else %}
     <label class="field"><span class="field-label">Glitchy → postback URL</span>
       <input type="text" readonly value="{{ postback_template }}" onclick="this.select()" style="font-family:var(--font-mono);font-size:12px;background:var(--panel-hover);">

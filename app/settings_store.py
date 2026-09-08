@@ -62,6 +62,7 @@ DEFAULTS: dict = {
                                    # redirect = the ad points at /t/c which records the click, then redirects
                                    # clickflare = ClickFlare is the tracker; it postbacks every conversion here
     "tracking_domain": "",         # public host the landers/ads reach this app on (empty = POSTBACK_HOST or this site)
+    "clickflare_field": 3,         # ClickFlare tracking field that holds the TikTok campaign name (3 in ClickFlare's TikTok template)
     "events_api_enabled": False,   # forward postbacks with a ttclid to TikTok
     "events_pixel_code": "",       # pixel ID to fire to; empty = auto-resolve
                                    # from the source's launch (PixelCache)
@@ -132,6 +133,7 @@ def save_settings(db: Session, values: dict):
         clean["source_mode"] = "campaign"
     if clean.get("tracking_mode") not in ("direct", "redirect", "clickflare"):
         clean["tracking_mode"] = "direct"
+    clean["clickflare_field"] = min(max(int(clean.get("clickflare_field") or 3), 1), 20)
     clean["tracking_domain"] = str(clean.get("tracking_domain") or "").strip().lower().replace("https://", "").replace("http://", "").strip("/")
     if clean.get("events_event_mode") not in ("campaign", "fixed"):
         clean["events_event_mode"] = "campaign"
