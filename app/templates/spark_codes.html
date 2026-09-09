@@ -116,12 +116,17 @@ Slides1, #SD93QJYXLZVH3jCUI09AWIYt2CfB…, carousel"></textarea>
       var a = ev.target.closest("[data-act]"); if (!a) return; p.close();
       if (a.dataset.act === "copy") { navigator.clipboard && navigator.clipboard.writeText(d.code); adopsToast && adopsToast("ok", "Code copied"); }
       else if (a.dataset.act === "delete") UI.confirm({ title: "Delete “" + d.name + "”?", text: "Campaigns already launched with it keep running.", ok: "Delete", danger: true }).then(function (y) { if (y) fetch("/spark-codes/" + d.id + "/delete", { method: "POST", credentials: "same-origin" }).then(function () { location.reload(); }); });
-      else if (a.dataset.act === "rename") {
-        var m = UI.modal({ title: "Edit spark", body: '<form method="post" action="/spark-codes/' + d.id + '/update" id="spEdit"><label class="field"><span class="field-label">Name</span><input type="text" name="name" value="' + UI.esc(d.name) + '"></label><label class="field"><span class="field-label">Auth code</span><input type="text" name="code" value="' + UI.esc(d.code) + '" class="mono"></label><label class="field"><span class="field-label">Source (P&amp;L)</span><input type="text" name="source" value="' + UI.esc(d.source) + '" class="mono"></label></form>', footer: '<button type="button" class="btn" data-close>Cancel</button><button type="button" class="btn primary" id="spEditSave">Save</button>' });
-        m.el.querySelector("#spEditSave").addEventListener("click", function () { m.el.querySelector("#spEdit").submit(); });
-      }
+      else if (a.dataset.act === "rename") openEdit(d);
     });
   });
+  function openEdit(d) {
+    var m = UI.modal({ title: "Edit spark", body: '<form method="post" action="/spark-codes/' + d.id + '/update" id="spEdit"><label class="field"><span class="field-label">Name</span><input type="text" name="name" value="' + UI.esc(d.name) + '"></label><label class="field"><span class="field-label">Auth code</span><input type="text" name="code" value="' + UI.esc(d.code) + '" class="mono"><span class="hint">Paste the fresh code from the creator (post → ⋯ → Ad settings → Ad authorization).</span></label><label class="field"><span class="field-label">Source (P&amp;L)</span><input type="text" name="source" value="' + UI.esc(d.source) + '" class="mono"></label></form>', footer: '<button type="button" class="btn" data-close>Cancel</button><button type="button" class="btn primary" id="spEditSave">Save</button>' });
+    m.el.querySelector("#spEditSave").addEventListener("click", function () { m.el.querySelector("#spEdit").submit(); });
+    setTimeout(function () { try { m.el.querySelector('[name="code"]').focus(); m.el.querySelector('[name="code"]').select(); } catch (e) {} }, 30);
+  }
+  // arrived from a failed launch's "Replace the spark code" → open that row's editor
+  var editId = new URLSearchParams(location.search).get("edit");
+  if (editId) { var er = document.querySelector('.sp-row[data-id="' + editId + '"]'); if (er) openEdit(er.dataset); }
 })();
 </script>
 {% endblock %}

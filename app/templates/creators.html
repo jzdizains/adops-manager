@@ -1,0 +1,251 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Creators</h1>
+    <div class="muted">Which TikTok profiles each ad account can run ads as · a spark ad only launches when the post's creator is one of them</div></div>
+  <div class="actions">
+    <form method="post" action="/creators/sync" id="crSyncForm"><input type="hidden" name="scope" value="all"><button class="btn" type="button" id="crSyncBtn"{% if sync_pending %} disabled{% endif %}>{% if sync_pending %}↻ Refreshing…{% else %}↻ Refresh{% endif %}</button></form>
+    <select id="crScopeSrc" hidden>
+      <option value="all">Every connected account</option>
+      {% if bc_list %}<optgroup label="One Business Center">{% for b in bc_list %}<option value="bc:{{ b.bc_id }}">{{ b.name or b.bc_id }}</option>{% endfor %}</optgroup>{% endif %}
+      <optgroup label="One ad account">{% for a in accounts %}<option value="acct:{{ a.advertiser_id }}">{{ a.advertiser_name or a.advertiser_id }}</option>{% endfor %}</optgroup>
+    </select>
+    <button class="btn primary" type="button" id="crConnectBtn">＋ Connect a creator</button>
+  </div>
+</div>
+
+{% if auth_report %}
+<div class="card" id="crAuthReport">
+  <div class="card-header"><span class="card-title">Spark code {{ auth_report.code }} — usable on {{ auth_report.ok }} of {{ auth_report.total }} account(s) ({{ auth_report.label }})</span>
+    <span class="card-meta">{{ auth_report.at|ago }}</span>
+    <form method="post" action="/creators/report/dismiss" style="margin-left:8px;"><input type="hidden" name="which" value="auth"><button class="btn sm ghost" type="submit" title="Hide this report">✕</button></form></div>
+  {% for r in auth_report.results %}
+  <div class="attn-row">
+    <span class="attn-dot" style="color:var(--{{ 'ok' if r.ok else 'err' }});">●</span>
+    <span style="font-weight:600;">{{ r.account }}</span>
+    <span class="clip muted" style="font-size:12px;flex:1;min-width:0;" title="{{ r.message }}">{{ r.message }}</span>
+    {% if not r.ok %}<button type="button" class="btn sm cr-fix" data-acct="{{ r.advertiser_id }}" data-code="{{ auth_report.code_full or '' }}">Fix…</button>{% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if sync_report and sync_report.failures %}
+<div class="card" id="crSyncReport">
+  <div class="card-header"><span class="card-title">Last refresh ({{ sync_report.label or 'every account' }}) — {{ sync_report.failures|length }} of {{ sync_report.accounts }} account(s) didn't answer</span>
+    <span class="card-meta">{{ sync_report.identities }} identities from {{ sync_report.ok_accounts }} account(s) · {{ sync_report.at|ago }}</span>
+    <form method="post" action="/creators/report/dismiss" style="margin-left:8px;"><input type="hidden" name="which" value="sync"><button class="btn sm ghost" type="submit" title="Hide this report">✕</button></form></div>
+  {% for f in sync_report.failures %}
+  <div class="attn-row">
+    <span class="attn-dot" style="color:var(--err);">●</span>
+    <span style="font-weight:600;">{{ f.account }}</span>
+    <span class="muted" style="font-size:12px;">{{ f.friendly }} {{ f.action }}</span>
+    <span class="clip mono" style="font-size:11px;max-width:260px;" title="TikTok said (code {{ f.code }}): {{ f.message }}">code {{ f.code }} · {{ f.message }}</span>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<div class="card" style="padding:0;overflow:hidden;">
+  <div style="display:flex;gap:8px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--border-soft);flex-wrap:wrap;">
+    <div class="search-wrap" style="max-width:260px;"><input type="text" id="crQ" placeholder="Filter accounts, creators…"></div>
+    <form method="get" action="/creators" style="margin:0;display:flex;gap:6px;align-items:center;">
+      <select name="bc" onchange="this.form.submit()" style="min-width:180px;">
+        <option value="">Every Business Center</option>
+        {% for b in bc_list %}<option value="{{ b.bc_id }}"{% if want_bc == b.bc_id %} selected{% endif %}>{{ b.name or b.bc_id }}</option>{% endfor %}
+      </select>
+      {% if want_acct %}<a class="btn sm" href="/creators" style="white-space:nowrap;">Show all accounts</a>{% endif %}
+    </form>
+    <span class="muted" style="margin-left:auto;font-size:12px;" id="crCount">{{ rows|length }} account(s) · {{ n_with }} with identities · {{ rows|length - n_fetched }} never refreshed</span>
+  </div>
+  {% if rows %}
+  <table class="data">
+    <thead><tr><th>Ad account</th><th>Business Center</th><th>Can run ads as</th><th>Refreshed</th><th class="num"></th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr class="cr-row" data-search="{{ (r.a.advertiser_name ~ ' ' ~ r.a.advertiser_id ~ ' ' ~ ((r.bc.name if r.bc else '') or '') ~ ' ' ~ (r.idents|map(attribute='display_name')|join(' ')))|lower }}" data-acct="{{ r.a.advertiser_id }}">
+        <td><b>{{ r.a.advertiser_name or r.a.advertiser_id }}</b><div class="mono muted" style="font-size:11px;">{{ r.a.advertiser_id }}</div></td>
+        <td class="muted">{{ (r.bc.name if r.bc else '') or r.a.owner_bc_id or '—' }}</td>
+        <td>
+          {% if r.idents %}
+          <div class="cr-chips">
+            {% for i in r.idents %}
+            <span class="cr-chip cr-{{ i.identity_type|lower }}" title="{{ type_labels.get(i.identity_type, i.identity_type) }} — {{ type_help.get(i.identity_type, '') }}">
+              {% if i.profile_image %}<img src="{{ i.profile_image }}" alt="" loading="lazy">{% else %}<span class="cr-ph">{{ (i.display_name or '?')[:1]|upper }}</span>{% endif %}
+              <span>{{ i.display_name or ('…' ~ i.identity_id[-6:]) }}</span>
+              <em>{{ {'TT_USER': 'linked', 'BC_AUTH_TT': 'BC', 'AUTH_CODE': 'spark', 'CUSTOMIZED_USER': 'custom'}.get(i.identity_type, i.identity_type) }}</em>
+            </span>
+            {% endfor %}
+          </div>
+          {% elif r.fetched %}<span class="muted" style="font-size:12px;">none — no profile is linked to this account yet</span>
+          {% else %}<span class="muted" style="font-size:12px;">not refreshed yet</span>{% endif %}
+        </td>
+        <td class="muted" style="font-size:12px;white-space:nowrap;">{% if r.fetched %}{{ r.fetched|ago }}{% else %}—{% endif %}</td>
+        <td class="num" style="white-space:nowrap;"><button type="button" class="btn sm cr-fix" data-acct="{{ r.a.advertiser_id }}">Authorise a code…</button></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty"><div class="empty-title">No connected ad accounts</div>Connect TikTok on the <a href="/accounts">Ad accounts</a> page first.</div>
+  {% endif %}
+</div>
+
+<div class="card" style="margin-top:14px;">
+  <div class="card-header"><span class="card-title">What these mean</span></div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;font-size:12.5px;">
+    {% for t, label in type_labels.items() %}
+    <div><span class="cr-chip cr-{{ t|lower }}" style="margin-bottom:6px;"><span class="cr-ph">{{ label[:1] }}</span><span>{{ label }}</span><em>{{ {'TT_USER': 'linked', 'BC_AUTH_TT': 'BC', 'AUTH_CODE': 'spark', 'CUSTOMIZED_USER': 'custom'}.get(t, t) }}</em></span><div class="muted">{{ type_help[t] }}</div></div>
+    {% endfor %}
+  </div>
+</div>
+
+{# ---- Connect a creator: 3-step pop-up ---- #}
+<div id="crBox" hidden>
+  <div>
+    <div class="cz-steps" id="crSteps">
+      <button type="button" class="on" data-step="1"><span class="pf-no">1</span>How<span class="cz-step-sub" id="crSub1"></span></button>
+      <button type="button" data-step="2"><span class="pf-no">2</span>Details<span class="cz-step-sub" id="crSub2"></span></button>
+      <button type="button" data-step="3"><span class="pf-no">3</span>Result<span class="cz-step-sub" id="crSub3"></span></button>
+    </div>
+    <section class="cz-step" data-step="1">
+      <div class="cz-step-head"><div><b>How do you want to connect the creator?</b></div></div>
+      <div class="cr-how">
+        <button type="button" class="cr-how-card on" data-how="code">
+          <b>I have a spark code</b>
+          <span>Paste the code the creator generated (post → ⋯ → Ad settings → Ad authorization). The post becomes usable on the accounts you choose right away — this is what fixes “no identity owns the post”.</span>
+          <em>Recommended · works in seconds</em>
+        </button>
+        <button type="button" class="cr-how-card" data-how="profile">
+          <b>Link the creator's TikTok profile</b>
+          <span>Gives every account in the Business Center the creator's whole authorised catalogue (and lets Auto-grab find their posts). Only the creator can approve it — in TikTok, not here.</span>
+          <em>Needs the creator to accept a request</em>
+        </button>
+      </div>
+    </section>
+    <section class="cz-step" data-step="2" hidden>
+      <div id="crCodePane">
+        <div class="cz-step-head"><div><b>Authorise a spark code</b> <span class="muted">· the code is checked with TikTok and saved to your Sparks list</span></div></div>
+        <div class="form-row">
+          <label class="field" style="grid-column:1/-1;"><span class="field-label">Spark code</span>
+            <textarea id="crCode" rows="2" class="mono" style="min-height:52px;font-size:12px;" placeholder="#HEO5xA4whgKls1Q8rJOuNp7p2KGP…"></textarea>
+            <select id="crSparkPick" hidden></select>
+            <span class="hint">Or pick one you already saved: <a href="#" id="crPickSaved">choose from Sparks…</a></span></label>
+          <label class="field"><span class="field-label">Post type</span>
+            <select id="crType"><option value="VIDEO">Video</option><option value="CAROUSEL">Carousel (photos)</option></select>
+            <span class="hint">Only used when the code is new to your list; the launcher checks the real type anyway.</span></label>
+          <label class="field"><span class="field-label">Name <span class="muted">(optional)</span></span>
+            <input type="text" id="crName" placeholder="e.g. hook v3 — @creator"></label>
+          <label class="field" style="grid-column:1/-1;"><span class="field-label">Authorise on</span>
+            <select id="crScope">
+              <option value="all">Every connected account</option>
+              {% if bc_list %}<optgroup label="One Business Center">{% for b in bc_list %}<option value="bc:{{ b.bc_id }}">{{ b.name or b.bc_id }}</option>{% endfor %}</optgroup>{% endif %}
+              <optgroup label="One ad account">{% for a in accounts %}<option value="acct:{{ a.advertiser_id }}">{{ a.advertiser_name or a.advertiser_id }}</option>{% endfor %}</optgroup>
+            </select>
+            <span class="hint">One account answers right here; a Business Center or everything runs in the background and reports back on this page.</span></label>
+        </div>
+      </div>
+      <div id="crProfilePane" hidden>
+        <div class="cz-step-head"><div><b>Link the creator's TikTok profile</b> <span class="muted">· done in TikTok, approved by the creator</span></div></div>
+        <div class="cr-guide">
+          <div class="cr-guide-step"><span class="pf-no">1</span><div><b>Open the Business Center the ad accounts belong to</b><div class="muted">Business Center → <b>Assets</b> → <b>TikTok accounts</b> → <b>Add TikTok account</b> → <b>Request access</b>, and enter the creator's handle.</div>
+            <div class="cr-links">{% for b in bc_list %}<a class="btn sm" href="https://business.tiktok.com/manage/overview?org_id={{ b.bc_id }}" target="_blank" rel="noopener">{{ b.name or b.bc_id }} ↗</a>{% endfor %}</div></div></div>
+          <div class="cr-guide-step"><span class="pf-no">2</span><div><b>The creator approves it in the TikTok app</b><div class="muted">They get a notification (Settings and privacy → Business Center requests). Until they tap Approve nothing changes — chase them, not the dashboard.</div></div></div>
+          <div class="cr-guide-step"><span class="pf-no">3</span><div><b>Assign the profile to the ad accounts</b><div class="muted">Back in Business Center → Assets → TikTok accounts → the creator → <b>Assign</b> → tick the ad accounts (or Ads Manager → Assets → Identity on each account).</div></div></div>
+          <div class="cr-guide-step"><span class="pf-no">4</span><div><b>Refresh here</b><div class="muted">Press <b>Refresh</b> on this page (or Next) — the creator shows up as a <em>Business Center</em> identity on every assigned account, and their authorised posts can be launched or Auto-grabbed.</div></div></div>
+        </div>
+        <div class="hint" style="margin-top:8px;">No API can do this on the creator's behalf — TikTok requires the profile owner's consent, which is why this step lives in TikTok.</div>
+      </div>
+    </section>
+    <section class="cz-step" data-step="3" hidden>
+      <div class="cz-step-head"><div><b id="crResTitle">Result</b></div></div>
+      <div id="crResult"></div>
+    </section>
+    <div class="cz-foot">
+      <button type="button" class="btn ghost" id="crBack" hidden>← Back</button>
+      <span class="muted" id="crFootHint" style="flex:1;text-align:right;font-size:12px;"></span>
+      <button type="button" class="btn primary" id="crNext">Next →</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="/static/picker.js?v={{ STATIC_V }}"></script>
+<script>
+(function () {
+  var box = document.getElementById("crBox"), node = box.firstElementChild, modal = null, step = 1, how = "code", busy = false, lastRes = null;
+  var stepsBar = document.getElementById("crSteps"), nextBtn = document.getElementById("crNext"), backBtn = document.getElementById("crBack"), hint = document.getElementById("crFootHint");
+  var esc = UI.esc;
+  function show(n) {
+    step = n;
+    node.querySelectorAll(".cz-step").forEach(function (s) { s.hidden = Number(s.dataset.step) !== n; });
+    stepsBar.querySelectorAll("button").forEach(function (b) { var k = Number(b.dataset.step); b.classList.toggle("on", k === n); b.classList.toggle("done", k < n); });
+    document.getElementById("crCodePane").hidden = how !== "code"; document.getElementById("crProfilePane").hidden = how !== "profile";
+    document.getElementById("crSub1").textContent = how === "code" ? "spark code" : "link a profile";
+    backBtn.hidden = n === 1;
+    if (n === 1) { nextBtn.textContent = "Next →"; nextBtn.disabled = false; hint.textContent = ""; }
+    if (n === 2) { nextBtn.textContent = how === "code" ? "Authorise →" : "I've done this — refresh"; nextBtn.disabled = false; hint.textContent = how === "code" ? "" : "Refreshes every account's identities."; if (how === "code") setTimeout(function () { try { document.getElementById("crCode").focus(); } catch (e) {} }, 30); }
+    if (n === 3) { nextBtn.textContent = "Done"; nextBtn.disabled = false; hint.textContent = ""; }
+  }
+  function open(opts) {
+    opts = opts || {};
+    box.hidden = false;
+    modal = UI.modal({ title: "Connect a creator", body: node, onClose: function () { box.appendChild(node); box.hidden = true; modal = null; if (lastRes && lastRes.reload) location.href = "/creators?ok=" + encodeURIComponent(lastRes.msg || "Done."); } });
+    modal.el.classList.add("cz-modal");
+    how = opts.how || "code";
+    node.querySelectorAll(".cr-how-card").forEach(function (c) { c.classList.toggle("on", c.dataset.how === how); });
+    document.getElementById("crCode").value = opts.code || "";
+    if (opts.type) document.getElementById("crType").value = opts.type;
+    if (opts.name) document.getElementById("crName").value = opts.name;
+    if (opts.scope) { var sel = document.getElementById("crScope"); if (sel.querySelector('option[value="' + opts.scope + '"]')) sel.value = opts.scope; }
+    show(opts.step || 1);
+  }
+  node.querySelector(".cr-how").addEventListener("click", function (e) { var c = e.target.closest(".cr-how-card"); if (!c) return; how = c.dataset.how; node.querySelectorAll(".cr-how-card").forEach(function (x) { x.classList.toggle("on", x === c); }); show(2); });
+  stepsBar.addEventListener("click", function (e) { var b = e.target.closest("button[data-step]"); if (!b || busy) return; var n = Number(b.dataset.step); if (n < step || n === 2) show(n); });
+  backBtn.addEventListener("click", function () { if (!busy) show(step - 1); });
+  document.getElementById("crPickSaved").addEventListener("click", function (e) {
+    e.preventDefault();
+    UI.pickSpark({ state: "all", title: "Pick a saved spark code" }).then(function (it) { if (!it || !it.code) return; document.getElementById("crCode").value = it.code; document.getElementById("crName").value = it.name; document.getElementById("crType").value = (it.type || "video").toUpperCase(); });
+  });
+  function renderResult(res) {
+    var title = document.getElementById("crResTitle"), out = document.getElementById("crResult");
+    if (res.queued) { title.textContent = "Running in the background"; out.innerHTML = '<div class="flash ok">' + esc(res.message) + '</div>'; lastRes = { reload: true, msg: res.message }; return; }
+    title.textContent = res.ok ? "✓ " + (res.account ? res.account + " — " : "") + "ready to launch" : "✕ " + (res.account ? res.account + " — " : "") + "not usable yet";
+    var html = (res.steps || []).map(function (s) { return '<div class="attn-row"><span class="attn-dot" style="color:var(--' + (s.ok ? "ok" : "err") + ');">●</span><span style="font-weight:600;">' + esc(s.step) + '</span><span class="muted" style="font-size:12px;min-width:0;">' + esc(s.detail || "") + '</span></div>'; }).join("");
+    html += '<div class="flash ' + (res.ok ? "ok" : "err") + '" style="margin-top:10px;">' + esc(res.message || "") + '</div>';
+    if (res.ok && res.spark_id) html += '<div style="margin-top:10px;"><a class="btn primary" href="/super-launcher?spark=' + res.spark_id + '">🚀 Launch with this spark</a></div>';
+    if (!res.ok) html += '<div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;"><button type="button" class="btn" id="crGoProfile">How to link the creator’s profile →</button></div>';
+    out.innerHTML = html;
+    var gp = document.getElementById("crGoProfile"); if (gp) gp.addEventListener("click", function () { how = "profile"; node.querySelectorAll(".cr-how-card").forEach(function (x) { x.classList.toggle("on", x.dataset.how === "profile"); }); show(2); });
+    lastRes = { reload: true, msg: res.message };
+  }
+  nextBtn.addEventListener("click", function () {
+    if (busy) return;
+    if (step === 1) { show(2); return; }
+    if (step === 3) { modal.close(); return; }
+    if (how === "profile") { document.getElementById("crSyncForm").scope.value = "all"; document.getElementById("crSyncForm").submit(); return; }
+    var code = document.getElementById("crCode").value.trim();
+    if (!code) { adopsToast && adopsToast("err", "Paste the spark code first."); document.getElementById("crCode").focus(); return; }
+    busy = true; nextBtn.disabled = true; nextBtn.textContent = "Checking with TikTok…"; hint.textContent = "authorising, looking the post up, verifying the owner";
+    UI.post("/creators/authorize", { code: code, scope: document.getElementById("crScope").value, media_type: document.getElementById("crType").value, name: document.getElementById("crName").value }).then(function (res) {
+      busy = false; renderResult(res); document.getElementById("crSub3").textContent = res.ok ? "ready" : "needs attention"; show(3);
+    }).catch(function () { busy = false; show(2); adopsToast && adopsToast("err", "Couldn't reach the dashboard — try again."); });
+  });
+  document.getElementById("crConnectBtn").addEventListener("click", function () { open({}); });
+  document.addEventListener("click", function (e) { var b = e.target.closest(".cr-fix"); if (!b) return; open({ how: "code", step: 2, scope: "acct:" + b.dataset.acct, code: b.dataset.code || "" }); });
+  // refresh popover (scope)
+  var syncForm = document.getElementById("crSyncForm"), syncBtn = document.getElementById("crSyncBtn");
+  syncBtn.addEventListener("click", function () {
+    var p = UI.popover(syncBtn, '<div style="max-width:380px;"><div style="font-weight:700;margin-bottom:6px;">Refresh identities for</div><div style="display:flex;gap:6px;"><select style="flex:1;min-width:240px;">' + document.getElementById("crScopeSrc").innerHTML + '</select><button type="button" class="btn sm primary">Refresh</button></div><div class="hint" style="margin-top:6px;">Reads each account\'s identities from TikTok — nothing is changed.</div></div>', { alignRight: true });
+    p.querySelector(".primary").addEventListener("click", function () { syncForm.scope.value = p.querySelector("select").value; syncBtn.disabled = true; syncBtn.textContent = "↻ Refreshing…"; syncForm.submit(); });
+  });
+  document.addEventListener("adops:job", function (e) { var j = e.detail || {}; if (j.kind === "identities_sync" || j.kind === "spark_authorize") location.href = "/creators?" + (j.status === "done" ? "ok" : "err") + "=" + encodeURIComponent(j.detail || ""); });
+  // filter
+  document.getElementById("crQ").addEventListener("input", function () { var q = this.value.trim().toLowerCase(), n = 0; document.querySelectorAll(".cr-row").forEach(function (r) { var on = !q || r.dataset.search.indexOf(q) >= 0; r.hidden = !on; if (on) n++; }); });
+  // arrived from a failed launch: open the pop-up on the authorise step, prefilled
+  {% if spark %}
+  open({ how: "code", step: 2, code: {{ spark.code|tojson }}, type: {{ (spark.media_type or 'VIDEO')|tojson }}, name: {{ (spark.name or '')|tojson }}, scope: {{ (('acct:' ~ want_acct) if want_acct else 'all')|tojson }} });
+  {% endif %}
+})();
+</script>
+{% endblock %}

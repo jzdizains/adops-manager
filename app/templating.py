@@ -21,6 +21,8 @@ templates.env.globals.update({
     "nav_tabs": nav.tabs,
     "nav_jump": [list(j) for j in nav.JUMP],
     "is_owner": users.is_owner,
+    # a failed launch → the page where it can be fixed (launch result cards)
+    "fix_for": __import__("app.error_messages", fromlist=["fix_for"]).fix_for,
 })
 
 

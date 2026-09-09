@@ -320,6 +320,22 @@ class SparkCode(Base):
     group = relationship("SparkCodeGroup", back_populates="codes")
 
 
+class IdentityRecord(Base):
+    """A creator identity TikTok reports on an ad account (cached copy of
+    /identity/get/ — refreshed by the Creators page / sync job). Spark ads run
+    under one of these: the post's creator must be one of the account's identities."""
+    __tablename__ = "identity_records"
+
+    id = Column(Integer, primary_key=True)
+    advertiser_id = Column(String, index=True, nullable=False)
+    identity_id = Column(String, nullable=False)
+    identity_type = Column(String, default="")               # TT_USER | BC_AUTH_TT | AUTH_CODE | CUSTOMIZED_USER
+    display_name = Column(String, default="")
+    profile_image = Column(Text, default="")
+    bc_id = Column(String, default="")                       # the BC that authorised it (BC_AUTH_TT)
+    fetched_at = Column(DateTime, default=utcnow)
+
+
 class SparkSetting(Base):
     """'Which creators are mine' filter for the spark hub."""
     __tablename__ = "spark_settings"

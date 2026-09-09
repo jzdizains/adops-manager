@@ -53,6 +53,10 @@
   </div>
   {% if not l.ok %}
     <p style="margin:0 0 8px;font-weight:600;">{{ l.error_message }}</p>
+    {% set fx = fix_for(l) %}
+    {% if fx %}
+    <div class="lr-fix"><a class="btn sm primary" href="{{ fx.href }}">🛠 {{ fx.label }} →</a><span class="muted" style="font-size:12px;">{{ fx.why }}</span></div>
+    {% endif %}
     <details>
       <summary class="muted" style="cursor:pointer;font-size:12px;">technical details (copy for debugging)</summary>
       <pre class="mono" style="background:var(--panel-hover);padding:10px;border-radius:8px;overflow:auto;white-space:pre-wrap;">{{ l.error_technical }}</pre>

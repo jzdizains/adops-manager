@@ -153,6 +153,47 @@ def _pixels_sync(db: Session, p: dict, job: models.Job) -> dict:
     return {"ok": rep["ok_accounts"] > 0, "detail": detail, "href": "/pixels"}
 
 
+@jobs.handler("identities_sync")
+def _identities_sync(db: Session, p: dict, job: models.Job) -> dict:
+    import json as _json
+    from . import identities, queries
+    from .routes.creators import scope_accounts
+    accounts, label = scope_accounts(db, str(p.get("scope") or "all"))
+    rep = identities.sync(db, accounts)
+    rep["scope"], rep["label"] = str(p.get("scope") or "all"), label
+    queries.set_setting(db, "identities_sync_report", _json.dumps(rep))
+    n_fail = len(rep["failures"])
+    detail = f"{rep['identities']} identit{'y' if rep['identities'] == 1 else 'ies'} across {rep['ok_accounts']} of {rep['accounts']} account(s) ({label})"
+    if n_fail:
+        f0 = rep["failures"][0]
+        detail += f" — {n_fail} account(s) failed: {f0['account']}: {f0['friendly']}"
+    if not accounts:
+        return {"ok": False, "detail": "no enabled ad accounts — connect TikTok first", "href": "/creators"}
+    return {"ok": rep["ok_accounts"] > 0, "detail": detail, "href": "/creators"}
+
+
+@jobs.handler("spark_authorize")
+def _spark_authorize(db: Session, p: dict, job: models.Job) -> dict:
+    """Authorise one spark code on every account in the scope (a BC, or all)."""
+    import json as _json
+    from datetime import datetime, timezone
+    from . import identities, queries
+    from .routes.creators import scope_accounts
+    accounts, label = scope_accounts(db, str(p.get("scope") or "all"))
+    code = str(p.get("code") or "")
+    results = []
+    for i, acct in enumerate(accounts):
+        jobs.progress(db, job, f"{i + 1} of {len(accounts)}")
+        r = identities.authorize(db, acct, code)
+        results.append({"account": acct.advertiser_name or acct.advertiser_id, "advertiser_id": acct.advertiser_id, "ok": r["ok"],
+                        "message": r["message"], "identity": r.get("identity"), "item_id": r.get("item_id", "")})
+    ok = sum(1 for r in results if r["ok"])
+    queries.set_setting(db, "spark_authorize_report", _json.dumps({"at": datetime.now(timezone.utc).isoformat(), "code": code[:12] + "…", "code_full": code, "label": label,
+                                                                    "ok": ok, "total": len(results), "results": results[:80]}))
+    return {"ok": ok > 0 and ok == len(results), "detail": f"spark code usable on {ok} of {len(results)} account(s) ({label})"
+            + ("" if ok == len(results) else " — see the Creators page for the ones that need the creator linked"), "href": "/creators"}
+
+
 @jobs.handler("pixel_link_all")
 def _pixel_link_all(db: Session, p: dict, job: models.Job) -> dict:
     from . import queries

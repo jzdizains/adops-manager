@@ -310,6 +310,17 @@ def resolve_spark(db: Session, acct: models.AdAccount, spark: models.SparkCode) 
             diag.append(f"authorize code: {e.code} {e.message[:60]} (continuing — may already be authorized)")
             if _BAD_CODE_RE.search(e.message or ""):
                 code_rejected = (e.message or "").strip()[:160]
+        # authorizing a code creates/extends an AUTH_CODE identity for the creator on this
+        # advertiser — it was NOT in the list fetched above, so fetch again before probing
+        try:
+            fresh = _account_identities(acct)
+            new = [i for i in fresh if i.get("identity_id") not in {x.get("identity_id") for x in identities}]
+            identities = fresh
+            diag.append("identities after authorize: " + (", ".join(
+                f"{i.get('identity_type', '?')}·…{str(i.get('identity_id', ''))[-4:]}" for i in identities) or "NONE")
+                + (f" (+{len(new)} new)" if new else ""))
+        except tiktok_api.TikTokError as e:
+            diag.append(f"identity re-list failed: {e.code}")
 
         # 3b) translate the code into a post id via /tt_video/info/
         if not item_id:

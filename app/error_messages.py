@@ -81,3 +81,41 @@ def explain(code, raw_message: str = "") -> dict:
         "technical": (raw_message or "").strip(),
         "is_permission": is_permission,
     }
+
+
+def fix_for(log) -> dict | None:
+    """Where a failed launch can actually be FIXED in the dashboard — {label, href, why} or None.
+    Read from the launch log (error_code + message), so the result page can offer a button
+    instead of leaving the operator to work out which page handles it."""
+    code = str(getattr(log, "error_code", "") or "")
+    msg = (getattr(log, "error_message", "") or "")
+    low = msg.lower()
+    adv = getattr(log, "advertiser_id", "") or ""
+    spark_id = getattr(log, "spark_code_id", None)
+    template_id = getattr(log, "template_id", None)
+    if code == "SPARK":
+        if "rejected the spark code" in low or "code is incorrect" in low:
+            return {"label": "Replace the spark code", "href": f"/spark-codes?edit={spark_id}" if spark_id else "/spark-codes",
+                    "why": "Paste a fresh code from the creator, then Retry failed."}
+        if "no identity" in low or "could not resolve spark" in low:
+            q = f"?account={adv}&fix=1" + (f"&spark={spark_id}" if spark_id else "")
+            return {"label": "Connect the creator", "href": "/creators" + q,
+                    "why": "Authorise the code on this account or link the creator's profile, then Retry failed."}
+        return {"label": "Open Creators", "href": f"/creators?account={adv}", "why": "Check which profiles this account can run ads as."}
+    if code == "CONFIG":
+        if "caption" in low and "carousel" in low:
+            return {"label": "Add the caption", "href": "/creatives?view=carousels", "why": "Open the carousel and type its caption, or add ad text to the preset."}
+        if "pixel" in low or "optimization event" in low:
+            return {"label": "Open Pixels", "href": "/pixels", "why": "Pick a pixel + event that exists, or fix the preset."}
+        if template_id:
+            return {"label": "Edit the preset", "href": f"/presets/{template_id}/edit", "why": "The preset's settings need a change."}
+        return {"label": "Open Presets", "href": "/presets", "why": "The preset's settings need a change."}
+    if code == "ASSET":
+        return {"label": "Open Creatives", "href": "/creatives", "why": "The instant page / lead form / creative wasn't found on this account."}
+    if code in ("40105", "40113", "40102") or "token" in low or "permission" in low or "reconnect" in low:
+        return {"label": "Reconnect the account", "href": f"/accounts?q={adv}", "why": "The connection to this ad account needs renewing."}
+    if code == "40100":
+        return None      # rate limit — just retry
+    if code == "51009" or "budget" in low:
+        return {"label": "Edit the preset", "href": f"/presets/{template_id}/edit" if template_id else "/presets", "why": "Raise the budget in the preset."}
+    return None

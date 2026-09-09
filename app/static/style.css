@@ -1103,3 +1103,26 @@ table.data.aud thead th:first-child { white-space: nowrap; }
 .tr-arrow { align-self: center; color: var(--text-dim); font-size: 18px; }
 .tr-check { font-size: 12.5px; padding: 8px 10px; border-radius: 10px; background: var(--accent-soft); color: var(--accent-ink); }
 .pb-card { position: relative; }
+
+/* ---- Creators page ---- */
+.cr-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.cr-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px 3px 3px; border-radius: 999px; border: 1px solid var(--card-border); background: var(--raised); font-size: 12px; font-weight: 600; max-width: 260px; }
+.cr-chip img, .cr-chip .cr-ph { width: 22px; height: 22px; border-radius: 50%; object-fit: cover; background: var(--panel-hover); display: grid; place-items: center; font-size: 11px; color: var(--text-dim); flex: none; }
+.cr-chip > span:not(.cr-ph) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cr-chip em { font-style: normal; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; padding: 1px 6px; border-radius: 999px; background: var(--panel-hover); color: var(--text-dim); flex: none; }
+.cr-chip.cr-auth_code em { background: var(--accent-soft); color: var(--accent-ink, var(--accent)); }
+.cr-chip.cr-bc_auth_tt em { background: var(--ok-bg); color: var(--ok); }
+.cr-chip.cr-tt_user em { background: var(--warn-bg); color: var(--warn); }
+.cr-how { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.cr-how-card { font: inherit; text-align: left; display: flex; flex-direction: column; gap: 6px; padding: 14px; border-radius: 14px; border: 1px solid var(--card-border); background: var(--raised); color: var(--text); cursor: pointer; }
+.cr-how-card:hover { border-color: var(--border-strong); background: var(--panel-hover); }
+.cr-how-card.on { outline: 2px solid var(--accent); outline-offset: -1px; }
+.cr-how-card > span { font-size: 12.5px; color: var(--text-soft); line-height: 1.45; }
+.cr-how-card em { font-style: normal; font-size: 11.5px; color: var(--text-dim); }
+.cr-guide { display: flex; flex-direction: column; gap: 10px; }
+.cr-guide-step { display: flex; gap: 12px; align-items: flex-start; font-size: 13px; }
+.cr-guide-step .pf-no { flex: none; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; background: var(--accent); color: var(--on-accent); font-size: 12px; font-weight: 700; }
+.cr-guide-step .muted { font-size: 12.5px; line-height: 1.45; margin-top: 2px; }
+.cr-links { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+@media (max-width: 720px) { .cr-how { grid-template-columns: 1fr; } }
+.lr-fix { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 10px; }

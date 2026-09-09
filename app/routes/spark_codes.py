@@ -111,7 +111,7 @@ def pick_json(request: Request, db: Session = Depends(get_db)):
         hay = f"{s.name} {s.code} {creator} {s.source}".lower()
         if q and q not in hay:
             continue
-        items.append({"id": s.id, "name": s.name or s.code[:16], "creator": creator, "type": (s.media_type or "VIDEO").lower(),
+        items.append({"id": s.id, "name": s.name or s.code[:16], "code": s.code, "creator": creator, "type": (s.media_type or "VIDEO").lower(),
                       "state": "fresh" if s.status == "active" else (s.status or "used"), "thumb": s.thumbnail_url or "",
                       "post_url": s.tiktok_post_url or "", "source": s.source or "", "uses": int(s.use_count or 0),
                       "last_used": _ago(s.last_used_at) if s.last_used_at else "", "added": _ago(s.created_at) if s.created_at else ""})
