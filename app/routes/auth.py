@@ -23,7 +23,7 @@ router = APIRouter()
 
 # /postback is public so Glitchy's servers can reach it (auth = its key param)
 PUBLIC_PATHS = ("/login", "/static", "/health", "/oauth/callback", "/favicon.ico",
-                "/postback", "/t/escape", "/t/click", "/t/c")   # /t/escape/* = phone-side test pages (results stay behind login)
+                "/postback", "/t/escape", "/t/click", "/t/c", "/pub/src/")   # /pub/src = signed, expiring file links   # /t/escape/* = phone-side test pages (results stay behind login)
 
 GENERIC = "Couldn't log in."     # never say which part was wrong
 LP = config.LOGIN_PATH           # where the login page actually lives (may be a secret path)

@@ -480,6 +480,9 @@ async def upload_creatives(request: Request, db: Session = Depends(get_db)):
     do_freshen = form.get("freshen") is not None      # "create variations" toggle
     model_ids = [str(m) for m in form.getlist("model_ids") if str(m).strip().isdigit()]
     do_uniquify = form.get("uniquify") is not None
+    image_enh = str(form.get("image_enhance") or "").strip()      # "" | sr2x — TensorPix for images
+    if image_enh and image_enh not in {k for k, _ in tensorpix.IMAGE_ENHANCEMENTS}:
+        image_enh = ""
     intensity = str(form.get("intensity") or "medium")
     if intensity not in ("light", "medium", "strong"):
         intensity = "medium"
@@ -490,10 +493,14 @@ async def upload_creatives(request: Request, db: Session = Depends(get_db)):
     if not do_freshen:
         variants = 1     # variations only make sense when processing
 
-    if do_freshen and not model_ids and not do_uniquify:
+    if do_freshen and not model_ids and not do_uniquify and not image_enh:
         return RedirectResponse(
             "/creatives?err=Pick+an+enhancement+model,+turn+on+Uniquify,+or+both.",
             status_code=303)
+    if do_freshen and image_enh and not tensorpix.configured():
+        return RedirectResponse(
+            "/creatives?err=TensorPix+API+key+not+set+—+add+TENSORPIX_API_KEY,+or+"
+            "use+Uniquify+alone.", status_code=303)
     if do_freshen and model_ids and not tensorpix.configured():
         return RedirectResponse(
             "/creatives?err=TensorPix+API+key+not+set+—+add+TENSORPIX_API_KEY,+or+"
@@ -501,12 +508,41 @@ async def upload_creatives(request: Request, db: Session = Depends(get_db)):
 
     CREATIVES_DIR.mkdir(parents=True, exist_ok=True)
     saved, queued, images, skipped = 0, 0, 0, []
+    image_variants = 0
     for f in files:
         fname = _safe_name(f.filename)
         ext = ("." + fname.rsplit(".", 1)[-1].lower()) if "." in fname else ""
         if ext in ALLOWED_IMAGE:
-            # images dropped into the main uploader go straight to the image shelf
-            # (variations / TensorPix are video-only)
+            if do_freshen and (do_uniquify or image_enh):
+                # image variations: keep ONE source copy, queue N picture variants
+                # (TensorPix enhancement and/or the picture uniquify pass — see tensorpix_worker)
+                data = await f.read(MAX_IMAGE_BYTES + 1)
+                if not data or len(data) > MAX_IMAGE_BYTES:
+                    skipped.append(f"{fname}: {'over 25MB' if data else 'empty file'}")
+                    continue
+                md5 = hashlib.md5(data).hexdigest()
+                SRC_DIR.mkdir(parents=True, exist_ok=True)
+                src_path = SRC_DIR / f"{md5}{ext}"
+                if not src_path.exists():
+                    src_path.write_bytes(data)
+                base = fname.rsplit(".", 1)[0]
+                for n in range(variants):
+                    vname = (f"{base}_v{n+1}{ext}" if variants > 1 else fname)
+                    row = models.Creative(
+                        name=vname, file_name=vname, size_bytes=len(data), kind="image",
+                        status="processing", freshen=True, tp_model_ids=image_enh,
+                        uniquify=do_uniquify, freshen_intensity=intensity,
+                        src_path=str(src_path), source_md5=md5)
+                    db.add(row)
+                    db.flush()
+                    if source_prefix:
+                        row.source = f"{source_prefix}_{row.id}"
+                    queued += 1
+                    images += 1
+                    image_variants += 1
+                db.commit()
+                continue
+            # plain image upload → straight to the image shelf
             why = await _save_image_upload(db, f, source_prefix)
             if why:
                 skipped.append(why)
@@ -606,13 +642,14 @@ async def upload_creatives(request: Request, db: Session = Depends(get_db)):
     if saved:
         parts.append(f"{saved} video(s) uploaded")
     if queued:
-        parts.append(f"{queued} sent to TensorPix (appear as they finish)")
+        parts.append(f"{queued} variation(s) rendering in the background (they appear as they finish)")
     if images:
-        parts.append(f"{images} image(s) added to the image shelf below")
+        parts.append(f"{images} image(s) on the image shelf")
     q = "ok=" + (", ".join(parts).replace(" ", "+") or "nothing+to+do")
     if skipped:
         q += "&err=" + "+·+".join(skipped)[:300].replace(" ", "+")
-    return RedirectResponse(f"/creatives?view={'images' if (images and not saved and not queued) else 'library'}&{q}", status_code=303)
+    video_side = saved or (queued - image_variants)
+    return RedirectResponse(f"/creatives?view={'images' if (images and not video_side) else 'library'}&{q}", status_code=303)
 
 
 @router.post("/creatives/{creative_id}/update")

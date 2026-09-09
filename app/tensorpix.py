@@ -172,6 +172,35 @@ def get_job(job_id: str) -> dict:
     return _get(f"/api/jobs/{job_id}/")
 
 
+# ---------------------------------------------------------------------------
+# Images — docs.tensorpix.ai/recipes/image-enhancing: ONE synchronous call,
+#   POST /api/images/enhance/from-url/  {url, enhancement_type, output_format, face_enhance, watermark}
+#   → {"enhanced_url": …}
+# The image must be reachable at a public URL (the app serves the source through a
+# signed, short-lived link). Enhancement types we offer are the documented ones only.
+# ---------------------------------------------------------------------------
+IMAGE_ENHANCEMENTS = [("sr2x", "Upscale 2× (super resolution)")]
+IMAGE_TIMEOUT = httpx.Timeout(300.0, connect=15.0)     # the call returns when the render is done
+
+
+def enhance_image_from_url(url: str, enhancement_type: str = "sr2x", output_format: str = "jpeg",
+                           face_enhance: bool = False, watermark: bool = False) -> str:
+    """Enhance one image; returns the pre-signed URL of the result."""
+    if enhancement_type not in {k for k, _ in IMAGE_ENHANCEMENTS}:
+        raise TensorPixError(f"Unknown image enhancement '{enhancement_type}'")
+    payload = {"url": url, "enhancement_type": enhancement_type, "output_format": output_format,
+               "face_enhance": bool(face_enhance), "watermark": bool(watermark)}
+    try:
+        with httpx.Client(timeout=IMAGE_TIMEOUT) as c:
+            data = _parse(c.post(_url("/api/images/enhance/from-url/"), headers=_headers(), data=payload))
+    except httpx.HTTPError as e:
+        raise TensorPixError(f"Network error calling TensorPix: {e!r}")
+    out = (data or {}).get("enhanced_url") if isinstance(data, dict) else ""
+    if not out:
+        raise TensorPixError(f"TensorPix returned no enhanced_url: {str(data)[:200]}")
+    return str(out)
+
+
 def job_output_url(job: dict) -> str:
     ov = job.get("output_video") or {}
     return ov.get("file") or ""

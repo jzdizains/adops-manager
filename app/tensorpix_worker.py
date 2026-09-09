@@ -43,6 +43,17 @@ def _variant_params(row) -> dict:
     return p
 
 
+def _image_enh(row) -> str:
+    """Image rows carry the TensorPix enhancement type (e.g. "sr2x") in tp_model_ids."""
+    if (row.kind or "video") != "image":
+        return ""
+    for tok in (row.tp_model_ids or "").split(","):
+        tok = tok.strip()
+        if tok and not tok.isdigit():
+            return tok
+    return ""
+
+
 def _model_ids(row) -> list[int]:
     out = []
     for tok in (row.tp_model_ids or "").split(","):
@@ -78,22 +89,24 @@ def process_pending(db, limit: int = 6) -> int:
 def _process_pending(db, limit: int) -> int:
     from . import config, models, tensorpix
 
+    # ONLY variation rows (freshen=True). Other "processing" rows — AI edits / generations
+    # in flight — belong to their own worker and must never be touched here.
     rows = (db.query(models.Creative)
-            .filter(models.Creative.status == "processing")
+            .filter(models.Creative.status == "processing", models.Creative.freshen == True)  # noqa: E712
             .order_by(models.Creative.id).all())
     rows = [r for r in rows if _due(r)][:limit]
     if not rows:
         return 0
     if not tensorpix.configured():
         # only rows that actually need TensorPix fail; uniquify-only rows proceed
-        needs_tp = [r for r in rows if _model_ids(r)]
+        needs_tp = [r for r in rows if _model_ids(r) or _image_enh(r)]
         for r in needs_tp:
             r.status = "error"
             r.error = ("TensorPix API key not set — add TENSORPIX_API_KEY in the "
                        "server environment, then re-upload.")
         if needs_tp:
             db.commit()
-        rows = [r for r in rows if not _model_ids(r)]
+        rows = [r for r in rows if not (_model_ids(r) or _image_enh(r))]
         if not rows:
             return len(needs_tp)
 
@@ -125,8 +138,52 @@ def _store(db, models, row, out_path) -> None:
     _gc_source(db, models, row.source_md5)
 
 
+def _advance_image(db, row, out_dir, tensorpix, models) -> None:
+    """Image variation in ONE hop: optional TensorPix enhancement (synchronous call via a
+    signed public link to the source), then the picture uniquify pass, then store."""
+    from . import image_freshen
+    out = out_dir / f"{row.id}_{row.file_name}"
+    enh = _image_enh(row)
+    if not enh and not row.uniquify:
+        row.status = "error"
+        row.error = "Nothing to do: pick an enhancement, uniquify, or both."
+        return
+    if not row.src_path or not os.path.exists(row.src_path):
+        raise RuntimeError("source image went missing before processing")
+    src = row.src_path
+    tmp = None
+    if enh:
+        from . import tracking
+        from .routes.pub import signed_url
+        base = tracking.base_url(db)
+        if not base:
+            raise RuntimeError("the dashboard doesn't know its public address yet — open Settings once "
+                               "(it remembers the host) or set a tracking domain, then re-upload")
+        url = tensorpix.enhance_image_from_url(signed_url(base, src), enhancement_type=enh,
+                                               output_format="jpeg" if str(out).lower().endswith((".jpg", ".jpeg")) else "png")
+        tmp = out_dir / f"{row.id}_tp_{row.file_name}"
+        tensorpix.download(url, str(tmp), timeout=300)
+        src = str(tmp)
+    try:
+        if row.uniquify:
+            image_freshen.uniquify(src, str(out), intensity=row.freshen_intensity or "medium", seed=row.id)
+        else:
+            import shutil
+            shutil.copyfile(src, str(out))
+    finally:
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    _store(db, models, row, out)
+
+
 def _advance(db, row, out_dir, tensorpix, models) -> None:
     from . import video_freshen
+    if (row.kind or "video") == "image":
+        _advance_image(db, row, out_dir, tensorpix, models)
+        return
     out = out_dir / f"{row.id}_{row.file_name}"
 
     # ---- uniquify-only path (no TensorPix model chosen) --------------------
@@ -228,4 +285,4 @@ def _gc_source(db, models, source_md5: str) -> None:
 def pending_count(db) -> int:
     from . import models
     return (db.query(models.Creative)
-            .filter(models.Creative.status == "processing").count())
+            .filter(models.Creative.status == "processing", models.Creative.freshen == True).count())  # noqa: E712
