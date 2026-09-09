@@ -90,4 +90,60 @@
       mark(); load();
     });
   };
+
+  /* UI.pickSpark({selected, title}) → Promise<{id,name,creator,type,state,thumb,post_url}|null>
+     One creator post (spark code) from the Sparks list — search, fresh/used, post link. Data: /spark-codes/pick.json */
+  UI.pickSpark = function (o) {
+    o = o || {};
+    return new Promise(function (resolve) {
+      var state = o.state || "fresh", q = "", items = [], sel = o.selected || null, done = false;
+      var body = UI.el('<div class="pk"><div class="pk-top">' +
+        '<input type="text" class="pk-q" placeholder="Search name, creator, code, source…" style="width:260px;">' +
+        '<span class="seg pk-state"><button type="button" data-state="fresh">Fresh <span class="n"></span></button><button type="button" data-state="used">Used <span class="n"></span></button><button type="button" data-state="all">All</button></span>' +
+        '<a href="/spark-codes" class="btn sm" style="margin-left:auto;">＋ Add codes</a></div>' +
+        '<div class="sp-list"></div></div>');
+      var foot = UI.el('<div style="display:flex;align-items:center;gap:8px;width:100%;"><span class="muted pk-hint" style="font-size:12px;">The creator\'s post runs as the ad under their identity; the preset\'s text, CTA and destination still apply.</span><button type="button" class="btn" data-close style="margin-left:auto;">Cancel</button><button type="button" class="btn primary pk-use" disabled>Use this spark code</button></div>');
+      var m = UI.modal({ title: o.title || "Pick a spark code", body: body, footer: foot, wide: true, onClose: function () { if (!done) { done = true; resolve(null); } } });
+      m.el.classList.add("pk-modal");
+      var list = body.querySelector(".sp-list");
+      function mark() {
+        body.querySelectorAll(".pk-state button").forEach(function (b) { b.classList.toggle("on", b.dataset.state === state); });
+        list.querySelectorAll(".sp-row").forEach(function (r) { r.classList.toggle("on", !!sel && r.dataset.id == sel); });
+        foot.querySelector(".pk-use").disabled = !sel;
+      }
+      function row(it) {
+        return '<div class="sp-row" data-id="' + it.id + '">' +
+          (it.thumb ? '<img src="' + esc(it.thumb) + '" alt="" loading="lazy">' : '<span class="sp-ph">✦</span>') +
+          '<div class="sp-main"><b>' + esc(it.name) + '</b>' + (it.creator ? ' <span class="muted">· @' + esc(it.creator.replace(/^@/, "")) + '</span>' : "") +
+          '<div class="muted" style="font-size:11px;">' + esc(it.type) + (it.source ? " · source " + esc(it.source) : "") + (it.uses ? " · used " + it.uses + "×" + (it.last_used ? " · last " + esc(it.last_used) : "") : (it.added ? " · added " + esc(it.added) : "")) + '</div></div>' +
+          '<span class="pill ' + (it.state === "fresh" ? "ok" : "mute") + '">' + esc(it.state) + '</span>' +
+          (it.post_url ? '<a href="' + esc(it.post_url) + '" target="_blank" rel="noopener" class="muted" style="font-size:11px;" title="Open the post">post ↗</a>' : "") +
+          '<span class="sp-chk">' + (sel == it.id ? "✓" : "") + '</span></div>';
+      }
+      function load() {
+        list.innerHTML = '<div class="muted" style="padding:20px;">Loading…</div>';
+        UI.get("/spark-codes/pick.json?state=" + state + "&q=" + encodeURIComponent(q)).then(function (d) {
+          items = d.items || [];
+          body.querySelector('.pk-state [data-state="fresh"] .n').textContent = d.counts ? d.counts.fresh : "";
+          body.querySelector('.pk-state [data-state="used"] .n').textContent = d.counts ? d.counts.used : "";
+          list.innerHTML = items.length ? items.map(row).join("") : '<div class="empty">No spark codes' + (q ? " for “" + esc(q) + "”" : (state === "fresh" ? " left unused — try Used or All, or add codes" : "")) + ".</div>";
+          mark();
+        });
+      }
+      list.addEventListener("click", function (e) {
+        if (e.target.closest("a")) return;
+        var r = e.target.closest(".sp-row"); if (!r) return;
+        sel = r.dataset.id; mark(); list.querySelectorAll(".sp-chk").forEach(function (c) { c.textContent = c.closest(".sp-row").dataset.id == sel ? "✓" : ""; });
+      });
+      list.addEventListener("dblclick", function (e) { var r = e.target.closest(".sp-row"); if (r) { sel = r.dataset.id; foot.querySelector(".pk-use").click(); } });
+      body.querySelector(".pk-state").addEventListener("click", function (e) { var b = e.target.closest("[data-state]"); if (!b) return; state = b.dataset.state; load(); });
+      var qt = null; body.querySelector(".pk-q").addEventListener("input", function (e) { clearTimeout(qt); q = e.target.value; qt = setTimeout(load, 250); });
+      foot.querySelector(".pk-use").addEventListener("click", function () {
+        var it = items.filter(function (x) { return x.id == sel; })[0]; if (!it) return;
+        done = true; m.close(); resolve(it);
+      });
+      setTimeout(function () { try { body.querySelector(".pk-q").focus(); } catch (e) {} }, 30);
+      mark(); load();
+    });
+  };
 })();

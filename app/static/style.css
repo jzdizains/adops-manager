@@ -932,6 +932,16 @@ table.data.aud thead th:first-child { white-space: nowrap; }
 .pf-no { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--panel-hover); color: var(--text-dim); font-size: 10.5px; font-weight: 700; margin-right: 9px; flex: none; }
 .settings-nav a.on .pf-no { background: var(--accent); color: var(--on-accent); }
 .pk-chip[hidden] { display: none; }
+/* spark picker rows */
+.sp-list { max-height: 56vh; overflow: auto; border: 1px solid var(--border); border-radius: 12px; }
+.sp-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-bottom: 1px solid var(--border-soft); cursor: pointer; font-size: 12.5px; }
+.sp-row:last-child { border-bottom: none; }
+.sp-row:hover { background: var(--panel-hover); }
+.sp-row.on { background: var(--accent-soft); }
+.sp-row img, .sp-row .sp-ph { width: 30px; height: 40px; object-fit: cover; border-radius: 6px; background: var(--panel-hover); flex: none; display: grid; place-items: center; color: var(--text-dim); font-size: 12px; }
+.sp-main { flex: 1; min-width: 0; } .sp-main b { display: inline; }
+.sp-chk { width: 20px; height: 20px; border-radius: 6px; border: 1px solid var(--border-strong); display: grid; place-items: center; font-size: 12px; flex: none; }
+.sp-row.on .sp-chk { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 
 /* ---- Assistant ---------------------------------------------------------------------------- */
 .as-wrap { display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 14px; height: calc(100vh - var(--top-h, 58px) - 48px); min-height: 480px; }

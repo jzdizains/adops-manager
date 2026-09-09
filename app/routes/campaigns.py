@@ -212,6 +212,9 @@ def spark_ad_format(spark_ref: dict | None, spark: models.SparkCode | None) -> s
     return "CAROUSEL_ADS" if kind == "CAROUSEL" else "SINGLE_VIDEO"
 
 
+_BAD_CODE_RE = re.compile(r"code is (incorrect|invalid|wrong)|invalid (auth|post) ?code|code (has )?expired|expired", re.I)
+
+
 def resolve_spark(db: Session, acct: models.AdAccount, spark: models.SparkCode) -> dict:
     """Resolve a SparkCode to (identity_id, identity_type, item_id) for THIS account.
 
@@ -221,6 +224,7 @@ def resolve_spark(db: Session, acct: models.AdAccount, spark: models.SparkCode) 
     is unreliable — ownership verification is the real test.
     """
     diag: list[str] = []
+    code_rejected = ""          # TikTok's own words when it refuses the pasted code (wrong / expired / revoked)
     diag.append(f"account BC: {acct.owner_bc_id or 'NONE RECORDED — run a sync (Monitor page)'}")
     try:
         identities = _account_identities(acct)
@@ -304,6 +308,8 @@ def resolve_spark(db: Session, acct: models.AdAccount, spark: models.SparkCode) 
             diag.append(f"authorize code: OK, item_id={item_id or '?'}")
         except tiktok_api.TikTokError as e:
             diag.append(f"authorize code: {e.code} {e.message[:60]} (continuing — may already be authorized)")
+            if _BAD_CODE_RE.search(e.message or ""):
+                code_rejected = (e.message or "").strip()[:160]
 
         # 3b) translate the code into a post id via /tt_video/info/
         if not item_id:
@@ -382,6 +388,14 @@ def resolve_spark(db: Session, acct: models.AdAccount, spark: models.SparkCode) 
         ident, item_id = all_items[0]
         return _ref(ident, item_id)
 
+    if code_rejected:
+        # TikTok itself refused the pasted code — that is the whole story, say so plainly
+        raise SparkResolveError(
+            f"TikTok rejected the spark code for '{spark.name or spark.code[:12]}' — “{code_rejected}”. "
+            "The code is wrong, has expired, or the creator switched ad authorization off. "
+            "In the TikTok app open the post → ⋯ → Ad settings → Ad authorization, generate a fresh code, "
+            "paste it over this spark code (Creatives → Spark codes → ✎), then Retry failed.",
+            technical=" → ".join(diag))
     raise SparkResolveError(
         f"Could not resolve spark '{spark.name or spark.code[:12]}' on account "
         f"{acct.advertiser_id}: no identity verifiably owns the post. "
@@ -1058,8 +1072,7 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                                   "turn Smart Creative off.")
             if fields["destination_type"] not in ("website", "pixel") or not fields.get("landing_page_url"):
                 raise ConfigError("Carousel presets need a Website destination with a landing page URL.")
-            if not (fields.get("ad_text") or "").strip() and fields.get("ad_text_mode") != "pool":
-                raise ConfigError("Carousel Ads need a caption — add ad text to the preset.")
+            # the caption check happens below, once the carousel is known (it may carry its own)
         if fields.get("smart_creative") and not use_library:
             raise ConfigError("Smart Creative pulls several videos from the Creative "
                               "library — set the creative source to “Library” to use it.")
@@ -1086,8 +1099,8 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
             if fields.get("ad_text_mode") != "pool" and not (fields.get("ad_text") or "").strip():
                 raise ConfigError("TikTok requires ad text on every ad — enter it in the "
                                   "preset, or switch to pulling from the Ad Texts list.")
-        elif fields.get("ad_text_mode") == "pool":
-            raise ConfigError("The Ad Texts pool works with the Creative library only — "
+        elif fields.get("ad_text_mode") == "pool" and not use_carousel:
+            raise ConfigError("The Ad Texts pool works with the Creative library and carousels only — "
                               "spark ads always show the post's own caption.")
         needs_pixel = (fields["destination_type"] == "pixel"
                        or (fields["destination_type"] == "website"
@@ -1192,6 +1205,13 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                 raise ConfigError(f"Carousel “{carousel.name}” has fewer than 2 slides.")
             if not (carousel.music_id or "").strip():
                 raise ConfigError(f"Carousel “{carousel.name}” has no soundtrack — TikTok requires one.")
+            # caption: the carousel's own text wins; else the preset's fixed text; else the pool
+            own_text = (carousel.ad_text or "").strip()
+            if own_text:
+                fields = dict(fields); fields["ad_text"] = own_text; fields["ad_text_mode"] = "fixed"
+            elif not (fields.get("ad_text") or "").strip() and fields.get("ad_text_mode") != "pool":
+                raise ConfigError(f"Carousel “{carousel.name}” has no caption and the preset has no ad text — "
+                                  "add a caption to the carousel (Creatives → Carousels → open it) or ad text to the preset.")
             if carousel.status == "available":
                 carousel.status = "used"
                 carousel.used_advertiser_id = acct.advertiser_id

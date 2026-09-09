@@ -837,6 +837,7 @@ async def carousel_save(request: Request, db: Session = Depends(get_db)):
         music_name=str(form.get("music_name") or "").strip()[:200],
         music_author=str(form.get("music_author") or "").strip()[:200],
         source=str(form.get("source") or "").strip()[:120],
+        ad_text=" ".join(str(form.get("ad_text") or "").split())[:AD_TEXT_MAX],
         md5=f"carousel:{','.join(map(str, ids))}:{music_id}",
         source_md5=imgs[ids[0]].source_md5 or imgs[ids[0]].md5,
         size_bytes=sum(int(imgs[i].size_bytes or 0) for i in ids))
@@ -844,6 +845,24 @@ async def carousel_save(request: Request, db: Session = Depends(get_db)):
     db.commit()
     return RedirectResponse(f"/creatives?view=carousels&ok=Carousel+“{name}”+saved+({len(ids)}+slides)#cz{row.id}",
                             status_code=303)
+
+
+AD_TEXT_MAX = 100     # TikTok: ad text 1–100 characters (one caption for the whole carousel)
+
+
+@router.post("/creatives/{creative_id}/caption")
+async def creative_caption(request: Request, creative_id: int, db: Session = Depends(get_db)):
+    """Set / change a carousel's own caption (ad text). Form field `text`; {ok, text} out.
+    Allowed after launch too — it only affects launches from now on."""
+    from fastapi.responses import JSONResponse
+    row = db.get(models.Creative, creative_id)
+    if not row or row.kind != "carousel":
+        return JSONResponse({"ok": False, "error": "not a carousel"}, status_code=404)
+    form = await request.form()
+    text = " ".join(str(form.get("text") or "").split())[:AD_TEXT_MAX]
+    row.ad_text = text
+    db.commit()
+    return JSONResponse({"ok": True, "text": text})
 
 
 @router.get("/creatives/music/library")
@@ -1154,7 +1173,7 @@ def creative_detail(creative_id: int, db: Session = Depends(get_db)):
         "uploaded_at": (r.uploaded_at.isoformat() + "Z") if r.uploaded_at else "", "uploaded_ago": _ago(r.uploaded_at),
         "uploaded_str": r.uploaded_at.strftime("%d %b %Y · %H:%M") if r.uploaded_at else "",
         "poster": f"/creatives/{r.id}/poster", "file": f"/creatives/{r.id}/file" if r.kind != "carousel" else "",
-        "music": r.music_name or "", "slides": len(_slides_of(r)) if r.kind == "carousel" else 0, "slide_ids": _slides_of(r) if r.kind == "carousel" else [],
+        "music": r.music_name or "", "ad_text": (r.ad_text or "") if r.kind == "carousel" else "", "slides": len(_slides_of(r)) if r.kind == "carousel" else 0, "slide_ids": _slides_of(r) if r.kind == "carousel" else [],
         "variants": [{"id": v.id, "name": v.name, "status": v.status, "archived": bool(v.archived)} for v in variants if v.id != r.id][:30],
         "today": _sum(today), "alltime": _sum(alltime), "by_account": by_acct[:40], "note": note.text if note else "",
         "used_in": r.used_campaign_id or "", "used_account": r.used_advertiser_id or "",

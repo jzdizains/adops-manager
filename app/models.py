@@ -128,6 +128,7 @@ class Creative(Base):
     music_id = Column(String, default="")                  # TikTok music_id (Commercial Music Library / uploaded)
     music_name = Column(String, default="")
     music_author = Column(String, default="")
+    ad_text = Column(Text, default="")                     # the carousel's own caption (ad text); empty = preset text / pool at launch
     # --- AI image editing (Gemini / "Nano Banana") ----------------------------
     ai_prompt = Column(Text, default="")                   # prompt that produced this image
     # --- text tool: a text copy remembers its recipe so the text can be edited later ---

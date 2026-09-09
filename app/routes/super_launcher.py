@@ -236,6 +236,8 @@ async def launch(request: Request, db: Session = Depends(get_db)):
     picked_ids = [int(x) for x in form.getlist("creative_ids") if str(x).isdigit()]
     if creative_mode == "pick" and not picked_ids:
         return RedirectResponse("/super-launcher?err=Pick+at+least+one+creative.", status_code=303)
+    if creative_mode == "spark" and not spark_id:
+        return RedirectResponse("/super-launcher?err=Pick+a+spark+code.", status_code=303)
     use_library = (not spark_id) and creative_mode in ("library", "carousel", "pick")
     # creative → account mapping (library only): 1 creative per N accounts
     per_creative = max(_int("accounts_per_creative", 1), 1)

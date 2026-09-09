@@ -71,10 +71,17 @@
         <button type="button" data-mode="library" {{ 'disabled' if not creatives_available }} title="Next unused library videos, one per account">Fresh videos <span class="n">{{ creatives_available }}</span></button>
         <button type="button" data-mode="carousel" {{ 'disabled' if not carousels_available }} title="Next unused library carousels">Fresh carousels <span class="n">{{ carousels_available }}</span></button>
         <button type="button" data-mode="pick">Pick specific…</button>
+        <button type="button" data-mode="spark" title="Launch a creator's post through its spark code on every account">Spark code… <span class="n">{{ sparks|length }}</span></button>
       </div>
       <select name="creative_mode" id="slCreative" hidden>
-        <option value="">— use preset default —</option><option value="library">library</option><option value="carousel">carousel</option><option value="pick">pick</option>
+        <option value="">— use preset default —</option><option value="library">library</option><option value="carousel">carousel</option><option value="pick">pick</option><option value="spark">spark</option>
       </select>
+      <input type="hidden" name="spark_code_id" id="slSpark" value="">
+      <div id="slSparkPick" hidden style="margin-top:10px;display:flex;align-items:center;gap:10px;">
+        <img id="slSparkImg" alt="" style="width:36px;height:48px;object-fit:cover;border-radius:8px;background:var(--panel-hover);flex:none;" hidden>
+        <div style="min-width:0;flex:1;"><b id="slSparkName" style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></b><span class="muted" id="slSparkSub" style="font-size:11.5px;"></span></div>
+        <button type="button" class="btn sm" id="slSparkChange">Change…</button>
+      </div>
       <div id="slPicked" class="pk-chips" style="margin-top:8px;" hidden></div>
       <div id="slPickedInputs"></div>
       <span class="hint" id="slCreativeHint">Library creatives need a landing URL &amp; ad text on the preset. Each creative launches to its own accounts — nothing runs twice.</span>
@@ -91,15 +98,6 @@
       </div>
       <div class="hint" id="slAssignHint" style="margin-top:8px;">Auto-assign: creatives are spread round-robin over the selected accounts.</div>
     </div>
-
-    <label class="field"><span class="field-label">Spark code <span class="muted">(optional override)</span></span>
-      <select name="spark_code_id" id="slSpark">
-        <option value="">— use preset default —</option>
-        {% for s in sparks %}
-          <option value="{{ s.id }}">{{ s.name or s.code[:18] }} ({{ s.media_type }})</option>
-        {% endfor %}
-      </select>
-      <span class="hint">Runs a creator's post as the ad on every account instead of the preset's creative.</span></label>
 
   </div>
   <div class="pf-foot"><button type="button" class="btn ghost" data-next="preset">← Preset</button><button type="button" class="btn" data-next="accounts">Next · Accounts →</button></div>
@@ -184,13 +182,13 @@
   var picker = window.AccountPicker.init({ onChange: function () { if (picker) syncSummary(); } });   // (init fires once before `picker` exists; syncPreset() below covers that)
   var boxes = picker.boxes;
   var slSpark = document.getElementById("slSpark"), slCreative = document.getElementById("slCreative");
-  var picked = [];
+  var picked = [], sparkPick = null;    // sparkPick: {id, name, creator, type, thumb} from UI.pickSpark
 
   // ---- steps -------------------------------------------------------------------
   function nAccounts() { return autoBox.checked ? (parseInt(document.getElementById("slAutoCount").value, 10) || 0) : boxes.filter(function (b) { return b.checked; }).length; }
   function problem(tab) {
     if (tab === "preset") return preset && preset.value ? "" : "Pick a preset first.";
-    if (tab === "creative") return slCreative.value === "pick" && !picked.length ? "Pick at least one creative (or switch back to Preset default)." : "";
+    if (tab === "creative") { if (slCreative.value === "spark" && !slSpark.value) return "Pick a spark code (or switch back to Preset default)."; return slCreative.value === "pick" && !picked.length ? "Pick at least one creative (or switch back to Preset default)." : ""; }
     if (tab === "accounts") return nAccounts() ? "" : (autoBox.checked ? "Enter how many accounts to launch across." : "Tick at least one account (or use auto-pick).");
     return "";
   }
@@ -217,7 +215,8 @@
   }
   function creativeText() {
     var m = slCreative.value;
-    return m === "pick" ? (picked.length ? picked.length + " picked creative" + (picked.length === 1 ? "" : "s") : "none picked yet") : (m === "library" ? "fresh library videos" : (m === "carousel" ? "fresh library carousels" : (slSpark.value ? "spark: " + slSpark.options[slSpark.selectedIndex].text : "the preset's creative")));
+    if (m === "spark") return sparkPick ? "spark: " + sparkPick.name + (sparkPick.creator ? " (@" + sparkPick.creator.replace(/^@/, "") + ")" : "") : "spark — not picked yet";
+    return m === "pick" ? (picked.length ? picked.length + " picked creative" + (picked.length === 1 ? "" : "s") : "none picked yet") : (m === "library" ? "fresh library videos" : (m === "carousel" ? "fresh library carousels" : "the preset's creative"));
   }
   function numbers() {
     var p = (preset && PRESETS[preset.value]) || {}, n = nAccounts();
@@ -288,15 +287,31 @@
     if (e.target.closest("#slPickMore")) { openPicker(); return; }
     var x = e.target.closest(".pk-chip button"); if (x) { var id = x.closest(".pk-chip").dataset.id; picked = picked.filter(function (c) { return String(c.id) !== id; }); renderPicked(); }
   });
+  function showSpark() {
+    var box = document.getElementById("slSparkPick");
+    box.hidden = !(slCreative.value === "spark" && sparkPick);
+    if (!sparkPick) return;
+    var img = document.getElementById("slSparkImg"); img.hidden = !sparkPick.thumb; if (sparkPick.thumb) img.src = sparkPick.thumb;
+    document.getElementById("slSparkName").textContent = sparkPick.name;
+    document.getElementById("slSparkSub").textContent = [sparkPick.creator ? "@" + sparkPick.creator.replace(/^@/, "") : "", sparkPick.type, sparkPick.state].filter(Boolean).join(" · ");
+  }
+  function openSparkPicker() {
+    UI.pickSpark({ selected: sparkPick ? sparkPick.id : null }).then(function (it) {
+      if (!it) { if (!sparkPick) setMode(""); return; }
+      sparkPick = it; slSpark.value = it.id; showSpark(); syncSummary();
+    });
+  }
+  document.getElementById("slSparkChange").addEventListener("click", openSparkPicker);
   function setMode(m) {
     slCreative.value = m;
     seg.querySelectorAll("button").forEach(function (b) { b.classList.toggle("on", b.dataset.mode === m); });
     slLibOpts.style.display = (m === "library" || m === "carousel" || m === "pick") ? "" : "none";
-    if (m) slSpark.value = "";
+    if (m !== "spark") { slSpark.value = ""; sparkPick = null; } else if (sparkPick) slSpark.value = sparkPick.id;
+    document.getElementById("slCreativeHint").textContent = m === "spark" ? "The creator's post runs as the ad on every selected account, under their identity; the preset's text, CTA and destination still apply." : (m ? "Library creatives need a landing URL & ad text on the preset. Each creative launches to its own accounts — nothing runs twice." : "Preset default = whatever the preset says (its spark, or the next unused library creative per account).");
+    showSpark();
     renderPicked();
   }
-  seg.addEventListener("click", function (e) { var b = e.target.closest("[data-mode]"); if (!b || b.disabled) return; setMode(b.dataset.mode); if (b.dataset.mode === "pick" && !picked.length) openPicker(); });
-  slSpark.addEventListener("change", function () { if (slSpark.value) setMode(""); else syncSummary(); });
+  seg.addEventListener("click", function (e) { var b = e.target.closest("[data-mode]"); if (!b || b.disabled) return; setMode(b.dataset.mode); if (b.dataset.mode === "pick" && !picked.length) openPicker(); if (b.dataset.mode === "spark" && !sparkPick) openSparkPicker(); });
   document.querySelector('[name="accounts_per_creative"]').addEventListener("input", syncSummary);
   document.querySelector('[name="creatives_count"]').addEventListener("input", syncSummary);
   setMode("");
@@ -320,7 +335,7 @@
   }
   // arrived from Sparks with ?spark=ID → that spark is the override
   var preSpark = qs.get("spark");
-  if (preSpark && slSpark.querySelector('option[value="' + preSpark + '"]')) { slSpark.value = preSpark; setMode(""); syncSummary(); }
+  if (preSpark) UI.get("/spark-codes/pick.json?id=" + encodeURIComponent(preSpark)).then(function (d) { var it = (d.items || [])[0]; if (it) { sparkPick = it; setMode("spark"); syncSummary(); } });
   var modeField = document.getElementById("slMode");
   autoBox.addEventListener("change", function () {
     autoRow.style.display = autoBox.checked ? "" : "none";

@@ -87,6 +87,39 @@ def spark_list(request: Request, db: Session = Depends(get_db)):
     })
 
 
+@router.get("/spark-codes/pick.json")
+def pick_json(request: Request, db: Session = Depends(get_db)):
+    """The spark picker's data (Super Launcher / Single campaign): every code with its
+    creator, type, status and post link. state = fresh (active) | used | all; q = search;
+    id = one specific code (to show a pre-selected one)."""
+    from fastapi.responses import JSONResponse
+    from ..templating import _ago
+    qp = request.query_params
+    state = qp.get("state") or "fresh"
+    q = (qp.get("q") or "").strip().lower()
+    only_id = qp.get("id")
+    query = db.query(models.SparkCode).order_by(models.SparkCode.created_at.desc())
+    if only_id and only_id.isdigit():
+        query = query.filter(models.SparkCode.id == int(only_id))
+    elif state == "fresh":
+        query = query.filter(models.SparkCode.status == "active")
+    elif state == "used":
+        query = query.filter(models.SparkCode.status != "active")
+    items = []
+    for s in query.limit(500):
+        creator = s.group.name if s.group else ""
+        hay = f"{s.name} {s.code} {creator} {s.source}".lower()
+        if q and q not in hay:
+            continue
+        items.append({"id": s.id, "name": s.name or s.code[:16], "creator": creator, "type": (s.media_type or "VIDEO").lower(),
+                      "state": "fresh" if s.status == "active" else (s.status or "used"), "thumb": s.thumbnail_url or "",
+                      "post_url": s.tiktok_post_url or "", "source": s.source or "", "uses": int(s.use_count or 0),
+                      "last_used": _ago(s.last_used_at) if s.last_used_at else "", "added": _ago(s.created_at) if s.created_at else ""})
+    counts = {"fresh": db.query(models.SparkCode).filter_by(status="active").count(),
+              "used": db.query(models.SparkCode).filter(models.SparkCode.status != "active").count()}
+    return JSONResponse({"items": items, "counts": counts})
+
+
 @router.post("/spark-codes/add")
 def add_code(name: str = Form(""), code: str = Form(...), media_type: str = Form("VIDEO"),
              tiktok_post_url: str = Form(""), group_name: str = Form(""),

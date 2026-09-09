@@ -129,6 +129,9 @@
           <label class="field-label" for="czName">Carousel name</label>
           <input type="text" name="name" id="czName" placeholder="e.g. summer_offer_v1" required autocomplete="off">
           <div class="hint" style="margin-top:4px;">Shown in the library and on Results — pick something you'll recognise.</div>
+          <label class="field-label" for="czText" style="margin-top:12px;display:flex;justify-content:space-between;gap:8px;">Caption <span class="muted" style="flex:1;">· the ad text, one for the whole carousel</span><span id="czTextN" class="mono muted" style="font-weight:400;">0/100</span></label>
+          <textarea name="ad_text" id="czText" rows="2" maxlength="100" placeholder="e.g. Swipe → this is how I stopped overpaying 👀" style="min-height:56px;font-family:var(--font-sans);font-size:13px;"></textarea>
+          <div class="hint" style="margin-top:4px;">TikTok requires one on every carousel ad. Leave it empty to use the preset's ad text (or the Ad Texts pool) at launch instead.</div>
           {% if source_mode == 'static' %}
           <label class="field-label" for="czSource" style="margin-top:12px;">Source <span class="muted">· static mode</span></label>
           <input type="text" name="source" id="czSource" placeholder="e.g. offerA" autocomplete="off">
@@ -136,7 +139,7 @@
           {% else %}
           <input type="hidden" name="source" value="">
           {% endif %}
-          <div class="hint" style="margin-top:14px;">Caption + CTA come from the preset at launch (TikTok allows one for the whole carousel). Slides are delivered in TikTok's carousel sizes automatically — 720×1280, 640×640 or 1200×628 — so design at 9:16, 1:1 or 1.91:1 to avoid cropping.</div>
+          <div class="hint" style="margin-top:14px;">The CTA button comes from the preset at launch. Slides are delivered in TikTok's carousel sizes automatically — 720×1280, 640×640 or 1200×628 — so design at 9:16, 1:1 or 1.91:1 to avoid cropping.</div>
         </div>
       </div>
     </section>
@@ -855,6 +858,7 @@
     nextBtn.addEventListener("click", function () { goStep(step + 1); });
     backBtn.addEventListener("click", function () { goStep(step - 1); });
     document.getElementById("czName").addEventListener("input", refreshFoot);
+    (function () { var ta = document.getElementById("czText"), n = document.getElementById("czTextN"); function cnt() { n.textContent = ta.value.length + "/100"; } ta.addEventListener("input", cnt); cnt(); })();
     czForm.addEventListener("submit", function (e) {
       if (!(slidesOk() && music)) { e.preventDefault(); goStep(slidesOk() ? 2 : 1); return; }
       var nm = document.getElementById("czName"); if (!nm.value.trim()) { e.preventDefault(); goStep(3); nm.focus(); adopsToast && adopsToast("err", "Give the carousel a name."); return; }
