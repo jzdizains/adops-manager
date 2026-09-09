@@ -284,6 +284,14 @@
 {% endif %}
 {% if view == 'images' %}
 {# ============================== IMAGES ============================== #}
+{% set img_busy = images|selectattr('status', 'equalto', 'processing')|list|length %}
+{% set img_failed = images|selectattr('status', 'equalto', 'error')|list|length %}
+{% if img_busy or img_failed %}
+<div class="flash {{ 'ok' if img_busy else 'err' }}" id="imgWork" style="margin-top:14px;margin-bottom:0;">
+  {% if img_busy %}<b>{{ img_busy }}</b> image{{ '' if img_busy == 1 else 's' }} being made right now (AI edits / variations) — they sit at the top of the shelf and the page refreshes itself when one is ready.{% endif %}
+  {% if img_failed %} <b>{{ img_failed }}</b> failed — the reason is on the tile, with a Retry button.{% endif %}
+</div>
+{% endif %}
 <div class="card" id="images" style="margin-top:14px;">
   <div class="card-header"><span class="card-title">🖼 Images</span>
     <span class="card-meta">{{ images|length }} image(s) · png · jpg · webp — edit or generate with AI (Nano Banana)</span></div>
@@ -348,7 +356,7 @@
         {% if tg.tag == 'ai' %}<span class="img-badge" title="AI edit: {{ r.ai_prompt }}">✨</span>{% elif tg.tag == 'text' %}<span class="img-badge" title="Text copy">T</span>{% endif %}
         {% if tg.carousel %}<span class="img-badge right" title="Slide in carousel “{{ tg.carousel }}”">🖼</span>{% elif r.status == 'used' %}<span class="img-badge right" title="Launched">used</span>{% endif %}
         {% if r.status == 'processing' %}<div class="img-ph busy" data-since="{{ (r.uploaded_at.isoformat() + 'Z') if r.uploaded_at else '' }}"><span class="spin"></span><b>{{ 'Rendering variation…' if r.freshen else 'AI is working…' }}</b><small class="ph-age">just started</small><small class="muted">{{ 'TensorPix + uniquify' if (r.freshen and r.tp_model_ids) else ('uniquify' if r.freshen else 'usually under a minute') }}</small></div>
-        {% elif r.status == 'error' %}<div class="img-ph fail" title="{{ r.error }}"><b>✕ Failed</b><small>{{ (r.error or 'no detail')[:90] }}</small></div>
+        {% elif r.status == 'error' %}<div class="img-ph fail" title="{{ r.error }}"><b>✕ Failed</b><small>{{ (r.error or 'no detail')[:90] }}</small>{% if r.ai_model %}<form method="post" action="/creatives/{{ r.id }}/ai-retry" style="margin-top:6px;"><button type="submit" class="btn sm">↻ Retry</button></form>{% endif %}</div>
         {% elif r.file_path %}<a href="/creatives/{{ r.id }}/file" target="_blank" rel="noopener" title="Open full size"><img src="/creatives/{{ r.id }}/thumb" alt="{{ r.name }}" loading="lazy" decoding="async"></a>
         {% else %}<div class="img-ph">—</div>{% endif %}
         <div class="img-actions">

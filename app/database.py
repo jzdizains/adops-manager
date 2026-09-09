@@ -79,6 +79,9 @@ schema_additions: dict[str, dict[str, str]] = {
     },
     "creatives": {
         "ad_text": "TEXT DEFAULT ''",
+        "ai_parent_id": "INTEGER",
+        "ai_size": "TEXT DEFAULT ''",
+        "ai_aspect": "TEXT DEFAULT ''",
         "archived": "BOOLEAN DEFAULT 0",
         "favorite": "BOOLEAN DEFAULT 0",
         "labels": "TEXT DEFAULT ''",

@@ -237,6 +237,11 @@ if os.environ.get("ADOPS_DISABLE_BG") != "1":
     _db = _SL()
     try:
         _jobs.recover(_db)
+        try:
+            from .routes.creatives import recover_stuck_ai
+            recover_stuck_ai(_db, max_age_min=0)       # a restart killed every AI thread — say so on their tiles
+        except Exception:  # noqa: BLE001
+            pass
     finally:
         _db.close()
     _jobs.start()

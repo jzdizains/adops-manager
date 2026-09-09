@@ -124,6 +124,11 @@ def _loop():
             rules.evaluate_profit_rules(db, settings)
             queue_worker.process(db, settings)
             tensorpix_worker.process_pending(db, limit=6)   # advance variant jobs
+            try:
+                from .routes.creatives import recover_stuck_ai
+                recover_stuck_ai(db, max_age_min=20)          # an AI edit that never came back (thread died) → failed + Retry
+            except Exception:  # noqa: BLE001
+                pass
             _posters_pass(db)                                 # pre-make a few missing video posters, one at a time
             log.info("sweep %s done (slow=%s) rss=%.0fMB", sweep_n, slow, rss_mb())
         except Exception:  # one bad sweep must never kill the worker

@@ -94,7 +94,10 @@ def creatives_page(request: Request, db: Session = Depends(get_db)):
     archived_rows = [r for r in rows if r.archived]
     rows = [r for r in rows if not r.archived]
     videos = [r for r in rows if (r.kind or "video") == "video"]
-    images = [r for r in rows if r.kind == "image"]
+    # images: work in progress and failures FIRST (they were sorting to the bottom of a long
+    # shelf, out of sight), then newest first
+    images = sorted((r for r in rows if r.kind == "image"),
+                    key=lambda r: ({"processing": 0, "error": 1}.get(r.status, 2), -(r.id or 0)))
     from .. import activity as _activity
     notes = _activity.notes_for(db, "creative", [str(r.id) for r in rows + archived_rows])
     lib_q = request.query_params.get("q", "").strip().lower()
@@ -352,7 +355,8 @@ def _ai_job_rows(db: Session, *, prompt: str, model: str, size: str, aspect: str
     for n in range(variants):
         vname = f"{base_name}_ai{n + 1}.png"
         row = models.Creative(name=vname, file_name=vname, kind="image", status="processing",
-                              ai_prompt=prompt, ai_model=model, ai_cost=cost,
+                              ai_prompt=prompt, ai_model=model, ai_cost=cost, ai_size=size, ai_aspect=aspect,
+                              ai_parent_id=(parent.id if parent else None),
                               source_md5=family, source=(parent.source if parent else ""))
         db.add(row)
         db.flush()
@@ -373,11 +377,21 @@ def _run_ai_jobs(row_ids: list[int], parent_id: int | None, model: str, size: st
     d = SessionLocal()
     try:
         src_bytes, src_mime = None, "image/png"
-        if parent_id:
-            parent = d.get(models.Creative, parent_id)
-            if parent and parent.file_path and Path(parent.file_path).exists():
-                src_bytes = Path(parent.file_path).read_bytes()
-                src_mime = _MIME.get(Path(parent.file_path).suffix.lower(), "image/png")
+        try:
+            if parent_id:
+                parent = d.get(models.Creative, parent_id)
+                if parent and parent.file_path and Path(parent.file_path).exists():
+                    src_bytes = Path(parent.file_path).read_bytes()
+                    src_mime = _MIME.get(Path(parent.file_path).suffix.lower(), "image/png")
+                elif parent_id:
+                    raise RuntimeError("the source image file is missing on the server")
+        except Exception as e:      # noqa: BLE001 — never leave the rows stuck in 'processing'
+            for rid in row_ids:
+                row = d.get(models.Creative, rid)
+                if row:
+                    row.status, row.error = "error", f"Couldn't read the source image: {e}"[:500]
+            d.commit()
+            return
         for rid in row_ids:
             row = d.get(models.Creative, rid)
             if not row:
@@ -444,6 +458,50 @@ async def ai_edit(creative_id: int, request: Request, db: Session = Depends(get_
     est = nanobanana.price(model, size) * variants
     return RedirectResponse(f"/creatives?view=images&ok={variants}+AI+edit(s)+started+(≈${est:.2f})",
                             status_code=303)
+
+
+@router.post("/creatives/{creative_id}/ai-retry")
+def ai_retry(creative_id: int, db: Session = Depends(get_db)):
+    """Run a failed / interrupted AI edit again with the same prompt, model, size and source."""
+    import threading
+    from datetime import datetime, timezone
+    from .. import nanobanana
+    row = db.get(models.Creative, creative_id)
+    if not row or row.kind != "image" or not row.ai_model:
+        return RedirectResponse("/creatives?view=images&err=That+isn%27t+an+AI+image", status_code=303)
+    if row.status == "processing":
+        return RedirectResponse("/creatives?view=images&ok=Still+running+—+give+it+a+moment", status_code=303)
+    if not nanobanana.configured():
+        return RedirectResponse("/creatives?view=images&err=GEMINI_API_KEY+is+not+set", status_code=303)
+    row.status, row.error = "processing", ""
+    row.uploaded_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    db.commit()
+    threading.Thread(target=_run_ai_jobs, args=([row.id], row.ai_parent_id, row.ai_model, row.ai_size or nanobanana.DEFAULT_SIZE, row.ai_aspect or ""),
+                     name="nanobanana-retry", daemon=True).start()
+    return RedirectResponse(f"/creatives?view=images&ok=Running+the+AI+edit+again#c{row.id}", status_code=303)
+
+
+def recover_stuck_ai(db: Session, max_age_min: int = 20) -> int:
+    """AI edits only live in a thread of the process that started them: after a restart (a
+    deploy, a crash) their rows would sit on 'processing' forever, sorted out of sight. Mark
+    anything older than max_age_min as failed with a reason + Retry. Called at boot and by
+    the sweep."""
+    from datetime import datetime, timedelta, timezone
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=max_age_min)
+    n = 0
+    for r in (db.query(models.Creative)
+              .filter(models.Creative.status == "processing", models.Creative.freshen == False,  # noqa: E712
+                      models.Creative.ai_model != "").all()):
+        at = r.uploaded_at or cutoff
+        if at.tzinfo is not None:
+            at = at.astimezone(timezone.utc).replace(tzinfo=None)
+        if at <= cutoff:
+            r.status = "error"
+            r.error = "Interrupted — the server restarted while this edit was running. Press Retry."
+            n += 1
+    if n:
+        db.commit()
+    return n
 
 
 @router.post("/creatives/ai-generate")
