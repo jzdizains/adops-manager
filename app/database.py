@@ -45,7 +45,7 @@ if config.DATABASE_URL.startswith("sqlite"):
 schema_additions: dict[str, dict[str, str]] = {
     # example: "templates": {"campaign_name_pattern": "TEXT DEFAULT ''"},
     "templates": {"campaign_name_pattern": "TEXT DEFAULT ''"},
-    "jobs": {"cancel_requested": "BOOLEAN DEFAULT 0"},
+    "jobs": {"cancel_requested": "BOOLEAN DEFAULT 0", "quiet": "BOOLEAN DEFAULT 0"},
     "ad_accounts": {"balance": "REAL DEFAULT 0", "enabled": "BOOLEAN DEFAULT 1",
                     "error_count": "INTEGER DEFAULT 0", "cooldown_until": "DATETIME"},
     "spark_codes": {"use_count": "INTEGER DEFAULT 0", "source": "TEXT DEFAULT ''"},

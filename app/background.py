@@ -178,7 +178,7 @@ def _audience_quick(db, settings: dict) -> None:
     days = {"hours": [today.isoformat()] if hours_due else [], "audience": [today.isoformat(), y1] if bd_due else []}
     title = ("Refresh audience breakdowns (today + yesterday, active accounts)" if bd_due
              else "Refresh today's hour-by-hour delivery (active accounts)")
-    jobs.enqueue_once(db, "audience_sync", title, {"days": days, "hot_only": True}, href="/audience")
+    jobs.enqueue_once(db, "audience_sync", title, {"days": days, "hot_only": True}, href="/audience", quiet=True)
 
 
 def _prune_logins(db) -> None:
@@ -196,7 +196,7 @@ def _music_monthly(db) -> None:
         return
     if jobs.pending(db, "music_sync"):
         return
-    jobs.enqueue_once(db, "music_sync", "Refresh TikTok music library (monthly)", {}, href="/creatives?view=carousels")
+    jobs.enqueue_once(db, "music_sync", "Refresh TikTok music library (monthly)", {}, href="/creatives?view=carousels", quiet=True)
 
 
 def _audience_daily(db) -> None:
@@ -208,6 +208,6 @@ def _audience_daily(db) -> None:
         return
     if not queries.any_access_token(db):
         return
-    jobs.enqueue_once(db, "audience_sync", "Refresh audience breakdowns (daily)", {}, href="/audience")
+    jobs.enqueue_once(db, "audience_sync", "Refresh audience breakdowns (daily)", {}, href="/audience", quiet=True)
     queries.set_setting(db, "audience_sync_day", today)
     db.commit()

@@ -54,9 +54,12 @@ def _now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def enqueue(db: Session, kind: str, title: str, payload: dict | None = None, href: str = "") -> models.Job:
+def enqueue(db: Session, kind: str, title: str, payload: dict | None = None, href: str = "", quiet: bool = False) -> models.Job:
+    """quiet=True for jobs the sweep schedules on its own (audience / hourly refreshes, monthly
+    music sync): they still show on the Jobs page but never pop a notification unless they fail —
+    otherwise a user logging in after a night away is greeted by a wall of "refreshed" toasts."""
     job = models.Job(kind=kind, title=title[:200], payload=json.dumps(payload or {}, default=str),
-                     href=href or "", status="queued", cancel_requested=False)
+                     href=href or "", status="queued", cancel_requested=False, quiet=quiet)
     db.add(job)
     db.commit()
     if _inline():
@@ -74,13 +77,13 @@ def pending(db: Session, kind: str) -> models.Job | None:
 
 
 def enqueue_once(db: Session, kind: str, title: str, payload: dict | None = None,
-                 href: str = "") -> tuple[models.Job, bool]:
+                 href: str = "", quiet: bool = False) -> tuple[models.Job, bool]:
     """enqueue() unless the same kind is already queued or running.
     Returns (job, created)."""
     existing = pending(db, kind)
     if existing:
         return existing, False
-    return enqueue(db, kind, title, payload, href), True
+    return enqueue(db, kind, title, payload, href, quiet=quiet), True
 
 
 def cancel(db: Session, job_id: int) -> tuple[bool, str]:
@@ -168,6 +171,8 @@ def run_job(db: Session, job: models.Job) -> None:
         job.detail = f"{type(e).__name__}: {str(e)[:400]}"
     job.finished_at = _now()
     job.progress = ""
+    if job.quiet and job.status == "done":
+        job.seen = True                # scheduled housekeeping that worked: no toast, just the Jobs list
     db.commit()
 
 

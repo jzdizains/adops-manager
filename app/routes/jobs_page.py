@@ -15,28 +15,39 @@ from ..templating import render
 router = APIRouter()
 
 
+ANNOUNCE_MAX = 4      # individual notifications per poll; the rest become one "N more" line
+
+
 @router.get("/jobs/data")
 def jobs_data(request: Request, db: Session = Depends(get_db)):
     """Unseen finished jobs (→ notifications) + what's running. Marks the
     returned finished jobs as seen so each is announced once — unless
     ?peek=1 (the Jobs page polling), which must not eat the notifications."""
     from sqlalchemy import func
+    from datetime import datetime, timedelta
     peek = request.query_params.get("peek") == "1"
     items = []
+    more = 0
     if not peek:
-        done = (db.query(models.Job)
-                .filter(models.Job.status.in_(("done", "error")), models.Job.seen == False)  # noqa: E712
-                .order_by(models.Job.finished_at).limit(20).all())
-        for j in done:
+        unseen = (db.query(models.Job)
+                  .filter(models.Job.status.in_(("done", "error")), models.Job.seen == False)  # noqa: E712
+                  .order_by(models.Job.finished_at.desc()).limit(200).all())
+        # a notification is for something that JUST finished: results older than half an hour
+        # (nobody was looking) are folded into one line; at most 4 pop individually per poll
+        cutoff = datetime.utcnow() - timedelta(minutes=30)
+        fresh = [j for j in unseen if (j.finished_at or j.created_at or cutoff) >= cutoff]
+        for j in reversed(fresh[:ANNOUNCE_MAX]):
             items.append({"id": j.id, "kind": j.kind, "title": j.title, "status": j.status,
                           "detail": j.detail or "", "href": j.href or "/jobs"})
+        more = len(unseen) - len(items)
+        for j in unseen:
             j.seen = True
     running = (db.query(models.Job).filter(models.Job.status.in_(("queued", "running")))
                .order_by(models.Job.id).all())
     done_count = db.query(func.count(models.Job.id)).filter(models.Job.status.in_(("done", "error", "cancelled"))).scalar() or 0
-    if items:
+    if items or more:
         db.commit()      # only a write when something was marked seen — every tab polls this, and SQLite has one writer
-    return JSONResponse({"done": items, "done_count": done_count,
+    return JSONResponse({"done": items, "more": more, "done_count": done_count,
                          "running": [{"id": j.id, "kind": j.kind, "title": j.title, "status": j.status,
                                       "progress": j.progress or ""} for j in running]})
 

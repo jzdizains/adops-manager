@@ -289,6 +289,11 @@
     if (!host) { host = document.createElement("div"); host.id = "jobNotes"; host.className = "jn-host"; host.setAttribute("aria-live", "polite"); document.body.appendChild(host); }
     if (!document.body.contains(host)) return;
     var seen = {};
+    var MAX_VISIBLE = 4;
+    function trim() {   // never more than a few cards on screen — the oldest make room
+      var cards = host.querySelectorAll(".jn:not(.out)");
+      for (var i = 0; i < cards.length - MAX_VISIBLE; i++) { cards[i].classList.add("out"); (function (c) { setTimeout(function () { c.remove(); }, 250); })(cards[i]); }
+    }
     function note(j) {
       if (seen[j.id]) return; seen[j.id] = true;
       var a = document.createElement("a");
@@ -298,7 +303,7 @@
       a.querySelector("b").textContent = j.title;
       a.querySelector(".jn-d").textContent = j.detail || (j.status === "error" ? "failed" : "done");
       a.querySelector(".jn-x").addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); gone(); });
-      host.appendChild(a);
+      host.appendChild(a); trim();
       var t = setTimeout(gone, 10000);
       function gone() { clearTimeout(t); a.classList.add("out"); setTimeout(function () { a.remove(); }, 250); }
       a.addEventListener("mouseenter", function () { clearTimeout(t); });
@@ -308,6 +313,7 @@
     function poll() {
       fetch("/jobs/data", { credentials: "same-origin" }).then(function (r) { return r.json(); }).then(function (d) {
         (d.done || []).forEach(note);
+        if (d.more > 0) note({ id: "more-" + Date.now(), kind: "more", title: d.more + " more job" + (d.more > 1 ? "s" : "") + " finished while you were away", status: "ok", detail: "Results are on the Jobs page.", href: "/jobs" });
         if (pill) {
           var n = (d.running || []).length;
           pill.hidden = n === 0;

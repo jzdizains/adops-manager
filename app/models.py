@@ -762,6 +762,7 @@ class Job(Base):
     href = Column(String, default="")                       # where the notification takes you
     progress = Column(String, default="")                   # optional "3 of 12" while running
     seen = Column(Boolean, default=False, index=True)
+    quiet = Column(Boolean, default=False)                  # scheduled by the sweep, not a person: no notification unless it fails
     cancel_requested = Column(Boolean, default=False)       # operator asked a running job to stop
     created_at = Column(DateTime, default=utcnow, index=True)
     started_at = Column(DateTime, nullable=True)
