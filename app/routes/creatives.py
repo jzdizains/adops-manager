@@ -339,6 +339,9 @@ async def upload_images(request: Request, db: Session = Depends(get_db)):
             skipped.append(why)
         else:
             saved += 1
+    if request.headers.get("x-requested-with") == "fetch":
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"ok": True, "saved": saved, "skipped": skipped})
     q = f"ok={saved}+image(s)+uploaded" if saved else "ok=nothing+uploaded"
     if skipped:
         q += "&err=" + "+·+".join(skipped)[:300].replace(" ", "+")

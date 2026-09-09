@@ -296,11 +296,16 @@
   <div class="card-header"><span class="card-title">🖼 Images</span>
     <span class="card-meta">{{ images|length }} image(s) · png · jpg · webp — edit or generate with AI (Nano Banana)</span></div>
   <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:4px;">
-    <form method="post" action="/creatives/upload-images" enctype="multipart/form-data" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-      <input type="file" name="files" accept="image/png,image/jpeg,image/webp" multiple required style="width:auto;">
+    <form method="post" action="/creatives/upload-images" enctype="multipart/form-data" id="imgUpForm" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <input type="file" name="files" id="imgUpFiles" accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp" multiple required style="width:auto;">
       {% if source_mode == 'static' %}<input type="text" name="source_prefix" placeholder="source prefix" style="width:150px;" title="Static source mode: postbacks report this source">{% endif %}
-      <button class="btn primary" type="submit">⬆ Upload images</button>
+      <button class="btn primary" type="submit" id="imgUpGo">⬆ Upload images</button>
     </form>
+    <div id="imgUpStatus" hidden style="flex-basis:100%;border:1px solid var(--border);border-radius:12px;padding:10px 12px;background:var(--surface-2);font-size:12.5px;">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:center;"><b id="imgUpTitle">Uploading…</b><span class="muted mono" id="imgUpPct">0%</span></div>
+      <div style="height:6px;border-radius:999px;background:var(--panel-hover);margin:8px 0;overflow:hidden;"><div id="imgUpBar" style="height:100%;width:0;background:var(--accent);transition:width .2s;"></div></div>
+      <div id="imgUpLog" class="muted" style="font-size:12px;max-height:120px;overflow:auto;"></div>
+    </div>
     {% if nb_configured %}
     <button type="button" class="btn" id="genBtn" style="margin-left:auto;">✨ Generate with AI…</button>
     {% else %}
@@ -611,6 +616,58 @@
       });
     });
     apply();
+  })();
+  // ---- Images tab uploader: batches of 3 with a live progress bar, plain-language skips ----
+  (function () {
+    var f = document.getElementById("imgUpForm"); if (!f) return;
+    var inp = document.getElementById("imgUpFiles"), go = document.getElementById("imgUpGo"), box = document.getElementById("imgUpStatus"), bar = document.getElementById("imgUpBar"), pct = document.getElementById("imgUpPct"), title = document.getElementById("imgUpTitle"), log = document.getElementById("imgUpLog");
+    var OK = /\.(png|jpe?g|webp)$/i, MAXB = 25 * 1024 * 1024;
+    function line(t, bad) { var d = document.createElement("div"); d.textContent = t; if (bad) d.style.color = "var(--err)"; log.appendChild(d); log.scrollTop = log.scrollHeight; }
+    function send(batch, prefix) {
+      return new Promise(function (resolve) {
+        var fd = new FormData(); batch.forEach(function (x) { fd.append("files", x, x.name); }); if (prefix) fd.append("source_prefix", prefix);
+        var xhr = new XMLHttpRequest(); xhr.open("POST", "/creatives/upload-images"); xhr.setRequestHeader("X-Requested-With", "fetch");
+        xhr.upload.onprogress = function (e) { if (e.lengthComputable) batchPct(e.loaded / e.total); };
+        xhr.onload = function () { try { resolve(JSON.parse(xhr.responseText)); } catch (e) { resolve({ ok: false, error: "server answered " + xhr.status }); } };
+        xhr.onerror = function () { resolve({ ok: false, error: "network error — the upload was cut off" }); };
+        xhr.ontimeout = function () { resolve({ ok: false, error: "timed out — try fewer or smaller files" }); };
+        xhr.timeout = 180000; xhr.send(fd);
+      });
+    }
+    var doneBytes = 0, totalBytes = 1, curBatchBytes = 0;
+    function batchPct(frac) { var v = Math.min(100, Math.round(((doneBytes + curBatchBytes * frac) / totalBytes) * 100)); bar.style.width = v + "%"; pct.textContent = v + "%"; }
+    f.addEventListener("submit", function (e) {
+      e.preventDefault();
+      var all = Array.prototype.slice.call(inp.files || []); if (!all.length) { adopsToast && adopsToast("err", "Choose one or more images first."); return; }
+      var files = [], skipped = [];
+      all.forEach(function (x) {
+        if (!OK.test(x.name)) skipped.push(x.name + ": " + (/\.heic$|\.heif$/i.test(x.name) ? "iPhone HEIC photos aren't supported — export as JPG first" : "not a png / jpg / webp"));
+        else if (x.size > MAXB) skipped.push(x.name + ": over 25 MB");
+        else files.push(x);
+      });
+      box.hidden = false; log.innerHTML = ""; skipped.forEach(function (t) { line("skipped " + t, true); });
+      if (!files.length) { title.textContent = "Nothing to upload"; return; }
+      go.disabled = true; inp.disabled = true;
+      totalBytes = files.reduce(function (a, x) { return a + x.size; }, 0) || 1; doneBytes = 0;
+      var prefix = (f.querySelector('[name="source_prefix"]') || {}).value || "", saved = 0, i = 0, errors = 0;
+      function next() {
+        if (i >= files.length) {
+          title.textContent = "Done — " + saved + " image" + (saved === 1 ? "" : "s") + " uploaded" + (errors ? ", " + errors + " problem(s) above" : "");
+          bar.style.width = "100%"; pct.textContent = "100%";
+          var u = new URL(location.href); u.searchParams.delete("ok"); u.searchParams.delete("err"); u.searchParams.set("view", "images"); u.searchParams.set("ok", saved + " image" + (saved === 1 ? "" : "s") + " uploaded");
+          setTimeout(function () { location.href = u.toString(); }, errors ? 2500 : 600); return;
+        }
+        var batch = files.slice(i, i + 3); i += batch.length; curBatchBytes = batch.reduce(function (a, x) { return a + x.size; }, 0);
+        title.textContent = "Uploading " + Math.min(i, files.length) + " of " + files.length + "…";
+        send(batch, prefix).then(function (r) {
+          doneBytes += curBatchBytes; batchPct(0);
+          if (!r || r.ok === false) { errors += batch.length; line((r && r.error) || "upload failed", true); }
+          else { saved += r.saved || 0; (r.skipped || []).forEach(function (t) { errors++; line("skipped " + t, true); }); batch.forEach(function (x) { if (!(r.skipped || []).some(function (t) { return t.indexOf(x.name) === 0; })) line("✓ " + x.name); }); }
+          next();
+        });
+      }
+      next();
+    });
   })();
   {% if processing %}
   // While AI edits / variations run: tick the "started N s ago" labels, poll a tiny JSON

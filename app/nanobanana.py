@@ -6,7 +6,7 @@ Contract (ai.google.dev/gemini-api/docs/image-generation + /api/interactions-api
   body    {"model": "...",
            "input": [{"type":"text","text": prompt},
                      {"type":"image","mime_type":"image/png","data": <base64>}],   # omit for text→image
-           "response_format": {"type":"image","mime_type":"image/png","image_size":"1K"}}
+           "response_format": {"type":"image","mime_type":"image/jpeg","image_size":"1K"}}   # jpeg is the only accepted output
   reply   {"status":"completed", "steps":[{"type":"model_output",
              "content":[{"type":"image","mime_type":"image/png","data":<base64>}, ...]}], "usage":{...}}
 The generated image is the LAST image block across steps[].content[].
@@ -97,7 +97,9 @@ def generate(prompt: str, image: bytes | None = None, image_mime: str = "image/p
     if image:
         inputs.append({"type": "image", "mime_type": image_mime,
                        "data": base64.b64encode(image).decode("ascii")})
-    fmt: dict = {"type": "image", "mime_type": "image/png", "image_size": size}
+    # Google now accepts ONLY image/jpeg here (Sep 2026: "The value 'image/png' is not supported
+    # for 'response_format.mime_type'. Supported values: 'image/jpeg'") — the result is stored as .jpg
+    fmt: dict = {"type": "image", "mime_type": "image/jpeg", "image_size": size}
     if aspect in ASPECTS:
         fmt["aspect_ratio"] = aspect
     body = {"model": model, "input": inputs, "response_format": fmt}
