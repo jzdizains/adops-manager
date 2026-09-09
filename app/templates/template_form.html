@@ -64,11 +64,11 @@
     <div class="card-header"><span class="card-title">2 · Destination</span><span class="card-meta">where the click lands and what counts as a conversion</span></div>
     <select name="destination_type" id="destType" hidden>{% for d in destinations %}<option value="{{ d }}" {{ 'selected' if blob.get('destination_type', 'website') == d }}>{{ d }}</option>{% endfor %}</select>
     <div class="pb-cards" id="destCards">
-      {% for d, label, sub in [('website', 'Website', 'landing page URL, no pixel event'), ('pixel', 'Website + pixel', 'landing page URL, optimised for a pixel event'), ('instant_page', 'Instant page', "each account's own copy, by name"), ('lead_form', 'Instant form', 'TikTok lead form, by name')] %}
+      {% for d, label, sub in [('website', 'Website', 'landing page URL, no pixel event'), ('pixel', 'Website + pixel', 'landing page URL, optimised for a pixel event'), ('instant_page', 'Instant page', "TikTok-hosted page, no pixel — each account's own copy, by name"), ('lead_form', 'Instant form', 'TikTok lead form, no pixel — by name')] %}
       <button type="button" class="pb-card" data-val="{{ d }}"><b>{{ label }}</b><span class="muted">{{ sub }}</span></button>
       {% endfor %}
     </div>
-    <div class="hint" id="destNote" hidden style="margin-top:8px;">This goal optimises for a pixel event, so TikTok needs a pixel here — there is no "without pixel" version of it. To run traffic with no pixel at all, pick the <b>Click</b> goal in step 1: <button type="button" class="linkish" id="destToClick">switch to Click</button>.</div>
+    <div class="hint" id="destNote" hidden style="margin-top:8px;">A plain website under this goal needs a pixel + event (Ads Manager: "a data connection is required"). Without a pixel, use <b>Instant page</b> (Website engagements — TikTok optimises for the page's button clicks) or <b>Instant form</b> (Leads); or run plain traffic with the <b>Click</b> goal: <button type="button" class="linkish" id="destToClick">switch to Click</button>.</div>
     <div class="form-row" style="margin-top:12px;">
       <label class="field" data-dest="website pixel"><span class="field-label">Landing page URL</span>
         <input type="url" name="landing_page_url" id="pbLanding" value="{{ blob.get('landing_page_url', '') }}" placeholder="https://offer.example.com/page">

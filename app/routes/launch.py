@@ -23,6 +23,9 @@ OBJECTIVE_MAP: dict[tuple[str, str], tuple[str, str, str]] = {
     ("TRAFFIC", "instant_page"):     ("CLICK",   "CPC",  "BID_TYPE_NO_BID"),
     ("WEB_CONVERSIONS", "pixel"):    ("CONVERT", "OCPM", "BID_TYPE_NO_BID"),
     ("WEB_CONVERSIONS", "website"):  ("CONVERT", "OCPM", "BID_TYPE_NO_BID"),
+    # Website engagements with a TikTok Instant Page as the optimisation location: no pixel,
+    # TikTok optimises for the page's button (outbound) clicks
+    ("WEB_CONVERSIONS", "instant_page"): ("CONVERT", "OCPM", "BID_TYPE_NO_BID"),
     ("LEAD_GENERATION", "lead_form"): ("CONVERT", "OCPM", "BID_TYPE_NO_BID"),
     ("LEAD_GENERATION", "instant_page"): ("CONVERT", "OCPM", "BID_TYPE_NO_BID"),
     # TikTok moved lead-type pixel events (Complete Registration, Contact) OUT of
@@ -71,12 +74,15 @@ DEST_LABELS = {
 # mirrors what Ads Manager offers so the form can only produce valid combos.
 #   event: "required" (always needs pixel+event) | "conditional" (only on a
 #   website/pixel destination) | "none"
-# A plain "website" destination (no pixel event) is only real for goals that don't
-# optimise for a conversion — with Website engagements / Leads-on-a-site TikTok always
-# needs a pixel event, so those goals only offer the "Website + pixel" card.
+# What Ads Manager offers per goal (its "Optimization location" list):
+#   Website engagements → Website (needs a pixel + event)  |  TikTok Instant Page (no pixel:
+#                         optimises for the page's button clicks)
+#   Leads               → Website (needs a pixel + event)  |  TikTok Instant Form (no pixel)
+#   Click / Reach / Video views → a plain website URL or an Instant page, no pixel anywhere
+# A plain "website, no pixel event" destination therefore only exists for the last group.
 OBJECTIVE_RULES = {
-    "WEB_CONVERSIONS": {"destinations": ["pixel"],
-                        "goals": ["CONVERT"], "event": "required"},
+    "WEB_CONVERSIONS": {"destinations": ["pixel", "instant_page"],
+                        "goals": ["CONVERT"], "event": "conditional"},
     "LEAD_GENERATION": {"destinations": ["lead_form", "pixel"],
                         "goals": ["CONVERT"], "event": "conditional"},
     "TRAFFIC":         {"destinations": ["website", "instant_page"],

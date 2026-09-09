@@ -665,6 +665,13 @@ def build_adgroup_payload(fields: dict, acct: models.AdAccount, campaign_id: str
         payload["optimization_event"] = fields["optimization_event"]
     elif dest == "lead_form":
         payload["promotion_type"] = "LEAD_GENERATION"
+    elif dest == "instant_page" and fields.get("optimization_goal") == "CONVERT":
+        # Website engagements → TikTok Instant Page as the optimisation location: no pixel,
+        # the page's button click is the optimisation event (Ads Manager: "We will optimize
+        # for outbound clicks on your Instant Page"). promotion_website_type marks the page.
+        payload["promotion_type"] = "WEBSITE"
+        payload["promotion_website_type"] = "TIKTOK_NATIVE_PAGE"
+        payload["optimization_event"] = "BUTTON"
     else:
         payload["promotion_type"] = "WEBSITE"
     return payload
@@ -1116,6 +1123,8 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
         needs_pixel = (fields["destination_type"] == "pixel"
                        or (fields["destination_type"] == "website"
                            and fields.get("optimization_goal") == "CONVERT"))
+        # an Instant page / Instant form destination never needs a pixel — TikTok optimises for
+        # the page's button clicks / the form itself
         if needs_pixel and not fields.get("optimization_event"):
             raise ConfigError("Conversion campaigns need a pixel + optimization event — "
                               "pick both in the preset (Optimization location section). "
@@ -1431,6 +1440,10 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                                  if k != "promotion_target_type"}
                     variants.append(no_target)
                     variants.append({**no_target, "promotion_type": "WEBSITE"})
+                if base_payload.get("promotion_website_type") == "TIKTOK_NATIVE_PAGE":
+                    # instant-page conversions: if TikTok won't take the explicit button event,
+                    # let it pick the page's default event
+                    variants.append({k: v for k, v in base_payload.items() if k != "optimization_event"})
 
                 ag = None
                 last_err: tiktok_api.TikTokError | None = None
@@ -1462,7 +1475,7 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                         # only walk to the next variant on objective/promotion
                         # complaints; anything else is a real error — surface it
                         if (v_i < len(variants) - 1
-                                and ("objective" in msg or "promotion" in msg)):
+                                and ("objective" in msg or "promotion" in msg or "optimization" in msg or "event" in msg)):
                             continue
                         raise
                 if ag is None:   # defensive — loop always breaks or raises
