@@ -71,10 +71,13 @@ DEST_LABELS = {
 # mirrors what Ads Manager offers so the form can only produce valid combos.
 #   event: "required" (always needs pixel+event) | "conditional" (only on a
 #   website/pixel destination) | "none"
+# A plain "website" destination (no pixel event) is only real for goals that don't
+# optimise for a conversion — with Website engagements / Leads-on-a-site TikTok always
+# needs a pixel event, so those goals only offer the "Website + pixel" card.
 OBJECTIVE_RULES = {
-    "WEB_CONVERSIONS": {"destinations": ["website", "pixel"],
+    "WEB_CONVERSIONS": {"destinations": ["pixel"],
                         "goals": ["CONVERT"], "event": "required"},
-    "LEAD_GENERATION": {"destinations": ["lead_form", "website", "pixel"],
+    "LEAD_GENERATION": {"destinations": ["lead_form", "pixel"],
                         "goals": ["CONVERT"], "event": "conditional"},
     "TRAFFIC":         {"destinations": ["website", "instant_page"],
                         "goals": ["CLICK", "TRAFFIC_LANDING_PAGE_VIEW"], "event": "none"},

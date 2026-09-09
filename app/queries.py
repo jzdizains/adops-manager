@@ -15,12 +15,42 @@ def get_setting(db: Session, key: str, default: str = "") -> str:
 
 
 def set_setting(db: Session, key: str, value: str):
+    """Write one key. Atomic upsert — two users (or a user and the sweep) writing the
+    same key at the same moment must never race on the INSERT (UNIQUE key)."""
+    upsert_setting(db, key, value)
+    db.commit()
+
+
+def insert_setting_if_absent(db: Session, key: str, value: str) -> None:
+    """INSERT … ON CONFLICT DO NOTHING — for first-time defaults minted by several
+    simultaneous readers: exactly one value lands and everybody re-reads that one."""
+    from sqlalchemy.dialects.sqlite import insert as _sqlite_insert
+    if db.bind is not None and db.bind.dialect.name == "sqlite":
+        stmt = _sqlite_insert(models.Setting).values(key=key, value=value).on_conflict_do_nothing(index_elements=["key"])
+        db.execute(stmt)
+        return
+    if not db.query(models.Setting).filter_by(key=key).first():
+        db.add(models.Setting(key=key, value=value))
+
+
+def upsert_setting(db: Session, key: str, value: str) -> None:
+    """INSERT … ON CONFLICT(key) DO UPDATE (no read-then-insert window). Does not commit.
+    Any Setting object for this key already loaded in the session is refreshed."""
+    from sqlalchemy.dialects.sqlite import insert as _sqlite_insert
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    if db.bind is not None and db.bind.dialect.name == "sqlite":
+        stmt = _sqlite_insert(models.Setting).values(key=key, value=value, updated_at=now)
+        stmt = stmt.on_conflict_do_update(index_elements=["key"], set_={"value": value, "updated_at": now})
+        db.execute(stmt)
+        for obj in list(db.identity_map.values()):
+            if isinstance(obj, models.Setting) and obj.key == key:
+                db.expire(obj)
+        return
     row = db.query(models.Setting).filter_by(key=key).first()
     if row:
         row.value = value
     else:
         db.add(models.Setting(key=key, value=value))
-    db.commit()
 
 
 def enabled_accounts(db: Session) -> list[models.AdAccount]:

@@ -104,8 +104,22 @@ def get_settings(db: Session) -> dict:
             data = {}
     merged = {**DEFAULTS, **{k: v for k, v in data.items() if k in DEFAULTS}}
     if not merged["postback_key"]:
+        # first ever read: mint the postback key. Several simultaneous first readers each try —
+        # only ONE insert lands (ON CONFLICT DO NOTHING) and everyone re-reads that key.
         merged["postback_key"] = secrets.token_hex(16)
-        save_settings(db, merged)
+        if row is None:
+            from . import queries
+            queries.insert_setting_if_absent(db, KEY, json.dumps(merged))
+            db.commit()
+        else:
+            save_settings(db, merged)
+        db.expire_all()
+        row = db.query(models.Setting).filter_by(key=KEY).first()
+        try:
+            data = json.loads(row.value) if row and row.value else {}
+        except json.JSONDecodeError:
+            data = {}
+        merged = {**DEFAULTS, **{k: v for k, v in data.items() if k in DEFAULTS}}
     return merged
 
 
@@ -143,9 +157,6 @@ def save_settings(db: Session, values: dict):
     clean["appeal_daily_cap"] = max(int(clean.get("appeal_daily_cap") or 0), 1)
     clean["audience_hours_every_min"] = max(int(clean.get("audience_hours_every_min") or 0), AUDIENCE_HOURS_MIN)
     clean["audience_breakdown_every_min"] = max(int(clean.get("audience_breakdown_every_min") or 0), AUDIENCE_BREAKDOWN_MIN)
-    row = db.query(models.Setting).filter_by(key=KEY).first()
-    if not row:
-        row = models.Setting(key=KEY)
-        db.add(row)
-    row.value = json.dumps(clean)
+    from . import queries
+    queries.upsert_setting(db, KEY, json.dumps(clean))      # atomic: two first-time readers can't both INSERT
     db.commit()

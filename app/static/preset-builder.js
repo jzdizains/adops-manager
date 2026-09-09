@@ -22,8 +22,11 @@
     var rule = RULES[objSel.value] || { destinations: ["website"], event: "none" };
     $$("#destCards .pb-card").forEach(function (c) { c.hidden = rule.destinations.indexOf(c.dataset.val) < 0; });
     if (rule.destinations.indexOf(destSel.value) < 0) destSel.value = rule.destinations[0];
+    // goals that optimise for a conversion have no "website without pixel" option — say why, offer the way out
+    var note = $("#destNote"); if (note) note.hidden = rule.event === "none" || rule.destinations.indexOf("website") >= 0;
     dest.paint(); syncDest();
   }
+  var toClick = $("#destToClick"); if (toClick) toClick.addEventListener("click", function () { objSel.value = "TRAFFIC"; obj.paint(); syncObjective(); destSel.value = "website"; dest.paint(); syncDest(); refresh(); });
   function syncDest() {
     var objRule = RULES[objSel.value] || { event: "none" }, d = destSel.value;
     $$("[data-dest]").forEach(function (el) {
@@ -170,7 +173,7 @@
     var sums = { campaign: optText("#objType") + (smartPlus ? " · Smart+" : ""), location: destLab, targeting: rows[5][1], budget: n + " ad groups · " + UI.money(daily, 0) + (abo ? "/day" : ""), ad: $("#phSub").textContent, addons: dcSel.value ? (dcOpt ? dcOpt.text : "display card") : "no display card" };
     Object.keys(sums).forEach(function (k) { var el = $('[data-sum="' + k + '"]'); if (el) el.textContent = sums[k]; });
     var nm = $("#pbName").value.trim(); if (nm) $("#pbTitle").textContent = nm;
-    if (rule.event === "required" && destSel.value === "website") $("#destCards").dataset.warn = "1";
+
   }
   form.addEventListener("input", refresh); form.addEventListener("change", refresh);
   form.addEventListener("click", function (e) { if (e.target.closest(".cp-wrap")) setTimeout(refresh, 0); });

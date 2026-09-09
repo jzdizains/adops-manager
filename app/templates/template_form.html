@@ -68,6 +68,7 @@
       <button type="button" class="pb-card" data-val="{{ d }}"><b>{{ label }}</b><span class="muted">{{ sub }}</span></button>
       {% endfor %}
     </div>
+    <div class="hint" id="destNote" hidden style="margin-top:8px;">This goal optimises for a pixel event, so TikTok needs a pixel here — there is no "without pixel" version of it. To run traffic with no pixel at all, pick the <b>Click</b> goal in step 1: <button type="button" class="linkish" id="destToClick">switch to Click</button>.</div>
     <div class="form-row" style="margin-top:12px;">
       <label class="field" data-dest="website pixel"><span class="field-label">Landing page URL</span>
         <input type="url" name="landing_page_url" id="pbLanding" value="{{ blob.get('landing_page_url', '') }}" placeholder="https://offer.example.com/page">
