@@ -301,19 +301,21 @@ def processing_status(db: Session = Depends(get_db)):
 # ============================================================================
 # IMAGES: upload + AI editing / generation (Gemini "Nano Banana")
 # ============================================================================
-async def _save_image_upload(db: Session, f: UploadFile, source_prefix: str) -> str:
-    """Store one uploaded image on the image shelf. Returns "" on success or the
-    reason it was skipped (bad type / size / duplicate / disk problem)."""
+async def _save_image_upload(db: Session, f: UploadFile, source_prefix: str) -> tuple[str, object]:
+    """Store one uploaded image on the image shelf. Returns (reason, row): reason is "" on
+    success, else why it was skipped (bad type / size / duplicate / disk problem). For a
+    duplicate the row already on the shelf comes back too, so a caller can use that one."""
     fname = _safe_name(f.filename)
     ext = ("." + fname.rsplit(".", 1)[-1].lower()) if "." in fname else ""
     if ext not in ALLOWED_IMAGE:
-        return f"{fname}: not a supported image type (png/jpg/webp)"
+        return f"{fname}: not a supported image type (png/jpg/webp)", None
     data = await f.read(MAX_IMAGE_BYTES + 1)
     if not data or len(data) > MAX_IMAGE_BYTES:
-        return f"{fname}: {'over 25MB' if data else 'empty file'}"
+        return f"{fname}: {'over 25MB' if data else 'empty file'}", None
     md5 = hashlib.md5(data).hexdigest()
-    if db.query(models.Creative).filter_by(md5=md5).first():
-        return f"{fname}: duplicate"
+    dup = db.query(models.Creative).filter_by(md5=md5).first()
+    if dup is not None:
+        return f"{fname}: already on the shelf as “{dup.name}”", dup
     row = models.Creative(name=fname, file_name=fname, md5=md5, source_md5=md5,
                           size_bytes=len(data), kind="image")
     db.add(row)
@@ -324,12 +326,12 @@ async def _save_image_upload(db: Session, f: UploadFile, source_prefix: str) -> 
             out.write(data)
     except OSError as e:
         db.rollback()
-        return f"{fname}: couldn't write to the data disk ({e.strerror or e})"
+        return f"{fname}: couldn't write to the data disk ({e.strerror or e})", None
     row.file_path = str(path)
     if source_prefix:
         row.source = f"{source_prefix}_{row.id}"
     db.commit()
-    return ""
+    return "", row
 
 
 @router.post("/creatives/upload-images")
@@ -338,16 +340,19 @@ async def upload_images(request: Request, db: Session = Depends(get_db)):
     files = [v for v in form.getlist("files") if isinstance(v, UploadFile)]
     source_prefix = str(form.get("source_prefix") or "").strip()
     CREATIVES_DIR.mkdir(parents=True, exist_ok=True)
-    saved, skipped = 0, []
+    saved, skipped, new = 0, [], []
     for f in files:
-        why = await _save_image_upload(db, f, source_prefix)
+        why, row = await _save_image_upload(db, f, source_prefix)
         if why:
             skipped.append(why)
         else:
             saved += 1
+        # the AI pop-ups attach what came back — a duplicate hands over the copy already on the shelf
+        if row is not None:
+            new.append({"id": row.id, "name": row.name, "poster": f"/creatives/{row.id}/thumb", "dup": bool(why)})
     if request.headers.get("x-requested-with") == "fetch":
         from fastapi.responses import JSONResponse
-        return JSONResponse({"ok": True, "saved": saved, "skipped": skipped})
+        return JSONResponse({"ok": True, "saved": saved, "skipped": skipped, "images": new})
     q = f"ok={saved}+image(s)+uploaded" if saved else "ok=nothing+uploaded"
     if skipped:
         q += "&err=" + "+·+".join(skipped)[:300].replace(" ", "+")
@@ -470,6 +475,29 @@ def _parse_hf_form(form) -> dict:
     }
 
 
+def _ref_rows(db: Session, form, *, parent=None, limit: int = 8) -> tuple[list, str]:
+    """Source / reference images chosen in the AI pop-up: the tile the ✨ button was pressed on
+    (parent) first, then whatever was uploaded or picked from the shelf. Returns (rows, error)."""
+    ids: list[int] = []
+    if parent is not None:
+        ids.append(parent.id)
+    for tok in str(form.get("ref_ids") or "").replace(",", " ").split():
+        if tok.isdigit() and int(tok) not in ids:
+            ids.append(int(tok))
+    if not ids:
+        return [], ""
+    found = {r.id: r for r in db.query(models.Creative).filter(models.Creative.id.in_(ids)).all()}
+    rows = []
+    for i in ids:
+        r = found.get(i)
+        if r is None or r.kind != "image" or not r.file_path:
+            return [], f"Reference image #{i} isn't on the image shelf any more — pick it again."
+        rows.append(r)
+    if len(rows) > limit:
+        return [], f"That model takes at most {limit} reference image(s) — you picked {len(rows)}."
+    return rows, ""
+
+
 def _hf_opts_of(row) -> dict:
     """Rebuild the options a Higgsfield row was queued with (for Retry / resume)."""
     import json as _json
@@ -479,10 +507,11 @@ def _hf_opts_of(row) -> dict:
         extra = {}
     return {"aspect": row.ai_aspect or "", "resolution": row.ai_size or "",
             "output_format": extra.get("output_format", ""), "seed": extra.get("seed"),
-            "safety_tolerance": extra.get("safety_tolerance")}
+            "safety_tolerance": extra.get("safety_tolerance"),
+            "refs": [int(x) for x in (extra.get("refs") or []) if str(x).isdigit()] or ([row.ai_parent_id] if row.ai_parent_id else [])}
 
 
-def _run_hf_jobs(row_ids: list[int], parent_id: int | None, model: str, opts: dict, request_id: str = ""):
+def _run_hf_jobs(row_ids: list[int], ref_ids, model: str, opts: dict, request_id: str = ""):
     """Background: ONE Higgsfield request for N placeholder rows (num_images = N), then poll it
     — the tiles show queued → rendering — and download each output onto its row. A request
     id already known (resume after a restart, or Retry of a still-running request) is polled
@@ -509,15 +538,17 @@ def _run_hf_jobs(row_ids: list[int], parent_id: int | None, model: str, opts: di
 
     try:
         if not request_id:
+            refs = [ref_ids] if isinstance(ref_ids, int) else list(ref_ids or [])
             input_urls: list[str] = []
-            if parent_id:
-                parent = d.get(models.Creative, parent_id)
-                if not (parent and parent.file_path and Path(parent.file_path).exists()):
-                    fail("Couldn't read the source image: the file is missing on the server"); return
+            if refs:
                 base = tracking.base_url(d)
                 if not base:
-                    fail("Higgsfield fetches the source image from a public link, and this dashboard doesn't know its public address yet — open Settings once (it learns the address there), then Retry."); return
-                input_urls = [signed_url(base, parent.file_path, ttl_s=7200)]
+                    fail("Higgsfield fetches your reference image from a public link, and this dashboard doesn't know its public address yet — open Settings once (it learns the address there), then Retry."); return
+                for rid in refs:
+                    ref = d.get(models.Creative, rid)
+                    if not (ref and ref.file_path and Path(ref.file_path).exists()):
+                        fail(f"Couldn't read reference image #{rid}: the file is missing on the server"); return
+                    input_urls.append(signed_url(base, ref.file_path, ttl_s=7200))
             try:
                 rec = HF.submit(model, opts.get("prompt") or (rows()[0].ai_prompt if rows() else ""),
                                 num_images=len(row_ids), aspect=opts.get("aspect", ""), resolution=opts.get("resolution", ""),
@@ -581,7 +612,7 @@ def resume_hf(db: Session) -> int:
               .filter(models.Creative.status == "processing", models.Creative.ai_request_id != "").all()):
         groups.setdefault(r.ai_request_id, []).append(r)
     for rid, rs in groups.items():
-        threading.Thread(target=_run_hf_jobs, args=([r.id for r in rs], rs[0].ai_parent_id, rs[0].ai_model, _hf_opts_of(rs[0]), rid),
+        threading.Thread(target=_run_hf_jobs, args=([r.id for r in rs], _hf_opts_of(rs[0])["refs"], rs[0].ai_model, _hf_opts_of(rs[0]), rid),
                          name="higgsfield-resume", daemon=True).start()
     return len(groups)
 
@@ -625,18 +656,24 @@ def _start_hf(db: Session, form, *, parent, base_name: str):
     if not o["prompt"]:
         return RedirectResponse("/creatives?err=describe+the+image+you+want", status_code=303)
     spec = HF.MODELS[o["model"]]
-    if parent is not None and not spec["edit"]:
-        return RedirectResponse("/creatives?view=images&err=" + quote(f"{spec['label']} creates from text only — pick Nano Banana, Popcorn or Reve to edit an image."), status_code=303)
+    refs, why = _ref_rows(db, form, parent=parent, limit=spec["max_inputs"] or 99)
+    if why:
+        return RedirectResponse("/creatives?view=images&err=" + quote(why), status_code=303)
+    if refs and not spec["edit"]:
+        return RedirectResponse("/creatives?view=images&err=" + quote(f"{spec['label']} creates from text only — pick Nano Banana, Popcorn or Reve to work from an image."), status_code=303)
     ids = _ai_job_rows(db, prompt=o["prompt"], model=o["model"], size=o["resolution"], aspect=o["aspect"],
-                       variants=o["variants"], parent=parent, base_name=base_name)
+                       variants=o["variants"], parent=(refs[0] if refs else None), base_name=base_name)
     extra = {k: v for k, v in (("output_format", o["output_format"]), ("seed", o["seed"]), ("safety_tolerance", o["safety_tolerance"])) if v not in (None, "")}
+    if len(refs) > 1:
+        extra["refs"] = [r.id for r in refs]
     if extra:
         for rid in ids:
             r = db.get(models.Creative, rid)
             r.ai_opts = _json.dumps(extra)
         db.commit()
-    threading.Thread(target=_run_hf_jobs, args=(ids, parent.id if parent else None, o["model"], o), name="higgsfield-gen", daemon=True).start()
-    return RedirectResponse(f"/creatives?view=images&ok=" + quote(f"{o['variants']} image(s) queued on Higgsfield ({spec['label']}) — billed in Higgsfield credits when it succeeds"), status_code=303)
+    threading.Thread(target=_run_hf_jobs, args=(ids, [r.id for r in refs], o["model"], o), name="higgsfield-gen", daemon=True).start()
+    return RedirectResponse("/creatives?view=images&ok=" + quote(f"{o['variants']} image(s) queued on Higgsfield ({spec['label']}"
+                            + (f", {len(refs)} reference image(s)" if refs else "") + ") — billed in Higgsfield credits when it succeeds"), status_code=303)
 
 
 @router.post("/creatives/{creative_id}/ai-retry")
@@ -659,7 +696,7 @@ def ai_retry(creative_id: int, db: Session = Depends(get_db)):
         row.uploaded_at = datetime.now(timezone.utc).replace(tzinfo=None)
         row.ai_request_id = rid
         db.commit()
-        threading.Thread(target=_run_hf_jobs, args=([row.id], row.ai_parent_id, row.ai_model, dict(_hf_opts_of(row), prompt=row.ai_prompt), rid),
+        threading.Thread(target=_run_hf_jobs, args=([row.id], _hf_opts_of(row)["refs"], row.ai_model, dict(_hf_opts_of(row), prompt=row.ai_prompt), rid),
                          name="higgsfield-retry", daemon=True).start()
         return RedirectResponse(f"/creatives?view=images&ok=Queued+on+Higgsfield+again#c{row.id}", status_code=303)
     if not nanobanana.configured():
@@ -713,9 +750,13 @@ async def ai_generate(request: Request, db: Session = Depends(get_db)):
     prompt, model, size, aspect, variants = _parse_ai_form(form)
     if not prompt:
         return RedirectResponse("/creatives?err=describe+the+image+you+want", status_code=303)
+    refs, why = _ref_rows(db, form, limit=1)          # Gemini edits from ONE source image
+    if why:
+        return RedirectResponse("/creatives?view=images&err=" + quote(why), status_code=303)
+    parent = refs[0] if refs else None
     ids = _ai_job_rows(db, prompt=prompt, model=model, size=size, aspect=aspect,
-                       variants=variants, parent=None, base_name=base)
-    threading.Thread(target=_run_ai_jobs, args=(ids, None, model, size, aspect),
+                       variants=variants, parent=parent, base_name=base)
+    threading.Thread(target=_run_ai_jobs, args=(ids, parent.id if parent else None, model, size, aspect),
                      name="nanobanana-gen", daemon=True).start()
     est = nanobanana.price(model, size) * variants
     return RedirectResponse(f"/creatives?view=images&ok={variants}+image(s)+generating+(≈${est:.2f})",
@@ -797,7 +838,7 @@ async def upload_creatives(request: Request, db: Session = Depends(get_db)):
                 db.commit()
                 continue
             # plain image upload → straight to the image shelf
-            why = await _save_image_upload(db, f, source_prefix)
+            why, _row = await _save_image_upload(db, f, source_prefix)
             if why:
                 skipped.append(why)
             else:

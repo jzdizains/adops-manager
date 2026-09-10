@@ -326,6 +326,16 @@
     <form method="post" action="/creatives/ai-generate" class="ai-form" id="genForm">
       <label class="field"><span class="field-label">Describe the image</span>
         <textarea name="prompt" required placeholder="e.g. A bright kitchen counter with a glass of iced matcha, morning light, product photo style, vertical 9:16" style="min-height:96px;font-family:var(--font-sans);font-size:13px;"></textarea></label>
+      <div class="field ai-refs" hidden>
+        <span class="field-label">Start from an image <span class="muted">(optional — upload or pick one to edit instead of creating from scratch)</span> <span class="muted ai-ref-max" style="font-weight:400;"></span></span>
+        <div class="ref-strip"></div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+          <label class="btn sm ref-up-lbl" title="Upload from this computer — the file lands on the Images shelf too">⬆ Upload image<input type="file" class="ref-up" accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp" multiple hidden></label>
+          <button type="button" class="btn sm ref-pick">🖼 From the shelf</button>
+          <span class="muted ref-status" style="font-size:11.5px;"></span>
+        </div>
+        <input type="hidden" name="ref_ids" class="ref-ids">
+      </div>
       <div class="form-row-3">
         <label class="field"><span class="field-label">Name <span class="muted">(optional)</span></span><input type="text" name="name" placeholder="matcha_kitchen"></label>
         <label class="field"><span class="field-label">Model</span><select name="model" class="ai-model">{% if nb_only %}<optgroup label="Google (direct)">{% for m in nb_models %}<option value="{{ m.id }}" {{ 'selected' if m.id == nb_default }}>{{ m.label }}</option>{% endfor %}</optgroup>{% endif %}{% if hf_configured %}<optgroup label="Higgsfield">{% for m in hf_models %}<option value="{{ m.id }}" {{ 'selected' if not nb_only and loop.first }}>{{ m.label }}</option>{% endfor %}</optgroup>{% endif %}</select></label>
@@ -503,6 +513,16 @@
         </div>
         <label class="field"><span class="field-label">Aspect (optional)</span>
           <select name="aspect" class="ai-aspect"><option value="">Keep as-is / auto</option>{% for a in nb_aspects %}<option value="{{ a }}">{{ a }}</option>{% endfor %}</select></label>
+        <div class="field ai-refs" hidden>
+          <span class="field-label">Extra reference images <span class="muted">(optional — style or product shots alongside this one)</span> <span class="muted ai-ref-max" style="font-weight:400;"></span></span>
+          <div class="ref-strip"></div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+            <label class="btn sm ref-up-lbl" title="Upload from this computer — the file lands on the Images shelf too">⬆ Upload image<input type="file" class="ref-up" accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp" multiple hidden></label>
+            <button type="button" class="btn sm ref-pick">🖼 From the shelf</button>
+            <span class="muted ref-status" style="font-size:11.5px;"></span>
+        </div>
+          <input type="hidden" name="ref_ids" class="ref-ids">
+      </div>
         <div class="form-row-3 hf-extra" hidden>
           <label class="field hf-format"><span class="field-label">Output</span><select name="output_format"><option value="jpeg">JPEG</option><option value="png">PNG</option></select></label>
           <label class="field hf-seed"><span class="field-label">Seed <span class="muted">(optional)</span></span><input type="number" name="seed" min="1" max="1000000" placeholder="random"></label>
@@ -798,6 +818,65 @@
       var ps = PRICES[model.value] || {}, per = ps[size.value] || 0, k = Math.max(1, parseInt(n && n.value || "1", 10) || 1);
       if (cost) cost.textContent = "≈$" + (per * k).toFixed(2);
     }
+    // ---- reference images: upload from the computer or pick from the shelf ----
+    var refBox = form.querySelector(".ai-refs"), refs = [], isEdit = form.id === "aiForm";
+    function refMax() {
+      var hf = HF[model.value];
+      var m = hf ? hf.max_inputs : 1;             // Gemini edits from one source image
+      return isEdit ? Math.max(0, m - 1) : m;     // in the edit pop-up the tile itself is reference #1
+    }
+    function paintRefs() {
+      if (!refBox) return;
+      var max = refMax();
+      refBox.hidden = max < 1;
+      if (max < 1) { refs = []; }
+      refBox.querySelector(".ai-ref-max").textContent = max ? "· up to " + max + (isEdit ? " more" : "") : "";
+      refBox.querySelector(".ref-strip").innerHTML = refs.map(function (r, i) {
+        return '<span class="ref-chip"><img src="' + r.poster + '" alt=""><span>' + (r.name || ("#" + r.id)) + '</span><button type="button" data-rm="' + i + '" title="Remove">✕</button></span>';
+      }).join("");
+      refBox.querySelector(".ref-ids").value = refs.map(function (r) { return r.id; }).join(",");
+      refBox.querySelector(".ref-pick").disabled = refs.length >= max;
+      refBox.querySelector(".ref-up-lbl").classList.toggle("disabled", refs.length >= max);
+    }
+    function addRefs(list) {
+      var max = refMax(), before = refs.length;
+      list.forEach(function (r) {
+        if (refs.length < max && !refs.some(function (x) { return x.id == r.id; })) refs.push({ id: r.id, name: r.name, poster: r.poster || ("/creatives/" + r.id + "/thumb") });
+      });
+      paintRefs();
+      if (refs.length === before && list.length) refBox.querySelector(".ref-status").textContent = "That model takes at most " + max + " reference image(s).";
+    }
+    if (refBox) {
+      refBox.querySelector(".ref-strip").addEventListener("click", function (e) {
+        var b = e.target.closest("[data-rm]"); if (!b) return;
+        refs.splice(Number(b.dataset.rm), 1); paintRefs();
+      });
+      refBox.querySelector(".ref-pick").addEventListener("click", function () {
+        UI.pickCreatives({ kind: "image", kinds: ["image"], multi: true, state: "all", title: "Pick reference image(s)", selected: refs.map(function (r) { return r.id; }) })
+          .then(function (chosen) { if (chosen) addRefs(chosen.map(function (c) { return { id: c.id, name: c.name, poster: c.poster }; })); });
+      });
+      refBox.querySelector(".ref-up").addEventListener("change", function () {
+        var files = Array.prototype.slice.call(this.files); this.value = "";
+        if (!files.length) return;
+        var st = refBox.querySelector(".ref-status"); st.textContent = "Uploading " + files.length + " image(s)…";
+        var fd = new FormData(); files.forEach(function (f) { fd.append("files", f); });
+        var xhr = new XMLHttpRequest();
+        xhr.open("POST", "/creatives/upload-images");
+        xhr.setRequestHeader("X-Requested-With", "fetch");
+        xhr.onload = function () {
+          var d = {}; try { d = JSON.parse(xhr.responseText); } catch (e) {}
+          if (!d.ok) { st.textContent = "Upload failed — try the Upload button on the Images tab."; return; }
+          addRefs(d.images || []);
+          var dups = (d.images || []).filter(function (x) { return x.dup; }).length;
+          var refused = (d.skipped || []).filter(function (t) { return t.indexOf("already on the shelf") < 0; });
+          st.textContent = [d.saved ? d.saved + " uploaded" : "", dups ? dups + " already on the shelf — attached that copy" : "", refused.length ? "skipped: " + refused.join(" · ") : ""].filter(Boolean).join(" · ");
+        };
+        xhr.onerror = function () { st.textContent = "Upload failed — check the connection."; };
+        xhr.send(fd);
+      });
+    }
+    var baseSizes = sizes;
+    sizes = function () { baseSizes(); paintRefs(); };
     model.addEventListener("change", sizes); size.addEventListener("change", est);
     if (n) n.addEventListener("input", est);
     sizes();
