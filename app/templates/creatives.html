@@ -97,21 +97,29 @@
       <div class="cz-step-head">
         <div><b>Choose one TikTok soundtrack</b> <span class="muted">· required by TikTok for carousel ads{% if browse_account %} · browsing as {{ browse_account.advertiser_name or browse_account.advertiser_id }}{% endif %}</span></div>
       </div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">
-        <div class="search-wrap" style="flex:1;min-width:200px;"><input type="text" id="czQ" placeholder="Search by track or artist…"></div>
-        <select id="czStyle" style="width:auto;font-size:12px;" title="Genre / style"><option value="">All styles</option></select>
-        <button type="button" class="btn" id="czSearch">Search</button>
-        <button type="button" class="btn" id="czRecommend" title="TikTok recommends music for the slides you picked">✨ Suggest for my slides</button>
-      </div>
+      {# the same shelves TikTok Ads Manager offers for carousel sounds: its picks for these exact slides, search, liked, recently used, uploads — plus the cached Audio Library #}
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">
-        <span class="seg" id="czModes"><button type="button" class="on" data-mode="library">Library</button><button type="button" data-mode="keyword" title="TikTok's own fuzzy search (200 per page)">TikTok search</button><button type="button" data-mode="uploads">My uploads</button><button type="button" data-mode="liked">Liked</button><button type="button" data-mode="history">Recent</button></span>
+        <span class="seg" id="czModes"><button type="button" class="on" data-mode="recommend" id="czRecommend" title="TikTok picks sounds for the slides you chose (the “Recommended” shelf in Ads Manager)">✨ For your slides</button><button type="button" data-mode="keyword" title="TikTok's own search over its carousel sound catalogue">🔍 Search</button><button type="button" data-mode="liked">♥ Liked</button><button type="button" data-mode="history">Recent</button><button type="button" data-mode="uploads">My uploads</button><button type="button" data-mode="library" title="TikTok's Audio Library (Commercial Music Library) cached on this dashboard — only the tracks Carousel Ads accept">Library</button></span>
         <span id="czMusicStatus" class="muted" style="font-size:12px;"></span>
       </div>
+      <div id="czSearchRow" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:6px;" hidden>
+        <div class="search-wrap" style="flex:1;min-width:200px;"><input type="text" id="czQ" placeholder="Search by track, artist or mood…" autocomplete="off"></div>
+        <button type="button" class="btn" id="czSearch">Search</button>
+      </div>
+      <div id="czGenres" class="cz-genres" hidden>
+        {% for g in ["Pop", "Hip hop", "R&B", "Electronic", "Dance", "Chill", "Lo-fi", "Phonk", "Rock", "Latin", "Afrobeats", "K-pop", "Acoustic", "Cinematic", "Funk", "Jazz", "Country", "Kids", "Upbeat", "Emotional"] %}<button type="button" class="chip" data-genre="{{ g }}">{{ g }}</button>{% endfor %}
+      </div>
+      <div id="czFilters" class="cz-filters" hidden>
+        <select id="czStyle" style="width:auto;font-size:12px;" title="Genre / style (from the tracks loaded)"><option value="">All styles</option></select>
+        <select id="czSort" style="width:auto;font-size:12px;" title="Order"><option value="">TikTok's order</option><option value="name">A → Z</option><option value="short">Shortest first</option><option value="long">Longest first</option></select>
+        <span class="muted" id="czShown" style="font-size:11.5px;margin-left:auto;"></span>
+      </div>
       <div class="cz-music" id="czMusic"></div>
+      <div class="cz-music-empty muted" id="czMusicEmpty" hidden></div>
       <div style="display:flex;gap:8px;align-items:center;justify-content:space-between;margin-top:6px;font-size:11.5px;" class="muted">
-        <span id="czLibInfo">Library: loading…</span>
+        <span id="czLibInfo"></span>
         <span style="display:flex;gap:6px;align-items:center;"><button type="button" class="btn sm" id="czMore" hidden>More</button>
-<button type="submit" form="czSyncForm" class="btn sm ghost" title="Re-read every page of TikTok's Audio Library and re-check which tracks Carousel Ads accept (runs in the background)">↻ Refresh library</button></span>
+<button type="submit" form="czSyncForm" class="btn sm ghost" id="czSyncBtn" hidden title="Re-read every page of TikTok's Audio Library and re-check which tracks Carousel Ads accept (runs in the background)">↻ Refresh library</button></span>
       </div>
       <audio id="czAudio" preload="none"></audio>
       {% endif %}
@@ -294,7 +302,7 @@
 {% endif %}
 <div class="card" id="images" style="margin-top:14px;">
   <div class="card-header"><span class="card-title">🖼 Images</span>
-    <span class="card-meta">{{ images|length }} image(s) · png · jpg · webp — edit or generate with AI (Nano Banana)</span></div>
+    <span class="card-meta">{{ images|length }} image(s) · png · jpg · webp — edit or generate with AI (Google · Higgsfield)</span></div>
   <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:4px;">
     <form method="post" action="/creatives/upload-images" enctype="multipart/form-data" id="imgUpForm" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
       <input type="file" name="files" id="imgUpFiles" accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp" multiple required style="width:auto;">
@@ -306,11 +314,12 @@
       <div style="height:6px;border-radius:999px;background:var(--panel-hover);margin:8px 0;overflow:hidden;"><div id="imgUpBar" style="height:100%;width:0;background:var(--accent);transition:width .2s;"></div></div>
       <div id="imgUpLog" class="muted" style="font-size:12px;max-height:120px;overflow:auto;"></div>
     </div>
-    {% if nb_configured %}
-    <button type="button" class="btn" id="genBtn" style="margin-left:auto;">✨ Generate with AI…</button>
-    {% else %}
-    <span class="hint" style="margin-left:auto;">AI image editing is off — add <code>GEMINI_API_KEY</code> as an environment variable (Google AI Studio key) to enable “Edit with AI” and “Generate”.</span>
-    {% endif %}
+    <span class="hint" style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+      <span title="Google Gemini, called directly">Google {{ '✓' if nb_only else '— not connected' }}</span>
+      <span title="api.higgsfield.ai">Higgsfield {{ '✓' if hf_configured else '— not connected' }}</span>
+      <button type="button" class="btn sm ghost" id="aiConnectBtn">How to connect</button>
+    </span>
+    {% if nb_configured %}<button type="button" class="btn" id="genBtn">✨ Generate with AI…</button>{% endif %}
   </div>
   {% if nb_configured %}
   <div id="genBox" hidden>
@@ -319,18 +328,43 @@
         <textarea name="prompt" required placeholder="e.g. A bright kitchen counter with a glass of iced matcha, morning light, product photo style, vertical 9:16" style="min-height:96px;font-family:var(--font-sans);font-size:13px;"></textarea></label>
       <div class="form-row-3">
         <label class="field"><span class="field-label">Name <span class="muted">(optional)</span></span><input type="text" name="name" placeholder="matcha_kitchen"></label>
-        <label class="field"><span class="field-label">Model</span><select name="model" class="ai-model">{% for m in nb_models %}<option value="{{ m.id }}" {{ 'selected' if m.id == nb_default }}>{{ m.label }}</option>{% endfor %}</select></label>
-        <label class="field"><span class="field-label">Resolution</span><select name="size" class="ai-size"></select></label>
+        <label class="field"><span class="field-label">Model</span><select name="model" class="ai-model">{% if nb_only %}<optgroup label="Google (direct)">{% for m in nb_models %}<option value="{{ m.id }}" {{ 'selected' if m.id == nb_default }}>{{ m.label }}</option>{% endfor %}</optgroup>{% endif %}{% if hf_configured %}<optgroup label="Higgsfield">{% for m in hf_models %}<option value="{{ m.id }}" {{ 'selected' if not nb_only and loop.first }}>{{ m.label }}</option>{% endfor %}</optgroup>{% endif %}</select></label>
+        <label class="field ai-size-wrap"><span class="field-label">Resolution</span><select name="size" class="ai-size"></select></label>
       </div>
       <div class="form-row-3">
-        <label class="field"><span class="field-label">Aspect</span><select name="aspect"><option value="">Auto</option>{% for a in nb_aspects %}<option value="{{ a }}">{{ a }}</option>{% endfor %}</select></label>
+        <label class="field"><span class="field-label">Aspect</span><select name="aspect" class="ai-aspect"><option value="">Auto</option>{% for a in nb_aspects %}<option value="{{ a }}">{{ a }}</option>{% endfor %}</select></label>
         <label class="field"><span class="field-label">How many</span><input type="number" name="variants" class="ai-variants" value="1" min="1" max="8"></label>
-        <div class="field"><span class="field-label">Estimated cost</span><div style="padding:8px 0;"><b class="ai-cost mono"></b> <span class="muted" style="font-size:11.5px;">Google list price</span></div></div>
+        <div class="field"><span class="field-label">Estimated cost</span><div style="padding:8px 0;"><b class="ai-cost mono"></b> <span class="muted ai-cost-note" style="font-size:11.5px;">Google list price</span></div></div>
       </div>
+      <div class="form-row-3 hf-extra" hidden>
+        <label class="field hf-format"><span class="field-label">Output</span><select name="output_format"><option value="jpeg">JPEG</option><option value="png">PNG</option></select></label>
+        <label class="field hf-seed"><span class="field-label">Seed <span class="muted">(optional)</span></span><input type="number" name="seed" min="1" max="1000000" placeholder="random"></label>
+        <label class="field hf-safety"><span class="field-label">Safety tolerance</span><select name="safety_tolerance"><option value="2">2 · default</option><option value="0">0 · strictest</option><option value="1">1</option><option value="3">3</option><option value="4">4</option><option value="5">5</option><option value="6">6 · loosest</option></select></label>
+      </div>
+      <div class="hint ai-model-note" style="margin-top:2px;"></div>
       <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:4px;"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary" type="submit">✨ Generate</button></div>
     </form>
   </div>
   {% endif %}
+
+  <div id="aiConnectBox" hidden>
+    <div class="cr-guide">
+      <p style="margin:0 0 10px;">The dashboard can run image AI through two providers. Each one needs its own key, added as an environment variable on Render — keys are never typed into the dashboard itself.</p>
+      <h4 style="margin:10px 0 4px;">Higgsfield {{ '✓ connected' if hf_configured else '' }}</h4>
+      <ol style="margin:0 0 8px 18px;padding:0;line-height:1.7;">
+        <li>Log in at <b>higgsfield.ai</b> → your avatar → <b>API</b> (or <b>Developers</b>) → <b>Create API key</b>. You get a <b>Key ID</b> and a <b>Secret</b> — copy both now, the secret is shown once.</li>
+        <li>Make sure the account has <b>API credits</b> — the API bills per successful image in credits, separately from the web app's Unlimited plan.</li>
+        <li>Open <b>Render</b> → this service → <b>Environment</b> → add <code>HIGGSFIELD_KEY_ID</code> and <code>HIGGSFIELD_KEY_SECRET</code> → <b>Save</b>. Render redeploys by itself (about a minute).</li>
+        <li>Come back here: the Model list in “Generate with AI” and “Edit with AI” gains a <b>Higgsfield</b> group (Nano Banana, Soul, Popcorn, Reve, Flux Kontext).</li>
+      </ol>
+      <h4 style="margin:10px 0 4px;">Google (Nano Banana direct) {{ '✓ connected' if nb_only else '' }}</h4>
+      <ol style="margin:0 0 4px 18px;padding:0;line-height:1.7;">
+        <li><b>aistudio.google.com</b> → <b>Get API key</b> → create one for a project with billing enabled.</li>
+        <li>Render → <b>Environment</b> → add <code>GEMINI_API_KEY</code> → Save.</li>
+      </ol>
+      <p class="muted" style="margin:8px 0 0;font-size:12px;">Editing an image through Higgsfield sends it a temporary signed link to the source picture (valid 2 hours), so the dashboard's public address must be known — it learns it the first time Settings is opened.</p>
+    </div>
+  </div>
 
   {% if images %}
   <div class="img-tools">
@@ -360,7 +394,7 @@
         {% if r.status in ('available', 'used') %}<label class="img-pick" title="Select"><input type="checkbox" form="imgBulk" name="ids" value="{{ r.id }}" class="imgSel"></label>{% endif %}
         {% if tg.tag == 'ai' %}<span class="img-badge" title="AI edit: {{ r.ai_prompt }}">✨</span>{% elif tg.tag == 'text' %}<span class="img-badge" title="Text copy">T</span>{% endif %}
         {% if tg.carousel %}<span class="img-badge right" title="Slide in carousel “{{ tg.carousel }}”">🖼</span>{% elif r.status == 'used' %}<span class="img-badge right" title="Launched">used</span>{% endif %}
-        {% if r.status == 'processing' %}<div class="img-ph busy" data-since="{{ (r.uploaded_at.isoformat() + 'Z') if r.uploaded_at else '' }}"><span class="spin"></span><b>{{ 'Rendering variation…' if r.freshen else 'AI is working…' }}</b><small class="ph-age">just started</small><small class="muted">{{ 'TensorPix + uniquify' if (r.freshen and r.tp_model_ids) else ('uniquify' if r.freshen else 'usually under a minute') }}</small></div>
+        {% if r.status == 'processing' %}<div class="img-ph busy" data-since="{{ (r.uploaded_at.isoformat() + 'Z') if r.uploaded_at else '' }}"><span class="spin"></span><b class="ph-stage" data-id="{{ r.id }}">{{ 'Rendering variation…' if r.freshen else ('Higgsfield · rendering…' if r.ai_stage == 'in_progress' else ('Higgsfield · queued' if (r.ai_model or '').startswith('hf:') else 'AI is working…')) }}</b><small class="ph-age">just started</small><small class="muted">{{ 'TensorPix + uniquify' if (r.freshen and r.tp_model_ids) else ('uniquify' if r.freshen else (hf_labels.get(r.ai_model, r.ai_model) if (r.ai_model or '').startswith('hf:') else 'usually under a minute')) }}</small></div>
         {% elif r.status == 'error' %}<div class="img-ph fail" title="{{ r.error }}"><b>✕ Failed</b><small>{{ (r.error or 'no detail')[:90] }}</small>{% if r.ai_model %}<form method="post" action="/creatives/{{ r.id }}/ai-retry" style="margin-top:6px;"><button type="submit" class="btn sm">↻ Retry</button></form>{% endif %}</div>
         {% elif r.file_path %}<a href="/creatives/{{ r.id }}/file" target="_blank" rel="noopener" title="Open full size"><img src="/creatives/{{ r.id }}/thumb" alt="{{ r.name }}" loading="lazy" decoding="async"></a>
         {% else %}<div class="img-ph">—</div>{% endif %}
@@ -459,19 +493,26 @@
       <img id="aiPreview" src="" alt="" style="width:120px;height:120px;object-fit:cover;border-radius:8px;border:1px solid var(--border);background:var(--panel-hover);">
       <div>
         <label class="field"><span class="field-label">What should change?</span>
-          <textarea name="prompt" required placeholder="e.g. Replace the background with a bright kitchen, keep the product exactly as is, add bold text “50% OFF” top-left" style="min-height:90px;font-family:var(--font-sans);font-size:13px;"></textarea></label>
+          <textarea name="prompt" required placeholder="e.g. Replace the background with a bright kitchen, keep the product exactly as is, add bold text “50% OFF” top-left" style="min-height:90px;font-family:var(--font-sans);font-size:13px;"></textarea>
+          <span class="hint" id="aiHint">Describe what should <b>look</b> different. A copy TikTok treats as a new file (no visible change) is <b>Variations</b> on the upload step, not an AI edit.</span></label>
         <div class="form-row-3">
           <label class="field"><span class="field-label">Model</span>
-            <select name="model" class="ai-model">{% for m in nb_models %}<option value="{{ m.id }}" {{ 'selected' if m.id == nb_default }}>{{ m.label }}</option>{% endfor %}</select></label>
-          <label class="field"><span class="field-label">Resolution</span><select name="size" class="ai-size"></select></label>
+            <select name="model" class="ai-model">{% if nb_only %}<optgroup label="Google (direct)">{% for m in nb_models %}<option value="{{ m.id }}" {{ 'selected' if m.id == nb_default }}>{{ m.label }}</option>{% endfor %}</optgroup>{% endif %}{% if hf_configured %}<optgroup label="Higgsfield">{% for m in hf_models if m.edit %}<option value="{{ m.id }}" {{ 'selected' if not nb_only and loop.first }}>{{ m.label }}</option>{% endfor %}</optgroup>{% endif %}</select></label>
+          <label class="field ai-size-wrap"><span class="field-label">Resolution</span><select name="size" class="ai-size"></select></label>
           <label class="field"><span class="field-label">Copies</span><input type="number" name="variants" class="ai-variants" value="1" min="1" max="8"></label>
         </div>
         <label class="field"><span class="field-label">Aspect (optional)</span>
-          <select name="aspect"><option value="">Keep as-is / auto</option>{% for a in nb_aspects %}<option value="{{ a }}">{{ a }}</option>{% endfor %}</select></label>
+          <select name="aspect" class="ai-aspect"><option value="">Keep as-is / auto</option>{% for a in nb_aspects %}<option value="{{ a }}">{{ a }}</option>{% endfor %}</select></label>
+        <div class="form-row-3 hf-extra" hidden>
+          <label class="field hf-format"><span class="field-label">Output</span><select name="output_format"><option value="jpeg">JPEG</option><option value="png">PNG</option></select></label>
+          <label class="field hf-seed"><span class="field-label">Seed <span class="muted">(optional)</span></span><input type="number" name="seed" min="1" max="1000000" placeholder="random"></label>
+          <label class="field hf-safety"><span class="field-label">Safety tolerance</span><select name="safety_tolerance"><option value="2">2 · default</option><option value="0">0 · strictest</option><option value="1">1</option><option value="3">3</option><option value="4">4</option><option value="5">5</option><option value="6">6 · loosest</option></select></label>
+        </div>
+        <div class="hint ai-model-note" style="margin-top:2px;"></div>
       </div>
     </div>
     <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
-      <span class="muted" style="font-size:12px;">Estimated cost <b class="ai-cost mono"></b> (Google list price)</span>
+      <span class="muted" style="font-size:12px;">Estimated cost <b class="ai-cost mono"></b> <span class="ai-cost-note">(Google list price)</span></span>
       <button class="btn primary" type="submit">Create edit(s)</button>
     </div>
   </form>
@@ -505,6 +546,13 @@
     });
   });
   document.addEventListener("click", function () { document.querySelectorAll("[data-fsel].open").forEach(function (o) { o.classList.remove("open"); }); });
+
+  // ---- "How to connect" (Higgsfield / Google) step-by-step pop-up ----
+  var aiConnectBtn = document.getElementById("aiConnectBtn"), aiConnectBox = document.getElementById("aiConnectBox");
+  if (aiConnectBtn && aiConnectBox) aiConnectBtn.addEventListener("click", function () {
+    var node = aiConnectBox.firstElementChild; aiConnectBox.hidden = false;
+    UI.modal({ title: "Connect an image AI provider", body: node, onClose: function () { aiConnectBox.appendChild(node); aiConnectBox.hidden = true; } });
+  });
 
   // ---- generate-with-AI pop-up ----
   var genBtn = document.getElementById("genBtn"), genBox = document.getElementById("genBox");
@@ -687,6 +735,10 @@
     function tick() {
       if (document.hidden) return;
       fetch("/creatives/processing").then(function (r) { return r.json(); }).then(function (d) {
+        Object.keys(d.stages || {}).forEach(function (id) {
+          var el = document.querySelector('.ph-stage[data-id="' + id + '"]'); if (!el) return;
+          el.textContent = d.stages[id] === "in_progress" ? "Higgsfield · rendering…" : (d.stages[id] === "queued" ? "Higgsfield · queued" : el.textContent);
+        });
         if (d.processing === last) return;
         if (document.querySelector(".layer-bg")) { last = d.processing; adopsToast && adopsToast("ok", "Finished in the background — reload to see the new image(s)."); return; }
         var done = last - d.processing, u = new URL(location.href); u.searchParams.delete("ok"); u.searchParams.delete("err");
@@ -700,18 +752,49 @@
 
   // ---- AI forms: resolution options + live cost estimate --------------------
   var PRICES = {{ nb_models_json | safe }};
+  var HF = {{ hf_models_json | safe }};
   function wireAi(form) {
-    var model = form.querySelector(".ai-model"), size = form.querySelector(".ai-size"),
-        n = form.querySelector(".ai-variants"), cost = form.querySelector(".ai-cost");
+    var model = form.querySelector(".ai-model"), size = form.querySelector(".ai-size"), sizeWrap = form.querySelector(".ai-size-wrap"),
+        n = form.querySelector(".ai-variants"), cost = form.querySelector(".ai-cost"), costNote = form.querySelector(".ai-cost-note"),
+        aspect = form.querySelector(".ai-aspect"), extra = form.querySelector(".hf-extra"), note = form.querySelector(".ai-model-note");
     if (!model || !size) return;
+    var googleAspects = Array.prototype.slice.call(aspect ? aspect.options : []).map(function (o) { return [o.value, o.textContent]; });
+    function setAspects(list, firstLabel) {
+      if (!aspect) return;
+      var keep = aspect.value; aspect.innerHTML = "";
+      list.forEach(function (pair) { aspect.add(new Option(pair[1], pair[0])); });
+      aspect.value = list.some(function (p) { return p[0] === keep; }) ? keep : list[0][0];
+    }
     function sizes() {
-      var cur = size.value, ps = PRICES[model.value] || {};
-      size.innerHTML = "";
-      Object.keys(ps).forEach(function (k) { size.add(new Option(k + " · $" + ps[k].toFixed(3), k)); });
-      if (ps[cur]) size.value = cur; else if (ps["1K"]) size.value = "1K";
+      var hf = HF[model.value];
+      if (hf) {
+        size.innerHTML = "";
+        if (hf.resolutions.length) { hf.resolutions.forEach(function (r) { size.add(new Option(r, r)); }); if (sizeWrap) sizeWrap.hidden = false; }
+        else { size.add(new Option("model default", "")); if (sizeWrap) sizeWrap.hidden = true; }
+        if (hf.aspects.length) setAspects(hf.aspects.map(function (a) { return [a, a === "auto" ? "Auto" : a]; }));
+        else setAspects([["", "model default"]]);
+        if (aspect) aspect.disabled = !hf.aspects.length;
+        if (n) { n.max = hf.max_images; if (parseInt(n.value, 10) > hf.max_images) n.value = hf.max_images; n.disabled = hf.max_images === 1; }
+        if (extra) { extra.hidden = !(hf.formats.length || hf.seed || hf.safety); extra.querySelector(".hf-format").hidden = !hf.formats.length; extra.querySelector(".hf-seed").hidden = !hf.seed; extra.querySelector(".hf-safety").hidden = !hf.safety; }
+        if (note) note.textContent = hf.note || "";
+        if (cost) cost.textContent = "Higgsfield credits";
+        if (costNote) costNote.textContent = "charged per successful image, price set by Higgsfield for the model";
+      } else {
+        var cur = size.value, ps = PRICES[model.value] || {};
+        size.innerHTML = "";
+        Object.keys(ps).forEach(function (k) { size.add(new Option(k + " · $" + ps[k].toFixed(3), k)); });
+        if (ps[cur]) size.value = cur; else if (ps["1K"]) size.value = "1K";
+        if (sizeWrap) sizeWrap.hidden = false;
+        setAspects(googleAspects); if (aspect) aspect.disabled = false;
+        if (n) { n.max = 8; n.disabled = false; }
+        if (extra) extra.hidden = true;
+        if (note) note.textContent = "";
+        if (costNote) costNote.textContent = form.id === "aiForm" ? "(Google list price)" : "Google list price";
+      }
       est();
     }
     function est() {
+      if (HF[model.value]) return;
       var ps = PRICES[model.value] || {}, per = ps[size.value] || 0, k = Math.max(1, parseInt(n && n.value || "1", 10) || 1);
       if (cost) cost.textContent = "≈$" + (per * k).toFixed(2);
     }
@@ -875,7 +958,7 @@
       } });
       czOpen.el.classList.add("cz-modal");
       var pq = document.getElementById("czPoolQ"); if (pq && pq.value) { pq.value = ""; pq.dispatchEvent(new Event("input")); }   // a browser-restored filter must not hide every image
-      startMusic();
+      if (step === 2) startMusic();
     }
     if (czNewBtn) czNewBtn.addEventListener("click", openBuilder);
     if (/[?&]new=1/.test(location.search) || location.hash === "#czBuilder") { openBuilder(); if (history.replaceState) history.replaceState(null, "", "/creatives?view=carousels"); }
@@ -900,6 +983,7 @@
       backBtn.hidden = n === 1; nextBtn.hidden = n === 3; saveBtn.hidden = n !== 3;
       nextBtn.textContent = n === 1 ? "Next: soundtrack →" : "Next: name & save →";
       if (n === 3) { renderReview(); var nm = document.getElementById("czName"); setTimeout(function () { try { nm.focus(); } catch (e) {} }, 30); }
+      if (n === 2 && typeof startMusic === "function") startMusic();
       refreshFoot();
       if (czOpen) czOpen.el.scrollTop = 0;
     }
@@ -969,61 +1053,115 @@
       document.getElementById("czUnpick").addEventListener("click", function () { music = null; showPicked(); render(); });
     }
     var moreBtn = document.getElementById("czMore"), libInfo = document.getElementById("czLibInfo"), styleSel = document.getElementById("czStyle");
-    var cur = { mode: "library", page: 1, pages: 1, items: [] };
-    function startMusic() { if (czStarted || !list) return; czStarted = true; search("library"); }   // the library loads the first time the pop-up opens, not on every page view
+    var emptyBox = document.getElementById("czMusicEmpty"), shown = document.getElementById("czShown"), sortSel = document.getElementById("czSort"), syncBtn = document.getElementById("czSyncBtn");
+    var cur = { mode: "recommend", page: 1, pages: 1, items: [], key: "" };
+    var flt = { style: "", sort: "" };
+    var recKey = "";                       // which slide set the recommendations were fetched for
+    // "For your slides" is what TikTok shows first; it runs by itself when the soundtrack step opens
+    // (and again only when the slides changed — every run uploads the slides to the browsing account).
+    function startMusic() {
+      if (!list) return;
+      var key = picked.join(",");
+      if (cur.mode === "recommend" && key !== recKey) search("recommend");
+      else if (cur.mode !== "recommend" && !czStarted) search(cur.mode);
+      czStarted = true;
+    }
     function fmtAgo(iso) { if (!iso) return "never"; var d = (Date.now() - new Date(iso).getTime()) / 864e5; return d < 1 ? "today" : Math.round(d) + " day(s) ago"; }
+    function visibleItems() {
+      var out = [];
+      cur.items.forEach(function (m, i) { if (!flt.style || (m.style || "") === flt.style) out.push([m, i]); });
+      if (flt.sort === "name") out.sort(function (a, b) { return String(a[0].name).localeCompare(String(b[0].name)); });
+      else if (flt.sort === "short") out.sort(function (a, b) { return Number(a[0].duration || 0) - Number(b[0].duration || 0); });
+      else if (flt.sort === "long") out.sort(function (a, b) { return Number(b[0].duration || 0) - Number(a[0].duration || 0); });
+      return out;
+    }
+    function paint() {
+      // style options come from the tracks actually loaded (TikTok tags system music with a style)
+      var styles = {}; cur.items.forEach(function (m) { if (m.style) styles[m.style] = (styles[m.style] || 0) + 1; });
+      var keep = flt.style; styleSel.innerHTML = '<option value="">All styles</option>';
+      Object.keys(styles).sort().forEach(function (st) { var o = document.createElement("option"); o.value = st; o.textContent = st + " (" + styles[st] + ")"; styleSel.appendChild(o); });
+      styleSel.value = styles[keep] ? keep : ""; if (!styles[keep]) flt.style = "";
+      var vis = visibleItems();
+      list.innerHTML = vis.map(function (pair) { var m = pair[0], i = pair[1];
+        return '<div class="cz-track' + (music && music.music_id === m.music_id ? ' on' : '') + '" data-i="' + i + '">' + (m.cover_url ? '<img src="' + esc(m.cover_url) + '" alt="" loading="lazy">' : '<span class="cz-cover">♪</span>') +
+          '<div style="min-width:0;flex:1;"><div class="cz-tname">' + esc(m.name) + (m.liked ? ' <span class="cz-liked" title="In the Liked list">♥</span>' : '') + '</div><div class="muted" style="font-size:10.5px;">' + esc(m.author || "") + (m.author && m.style ? ' · ' : '') + esc(m.style || "") + (m.duration ? ' · ' + fmtDur(m.duration) : '') + (m.sources && m.sources.indexOf("USER") >= 0 ? ' · uploaded' : '') + '</div></div>' +
+          (m.url ? '<button type="button" class="btn sm" data-play="1" title="Preview">▶</button>' : '') + '<button type="button" class="btn sm primary" data-pick="1">Use</button></div>';
+      }).join("");
+      shown.textContent = cur.items.length ? (vis.length === cur.items.length ? cur.items.length + " track" + (cur.items.length === 1 ? "" : "s") : vis.length + " of " + cur.items.length + " tracks") : "";
+      var filtered = cur.items.length && !vis.length;
+      emptyBox.hidden = !filtered; if (filtered) emptyBox.textContent = "No loaded track has that style.";
+      document.getElementById("czFilters").hidden = !cur.items.length;
+    }
+    function playRow(row, m) {
+      var pb = row.querySelector("[data-play]");
+      if (audio.src === m.url && !audio.paused) { audio.pause(); pb.textContent = "▶"; return; }
+      list.querySelectorAll("[data-play]").forEach(function (x) { x.textContent = "▶"; });
+      audio.src = m.url; audio.play().then(function () { pb.textContent = "⏸"; }).catch(function () { status.textContent = "Preview couldn't play (TikTok preview links expire after 12h — search again)."; });
+    }
+    if (list) list.addEventListener("click", function (e) {
+      var row = e.target.closest(".cz-track"); if (!row) return;
+      var m = cur.items[Number(row.dataset.i)]; if (!m) return;
+      if (e.target.closest("[data-play]")) { playRow(row, m); return; }
+      if (e.target.closest("[data-pick]")) { music = m; audio.pause(); showPicked(); render(); if (czOpen) czOpen.el.scrollTop = 0; }
+    });
+    function emptyText(mode, d) {
+      if (mode === "recommend") return "TikTok had no suggestions for these slides — try Search or Liked.";
+      if (mode === "keyword") return "No music found — try another word or a genre chip.";
+      if (mode === "liked") return "Nothing in this ad account's Liked list yet (♥ a sound in TikTok Ads Manager and it shows up here).";
+      if (mode === "history") return "No recently used sounds on this ad account yet.";
+      if (mode === "uploads") return "No uploaded music on this ad account. Upload a track in TikTok Ads Manager → Assets → Music.";
+      if (mode === "library") return d && d.status ? d.status : "The cached Audio Library has no carousel-usable tracks — carousel sounds come from “For your slides” and Search.";
+      return "Nothing here.";
+    }
     function search(mode, page) {
       if (!list) return;
       page = page || 1;
       var q = document.getElementById("czQ").value.trim();
-      var url = mode === "library" ? "/creatives/music/library?page=" + page + "&q=" + encodeURIComponent(q) + "&style=" + encodeURIComponent(styleSel.value)
+      var url = mode === "library" ? "/creatives/music/library?page=" + page + "&q=" + encodeURIComponent(q)
                                    : "/creatives/music/search?mode=" + mode + "&page=" + page;
-      if (mode === "keyword") url += "&q=" + encodeURIComponent(q);
-      if (mode === "recommend") { if (picked.length < 2) { status.textContent = "Pick at least 2 slides first."; return; } url += "&images=" + picked.join(","); }
-      document.querySelectorAll("#czModes [data-mode]").forEach(function (b) { b.classList.toggle("on", b.dataset.mode === mode); });
-      status.textContent = mode === "recommend" ? "Uploading slides to TikTok and asking for suggestions…" : "Searching…";
-      if (page === 1) { list.innerHTML = ""; cur = { mode: mode, page: 1, pages: 1, items: [] }; }
+      if (mode === "keyword") { if (!q) { setMode(mode); cur = { mode: mode, page: 1, pages: 1, items: [] }; paint(); status.textContent = "Type a track, artist or mood — or tap a genre."; return; } url += "&q=" + encodeURIComponent(q); }
+      if (mode === "recommend") { if (picked.length < 2) { status.textContent = "Pick at least 2 slides first."; return; } url += "&images=" + picked.join(","); recKey = picked.join(","); }
+      setMode(mode);
+      status.textContent = mode === "recommend" ? "Uploading your slides to TikTok and asking what it would play over them…" : "Loading…";
+      if (page === 1) { cur = { mode: mode, page: 1, pages: 1, items: [] }; paint(); emptyBox.hidden = true; }
+      var stamp = ++searchSeq;
       fetch(url).then(function (r) { return r.json(); }).then(function (d) {
+        if (stamp !== searchSeq) return;                    // a newer tab/search took over
         if (!d.ok) { status.textContent = d.error || "Search failed"; moreBtn.hidden = true; return; }
-        cur.page = d.page || page; cur.pages = d.pages || 1; var offset = cur.items.length; cur.items = cur.items.concat(d.musics);
+        cur.page = d.page || page; cur.pages = d.pages || 1; cur.items = cur.items.concat(d.musics || []);
         moreBtn.hidden = !(cur.pages > cur.page && (mode === "library" || mode === "keyword"));
         if (mode === "library") {
-          if (d.styles && styleSel.options.length <= 1) d.styles.forEach(function (st) { var o = document.createElement("option"); o.value = st[0]; o.textContent = st[0] + " (" + st[1] + ")"; styleSel.appendChild(o); });
           libInfo.textContent = d.total === 0 && !d.synced_at ? (d.syncing ? "Library is being downloaded from TikTok right now — check Jobs." : "Library not downloaded yet — hit Refresh library once (it runs in the background).")
-                                : "Library: " + (d.status || d.total + " tracks") + " · synced " + fmtAgo(d.synced_at) + (d.syncing ? " · refreshing now" : "");
+                              : "Library: " + (d.status || d.total + " tracks") + " · synced " + fmtAgo(d.synced_at) + (d.syncing ? " · refreshing now" : "");
         }
-        status.textContent = cur.items.length ? (cur.items.length + " track(s)" + (d.total && d.total > cur.items.length ? " of " + d.total : "")) : (mode === "library" ? "No tracks match." : "No music found — try another word.");
-        var html = d.musics.map(function (m, j) { var i = offset + j;
-          return '<div class="cz-track" data-i="' + i + '">' + (m.cover_url ? '<img src="' + esc(m.cover_url) + '" alt="">' : '<span class="cz-cover">♪</span>') +
-            '<div style="min-width:0;flex:1;"><div class="cz-tname">' + esc(m.name) + '</div><div class="muted" style="font-size:10.5px;">' + esc(m.author || m.style || "") + (m.duration ? ' · ' + fmtDur(m.duration) : '') + (m.sources && m.sources.indexOf("USER") >= 0 ? ' · uploaded' : '') + '</div></div>' +
-            (m.url ? '<button type="button" class="btn sm" data-play="1" title="Preview">▶</button>' : '') + '<button type="button" class="btn sm primary" data-pick="1">Use</button></div>';
-        }).join("");
-        var frag = document.createElement("div"); frag.innerHTML = html;
-        var newRows = Array.prototype.slice.call(frag.children); newRows.forEach(function (r) { list.appendChild(r); });
-        newRows.forEach(function (row) {
-          var m = cur.items[Number(row.dataset.i)];
-          var pb = row.querySelector("[data-play]");
-          if (pb) pb.addEventListener("click", function () {
-            if (audio.src === m.url && !audio.paused) { audio.pause(); pb.textContent = "▶"; return; }
-            list.querySelectorAll("[data-play]").forEach(function (x) { x.textContent = "▶"; });
-            audio.src = m.url; audio.play().then(function () { pb.textContent = "⏸"; }).catch(function () { status.textContent = "Preview couldn't play (TikTok preview links expire after 12h — search again)."; });
-          });
-          row.querySelector("[data-pick]").addEventListener("click", function () { music = m; audio.pause(); showPicked(); render(); if (czOpen) czOpen.el.scrollTop = 0; });
-          if (music && music.music_id === m.music_id) row.classList.add("on");
-        });
-      }).catch(function () { status.textContent = "Search failed — check the connection."; });
+        status.textContent = cur.items.length ? (mode === "recommend" ? "TikTok suggests " + cur.items.length + " sound" + (cur.items.length === 1 ? "" : "s") + " for these slides" : cur.items.length + " track" + (cur.items.length === 1 ? "" : "s") + (d.total && d.total > cur.items.length ? " of " + d.total : "")) : "";
+        paint();
+        if (!cur.items.length) { emptyBox.hidden = false; emptyBox.textContent = emptyText(mode, d); }
+      }).catch(function () { if (stamp === searchSeq) status.textContent = "Search failed — check the connection."; });
+    }
+    var searchSeq = 0;
+    function setMode(mode) {
+      document.querySelectorAll("#czModes [data-mode]").forEach(function (b) { b.classList.toggle("on", b.dataset.mode === mode); });
+      document.getElementById("czSearchRow").hidden = !(mode === "keyword" || mode === "library");
+      document.getElementById("czGenres").hidden = mode !== "keyword";
+      libInfo.hidden = mode !== "library"; syncBtn.hidden = mode !== "library";
+      document.getElementById("czQ").placeholder = mode === "library" ? "Filter the cached library by track or artist…" : "Search by track, artist or mood…";
     }
     if (list) {
       audio.addEventListener("ended", function () { list.querySelectorAll("[data-play]").forEach(function (x) { x.textContent = "▶"; }); });
-      document.getElementById("czSearch").addEventListener("click", function () { search(cur.mode === "keyword" ? "keyword" : "library"); });
-      styleSel.addEventListener("change", function () { search("library"); });
-      document.getElementById("czQ").addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); search(cur.mode === "keyword" ? "keyword" : "library"); } });
-      document.getElementById("czRecommend").addEventListener("click", function () { search("recommend"); });
+      document.getElementById("czSearch").addEventListener("click", function () { search(cur.mode === "library" ? "library" : "keyword"); });
+      document.getElementById("czQ").addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); search(cur.mode === "library" ? "library" : "keyword"); } });
+      document.getElementById("czGenres").addEventListener("click", function (e) { var c = e.target.closest("[data-genre]"); if (!c) return; document.getElementById("czQ").value = c.dataset.genre; document.querySelectorAll("#czGenres .chip").forEach(function (x) { x.classList.toggle("on", x === c); }); search("keyword"); });
+      styleSel.addEventListener("change", function () { flt.style = styleSel.value; paint(); });
+      sortSel.addEventListener("change", function () { flt.sort = sortSel.value; paint(); });
       moreBtn.addEventListener("click", function () { search(cur.mode, cur.page + 1); });
-      document.querySelectorAll("#czModes [data-mode]").forEach(function (b) { b.addEventListener("click", function () { search(b.dataset.mode); }); });
+      document.querySelectorAll("#czModes [data-mode]").forEach(function (b) { b.addEventListener("click", function () {
+        if (b.dataset.mode === "recommend" && cur.mode === "recommend" && cur.items.length && recKey === picked.join(",")) return;   // already showing them
+        if (b.dataset.mode !== cur.mode) { document.getElementById("czQ").value = ""; document.querySelectorAll("#czGenres .chip").forEach(function (x) { x.classList.remove("on"); }); }
+        search(b.dataset.mode);
+      }); });
     }
     render(); goStep(1);
-    if (czOpen) startMusic();
     }
   }
 

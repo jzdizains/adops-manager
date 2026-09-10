@@ -21,6 +21,8 @@ OAUTH_REDIRECT_URI = os.environ.get("OAUTH_REDIRECT_URI", "http://localhost:8000
 # --- TensorPix (creative enhancement / variation) --------------------------
 TENSORPIX_API_KEY = os.environ.get("TENSORPIX_API_KEY", "")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")          # Nano Banana image editing
+HIGGSFIELD_KEY_ID = os.environ.get("HIGGSFIELD_KEY_ID", "")      # Higgsfield image models (api.higgsfield.ai)
+HIGGSFIELD_KEY_SECRET = os.environ.get("HIGGSFIELD_KEY_SECRET", "")
 TENSORPIX_BASE = os.environ.get("TENSORPIX_BASE", "https://backend.tensorpix.ai")
 
 # --- App auth ---------------------------------------------------------------
@@ -65,4 +67,4 @@ BC_LOW_BALANCE_THRESHOLD = float(os.environ.get("BC_LOW_BALANCE_THRESHOLD", "50"
 
 # --- Misc --------------------------------------------------------------------
 APP_NAME = "AdOps Manager"
-STATIC_VERSION = "66"  # bump to cache-bust CSS/JS (§9.9)
+STATIC_VERSION = "71"  # bump to cache-bust CSS/JS (§9.9)

@@ -3,9 +3,13 @@
 TikTok's carousel music search has no "show everything" (keyword / recommend /
 liked / history / uploads only). The Audio Library listing (CREATIVE_ASSET
 scene) does page through the whole catalogue, and TikTok recommends caching
-it and refreshing monthly — so we do exactly that, then confirm which tracks
-Carousel Ads accept by asking SEARCH_BY_MUSIC_ID in the CAROUSEL_ADS scene
-(100 ids per call). Preview urls last 12 h and are refreshed on demand.
+it and refreshing monthly — so we do exactly that. Which tracks Carousel Ads
+accept is marked in the listing itself (author / liked / cover_url are "returned
+only for music that can be used in Carousel Ads"); those candidates are then
+confirmed with SEARCH_BY_MUSIC_ID in the CAROUSEL_ADS scene (100 ids per call).
+In practice the Audio Library is video music and the carousel picker lives on
+TikTok's own shelves (recommend / keyword / liked / history / uploads) — the
+cache is a bonus, never the only way. Preview urls last 12 h, refreshed on demand.
 """
 from __future__ import annotations
 
@@ -42,7 +46,7 @@ def _check_split(acct, ids: list[str], errors: list, depth: int = 0) -> list[dic
     try:
         return tiktok_api.carousel_music_by_ids(acct.access_token, acct.advertiser_id, ids)
     except tiktok_api.TikTokError as e:
-        if len(ids) == 1 or depth > 8:
+        if len(ids) == 1 or depth > 7:          # halving 100 reaches single ids at depth 7
             if len(ids) > 1 or len(errors) < 20:
                 errors.append(f"carousel check ({len(ids)} id{'s' if len(ids) > 1 else ''}): {e}")
             return []
@@ -95,6 +99,7 @@ def sync(db: Session, should_stop=None, on_progress=None) -> dict:
         return r
     now = _now()
     seen: list[str] = []
+    carousel_hint: set[str] = set()      # listing rows that carry author / cover_url / liked
     page = 1
     while True:
         if should_stop and should_stop():
@@ -110,6 +115,8 @@ def sync(db: Session, should_stop=None, on_progress=None) -> dict:
             row = _upsert(db, m, now)
             if row is not None:
                 seen.append(row.music_id)
+                if m.get("author") or m.get("cover_url") or "liked" in m:
+                    carousel_hint.add(row.music_id)
         r["pages"] = page
         db.commit()
         info = data.get("page_info") or {}
@@ -120,26 +127,37 @@ def sync(db: Session, should_stop=None, on_progress=None) -> dict:
             break
         page += 1
     r["tracks"] = len(seen)
-    # which of these can a Carousel Ad actually use? ask the carousel scene by id
+    # Which of these can a Carousel Ad actually use? The doc marks it in the listing itself:
+    # author / liked / cover_url are "returned only for music that can be used in Carousel
+    # Ads". Only those candidates are confirmed by id in the carousel scene (SEARCH_BY_MUSIC_ID
+    # answers 40000 "Invalid music id" for anything else — asking about all 7,000+ library
+    # tracks used to burn ~150 calls to learn that none qualify, and zero the library).
     ok_ids: set[str] = set()
-    for i in range(0, len(seen), tiktok_api.MUSIC_ID_BATCH):
+    candidates = [m for m in seen if m in carousel_hint]
+    r["candidates"] = len(candidates)
+    db.query(models.MusicTrack).update({"carousel_ok": False}, synchronize_session=False)    # one statement, not one per track
+    db.commit()
+    db.expire_all()          # rows already loaded above must see the reset, or setting True again is a no-op
+    empty_streak = 0
+    for i in range(0, len(candidates), tiktok_api.MUSIC_ID_BATCH):
         if should_stop and should_stop():
             r["stopped"] = True
             break
-        chunk = seen[i:i + tiktok_api.MUSIC_ID_BATCH]
+        chunk = candidates[i:i + tiktok_api.MUSIC_ID_BATCH]
         found = _check_split(acct, chunk, r["errors"])
         for m in found:
             row = _upsert(db, m, now, carousel_ok=True)
             if row is not None:
                 ok_ids.add(row.music_id)
-        for mid in chunk:
-            if mid not in ok_ids:
-                row = db.query(models.MusicTrack).filter_by(music_id=mid).first()
-                if row is not None:
-                    row.carousel_ok = False
         db.commit()
+        empty_streak = 0 if found else empty_streak + 1
         if on_progress:
-            on_progress(f"checking carousel usability {min(i + len(chunk), len(seen))} of {len(seen)} · {len(ok_ids)} usable")
+            on_progress(f"confirming carousel usability {min(i + len(chunk), len(candidates))} of {len(candidates)} · {len(ok_ids)} usable")
+        if empty_streak >= 1 and not ok_ids:
+            # a whole batch rejected and nothing usable yet: the carousel scene does not take
+            # these ids at all — stop instead of asking about every remaining track
+            r["errors"].append("carousel check stopped early: the first batch was rejected outright")
+            break
     r["carousel_ok"] = len(ok_ids)
     if not r["stopped"] and seen:
         # tracks TikTok no longer lists
@@ -147,10 +165,14 @@ def sync(db: Session, should_stop=None, on_progress=None) -> dict:
         for row in gone:
             db.delete(row)
         queries.set_setting(db, SETTING_AT, now.isoformat(timespec="seconds"))
-    queries.set_setting(db, SETTING_STATUS, (
-        f"{r['carousel_ok']} of {r['tracks']} tracks usable in carousels"
-        + (" (stopped early)" if r["stopped"] else "")
-        + (f" — {len(r['errors'])} error(s): {r['errors'][0][:120]}" if r["errors"] else "")))
+    if r["tracks"] and not r["carousel_ok"] and not r["stopped"]:
+        status = (f"{r['tracks']} tracks in TikTok's Audio Library, none of them accepted for Carousel Ads on this account "
+                  "— carousel sounds come from “For your slides” and Search")
+    else:
+        status = f"{r['carousel_ok']} of {r['tracks']} tracks usable in carousels" + (" (stopped early)" if r["stopped"] else "")
+    if r["errors"]:
+        status += f" — {len(r['errors'])} error(s): {r['errors'][0][:120]}"
+    queries.set_setting(db, SETTING_STATUS, status)
     db.commit()
     return r
 

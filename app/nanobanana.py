@@ -13,7 +13,7 @@ The generated image is the LAST image block across steps[].content[].
 
 Pricing (ai.google.dev/gemini-api/docs/pricing, standard tier, per image):
   gemini-3.1-flash-lite-image  $0.0336 (1K only)
-  gemini-3.1-flash-image       $0.045 0.5K · $0.067 1K · $0.101 2K · $0.151 4K
+  gemini-3.1-flash-image       $0.045 512 · $0.067 1K · $0.101 2K · $0.151 4K
   gemini-3-pro-image           $0.134 1K/2K · $0.24 4K
 The key is read from the GEMINI_API_KEY env var only — never stored in code or DB.
 """
@@ -31,13 +31,26 @@ ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/interactions"
 MODELS: dict[str, tuple[str, dict[str, float]]] = {
     "gemini-3.1-flash-lite-image": ("Nano Banana 2 Lite — fastest, cheapest", {"1K": 0.0336}),
     "gemini-3.1-flash-image":      ("Nano Banana 2 — best all-rounder",
-                                    {"0.5K": 0.045, "1K": 0.067, "2K": 0.101, "4K": 0.151}),
+                                    {"512": 0.045, "1K": 0.067, "2K": 0.101, "4K": 0.151}),   # API enum: "512" (not 0.5K)
     "gemini-3-pro-image":          ("Nano Banana Pro — highest quality",
                                     {"1K": 0.134, "2K": 0.134, "4K": 0.24}),
 }
 DEFAULT_MODEL = "gemini-3.1-flash-image"
 DEFAULT_SIZE = "1K"
 ASPECTS = ["1:1", "9:16", "16:9", "4:5", "3:4", "4:3", "2:3", "3:2", "21:9"]
+
+# Without this the model sometimes answers a prompt with a paragraph instead of a
+# picture ("This image contains metadata. While I cannot directly access…") — an
+# ad-creative editor must always hand back an image.
+SYSTEM_EDIT = ("You are an image editor for advertising creatives. The user gives you an image and "
+               "an instruction. ALWAYS return exactly one edited image and no text. Apply the instruction "
+               "as a visual change to the picture; keep everything not mentioned (product, people, layout, "
+               "text on the image) exactly as it is. If the instruction is not a visual change or is "
+               "unclear, still return the image with the closest reasonable visual interpretation applied — "
+               "never answer with words, questions or explanations.")
+SYSTEM_CREATE = ("You create advertising creative images. ALWAYS return exactly one image and no text — "
+                 "never answer with words, questions or explanations. Photorealistic unless the prompt asks "
+                 "for another style; text on the image only when the prompt asks for it, spelled exactly.")
 
 
 class NanoBananaError(Exception):
@@ -71,13 +84,19 @@ def _extract_image(data: dict) -> tuple[bytes, str]:
         if isinstance(oi, dict) and oi.get("data"):
             found = oi
     if found is None:
-        # surface the model's text (often a safety refusal) so the operator sees WHY
+        # the model answered with WORDS instead of a picture — a refusal, or a prompt it read
+        # as a question / a non-visual task ("remove the metadata"). Say so, quote it, and
+        # tell the operator what to do instead.
         texts = []
         for step in data.get("steps", []) or []:
             for block in step.get("content", []) or []:
                 if isinstance(block, dict) and block.get("type") == "text" and block.get("text"):
                     texts.append(block["text"])
-        raise NanoBananaError("No image in the response" + (": " + " ".join(texts)[:300] if texts else ""),
+        said = " ".join(t.strip() for t in texts).replace("\n", " ")[:220]
+        raise NanoBananaError(("The AI replied with text instead of an edited image"
+                               + (f": “{said}…”" if said else "")
+                               + " — describe a VISIBLE change (background, colours, text on the image, product placement)."
+                               " To make a copy TikTok sees as a new file, use Variations (uniquify) — that is not an AI edit."),
                               "no_image")
     return base64.b64decode(found["data"]), found.get("mime_type") or "image/png"
 
@@ -91,8 +110,10 @@ def generate(prompt: str, image: bytes | None = None, image_mime: str = "image/p
         raise NanoBananaError("GEMINI_API_KEY is not set", "not_configured")
     if model not in MODELS:
         model = DEFAULT_MODEL
+    if size == "0.5K":
+        size = "512"                    # rows queued before the enum fix
     if size not in MODELS[model][1]:
-        size = sizes_for(model)[0]
+        size = DEFAULT_SIZE if DEFAULT_SIZE in MODELS[model][1] else sizes_for(model)[0]
     inputs: list[dict] = [{"type": "text", "text": prompt.strip()}]
     if image:
         inputs.append({"type": "image", "mime_type": image_mime,
@@ -102,7 +123,24 @@ def generate(prompt: str, image: bytes | None = None, image_mime: str = "image/p
     fmt: dict = {"type": "image", "mime_type": "image/jpeg", "image_size": size}
     if aspect in ASPECTS:
         fmt["aspect_ratio"] = aspect
-    body = {"model": model, "input": inputs, "response_format": fmt}
+    system = SYSTEM_EDIT if image else SYSTEM_CREATE
+    body = {"model": model, "input": inputs, "response_format": fmt, "system_instruction": system}
+    try:
+        return _call(body, timeout)
+    except NanoBananaError as e:
+        # Two guarded retries, one each:
+        #  * the image endpoint rejects the system_instruction field → send without it
+        #  * the model still answered with words → fold the "image only" rule into the prompt
+        if e.code == "400" and "system_instruction" in e.message:
+            body.pop("system_instruction", None)
+            return _call(body, timeout)
+        if e.code == "no_image":
+            body["input"][0] = {"type": "text", "text": f"{system}\n\nInstruction: {prompt.strip()}\n\nReturn only the image."}
+            return _call(body, timeout)
+        raise
+
+
+def _call(body: dict, timeout: float) -> tuple[bytes, str]:
     try:
         r = httpx.post(ENDPOINT, json=body, timeout=timeout,
                        headers={"x-goog-api-key": config.GEMINI_API_KEY,

@@ -126,6 +126,9 @@ def creatives_page(request: Request, db: Session = Depends(get_db)):
     processing = sum(1 for r in rows if r.status == "processing")
     nb_models = [{"id": mid, "label": lbl, "prices": prices}
                  for mid, (lbl, prices) in nanobanana.MODELS.items()]
+    from .. import higgsfield as HF
+    hf_configured = HF.configured()
+    hf_models = [dict(id=mid, **{k: v for k, v in spec.items() if k not in ("path", "edit_path")}) for mid, spec in HF.MODELS.items()]
 
     # image shelf tags (for the filter chips): original / AI edit / text copy,
     # plus which carousel (if any) uses the image as a slide
@@ -193,7 +196,10 @@ def creatives_page(request: Request, db: Session = Depends(get_db)):
         "source_mode": get_settings(db).get("source_mode", "campaign"),
         "rows": videos, "images": images, "img_tags": img_tags, "img_counts": img_counts, "editable_text": editable_text,
         "accounts": accounts, "available": available,
-        "nb_configured": nanobanana.configured(), "nb_models": nb_models,
+        "nb_configured": nanobanana.configured() or hf_configured, "nb_only": nanobanana.configured(),
+        "hf_configured": hf_configured, "hf_models": hf_models, "hf_models_json": __import__("json").dumps({m["id"]: m for m in hf_models}),
+        "hf_labels": {m["id"]: m["label"] for m in hf_models},
+        "nb_models": nb_models,
         "nb_default": nanobanana.DEFAULT_MODEL, "nb_aspects": nanobanana.ASPECTS,
         "nb_models_json": __import__("json").dumps({m["id"]: m["prices"] for m in nb_models}),
         "processing": processing, "tp_configured": tp_configured,
@@ -288,8 +294,8 @@ def creative_thumb(creative_id: int, db: Session = Depends(get_db)):
 @router.get("/creatives/processing")
 def processing_status(db: Session = Depends(get_db)):
     """Tiny JSON the Creatives page polls instead of reloading itself every 5s."""
-    n = db.query(models.Creative).filter_by(status="processing").count()
-    return {"processing": n}
+    rows = db.query(models.Creative.id, models.Creative.ai_stage).filter_by(status="processing").all()
+    return {"processing": len(rows), "stages": {str(i): st for i, st in rows if st}}
 
 
 # ============================================================================
@@ -352,7 +358,7 @@ def _ai_job_rows(db: Session, *, prompt: str, model: str, size: str, aspect: str
                  variants: int, parent: models.Creative | None, base_name: str) -> list[int]:
     """Create N placeholder image rows (status=processing) and return their ids."""
     from .. import nanobanana
-    cost = nanobanana.price(model, size)
+    cost = 0.0 if model.startswith("hf:") else nanobanana.price(model, size)     # Higgsfield bills in its own credits
     ids = []
     family = (parent.source_md5 or parent.md5) if parent else ""
     for n in range(variants):
@@ -439,21 +445,165 @@ def _parse_ai_form(form) -> tuple[str, str, str, str, int]:
     return prompt, model, size, aspect, variants
 
 
+def _parse_hf_form(form) -> dict:
+    """Settings for a Higgsfield model — only what that model accepts (see higgsfield.MODELS)."""
+    from .. import higgsfield as HF
+    model = str(form.get("model") or "")
+    spec = HF.MODELS[model]
+    def _int(name, lo, hi, default=None):
+        try:
+            v = int(str(form.get(name) or "").strip())
+        except ValueError:
+            return default
+        return max(lo, min(v, hi))
+    aspect = str(form.get("aspect") or "")
+    resolution = str(form.get("size") or "")
+    return {
+        "prompt": str(form.get("prompt") or "").strip()[:2000],
+        "model": model,
+        "variants": _int("variants", 1, spec["max_images"], 1),
+        "aspect": aspect if aspect in spec["aspects"] else "",
+        "resolution": resolution if resolution in spec["resolutions"] else (spec["resolutions"][0] if spec["resolutions"] else ""),
+        "output_format": str(form.get("output_format") or "") if spec["formats"] else "",
+        "seed": _int("seed", 1, 1_000_000) if spec["seed"] else None,
+        "safety_tolerance": _int("safety_tolerance", 0, 6) if spec["safety"] else None,
+    }
+
+
+def _hf_opts_of(row) -> dict:
+    """Rebuild the options a Higgsfield row was queued with (for Retry / resume)."""
+    import json as _json
+    try:
+        extra = _json.loads(row.ai_opts or "{}")
+    except ValueError:
+        extra = {}
+    return {"aspect": row.ai_aspect or "", "resolution": row.ai_size or "",
+            "output_format": extra.get("output_format", ""), "seed": extra.get("seed"),
+            "safety_tolerance": extra.get("safety_tolerance")}
+
+
+def _run_hf_jobs(row_ids: list[int], parent_id: int | None, model: str, opts: dict, request_id: str = ""):
+    """Background: ONE Higgsfield request for N placeholder rows (num_images = N), then poll it
+    — the tiles show queued → rendering — and download each output onto its row. A request
+    id already known (resume after a restart, or Retry of a still-running request) is polled
+    instead of re-submitted, so nothing is paid for twice."""
+    from pathlib import Path
+
+    from .. import higgsfield as HF, tracking
+    from ..database import SessionLocal
+    from .pub import signed_url
+    d = SessionLocal()
+
+    def rows():
+        return [r for r in (d.get(models.Creative, rid) for rid in row_ids) if r]
+
+    def fail(msg: str):
+        for r in rows():
+            r.status, r.error, r.ai_stage = "error", msg[:500], ""
+        d.commit()
+
+    def stage(st: str):
+        for r in rows():
+            r.ai_stage = st
+        d.commit()
+
+    try:
+        if not request_id:
+            input_urls: list[str] = []
+            if parent_id:
+                parent = d.get(models.Creative, parent_id)
+                if not (parent and parent.file_path and Path(parent.file_path).exists()):
+                    fail("Couldn't read the source image: the file is missing on the server"); return
+                base = tracking.base_url(d)
+                if not base:
+                    fail("Higgsfield fetches the source image from a public link, and this dashboard doesn't know its public address yet — open Settings once (it learns the address there), then Retry."); return
+                input_urls = [signed_url(base, parent.file_path, ttl_s=7200)]
+            try:
+                rec = HF.submit(model, opts.get("prompt") or (rows()[0].ai_prompt if rows() else ""),
+                                num_images=len(row_ids), aspect=opts.get("aspect", ""), resolution=opts.get("resolution", ""),
+                                input_urls=input_urls, output_format=opts.get("output_format", ""),
+                                seed=opts.get("seed"), safety_tolerance=opts.get("safety_tolerance"))
+            except HF.HiggsfieldError as e:
+                fail(e.message); return
+            request_id = str(rec.get("request_id"))
+            for r in rows():
+                r.ai_request_id, r.ai_stage = request_id, rec.get("status") or "queued"
+            d.commit()
+        try:
+            final = HF.wait(request_id, on_stage=stage)
+        except HF.HiggsfieldError as e:
+            fail(e.message); return
+        st = final.get("status")
+        if st != "completed":
+            why = (final.get("error") or "")[:200]
+            fail({"failed": "Higgsfield failed the render" + (f": {why}" if why else "") + " — not charged; Retry or change the prompt.",
+                  "nsfw": "Higgsfield's safety filter blocked this prompt or image (not charged) — rephrase and Retry.",
+                  "canceled": "The request was cancelled on Higgsfield's side."}.get(st, f"Higgsfield ended with status {st}"))
+            return
+        urls = [i.get("url") for i in (final.get("images") or []) if isinstance(i, dict) and i.get("url")]
+        CREATIVES_DIR.mkdir(parents=True, exist_ok=True)
+        for i, r in enumerate(rows()):
+            if i >= len(urls):
+                r.status, r.error, r.ai_stage = "error", f"Higgsfield returned {len(urls)} image(s) for {len(row_ids)} requested — this one has no output (not charged twice on Retry).", ""
+                continue
+            try:
+                ext = ".png" if (opts.get("output_format") == "png" or urls[i].lower().split("?")[0].endswith(".png")) else ".jpg"
+                fname = _safe_name(r.name.rsplit(".", 1)[0] + ext)
+                path = CREATIVES_DIR / f"{r.id}_{fname}"
+                mime = HF.download(urls[i], str(path))
+                if mime == "image/png" and ext != ".png":
+                    new = path.with_suffix(".png"); path.rename(new); path = new; fname = fname.rsplit(".", 1)[0] + ".png"
+                data = path.read_bytes()
+                r.file_path, r.file_name, r.name = str(path), fname, fname
+                r.md5, r.size_bytes = hashlib.md5(data).hexdigest(), len(data)
+                r.status, r.error, r.ai_stage = "available", "", ""
+            except (HF.HiggsfieldError, OSError) as e:
+                r.status, r.error, r.ai_stage = "error", f"{getattr(e, 'message', e)}"[:500], ""
+        d.commit()
+    except Exception as e:      # noqa: BLE001 — never leave rows stuck in 'processing'
+        try:
+            fail(f"{type(e).__name__}: {e}")
+        except Exception:  # noqa: BLE001
+            pass
+    finally:
+        d.close()
+
+
+def resume_hf(db: Session) -> int:
+    """After a restart: every Higgsfield row still 'processing' with a request id gets its
+    poller back (grouped per request) — the render carried on at Higgsfield meanwhile."""
+    import threading
+    from .. import higgsfield as HF
+    if not HF.configured():
+        return 0
+    groups: dict[str, list[models.Creative]] = {}
+    for r in (db.query(models.Creative)
+              .filter(models.Creative.status == "processing", models.Creative.ai_request_id != "").all()):
+        groups.setdefault(r.ai_request_id, []).append(r)
+    for rid, rs in groups.items():
+        threading.Thread(target=_run_hf_jobs, args=([r.id for r in rs], rs[0].ai_parent_id, rs[0].ai_model, _hf_opts_of(rs[0]), rid),
+                         name="higgsfield-resume", daemon=True).start()
+    return len(groups)
+
+
 @router.post("/creatives/{creative_id}/ai-edit")
 async def ai_edit(creative_id: int, request: Request, db: Session = Depends(get_db)):
     import threading
 
-    from .. import nanobanana
-    if not nanobanana.configured():
-        return RedirectResponse("/creatives?err=GEMINI_API_KEY+is+not+set+—+add+it+as+an+env+var+to+enable+AI+editing",
-                                status_code=303)
+    from .. import higgsfield as HF, nanobanana
     row = db.get(models.Creative, creative_id)
     if not row or row.kind != "image" or not row.file_path:
         return RedirectResponse("/creatives?err=pick+an+image+creative", status_code=303)
-    prompt, model, size, aspect, variants = _parse_ai_form(await request.form())
+    form = await request.form()
+    base = (row.name or "image").rsplit(".", 1)[0]
+    if HF.is_hf(str(form.get("model") or "")):
+        return _start_hf(db, form, parent=row, base_name=base)
+    if not nanobanana.configured():
+        return RedirectResponse("/creatives?err=GEMINI_API_KEY+is+not+set+—+add+it+as+an+env+var+to+enable+AI+editing",
+                                status_code=303)
+    prompt, model, size, aspect, variants = _parse_ai_form(form)
     if not prompt:
         return RedirectResponse("/creatives?err=describe+the+edit+you+want", status_code=303)
-    base = (row.name or "image").rsplit(".", 1)[0]
     ids = _ai_job_rows(db, prompt=prompt, model=model, size=size, aspect=aspect,
                        variants=variants, parent=row, base_name=base)
     threading.Thread(target=_run_ai_jobs, args=(ids, row.id, model, size, aspect),
@@ -461,6 +611,32 @@ async def ai_edit(creative_id: int, request: Request, db: Session = Depends(get_
     est = nanobanana.price(model, size) * variants
     return RedirectResponse(f"/creatives?view=images&ok={variants}+AI+edit(s)+started+(≈${est:.2f})",
                             status_code=303)
+
+
+def _start_hf(db: Session, form, *, parent, base_name: str):
+    """Queue N placeholder rows + one Higgsfield request for them."""
+    import json as _json
+    import threading
+
+    from .. import higgsfield as HF
+    if not HF.configured():
+        return RedirectResponse("/creatives?view=images&err=" + quote("Higgsfield isn't connected yet — add HIGGSFIELD_KEY_ID and HIGGSFIELD_KEY_SECRET on Render (the ‘How to connect’ link explains it)."), status_code=303)
+    o = _parse_hf_form(form)
+    if not o["prompt"]:
+        return RedirectResponse("/creatives?err=describe+the+image+you+want", status_code=303)
+    spec = HF.MODELS[o["model"]]
+    if parent is not None and not spec["edit"]:
+        return RedirectResponse("/creatives?view=images&err=" + quote(f"{spec['label']} creates from text only — pick Nano Banana, Popcorn or Reve to edit an image."), status_code=303)
+    ids = _ai_job_rows(db, prompt=o["prompt"], model=o["model"], size=o["resolution"], aspect=o["aspect"],
+                       variants=o["variants"], parent=parent, base_name=base_name)
+    extra = {k: v for k, v in (("output_format", o["output_format"]), ("seed", o["seed"]), ("safety_tolerance", o["safety_tolerance"])) if v not in (None, "")}
+    if extra:
+        for rid in ids:
+            r = db.get(models.Creative, rid)
+            r.ai_opts = _json.dumps(extra)
+        db.commit()
+    threading.Thread(target=_run_hf_jobs, args=(ids, parent.id if parent else None, o["model"], o), name="higgsfield-gen", daemon=True).start()
+    return RedirectResponse(f"/creatives?view=images&ok=" + quote(f"{o['variants']} image(s) queued on Higgsfield ({spec['label']}) — billed in Higgsfield credits when it succeeds"), status_code=303)
 
 
 @router.post("/creatives/{creative_id}/ai-retry")
@@ -474,6 +650,18 @@ def ai_retry(creative_id: int, db: Session = Depends(get_db)):
         return RedirectResponse("/creatives?view=images&err=That+isn%27t+an+AI+image", status_code=303)
     if row.status == "processing":
         return RedirectResponse("/creatives?view=images&ok=Still+running+—+give+it+a+moment", status_code=303)
+    from .. import higgsfield as HF
+    if HF.is_hf(row.ai_model):
+        if not HF.configured():
+            return RedirectResponse("/creatives?view=images&err=Higgsfield+keys+are+not+set", status_code=303)
+        rid = row.ai_request_id if "not finished" in (row.error or "") else ""      # a timed-out request is polled again, anything else re-submitted
+        row.status, row.error, row.ai_stage = "processing", "", ""
+        row.uploaded_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        row.ai_request_id = rid
+        db.commit()
+        threading.Thread(target=_run_hf_jobs, args=([row.id], row.ai_parent_id, row.ai_model, dict(_hf_opts_of(row), prompt=row.ai_prompt), rid),
+                         name="higgsfield-retry", daemon=True).start()
+        return RedirectResponse(f"/creatives?view=images&ok=Queued+on+Higgsfield+again#c{row.id}", status_code=303)
     if not nanobanana.configured():
         return RedirectResponse("/creatives?view=images&err=GEMINI_API_KEY+is+not+set", status_code=303)
     row.status, row.error = "processing", ""
@@ -498,8 +686,11 @@ def recover_stuck_ai(db: Session, max_age_min: int = 20) -> int:
         at = r.uploaded_at or cutoff
         if at.tzinfo is not None:
             at = at.astimezone(timezone.utc).replace(tzinfo=None)
+        if r.ai_request_id and at > cutoff - timedelta(minutes=40):
+            continue        # a Higgsfield request keeps rendering on their side — resume_hf() polls it again
         if at <= cutoff:
             r.status = "error"
+            r.ai_stage = ""
             r.error = "Interrupted — the server restarted while this edit was running. Press Retry."
             n += 1
     if n:
@@ -511,15 +702,17 @@ def recover_stuck_ai(db: Session, max_age_min: int = 20) -> int:
 async def ai_generate(request: Request, db: Session = Depends(get_db)):
     import threading
 
-    from .. import nanobanana
+    from .. import higgsfield as HF, nanobanana
+    form = await request.form()
+    base = _safe_name(str(form.get("name") or "generated").strip() or "generated").rsplit(".", 1)[0]
+    if HF.is_hf(str(form.get("model") or "")):
+        return _start_hf(db, form, parent=None, base_name=base)
     if not nanobanana.configured():
         return RedirectResponse("/creatives?err=GEMINI_API_KEY+is+not+set+—+add+it+as+an+env+var+to+enable+AI+images",
                                 status_code=303)
-    form = await request.form()
     prompt, model, size, aspect, variants = _parse_ai_form(form)
     if not prompt:
         return RedirectResponse("/creatives?err=describe+the+image+you+want", status_code=303)
-    base = _safe_name(str(form.get("name") or "generated").strip() or "generated").rsplit(".", 1)[0]
     ids = _ai_job_rows(db, prompt=prompt, model=model, size=size, aspect=aspect,
                        variants=variants, parent=None, base_name=base)
     threading.Thread(target=_run_ai_jobs, args=(ids, None, model, size, aspect),
@@ -990,7 +1183,7 @@ def music_library_sync(db: Session = Depends(get_db)):
     if not _browse_account(db):
         return RedirectResponse("/creatives?view=carousels&err=" + quote("Connect TikTok first — the music library is read through an ad account."), status_code=303)
     job, created = jobs.enqueue_once(db, "music_sync", "Refresh TikTok music library", {}, href="/creatives?view=carousels")
-    msg = ("Refreshing the music library in the background — every page of TikTok's Audio Library, then a carousel check per 100 tracks. Watch it on the Jobs page."
+    msg = ("Refreshing the music library in the background — every page of TikTok's Audio Library, then a carousel check of the tracks it marks as carousel-ready. Watch it on the Jobs page."
            if created else f"A library refresh is already {job.status}" + (f" · {job.progress}" if job.progress else "") + ".")
     return RedirectResponse("/creatives?view=carousels&ok=" + quote(msg), status_code=303)
 

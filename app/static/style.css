@@ -1079,6 +1079,13 @@ table.data.aud thead th:first-child { white-space: nowrap; }
 .cz-picked { margin-bottom: 10px; }
 @media (max-width: 760px) { .cz-review { grid-template-columns: 1fr; } .cz-steps .cz-step-sub { display: none; } }
 .cz-track.on { background: var(--accent-soft); }
+.cz-genres { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; }
+.cz-genres[hidden], .cz-filters[hidden], .cz-music-empty[hidden] { display: none; }
+.cz-filters { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 6px; }
+.cz-filters .cz-dur { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.cz-music-empty { padding: 14px 12px; border: 1px dashed var(--border); border-radius: var(--radius-sm); font-size: 12.5px; }
+.cz-liked { color: var(--err); font-size: 11px; margin-left: 3px; }
+
 .cz-track.on [data-pick] { background: var(--accent); color: var(--on-accent); }
 .pb-rail a.done .pf-no { background: var(--ok-bg); color: var(--ok); }
 /* ---- upload pop-up ---- */

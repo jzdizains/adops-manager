@@ -139,6 +139,9 @@ class Creative(Base):
     ai_parent_id = Column(Integer, nullable=True)          # the image an AI edit started from (Retry re-runs it)
     ai_size = Column(String, default="")                   # resolution / aspect the edit was asked for (Retry)
     ai_aspect = Column(String, default="")
+    ai_request_id = Column(String, default="")             # Higgsfield request id (resumable after a restart)
+    ai_stage = Column(String, default="")                  # queued | in_progress — shown on the tile while it runs
+    ai_opts = Column(Text, default="")                     # JSON: provider settings a Retry needs (output_format, seed, …)
     # --- variation processing (TensorPix): each reads as a new video ----------
     freshen = Column(Boolean, default=False)               # is this a processed variant?
     freshen_intensity = Column(String, default="")         # uniquify strength: light|medium|strong
