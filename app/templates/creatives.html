@@ -852,7 +852,7 @@
         refs.splice(Number(b.dataset.rm), 1); paintRefs();
       });
       refBox.querySelector(".ref-pick").addEventListener("click", function () {
-        UI.pickCreatives({ kind: "image", kinds: ["image"], multi: true, state: "all", title: "Pick reference image(s)", selected: refs.map(function (r) { return r.id; }) })
+        UI.pickCreatives({ kind: "image", kinds: ["image"], multi: true, state: "all", noun: "image", title: "Pick reference image(s)", selected: refs.map(function (r) { return r.id; }) })
           .then(function (chosen) { if (chosen) addRefs(chosen.map(function (c) { return { id: c.id, name: c.name, poster: c.poster }; })); });
       });
       refBox.querySelector(".ref-up").addEventListener("change", function () {

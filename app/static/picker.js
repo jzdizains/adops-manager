@@ -27,7 +27,8 @@
         body.querySelectorAll(".pk-state button").forEach(function (b) { b.classList.toggle("on", b.dataset.state === state); });
         var n = Object.keys(sel).filter(function (k) { return sel[k]; }).length;
         foot.querySelector(".pk-sel").textContent = n + " selected";
-        foot.querySelector(".pk-use").textContent = o.multi ? ("Use " + n + (n === 1 ? " creative" : " creatives")) : "Use this creative";
+        var noun = o.noun || "creative";
+        foot.querySelector(".pk-use").textContent = o.multi ? ("Use " + n + " " + noun + (n === 1 ? "" : "s")) : ("Use this " + noun);
         foot.querySelector(".pk-use").disabled = n === 0;
         foot.querySelector(".pk-hint").textContent = o.hint || "";
       }
@@ -39,10 +40,12 @@
           '<div class="pk-meta"><div class="pk-name">' + esc(it.name) + '</div><div class="muted" style="font-size:10.5px;">' + esc(it.uploaded_ago) + (it.variants > 1 ? " · " + it.variants + " variants" : "") + (it.note ? " · 📝" : "") + '</div></div></div>';
       }
       function render() {
+        grid.dataset.kind = kind;          // images get the Images-shelf tile shape (4/5), video/carousel stay 9/13
         grid.innerHTML = items.length ? items.map(tile).join("") : '<div class="empty" style="grid-column:1/-1;">Nothing here' + (q ? " for “" + esc(q) + "”" : "") + ".</div>";
         mark();
       }
       function load() {
+        grid.dataset.kind = kind;
         grid.innerHTML = '<div class="muted" style="grid-column:1/-1;padding:20px;">Loading…</div>';
         UI.get("/creatives/pick.json?kind=" + kind + "&state=" + state + "&q=" + encodeURIComponent(q)).then(function (d) {
           items = d.items || [];

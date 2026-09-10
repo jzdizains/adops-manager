@@ -873,7 +873,12 @@ table.data.aud thead th:first-child { white-space: nowrap; }
 .pk-modal { width: min(980px, calc(100vw - 32px)); }
 .pk-top { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
 .pk-body { display: grid; grid-template-columns: minmax(0, 1fr) 250px; gap: 14px; }
-.pk-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; max-height: 60vh; overflow: auto; align-content: start; padding: 2px; }
+/* grid-auto-rows: max-content is load-bearing — with a capped height the browser sized the rows
+   before the column width was known, so every tile was clipped to a strip (the thumb's aspect
+   ratio needs the final width). Same tile shape as the shelves: 4/5 for images, 9/13 for video. */
+.pk-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); grid-auto-rows: max-content; gap: 8px; max-height: 60vh; overflow: auto; align-content: start; padding: 2px; }
+.pk-grid[data-kind="image"] { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
+.pk-grid[data-kind="image"] .pk-thumb { aspect-ratio: 4 / 5; }
 .pk-tile { border-radius: 12px; overflow: hidden; background: var(--panel); cursor: pointer; outline: 2px solid transparent; outline-offset: 1px; }
 .pk-tile.on { outline-color: var(--accent); }
 .pk-thumb { position: relative; aspect-ratio: 9 / 13; background: var(--panel-hover); }

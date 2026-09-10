@@ -36,6 +36,37 @@ PREFIX = "hf:"                      # ai_model values for Higgsfield rows start 
 
 ASPECTS_10 = ["1:1", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "16:9", "9:16", "21:9"]
 
+# The docs disagree with themselves about version segments in model paths: the OpenAPI spec
+# lists /higgsfield-ai/soul/standard, the quickstart calls /higgsfield-ai/soul/v2/standard.
+# A wrong one answers 404 {"detail":"model_not_found"} and costs nothing, so each model carries
+# the spec's path plus the version spellings of THE SAME model; the first that isn't a 404 is
+# remembered for the rest of the process. Never a different model — only other spellings.
+ALIASES: dict[str, list[str]] = {
+    "hf:nano-banana": ["/nano-banana", "/nano-banana/v1", "/nano-banana/v2"],
+    "hf:soul": ["/higgsfield-ai/soul/standard", "/higgsfield-ai/soul/v2/standard", "/higgsfield-ai/soul/v1/standard"],
+    "hf:popcorn": ["/higgsfield-ai/popcorn/auto", "/higgsfield-ai/popcorn/v1/auto", "/higgsfield-ai/popcorn/v2/auto"],
+    "hf:reve": ["/reve/text-to-image", "/reve/v1/text-to-image"],
+    "hf:reve@edit": ["/reve/edit", "/reve/v1/edit"],
+    "hf:flux-kontext": ["/flux-pro/kontext/max/text-to-image", "/flux-pro/v1/kontext/max/text-to-image"],
+}
+_RESOLVED: dict[str, str] = {}          # model path that answered → used first next time
+
+
+def candidates(path: str) -> list[str]:
+    """Every spelling to try for this endpoint, best first."""
+    for key, paths in ALIASES.items():
+        if path in paths:
+            got = _RESOLVED.get(key)
+            return ([got] if got else []) + [p for p in paths if p != got]
+    return [path]
+
+
+def _remember(path: str) -> None:
+    for key, paths in ALIASES.items():
+        if path in paths:
+            _RESOLVED[key] = path
+
+
 # id -> capabilities (what the form shows) + how to build the request body
 MODELS: dict[str, dict] = {
     "hf:nano-banana": {
@@ -156,20 +187,32 @@ def build_body(model: str, prompt: str, *, num_images: int = 1, aspect: str = ""
 
 
 def submit(model: str, prompt: str, timeout: float = 60.0, **opts) -> dict:
-    """Queue a generation. Returns the request record ({request_id, status_url, status})."""
+    """Queue a generation. Returns the request record ({request_id, status_url, status}).
+    A 404 model_not_found means that spelling of the endpoint isn't the one this account is
+    served — the other documented spellings are tried before giving up (a 404 is free)."""
     if not configured():
         raise HiggsfieldError("HIGGSFIELD_KEY_ID / HIGGSFIELD_KEY_SECRET are not set", "not_configured")
     path, body = build_body(model, prompt, **opts)
-    try:
-        r = httpx.post(BASE + path, json=body, headers=_headers(), timeout=timeout)
-    except httpx.HTTPError as e:
-        raise HiggsfieldError(f"network error reaching Higgsfield: {e}", "network") from e
-    if r.status_code >= 400:
-        raise HiggsfieldError(_explain(r.status_code, r.text), str(r.status_code))
-    data = r.json()
-    if not data.get("request_id"):
-        raise HiggsfieldError(f"Higgsfield answered without a request id: {r.text[:200]}", "api")
-    return data
+    tried: list[str] = []
+    for cand in candidates(path):
+        tried.append(cand)
+        try:
+            r = httpx.post(BASE + cand, json=body, headers=_headers(), timeout=timeout)
+        except httpx.HTTPError as e:
+            raise HiggsfieldError(f"network error reaching Higgsfield: {e}", "network") from e
+        if r.status_code == 404 and "model_not_found" in r.text:
+            continue
+        if r.status_code >= 400:
+            raise HiggsfieldError(_explain(r.status_code, r.text), str(r.status_code))
+        data = r.json()
+        if not data.get("request_id"):
+            raise HiggsfieldError(f"Higgsfield answered without a request id: {r.text[:200]}", "api")
+        _remember(cand)
+        return data
+    label = MODELS.get(model, {}).get("label", model)
+    raise HiggsfieldError(f"Higgsfield has no “{label}” on this account (model_not_found). Pick another model in the list, "
+                          f"or check which models your Higgsfield API plan includes at higgsfield.ai. Tried: {', '.join(tried)}",
+                          "model_not_found")
 
 
 def status(request_id: str, timeout: float = 30.0) -> dict:
