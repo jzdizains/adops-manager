@@ -644,6 +644,18 @@ async def ai_edit(creative_id: int, request: Request, db: Session = Depends(get_
                             status_code=303)
 
 
+@router.post("/creatives/ai/check-models")
+async def ai_check_models():
+    """Which Higgsfield models this API key can actually use. Costs nothing — see higgsfield.probe."""
+    from fastapi.responses import JSONResponse
+
+    from .. import higgsfield as HF
+    if not HF.configured():
+        return JSONResponse({"ok": False, "error": "Higgsfield keys aren't set on Render yet."})
+    rows = await run_in_threadpool(HF.probe_all)
+    return JSONResponse({"ok": True, "models": rows})
+
+
 def _start_hf(db: Session, form, *, parent, base_name: str):
     """Queue N placeholder rows + one Higgsfield request for them."""
     import json as _json

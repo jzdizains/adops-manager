@@ -372,7 +372,12 @@
         <li><b>aistudio.google.com</b> → <b>Get API key</b> → create one for a project with billing enabled.</li>
         <li>Render → <b>Environment</b> → add <code>GEMINI_API_KEY</code> → Save.</li>
       </ol>
-      <p class="muted" style="margin:8px 0 0;font-size:12px;">Editing an image through Higgsfield sends it a temporary signed link to the source picture (valid 2 hours), so the dashboard's public address must be known — it learns it the first time Settings is opened.</p>
+      <div id="hfCheckWrap" style="margin:10px 0 2px;">
+        <button type="button" class="btn sm" id="hfCheckBtn">Check which models this key can use</button>
+        <span class="muted" style="font-size:11.5px;margin-left:6px;">Free — it asks Higgsfield without generating anything.</span>
+        <div id="hfCheckOut" class="hf-check" hidden></div>
+      </div>
+      <p class="muted" style="margin:8px 0 0;font-size:12px;">Not every model is switched on for every account — Higgsfield's own FAQ says model availability depends on the account, and support@higgsfield.ai can enable one. Editing an image through Higgsfield sends it a temporary signed link to the source picture (valid 2 hours), so the dashboard's public address must be known — it learns it the first time Settings is opened.</p>
     </div>
   </div>
 
@@ -568,6 +573,19 @@
   document.addEventListener("click", function () { document.querySelectorAll("[data-fsel].open").forEach(function (o) { o.classList.remove("open"); }); });
 
   // ---- "How to connect" (Higgsfield / Google) step-by-step pop-up ----
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest("#hfCheckBtn"); if (!b) return;
+    var out = document.getElementById("hfCheckOut");
+    b.disabled = true; b.textContent = "Checking…"; out.hidden = false; out.innerHTML = '<span class="muted">Asking Higgsfield about each model…</span>';
+    UI.post("/creatives/ai/check-models", {}).then(function (d) {
+      b.disabled = false; b.textContent = "Check again";
+      if (!d.ok) { out.innerHTML = '<span style="color:var(--err);">' + (d.error || "Check failed.") + "</span>"; return; }
+      out.innerHTML = d.models.map(function (m) {
+        return '<div class="hf-check-row"><span class="' + (m.ok ? "ok" : "no") + '">' + (m.ok ? "✓" : "✕") + "</span><b>" + m.label + "</b><span class=\"muted\">" + m.note + "</span></div>";
+      }).join("");
+    }).catch(function () { b.disabled = false; b.textContent = "Check again"; out.innerHTML = '<span style="color:var(--err);">Check failed — try again.</span>'; });
+  });
+
   var aiConnectBtn = document.getElementById("aiConnectBtn"), aiConnectBox = document.getElementById("aiConnectBox");
   if (aiConnectBtn && aiConnectBox) aiConnectBtn.addEventListener("click", function () {
     var node = aiConnectBox.firstElementChild; aiConnectBox.hidden = false;

@@ -215,6 +215,48 @@ def submit(model: str, prompt: str, timeout: float = 60.0, **opts) -> dict:
                           "model_not_found")
 
 
+def probe(model: str, timeout: float = 30.0) -> dict:
+    """Ask Higgsfield whether THIS account can use a model, without generating anything and
+    without spending credits: post a deliberately incomplete body (no prompt). The server
+    resolves the model first, so 404 model_not_found = not on this account, while a 422
+    validation error = the model is there and only the body was wrong. If a call somehow
+    queues work anyway, it is cancelled immediately.
+    Returns {model, label, ok, path, note}."""
+    spec = MODELS.get(model) or {}
+    label = spec.get("label", model)
+    if not configured():
+        return {"model": model, "label": label, "ok": False, "path": "", "note": "keys not set"}
+    tried = []
+    for cand in candidates(spec.get("path", "")):
+        tried.append(cand)
+        try:
+            r = httpx.post(BASE + cand, json={}, headers=_headers(), timeout=timeout)
+        except httpx.HTTPError as e:
+            return {"model": model, "label": label, "ok": False, "path": "", "note": f"network error: {e}"}
+        if r.status_code == 404 and "model_not_found" in r.text:
+            continue
+        if r.status_code == 422:
+            _remember(cand)
+            return {"model": model, "label": label, "ok": True, "path": cand, "note": "available"}
+        if r.status_code == 401:
+            return {"model": model, "label": label, "ok": False, "path": "", "note": "the API key was rejected (401)"}
+        if r.status_code < 300:
+            _remember(cand)
+            try:
+                rid = (r.json() or {}).get("request_id")
+                if rid:
+                    cancel(rid)          # never leave a probe running
+            except ValueError:
+                pass
+            return {"model": model, "label": label, "ok": True, "path": cand, "note": "available (test request cancelled)"}
+        return {"model": model, "label": label, "ok": False, "path": "", "note": _explain(r.status_code, r.text)[:160]}
+    return {"model": model, "label": label, "ok": False, "path": "", "note": "not on this account (model_not_found) — ask support@higgsfield.ai to enable it"}
+
+
+def probe_all(timeout: float = 30.0) -> list[dict]:
+    return [probe(m, timeout=timeout) for m in MODELS]
+
+
 def status(request_id: str, timeout: float = 30.0) -> dict:
     try:
         r = httpx.get(f"{BASE}/requests/{request_id}/status", headers=_headers(), timeout=timeout)

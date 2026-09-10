@@ -1099,6 +1099,13 @@ table.data.aud thead th:first-child { white-space: nowrap; }
 .ref-chip button:hover { color: var(--err); }
 .ref-up-lbl.disabled { opacity: .45; pointer-events: none; }
 .ai-refs[hidden] { display: none; }
+.hf-check { margin-top: 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
+.hf-check[hidden] { display: none; }
+.hf-check-row { display: flex; gap: 8px; align-items: baseline; padding: 6px 10px; font-size: 12.5px; border-bottom: 1px solid var(--border-soft); }
+.hf-check-row:last-child { border-bottom: none; }
+.hf-check-row .ok { color: var(--ok); font-weight: 800; }
+.hf-check-row .no { color: var(--err); font-weight: 800; }
+.hf-check-row .muted { margin-left: auto; text-align: right; }
 
 .cz-track.on [data-pick] { background: var(--accent); color: var(--on-accent); }
 .pb-rail a.done .pf-no { background: var(--ok-bg); color: var(--ok); }
