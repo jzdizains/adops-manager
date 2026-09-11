@@ -256,6 +256,30 @@ def bc_partner_add(access_token: str, bc_id: str, partner_id: str,
     return api_post("/bc/partner/add/", access_token, payload)
 
 
+def bc_partner_asset_get(access_token: str, bc_id: str, partner_id: str,
+                         asset_type: str = "ADVERTISER",
+                         share_type: str = "SHARED_TO_ME") -> list[dict]:
+    """GET /bc/partner/asset/get/ — the assets actually shared between bc_id and
+    partner_id. `share_type` is SHARED_TO_ME (assets the partner gave us) or
+    SHARED_BY_ME (assets we gave the partner).
+
+    This is the only honest answer to "did the share go through?": /bc/partner/add/
+    returns 0 as soon as TikTok has *recorded* the request, and a partnership the
+    other side has not approved yet records fine and shares nothing.
+    """
+    out: list[dict] = []
+    for page in range(1, 11):
+        data = api_get_retry("/bc/partner/asset/get/", access_token,
+                             {"bc_id": str(bc_id), "partner_id": str(partner_id),
+                              "asset_type": asset_type, "share_type": share_type,
+                              "page": page, "page_size": 50}) or {}
+        batch = data.get("list") or []
+        out.extend(batch)
+        if len(batch) < 50:
+            break
+    return out
+
+
 def bc_partner_list(access_token: str, bc_id: str) -> list[dict]:
     """GET /bc/partner/get/ — partners of a BC."""
     out: list[dict] = []

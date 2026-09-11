@@ -61,10 +61,10 @@ def bc_assets_state(db: Session = Depends(get_db)):
     job = (db.query(models.Job)
            .filter(models.Job.kind.in_(("bc_assets_scan", "bc_assets_wire", "bc_assets_connect")))
            .order_by(models.Job.id.desc()).first())
-    snap = bc_assets.snapshot(db)
     return JSONResponse({
         "ok": True,
-        "at": snap.get("at", ""),
+        "at": bc_assets.snapshot_at(db),     # one short setting — never parse the whole snapshot here,
+                                             # this runs every couple of seconds while a job is going
         "running": bool(job and job.status in ("queued", "running")),
         "kind": job.kind if job else "",
         "title": (job.title or "") if job else "",
@@ -87,22 +87,26 @@ def bc_assets_scan(db: Session = Depends(get_db)):
 
 @router.post("/bc-assets/wire")
 def bc_assets_wire(advertiser_id: str = Form(""), role: str = Form("OPERATOR"),
-                   mode: str = Form("preview"), db: Session = Depends(get_db)):
+                   mode: str = Form(""), db: Session = Depends(get_db)):
     """Give ONE ad account the pixel and every profile. `preview` sends nothing —
     it only records the exact requests that a `send` would make."""
     adv = "".join(ch for ch in (advertiser_id or "") if ch.isdigit())
     if not adv:
         return _back(err="Give the ad account id first.")
+    m = bc_assets.parse_mode(mode)
+    if m is None:
+        return _back(err="Use the Preview or Wire button — the browser didn't say which one you pressed, "
+                         "and nothing is ever sent on a guess.")
     if not queries.any_access_token(db):
         return _back(err="Connect TikTok first.")
     job, created = jobs.enqueue_once(db, "bc_assets_wire",
-                                     f"{'Preview' if mode != 'send' else 'Wire'} assets for {adv}",
-                                     {"advertiser_id": adv, "role": role, "dry_run": mode != "send"},
+                                     f"{'PREVIEW (nothing sent)' if m == 'preview' else 'Wire'} assets for {adv}",
+                                     {"advertiser_id": adv, "role": role, "dry_run": m == "preview"},
                                      href="/bc-assets")
     if not created:
         return _back(ok=f"A wiring run is already {job.status}.")
     return _back(ok=("Previewing — nothing is sent; the exact requests appear here in a moment."
-                     if mode != "send" else "Sending to TikTok — the answers appear here in a moment."))
+                     if m == "preview" else "Sending to TikTok — the answers appear here in a moment."))
 
 
 @router.post("/bc-assets/bc/add")
@@ -132,19 +136,23 @@ def bc_assets_invite(bc_id: str = Form(""), email: str = Form(""), role: str = F
 
 
 @router.post("/bc-assets/connect")
-def bc_assets_connect(bc_id: str = Form(""), role: str = Form("OPERATOR"), mode: str = Form("preview"),
+def bc_assets_connect(bc_id: str = Form(""), role: str = Form("OPERATOR"), mode: str = Form(""),
                       email: str = Form(""), db: Session = Depends(get_db)):
     """One Business Center, one button: share all its ad accounts in, then pixel + profiles."""
     clean = "".join(ch for ch in (bc_id or "") if ch.isdigit())
     if not clean:
         return _back(err="Which Business Center?")
+    m = bc_assets.parse_mode(mode)
+    if m is None:
+        return _back(err="Use the Preview or Connect button — the browser didn't say which one you pressed, "
+                         "and nothing is ever sent on a guess.")
     job, created = jobs.enqueue_once(db, "bc_assets_connect",
-                                     f"{'Preview' if mode != 'send' else 'Connect'} Business Center {clean}",
-                                     {"bc_id": clean, "role": role, "dry_run": mode != "send", "email": email},
+                                     f"{'PREVIEW (nothing sent)' if m == 'preview' else 'Connect'} Business Center {clean}",
+                                     {"bc_id": clean, "role": role, "dry_run": m == "preview", "email": email},
                                      href="/bc-assets")
     if not created:
         return _back(ok=f"A run is already {job.status}.")
-    return _back(ok="Previewing — nothing is sent." if mode != "send"
+    return _back(ok="Previewing — nothing is sent." if m == "preview"
                  else "Connecting in the background — the report appears here when it finishes.")
 
 

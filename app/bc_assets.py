@@ -33,6 +33,8 @@ from . import models, queries, tiktok_api
 log = logging.getLogger("adops.bc_assets")
 
 SNAPSHOT_KEY = "bc_assets_snapshot"
+SNAPSHOT_AT_KEY = "bc_assets_snapshot_at"   # just the timestamp, so the page's poll
+                                            # never has to parse the whole snapshot
 WATCH_KEY = "bc_assets_watchlist"   # satellite BCs being connected, in order
 MAIN_BC_KEY = "main_bc_id"          # set on the page; guessed from the pixels when empty
 
@@ -88,6 +90,17 @@ def watch_remove(db: Session, bc_id: str) -> None:
     rows = [r for r in watchlist(db) if r["bc_id"] != str(bc_id)]
     queries.upsert_setting(db, WATCH_KEY, json.dumps(rows))
     db.commit()
+
+
+def parse_mode(raw: str) -> str | None:
+    """`preview` or `send` — nothing else.
+
+    A missing or misspelt mode used to fall back to preview. That is the worst possible
+    default: the run does the reading, reports every step, finishes green — and sends
+    nothing. There is no safe guess here, so there is no guess.
+    """
+    m = (raw or "").strip().lower()
+    return m if m in ("preview", "send") else None
 
 
 def stage(db: Session, bc_id: str, snap: dict | None = None) -> dict:
@@ -262,11 +275,21 @@ def scan(db: Session, on_progress=None, should_stop=None) -> dict:
 def _store(db: Session, snap: dict) -> dict:
     try:
         queries.upsert_setting(db, SNAPSHOT_KEY, json.dumps(snap)[:900_000])
+        queries.upsert_setting(db, SNAPSHOT_AT_KEY, str(snap.get("at") or ""))
         db.commit()
     except Exception as e:      # noqa: BLE001 — a snapshot that can't be stored must not kill the job
         db.rollback()
         log.warning("could not store the assets snapshot: %s", e)
     return snap
+
+
+def snapshot_at(db: Session) -> str:
+    """When the last audit finished — one short setting, no JSON parsing. The page
+    polls this every couple of seconds, so it must stay cheap."""
+    at = queries.get_setting(db, SNAPSHOT_AT_KEY, "")
+    if at:
+        return at
+    return (snapshot(db) or {}).get("at", "")      # first run after the upgrade
 
 
 def snapshot(db: Session) -> dict:
@@ -359,6 +382,68 @@ def _stepper(report: dict, dry_run: bool):
     return step
 
 
+def _asset_ids(items) -> set[str]:
+    """Asset ids out of any BC listing — TikTok spells the key differently per endpoint."""
+    out: set[str] = set()
+    for it in items or []:
+        if not isinstance(it, dict):
+            continue
+        info = it.get("asset_info") if isinstance(it.get("asset_info"), dict) else {}
+        v = (it.get("asset_id") or it.get("advertiser_id") or it.get("id")
+             or info.get("asset_id") or info.get("advertiser_id"))
+        if v:
+            out.add(str(v))
+    return out
+
+
+def _usable_from_main(main_token: str, main: str, bc_id: str) -> tuple[set[str], str, bool]:
+    """Which ad accounts the MAIN Business Center can actually use right now, and a note
+    about the partnership if TikTok doesn't list it yet.
+
+    /bc/partner/add/ answers "ok" as soon as TikTok records the request. The partnership
+    itself has to be approved on the receiving side, and until it is, the shared ad
+    accounts are not assets of the main BC — so nothing can be linked to them. Asking
+    TikTok what it now reports is the only way to know which of the two happened.
+    """
+    ids: set[str] = set()
+    notes: list[str] = []
+    ok_owned = ok_shared = True
+    try:
+        ids |= _asset_ids(tiktok_api.bc_assets_admin(main_token, main, "ADVERTISER"))
+    except tiktok_api.TikTokError as e:
+        ok_owned = False
+        notes.append(f"could not re-read the main BC's ad accounts: {e.message} (code {e.code})")
+    try:
+        ids |= _asset_ids(tiktok_api.bc_partner_asset_get(main_token, main, str(bc_id),
+                                                          "ADVERTISER", "SHARED_TO_ME"))
+    except tiktok_api.TikTokError as e:
+        ok_shared = False
+        notes.append(f"could not read the partner share: {e.message} (code {e.code})")
+    # Both reads have to answer before an absence means anything. If either failed, an id
+    # missing from this set proves nothing — carry on and let TikTok refuse the link itself,
+    # rather than skipping work that would have succeeded.
+    return ids, "; ".join(notes), (ok_owned and ok_shared)
+
+
+def _partnership_note(main_token: str, main: str, bc_id: str) -> str:
+    """Empty when the main BC lists that BC as a partner; otherwise what to do about it."""
+    try:
+        partners = tiktok_api.bc_partner_list(main_token, main)
+    except tiktok_api.TikTokError:
+        return ""
+    ids = set()
+    for p in partners:
+        info = p.get("partner_info") if isinstance(p.get("partner_info"), dict) else {}
+        v = info.get("bc_id") or p.get("partner_id") or p.get("bc_id")
+        if v:
+            ids.add(str(v))
+    if str(bc_id) in ids:
+        return ""
+    return ("the main Business Center does not list this one as a partner yet — TikTok needs the "
+            "partnership approved from the main BC (Business Center → Partners → Requests) before "
+            "any of its ad accounts can be used")
+
+
 def connect_bc(db: Session, bc_id: str, role: str = "OPERATOR", dry_run: bool = True,
                email: str = "", on_progress=None) -> dict:
     """One Business Center, one button: share every ad account it owns into the main BC,
@@ -430,18 +515,78 @@ def connect_bc(db: Session, bc_id: str, role: str = "OPERATOR", dry_run: bool = 
         report["steps"].append({"step": "Share ad accounts into the main BC", "ok": True,
                                 "detail": f"all {len(owned)} already shared — skipped", "request": {}})
 
-    # 2. pixel + profiles for each
+    # 2. did the share ACTUALLY land? "/bc/partner/add/ returned ok" is not the same thing:
+    #    the partnership has to be approved from the main Business Center, and until it is,
+    #    those ad accounts are not assets of the main BC and nothing can be linked to them.
+    waiting: list[str] = []
+    if dry_run:
+        report["steps"].append({"step": "Check what arrives in the main Business Center", "ok": None,
+                                "detail": "a preview can't tell — TikTok only answers this after the share is sent",
+                                "request": {"endpoint": "/bc/partner/asset/get/", "bc_id": main,
+                                            "partner_id": str(bc_id), "share_type": "SHARED_TO_ME"}})
+        linkable = list(owned)
+    else:
+        say("checking what actually arrived in the main Business Center")
+        usable, read_note, reliable = _usable_from_main(main_token, main, str(bc_id))
+        linkable = [a for a in owned if reliable is False or a in usable]
+        waiting = [a for a in owned if reliable and a not in usable]
+        report["arrived"], report["waiting"] = linkable, waiting
+        if read_note:
+            report.setdefault("notes", []).append(read_note)
+        report["steps"].append({
+            "step": "Check what arrived in the main Business Center",
+            "ok": not waiting,
+            "detail": (f"TikTok reports all {len(linkable)} ad account(s) as usable from the main BC"
+                       if not waiting else
+                       f"{len(linkable)} of {len(owned)} usable — {len(waiting)} still not visible to the main BC"),
+            "request": {"endpoint": "/bc/partner/asset/get/", "bc_id": main,
+                        "partner_id": str(bc_id), "share_type": "SHARED_TO_ME"}})
+        if waiting:
+            hint = _partnership_note(main_token, main, str(bc_id))
+            report["approval_needed"] = True
+            report["approval_hint"] = hint or (
+                "TikTok recorded the share but the main Business Center can't see these ad accounts yet. "
+                "Open the main BC → Partners and approve the request from this Business Center, then press Connect again.")
+            report.setdefault("notes", []).append(report["approval_hint"])
+
+    # 3. pixel + profiles — only for the accounts TikTok actually reports as usable
     for adv in owned:
+        if adv in waiting:
+            report["steps"].append({
+                "step": f"Link pixel + profiles → {adv}", "ok": False,
+                "detail": "skipped — the main BC can't see this ad account yet (see the note above)",
+                "request": {}})
+            continue
         _account_steps(report, step, main, main_token, adv, pixels, profiles, say)
 
-    done = [s for s in report["steps"] if s["ok"] is True]
-    bad = [s for s in report["steps"] if s["ok"] is False]
-    report["summary"] = (f"{len(report['steps'])} step(s) previewed for {len(owned)} ad account(s) — nothing sent"
-                         if dry_run else
-                         f"{len(owned)} ad account(s) · {len(done)} step(s) ok" + (f", {len(bad)} failed" if bad else ""))
+    done = [x for x in report["steps"] if x["ok"] is True]
+    bad = [x for x in report["steps"] if x["ok"] is False]
+    if dry_run:
+        report["summary"] = (f"PREVIEW ONLY — nothing was sent to TikTok. "
+                             f"{len(report['steps'])} step(s) would run for {len(owned)} ad account(s).")
+    elif waiting:
+        report["summary"] = (f"Sent — but {len(waiting)} of {len(owned)} ad account(s) are still waiting for the "
+                             f"partnership to be approved in the main Business Center, so nothing could be linked to them."
+                             + (f" {len(done)} step(s) ok." if done else ""))
+    else:
+        report["summary"] = (f"Sent · {len(owned)} ad account(s) · {len(done)} step(s) ok"
+                             + (f", {len(bad)} failed" if bad else ""))
     if not dry_run:
         say("re-reading what TikTok now reports")
-        scan(db, on_progress=on_progress)      # the page must show reality, not what it was before the run
+        fresh = scan(db, on_progress=on_progress)   # the page must show reality, not what it was before the run
+        # ...and say what TikTok now confirms, rather than what we asked it to do
+        by_id = {r["advertiser_id"]: r for r in (fresh.get("accounts") or [])}
+        confirmed = [a for a in linkable
+                     if by_id.get(a) and by_id[a].get("in_main_bc")
+                     and by_id[a].get("pixels") and not by_id[a].get("profiles_missing")]
+        known = [a for a in linkable if a in by_id]
+        report["confirmed"] = confirmed
+        if known:
+            report["summary"] += (f" TikTok now confirms {len(confirmed)} of {len(known)} "
+                                  f"ad account(s) fully wired.")
+        elif not waiting:
+            report["summary"] += (" These ad accounts aren't in the dashboard yet — sync ad accounts "
+                                  "to see their pixel and profile status here.")
     return _store_wire(db, report)
 
 
@@ -555,14 +700,34 @@ def wire(db: Session, advertiser_id: str, role: str = "OPERATOR", dry_run: bool 
              {"endpoint": "/bc/partner/add/", "bc_id": owner, "partner_id": main,
               "asset_type": "ADVERTISER", "asset_ids": [str(advertiser_id)], "advertiser_role": role},
              lambda: tiktok_api.bc_partner_add(admin[owner], owner, main, [str(advertiser_id)], role))
+        # ...and did it land? A partnership the main BC has not approved records fine and
+        # shares nothing, so ask TikTok rather than trusting the "ok".
+        if not dry_run:
+            say("checking whether the main Business Center can see it")
+            usable, read_note, reliable = _usable_from_main(main_token, main, owner)
+            if read_note:
+                report.setdefault("notes", []).append(read_note)
+            if reliable and str(advertiser_id) not in usable:
+                report["approval_needed"] = True
+                report["approval_hint"] = _partnership_note(main_token, main, owner) or (
+                    "TikTok recorded the share, but the main Business Center still can't see this ad account. "
+                    "Open the main BC → Partners and approve the request, then press Wire again.")
+                report["steps"].append({
+                    "step": "Check it arrived in the main Business Center", "ok": False,
+                    "detail": "not visible to the main BC yet — the pixel and profiles can't be linked until it is",
+                    "request": {"endpoint": "/bc/partner/asset/get/", "bc_id": main,
+                                "partner_id": owner, "share_type": "SHARED_TO_ME"}})
+                report.setdefault("notes", []).append(report["approval_hint"])
 
     # ---- 2 + 3. the pixel(s) and every profile
-    _account_steps(report, step, main, main_token, str(advertiser_id), pixels, profiles, say)
+    if not report.get("approval_needed"):
+        _account_steps(report, step, main, main_token, str(advertiser_id), pixels, profiles, say)
 
-    done = [s for s in report["steps"] if s["ok"] is True]
-    bad = [s for s in report["steps"] if s["ok"] is False]
-    report["summary"] = (f"{len(report['steps'])} step(s) previewed — nothing sent" if dry_run
-                         else f"{len(done)} step(s) ok" + (f", {len(bad)} failed" if bad else ""))
+    done = [x for x in report["steps"] if x["ok"] is True]
+    bad = [x for x in report["steps"] if x["ok"] is False]
+    report["summary"] = (f"PREVIEW ONLY — nothing was sent to TikTok. {len(report['steps'])} step(s) would run."
+                         if dry_run
+                         else f"Sent · {len(done)} step(s) ok" + (f", {len(bad)} failed" if bad else ""))
     if not dry_run:
         say("re-reading what TikTok now reports")
         scan(db, on_progress=on_progress)      # so the row stops offering work that is already done

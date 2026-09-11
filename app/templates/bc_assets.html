@@ -124,9 +124,20 @@
 
 {% if wire %}
 <div class="card" style="margin-top:12px;">
-  <div class="card-header"><span class="card-title">{{ 'Preview' if wire.dry_run else 'Wiring run' }} — {{ wire.account_name or wire.advertiser_id }}</span>
-    <span class="card-meta">{{ wire.summary or wire.error }} · {{ wire.at|ago }}{% if wire.dry_run %} · nothing was sent{% endif %}</span></div>
+  <div class="card-header"><span class="card-title">
+      {% if wire.dry_run %}<span class="pill warn">PREVIEW — nothing sent</span>{% else %}<span class="pill {{ 'err' if wire.approval_needed else 'ok' }}">Sent to TikTok</span>{% endif %}
+      {{ wire.bc_name or wire.account_name or wire.advertiser_id or wire.bc_id }}</span>
+    <span class="card-meta">{{ wire.summary or wire.error }} · {{ wire.at|ago }}</span></div>
   {% if wire.error %}<div class="attn-row"><span class="attn-dot" style="color:var(--err);">●</span><span>{{ wire.error }}</span></div>{% endif %}
+  {% if wire.approval_needed %}
+  <div class="attn-row" style="align-items:flex-start;">
+    <span class="attn-dot" style="color:var(--err);">●</span>
+    <span><b>Waiting for approval in the main Business Center.</b>
+      <div class="muted" style="font-size:12px;">{{ wire.approval_hint }}</div>
+      <div class="muted" style="font-size:12px;">TikTok accepted the sharing request, but a partnership only takes effect once the receiving Business Center approves it — until then those ad accounts aren't assets of the main BC, so the pixel and the profiles can't be linked to them.</div>
+      <a class="btn sm" style="margin-top:6px;" href="https://business.tiktok.com/manage/partner?org_id={{ snap.main_bc or main_bc }}" target="_blank" rel="noopener">Open the main BC → Partners ↗</a></span>
+  </div>
+  {% endif %}
   {% for s in wire.steps %}
   <div class="attn-row">
     <span class="attn-dot" style="color:var(--{{ 'ok' if s.ok else ('err' if s.ok is false else 'text-dim') }});">●</span>
@@ -136,7 +147,7 @@
   </div>
   {% endfor %}
   {% for n in wire.notes or [] %}<div class="attn-row"><span class="attn-dot" style="color:var(--warn);">●</span><span class="muted">{{ n }}</span></div>{% endfor %}
-  <div class="hint" style="padding:8px 14px;">{% if wire.dry_run %}Nothing has been sent. Press <b>Wire</b> on that row to run exactly these requests.{% else %}Run the audit again to refresh the table.{% endif %}</div>
+  <div class="hint" style="padding:8px 14px;">{% if wire.dry_run %}<b>Nothing has been sent.</b> This is the list of requests a real run would make — press <b>Connect</b> (or <b>Wire</b>) to actually send them.{% else %}The table above was re-read from TikTok straight after this run, so it shows what is true now.{% endif %}</div>
 </div>
 {% endif %}
 
@@ -189,7 +200,11 @@
   "use strict";
   var st = {}; try { st = JSON.parse(document.getElementById("bcaState").textContent || "{}"); } catch (e) {}
   var live = document.getElementById("bcaLive"), liveText = document.getElementById("bcaLiveText");
-  var startedAt = st.at || "", timer = null, idle = 0;
+  var startedAt = st.at || "", timer = null, idle = 0, pending = false;
+  function toast(kind, msg) { if (window.adopsToast) { window.adopsToast(kind, msg); } else { alert(msg); } }
+  function reload() {
+    location.replace("/bc-assets" + (location.search.indexOf("show=") >= 0 ? location.search : ""));
+  }
 
   function buttons(disabled) {
     document.querySelectorAll("#bcaForms button[type=submit], .bca-form button").forEach(function (b) {
@@ -215,10 +230,13 @@
           show((d.title || "Working") + (d.progress ? " — " + d.progress : "…"));
           return;
         }
-        // finished: if the audit itself changed, redraw the page once with what it now says
-        if (d.at && d.at !== startedAt) {
+        // finished. Redraw whenever the audit moved, AND whenever a run we started has ended —
+        // a preview changes no audit but still has a report to show, and leaving the old page up
+        // is exactly what made a run that sent nothing look like one that worked.
+        if (pending || (d.at && d.at !== startedAt)) {
+          pending = false;
           show((d.detail || "Done") + " — updating the page…");
-          location.replace("/bc-assets" + (location.search.indexOf("show=") >= 0 ? location.search : ""));
+          reload();
           return;
         }
         if (idle === 0 && d.detail) { show(d.detail); setTimeout(hide, 4000); }
@@ -232,15 +250,31 @@
 
   // post every form in the background so the page never navigates away
   document.querySelectorAll("form.bca-form").forEach(function (f) {
+    f.addEventListener("click", function (ev) {
+      var b = ev.target.closest && ev.target.closest("button[type=submit]");
+      if (b && f.contains(b)) { f._lastBtn = b; }
+    }, true);
     f.addEventListener("submit", function (ev) {
       if (!window.fetch) return;                       // no fetch → plain POST, still works
       ev.preventDefault();
-      var btn = ev.submitter, data = new FormData(f);
-      if (btn && btn.name) data.append(btn.name, btn.value);
+      // WHICH button was pressed decides whether anything is sent, so never leave it to one API:
+      // ev.submitter, the button we recorded on mousedown, then the hidden field (= preview).
+      var btn = ev.submitter || f._lastBtn || null, data = new FormData(f);
+      if (btn && btn.name) data.set(btn.name, btn.value);
+      f._lastBtn = null;
       start((btn && btn.dataset.working) || "Working…");
       fetch(f.getAttribute("action"), { method: "POST", body: data, headers: { "X-Requested-With": "fetch" } })
-        .then(function () { setTimeout(poll, 400); })
-        .catch(function () { stop(); adopsToast && adopsToast("err", "That didn't reach the server — try again."); });
+        .then(function (res) {
+          // the POST answers with a redirect carrying ?ok= / ?err= — a background post must
+          // still show what it said, or a refusal looks exactly like a success
+          var q = "";
+          try { q = new URL(res.url, location.href).search; } catch (e) {}
+          var err = /[?&]err=([^&]*)/.exec(q);
+          if (err) { stop(); toast("err", decodeURIComponent(err[1].replace(/\+/g, " "))); return; }
+          pending = true;                       // reload once this run finishes, whatever it did
+          setTimeout(poll, 400);
+        })
+        .catch(function () { stop(); toast("err", "That didn't reach the server — try again."); });
     });
   });
   if (st.running) { start("Working…"); }

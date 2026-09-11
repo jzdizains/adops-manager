@@ -142,8 +142,25 @@ def _inline() -> bool:
     return os.environ.get("ADOPS_DISABLE_BG") == "1"
 
 
-def progress(db: Session, job: models.Job, text: str) -> None:
-    job.progress = text[:80]
+_progress_at: dict[int, float] = {}     # job id -> monotonic time of its last commit
+
+
+def progress(db: Session, job: models.Job, text: str, force: bool = False) -> None:
+    """Record what a job is doing — at most one write per second per job.
+
+    A long run calls this once per API call. Committing every one of them means a SQLite
+    write per step while the page is polling for the answer, which is what makes the rest
+    of the dashboard feel slow during a big run. The text is still assigned immediately,
+    so the next commit (this one's or the job's own) carries the latest line."""
+    text = (text or "")[:80]
+    if job.progress == text:
+        return
+    job.progress = text
+    import time as _time
+    now = _time.monotonic()
+    if not force and now - _progress_at.get(job.id, 0.0) < 1.0:
+        return                       # kept in the session; flushed with the next commit
+    _progress_at[job.id] = now
     db.commit()
 
 
@@ -171,6 +188,7 @@ def run_job(db: Session, job: models.Job) -> None:
         job.detail = f"{type(e).__name__}: {str(e)[:400]}"
     job.finished_at = _now()
     job.progress = ""
+    _progress_at.pop(job.id, None)     # the throttle map must not grow with every job
     if job.quiet and job.status == "done":
         job.seen = True                # scheduled housekeeping that worked: no toast, just the Jobs list
     db.commit()
