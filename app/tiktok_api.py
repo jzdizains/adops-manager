@@ -438,6 +438,25 @@ def bc_pixel_link_update(access_token: str, bc_id: str, pixel_code: str,
     })
 
 
+def bc_pixel_linked_advertisers(access_token: str, bc_id: str, pixel_code: str,
+                                max_pages: int = 40) -> list[str]:
+    """EVERY ad account a BC-owned pixel is linked to, across all pages.
+
+    bc_pixel_link_get returns one page of 50. A pixel shared across a hundred ad accounts
+    therefore looked, to a single-page reader, as if it were linked to the first fifty —
+    and an account linked today lands at the end of the list, so the audit reported the
+    link it had just made as missing."""
+    out: list[str] = []
+    for page in range(1, max_pages + 1):
+        data = bc_pixel_link_get(access_token, bc_id, pixel_code, page=page, page_size=50) or {}
+        batch = data.get("list") or []
+        out.extend(str(x.get("advertiser_id")) for x in batch if x.get("advertiser_id"))
+        info = data.get("page_info") or {}
+        if len(batch) < 50 or (info.get("total_page") and page >= int(info["total_page"])):
+            break
+    return out
+
+
 def bc_pixel_link_get(access_token: str, bc_id: str, pixel_code: str,
                       page: int = 1, page_size: int = 50) -> dict:
     """Which ad accounts a BC-owned pixel is linked to (v1.3: bc_id + pixel_code;

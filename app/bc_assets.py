@@ -208,11 +208,12 @@ def scan(db: Session, on_progress=None, should_stop=None) -> dict:
             })
         say(f"main BC: {len(snap['pixels'])} pixel(s), {len(snap['profiles'])} profile(s)")
 
-    try:
-        in_main = {str(a.get("asset_id")) for a in tiktok_api.bc_assets_admin(token, main, "ADVERTISER")}
-    except tiktok_api.TikTokError as e:
-        snap["errors"].append(f"could not list the main BC's ad accounts: {e.message} (code {e.code})")
-        in_main = set()
+    # what the main BC can USE — owned assets plus everything its partners share in.
+    # Connect judges its work by exactly this set, so the audit has to as well.
+    say("reading the main BC's ad accounts and partner shares")
+    in_main, shared_via, notes_main = main_bc_advertisers(token, main, say)
+    snap["errors"].extend(notes_main)
+    snap["shared_via"] = shared_via
 
     # ---- 3. what each pixel / profile is already linked to
     for p in snap["pixels"]:
@@ -220,8 +221,7 @@ def scan(db: Session, on_progress=None, should_stop=None) -> dict:
             snap["errors"].append("stopped")
             return _store(db, snap)
         try:
-            data = tiktok_api.bc_pixel_link_get(token, main, p.get("code") or p["id"]) or {}
-            p["linked"] = [str(x.get("advertiser_id")) for x in (data.get("list") or []) if x.get("advertiser_id")]
+            p["linked"] = tiktok_api.bc_pixel_linked_advertisers(token, main, p.get("code") or p["id"])
         except tiktok_api.TikTokError as e:
             p["error"] = f"{e.message} (code {e.code})"
     for pr in snap["profiles"]:
@@ -254,6 +254,7 @@ def scan(db: Session, on_progress=None, should_stop=None) -> dict:
             "owner_bc": a.owner_bc_id or "",
             "owner_bc_name": (seen_bcs.get(a.owner_bc_id or "") or {}).get("name", ""),
             "in_main_bc": adv in in_main,
+            "shared_via": shared_via.get(adv, ""),
             "pixels": sorted(pixel_linked.get(adv, [])),
             "profiles": have,
             "profiles_missing": max(0, n_profiles - len(have)),
@@ -396,6 +397,57 @@ def _asset_ids(items) -> set[str]:
     return out
 
 
+def main_bc_advertisers(token: str, main: str,
+                        say=lambda t: None) -> tuple[set[str], dict[str, str], list[str]]:
+    """Every ad account the MAIN Business Center can actually use, however it got there.
+
+    Two ways an ad account is usable from the main BC, and the audit used to see only the
+    first: the BC owns it (/bc/asset/admin/get/), or a partner BC shared it in
+    (/bc/partner/asset/get/, SHARED_TO_ME — which is exactly what Connect sets up).
+    Reading only the owned list meant every account connected through a partnership was
+    reported as "not in the main BC" forever, no matter how well the run had worked.
+
+    Returns (ids, {ad account id: partner BC it came from}, notes).
+    """
+    ids: set[str] = set()
+    via: dict[str, str] = {}
+    notes: list[str] = []
+    try:
+        ids |= _asset_ids(tiktok_api.bc_assets_admin(token, main, "ADVERTISER"))
+    except tiktok_api.TikTokError as e:
+        notes.append(f"could not list the main BC's own ad accounts: {e.message} (code {e.code})")
+    try:
+        partners = tiktok_api.bc_partner_list(token, main)
+    except tiktok_api.TikTokError as e:
+        notes.append(f"could not list the main BC's partners: {e.message} (code {e.code})")
+        partners = []
+    pids = sorted(_partner_ids(partners))[:60]           # a run must stay bounded
+    for i, pid in enumerate(pids, 1):
+        say(f"reading partner {i} of {len(pids)}'s shared ad accounts")
+        try:
+            shared = _asset_ids(tiktok_api.bc_partner_asset_get(token, main, pid,
+                                                                "ADVERTISER", "SHARED_TO_ME"))
+        except tiktok_api.TikTokError as e:
+            notes.append(f"could not read what partner {pid} shares: {e.message} (code {e.code})")
+            continue
+        for a in shared:
+            via.setdefault(a, pid)
+        ids |= shared
+    return ids, via, notes
+
+
+def _partner_ids(partners: list[dict]) -> set[str]:
+    out: set[str] = set()
+    for p in partners or []:
+        if not isinstance(p, dict):
+            continue
+        info = p.get("partner_info") if isinstance(p.get("partner_info"), dict) else {}
+        v = info.get("bc_id") or p.get("partner_id") or p.get("bc_id")
+        if v:
+            out.add(str(v))
+    return out
+
+
 def _usable_from_main(main_token: str, main: str, bc_id: str) -> tuple[set[str], str, bool]:
     """Which ad accounts the MAIN Business Center can actually use right now, and a note
     about the partnership if TikTok doesn't list it yet.
@@ -431,13 +483,7 @@ def _partnership_note(main_token: str, main: str, bc_id: str) -> str:
         partners = tiktok_api.bc_partner_list(main_token, main)
     except tiktok_api.TikTokError:
         return ""
-    ids = set()
-    for p in partners:
-        info = p.get("partner_info") if isinstance(p.get("partner_info"), dict) else {}
-        v = info.get("bc_id") or p.get("partner_id") or p.get("bc_id")
-        if v:
-            ids.add(str(v))
-    if str(bc_id) in ids:
+    if str(bc_id) in _partner_ids(partners):
         return ""
     return ("the main Business Center does not list this one as a partner yet — TikTok needs the "
             "partnership approved from the main BC (Business Center → Partners → Requests) before "
@@ -576,14 +622,39 @@ def connect_bc(db: Session, bc_id: str, role: str = "OPERATOR", dry_run: bool = 
         fresh = scan(db, on_progress=on_progress)   # the page must show reality, not what it was before the run
         # ...and say what TikTok now confirms, rather than what we asked it to do
         by_id = {r["advertiser_id"]: r for r in (fresh.get("accounts") or [])}
-        confirmed = [a for a in linkable
-                     if by_id.get(a) and by_id[a].get("in_main_bc")
-                     and by_id[a].get("pixels") and not by_id[a].get("profiles_missing")]
-        known = [a for a in linkable if a in by_id]
-        report["confirmed"] = confirmed
+        n_profiles = (fresh.get("summary") or {}).get("profiles", 0)
+        confirmed, checks = [], []
+        for a in linkable:
+            r = by_id.get(a)
+            if not r:
+                checks.append({"advertiser_id": a, "name": a, "known": False})
+                continue
+            full = bool(r.get("in_main_bc") and r.get("pixels") and not r.get("profiles_missing"))
+            if full:
+                confirmed.append(a)
+            checks.append({"advertiser_id": a, "name": r.get("name") or a, "known": True, "ok": full,
+                           "in_main_bc": bool(r.get("in_main_bc")),
+                           "shared_via": r.get("shared_via", ""),
+                           "pixels": list(r.get("pixels") or []),
+                           "profiles": len(r.get("profiles") or []),
+                           "profiles_total": n_profiles})
+        known = [c for c in checks if c["known"]]
+        report["confirmed"], report["checks"] = confirmed, checks
         if known:
             report["summary"] += (f" TikTok now confirms {len(confirmed)} of {len(known)} "
                                   f"ad account(s) fully wired.")
+            # "0 of 1" with no reason is the same dead end as "it completed" was — say which
+            # of the three checks came back empty.
+            miss = [c for c in known if not c["ok"]]
+            if miss:
+                why = []
+                if any(not c["in_main_bc"] for c in miss):
+                    why.append("the main BC still doesn't list it")
+                if any(not c["pixels"] for c in miss):
+                    why.append("no pixel link came back")
+                if any(c["profiles"] < c["profiles_total"] for c in miss):
+                    why.append("not every profile came back")
+                report["summary"] += " Still missing: " + "; ".join(why) + "."
         elif not waiting:
             report["summary"] += (" These ad accounts aren't in the dashboard yet — sync ad accounts "
                                   "to see their pixel and profile status here.")

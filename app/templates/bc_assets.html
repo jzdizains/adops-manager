@@ -146,6 +146,30 @@
     {% if s.request %}<span class="clip mono" style="font-size:11px;max-width:420px;" title="{{ s.request }}">{{ s.request.endpoint or '' }} {{ s.request }}</span>{% endif %}
   </div>
   {% endfor %}
+  {% if wire.checks %}
+  <div class="card-header" style="border-top:1px solid var(--line);"><span class="card-title" style="font-size:12.5px;">What TikTok reports now</span>
+    <span class="card-meta">re-read straight after the run — this is the answer, not the request</span></div>
+  <table class="table">
+    <thead><tr><th>Ad account</th><th>In the main BC</th><th>Pixel</th><th>Profiles</th></tr></thead>
+    <tbody>
+      {% for c in wire.checks %}
+      <tr>
+        <td>{{ c.name }}<div class="muted mono" style="font-size:11px;">{{ c.advertiser_id }}</div></td>
+        {% if not c.known %}
+        <td colspan="3" class="muted" style="font-size:12px;">not an ad account the dashboard syncs yet — add it on Accounts to track its wiring here</td>
+        {% else %}
+        <td>{% if c.in_main_bc %}<span class="pill ok">yes</span>{% if c.shared_via %} <span class="muted" style="font-size:11px;">shared in from {{ c.shared_via }}</span>{% endif %}
+            {% else %}<span class="pill err">no</span>{% endif %}</td>
+        <td>{% if c.pixels %}<span class="pill ok">{{ c.pixels|join(', ') }}</span>{% else %}<span class="pill err">none</span>{% endif %}</td>
+        <td>{% if c.profiles_total and c.profiles >= c.profiles_total %}<span class="pill ok">all {{ c.profiles }}</span>
+            {% elif c.profiles %}<span class="pill warn">{{ c.profiles }} of {{ c.profiles_total }}</span>
+            {% else %}<span class="pill err">none</span>{% endif %}</td>
+        {% endif %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
   {% for n in wire.notes or [] %}<div class="attn-row"><span class="attn-dot" style="color:var(--warn);">●</span><span class="muted">{{ n }}</span></div>{% endfor %}
   <div class="hint" style="padding:8px 14px;">{% if wire.dry_run %}<b>Nothing has been sent.</b> This is the list of requests a real run would make — press <b>Connect</b> (or <b>Wire</b>) to actually send them.{% else %}The table above was re-read from TikTok straight after this run, so it shows what is true now.{% endif %}</div>
 </div>
@@ -170,7 +194,7 @@
         <td>{{ r.name }}{% if not r.enabled %} <span class="pill mute">hidden</span>{% endif %}
             <div class="muted mono" style="font-size:11px;">{{ r.advertiser_id }}</div></td>
         <td class="muted" style="font-size:12px;">{{ r.owner_bc_name or r.owner_bc or '—' }}</td>
-        <td>{% if r.in_main_bc %}<span class="pill ok">yes</span>{% else %}<span class="pill err">no</span>{% endif %}</td>
+        <td>{% if r.in_main_bc %}<span class="pill ok">yes</span>{% if r.shared_via %} <span class="clip muted" style="font-size:11px;" title="shared in by partner Business Center {{ r.shared_via }}">shared in</span>{% endif %}{% else %}<span class="pill err">no</span>{% endif %}</td>
         <td>{% if r.pixels %}<span class="pill ok">{{ r.pixels|join(', ') }}</span>{% else %}<span class="pill err">none</span>{% endif %}</td>
         <td>{% if snap.summary.profiles and not r.profiles_missing %}<span class="pill ok">all {{ r.profiles|length }}</span>
             {% elif r.profiles %}<span class="pill warn">{{ r.profiles|length }} of {{ snap.summary.profiles }}</span>

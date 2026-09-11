@@ -95,6 +95,8 @@ world = {"shared": False, "writes": [], "partner_added": []}
 
 def reset(shared):
     world["shared"], world["writes"], world["partner_added"] = shared, [], []
+    PIXEL_LINKS["page2"] = [{"advertiser_id": "A1"}]      # back to "A2 not linked yet"
+    TT_LINKS.clear(); TT_LINKS["TT1"] = ["A1"]
 
 tiktok_api.list_business_centers = lambda tok: BCS.get(tok, [])
 
@@ -102,13 +104,34 @@ def _assets(tok, bc_id, kind, max_pages=20):
     if bc_id == MAIN:
         if kind == "PIXEL":      return [{"asset_id": "PX1", "pixel_code": "CODE1", "asset_name": "Main pixel"}]
         if kind == "TT_ACCOUNT": return [{"asset_id": "TT1", "tt_asset_handle": "@one"}]
-        if kind == "ADVERTISER": return [{"asset_id": "A1"}] + ([{"asset_id": "A2"}] if world["shared"] else [])
+        # A partner-shared ad account is NOT an asset the main BC owns — it only ever shows
+        # up under /bc/partner/asset/get/. Modelling that is the point of this stub.
+        if kind == "ADVERTISER": return [{"asset_id": "A1"}]
     if bc_id == SAT and kind == "ADVERTISER":
         return [{"asset_id": "A2"}]
     return []
 tiktok_api.bc_assets_admin = _assets
-tiktok_api.bc_pixel_link_get = lambda tok, bc, code, page=1, page_size=50: {"list": [{"advertiser_id": "A1"}]}
-tiktok_api.bc_tt_account_advertisers = lambda tok, bc, aid, asset_type="TT_ACCOUNT", max_pages=20: ["A1"]
+# a pixel linked to more ad accounts than fit on one page: A2 lands on page 2, which is
+# exactly where a single-page reader stopped looking
+PIXEL_LINKS = {"page1": [{"advertiser_id": "P%d" % i} for i in range(50)],
+               "page2": [{"advertiser_id": "A1"}]}
+def _pixel_link_get(tok, bc, code, page=1, page_size=50):
+    if page == 1:
+        return {"list": PIXEL_LINKS["page1"], "page_info": {"total_page": 2}}
+    return {"list": PIXEL_LINKS["page2"], "page_info": {"total_page": 2}}
+tiktok_api.bc_pixel_link_get = _pixel_link_get
+def _pixel_linked(tok, bc, code, max_pages=40):
+    out = []
+    for pg in range(1, max_pages + 1):
+        d = _pixel_link_get(tok, bc, code, page=pg)
+        out += [x["advertiser_id"] for x in d["list"]]
+        if pg >= d["page_info"]["total_page"]:
+            break
+    return out
+tiktok_api.bc_pixel_linked_advertisers = _pixel_linked
+TT_LINKS = {"TT1": ["A1"]}
+tiktok_api.bc_tt_account_advertisers = (lambda tok, bc, aid, asset_type="TT_ACCOUNT", max_pages=20:
+                                        list(TT_LINKS.get(aid, [])))
 tiktok_api.bc_partner_asset_get = (lambda tok, bc, partner, asset_type="ADVERTISER", share_type="SHARED_TO_ME":
                                    [{"asset_id": "A2"}] if world["shared"] else [])
 tiktok_api.bc_partner_list = lambda tok, bc: ([{"partner_id": SAT}] if world["shared"] else [])
@@ -118,9 +141,14 @@ def _partner_add(tok, bc_id, partner_id, ids, role):
     return {"code": 0}          # TikTok says ok whether or not the partnership is approved
 tiktok_api.bc_partner_add = _partner_add
 def _pixel_link(tok, bc, code, advs, rel="LINK"):
-    world["writes"].append(("pixel", code, list(advs))); return {}
+    world["writes"].append(("pixel", code, list(advs)))
+    for a in advs:                       # the link really is made — page 2 of the read shows it
+        PIXEL_LINKS["page2"].append({"advertiser_id": a})
+    return {}
 def _tt_link(tok, bc, asset_id, adv, asset_type="TT_ACCOUNT"):
-    world["writes"].append(("profile", asset_id, adv)); return {}
+    world["writes"].append(("profile", asset_id, adv))
+    TT_LINKS.setdefault(asset_id, []).append(adv)
+    return {}
 tiktok_api.bc_pixel_link_update = _pixel_link
 tiktok_api.bc_tt_account_link = _tt_link
 
@@ -168,12 +196,43 @@ _partner_get = tiktok_api.bc_partner_asset_get
 def _refuse(*a, **k):
     raise TikTokError("not supported here", 40002)
 tiktok_api.bc_partner_asset_get = _refuse
+bc_assets.scan(db)                     # audit taken while that read is refusing
 rep = bc_assets.connect_bc(db, SAT, dry_run=False)
 tiktok_api.bc_partner_asset_get = _partner_get
 check("the links are still attempted", any(w[0] == "pixel" for w in world["writes"]), str(world["writes"]))
 check("nothing is called waiting on a failed read", not rep.get("waiting"), str(rep.get("waiting")))
 check("the failed read is reported", any("partner share" in n for n in rep.get("notes", [])),
       str(rep.get("notes")))
+
+print("\n-- the audit counts a partner-shared account as in the main BC --")
+reset(shared=True)
+snap = bc_assets.scan(db)
+row = next(r for r in snap["accounts"] if r["advertiser_id"] == "A2")
+check("A2 counts as in the main BC", row["in_main_bc"] is True, str(row))
+check("and says it came in through a partner", row.get("shared_via") == SAT, str(row.get("shared_via")))
+check("and the main BC does not own it — only the partner read finds it",
+      "A2" not in {a["asset_id"] for a in _assets(None, MAIN, "ADVERTISER")})
+
+print("\n-- a pixel link past the first page is still seen --")
+reset(shared=True)
+bc_assets.scan(db)
+rep = bc_assets.connect_bc(db, SAT, dry_run=False)
+row = next(r for r in bc_assets.snapshot(db)["accounts"] if r["advertiser_id"] == "A2")
+check("the new pixel link is found on page 2", row["pixels"] == ["Main pixel"], str(row["pixels"]))
+check("A2 is confirmed fully wired", rep.get("confirmed") == ["A2"], str(rep.get("confirmed")))
+check("the summary confirms 1 of 1", "confirms 1 of 1" in rep.get("summary", ""), rep.get("summary"))
+
+print("\n-- an unconfirmed account says WHICH check came back empty --")
+reset(shared=True)
+bc_assets.scan(db)
+_tt = tiktok_api.bc_tt_account_link
+tiktok_api.bc_tt_account_link = lambda *a, **k: {}      # TikTok says ok, nothing changes
+rep = bc_assets.connect_bc(db, SAT, dry_run=False)
+tiktok_api.bc_tt_account_link = _tt
+check("it is not counted as wired", rep.get("confirmed") == [], str(rep.get("confirmed")))
+check("the summary names the gap", "not every profile came back" in rep.get("summary", ""), rep.get("summary"))
+check("the breakdown is per account", any(c["advertiser_id"] == "A2" and c["ok"] is False
+                                          for c in rep.get("checks", [])), str(rep.get("checks")))
 
 print("\n-- the page's poll never parses the whole snapshot --")
 check("snapshot_at is the stored timestamp",
