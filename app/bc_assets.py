@@ -439,6 +439,9 @@ def connect_bc(db: Session, bc_id: str, role: str = "OPERATOR", dry_run: bool = 
     report["summary"] = (f"{len(report['steps'])} step(s) previewed for {len(owned)} ad account(s) — nothing sent"
                          if dry_run else
                          f"{len(owned)} ad account(s) · {len(done)} step(s) ok" + (f", {len(bad)} failed" if bad else ""))
+    if not dry_run:
+        say("re-reading what TikTok now reports")
+        scan(db, on_progress=on_progress)      # the page must show reality, not what it was before the run
     return _store_wire(db, report)
 
 
@@ -560,6 +563,9 @@ def wire(db: Session, advertiser_id: str, role: str = "OPERATOR", dry_run: bool 
     bad = [s for s in report["steps"] if s["ok"] is False]
     report["summary"] = (f"{len(report['steps'])} step(s) previewed — nothing sent" if dry_run
                          else f"{len(done)} step(s) ok" + (f", {len(bad)} failed" if bad else ""))
+    if not dry_run:
+        say("re-reading what TikTok now reports")
+        scan(db, on_progress=on_progress)      # so the row stops offering work that is already done
     return _store_wire(db, report)
 
 

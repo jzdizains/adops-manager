@@ -4,8 +4,12 @@
   <div><h1>Assets</h1>
     <div class="muted">Which ad accounts carry the pixel and your TikTok profiles{% if snap.at %} · read {{ snap.at|ago }}{% else %} · never read yet{% endif %}</div></div>
   <div class="actions">
-    <form method="post" action="/bc-assets/scan"><button class="btn" type="submit"{% if running %} disabled{% endif %}>{{ '↻ Reading…' if running else '↻ Run audit' }}</button></form>
+    <form method="post" action="/bc-assets/scan" class="bca-form"><button class="btn" type="submit" data-working="Reading your Business Centers…"{% if running %} disabled{% endif %}>{{ '↻ Reading…' if running else '↻ Run audit' }}</button></form>
   </div>
+</div>
+
+<div id="bcaLive" class="flash" hidden style="display:flex;gap:10px;align-items:center;margin-bottom:12px;">
+  <span class="spin-inline" aria-hidden="true"></span><span id="bcaLiveText">Working…</span>
 </div>
 
 <div class="card">
@@ -60,14 +64,14 @@
     <span style="display:inline-flex;gap:4px;align-items:center;flex-wrap:wrap;">
       <a class="btn sm ghost" href="{{ w.portal }}" target="_blank" rel="noopener" title="Open this Business Center on TikTok">Open BC ↗</a>
       {% if w.code in ('ready', 'connected') %}
-      <form method="post" action="/bc-assets/connect" style="display:inline-flex;gap:4px;align-items:center;">
+      <form method="post" action="/bc-assets/connect" class="bca-form" style="display:inline-flex;gap:4px;align-items:center;">
         <input type="hidden" name="bc_id" value="{{ w.bc_id }}"><input type="hidden" name="email" value="{{ owner_email }}">
         <select name="role" style="width:auto;font-size:11.5px;padding:3px 6px;">{% for rl in roles %}<option value="{{ rl }}">{{ rl|capitalize }}</option>{% endfor %}</select>
-        <button class="btn sm" type="submit" name="mode" value="preview"{% if connecting %} disabled{% endif %}>Preview</button>
-        <button class="btn sm primary" type="submit" name="mode" value="send"{% if connecting %} disabled{% endif %}>Connect</button>
+        <button class="btn sm" type="submit" name="mode" value="preview" data-working="Previewing — nothing is sent…"{% if connecting %} disabled{% endif %}>Preview</button>
+        <button class="btn sm primary" type="submit" name="mode" value="send" data-working="Connecting this Business Center…"{% if connecting %} disabled{% endif %}>Connect</button>
       </form>
       {% else %}
-      <form method="post" action="/bc-assets/scan" style="display:inline;"><button class="btn sm" type="submit"{% if running %} disabled{% endif %}>Re-check</button></form>
+      <form method="post" action="/bc-assets/scan" class="bca-form" style="display:inline;"><button class="btn sm" type="submit" data-working="Re-checking…"{% if running %} disabled{% endif %}>Re-check</button></form>
       {% endif %}
       <form method="post" action="/bc-assets/bc/remove" style="display:inline;"><input type="hidden" name="bc_id" value="{{ w.bc_id }}"><button class="btn sm ghost" type="submit" title="Remove from this list">✕</button></form>
     </span>
@@ -161,11 +165,11 @@
             {% elif r.profiles %}<span class="pill warn">{{ r.profiles|length }} of {{ snap.summary.profiles }}</span>
             {% else %}<span class="pill err">none</span>{% endif %}</td>
         <td style="white-space:nowrap;">
-          <form method="post" action="/bc-assets/wire" style="display:inline-flex;gap:4px;align-items:center;">
+          <form method="post" action="/bc-assets/wire" class="bca-form" style="display:inline-flex;gap:4px;align-items:center;">
             <input type="hidden" name="advertiser_id" value="{{ r.advertiser_id }}">
             <select name="role" style="width:auto;font-size:11.5px;padding:3px 6px;" title="Role the main BC gets on this ad account">{% for rl in roles %}<option value="{{ rl }}">{{ rl|capitalize }}</option>{% endfor %}</select>
-            <button class="btn sm" type="submit" name="mode" value="preview"{% if wiring %} disabled{% endif %} title="Show the exact requests — nothing is sent">Preview</button>
-            <button class="btn sm primary" type="submit" name="mode" value="send"{% if wiring %} disabled{% endif %} title="Share into the main BC, link the pixel and every profile">Wire</button>
+            <button class="btn sm" type="submit" name="mode" value="preview" data-working="Previewing — nothing is sent…"{% if wiring %} disabled{% endif %} title="Show the exact requests — nothing is sent">Preview</button>
+            <button class="btn sm primary" type="submit" name="mode" value="send" data-working="Wiring this ad account…"{% if wiring %} disabled{% endif %} title="Share into the main BC, link the pixel and every profile">Wire</button>
           </form>
         </td>
       </tr>
@@ -175,4 +179,72 @@
   {% endif %}
   <div class="hint" style="padding:10px 14px;"><b>Preview</b> shows the exact requests and sends nothing. <b>Wire</b> runs them for that one account: share it into the main BC (needs an Admin token of the BC that owns it), link the pixel, link every profile. Steps that are already done are skipped, so pressing it twice is harmless.</div>
 </div>
+<script id="bcaState" type="application/json">{{ {'at': snap.at or '', 'running': (running or wiring or connecting)} | tojson }}</script>
+<script>
+/* The page shows its own progress: every form here posts in the background, the row
+   switches to "working", a tiny JSON endpoint is polled while a job runs, and the page
+   refreshes itself once the audit behind it has actually changed. No trip to Jobs, no
+   manual reload — and with JavaScript off every form still works as a plain POST. */
+(function () {
+  "use strict";
+  var st = {}; try { st = JSON.parse(document.getElementById("bcaState").textContent || "{}"); } catch (e) {}
+  var live = document.getElementById("bcaLive"), liveText = document.getElementById("bcaLiveText");
+  var startedAt = st.at || "", timer = null, idle = 0;
+
+  function buttons(disabled) {
+    document.querySelectorAll("#bcaForms button[type=submit], .bca-form button").forEach(function (b) {
+      if (disabled) { b.dataset.wasDisabled = b.disabled ? "1" : ""; b.disabled = true; }
+      else if (!b.dataset.wasDisabled) { b.disabled = false; }
+    });
+  }
+  function show(text) {
+    if (!live) return;
+    live.hidden = false; liveText.textContent = text;
+    buttons(true);
+  }
+  function hide() { if (live) { live.hidden = true; } buttons(false); }
+
+  function poll() {
+    if (document.hidden) return;
+    fetch("/bc-assets/state.json", { headers: { "X-Requested-With": "fetch" } })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d.ok) return;
+        if (d.running) {
+          idle = 0;
+          show((d.title || "Working") + (d.progress ? " — " + d.progress : "…"));
+          return;
+        }
+        // finished: if the audit itself changed, redraw the page once with what it now says
+        if (d.at && d.at !== startedAt) {
+          show((d.detail || "Done") + " — updating the page…");
+          location.replace("/bc-assets" + (location.search.indexOf("show=") >= 0 ? location.search : ""));
+          return;
+        }
+        if (idle === 0 && d.detail) { show(d.detail); setTimeout(hide, 4000); }
+        idle += 1;
+        if (idle > 6) { stop(); }            // nothing running and nothing changed — stop asking
+      })
+      .catch(function () {});
+  }
+  function start(text) { show(text); if (!timer) { timer = setInterval(poll, 2500); } poll(); }
+  function stop() { if (timer) { clearInterval(timer); timer = null; } hide(); }
+
+  // post every form in the background so the page never navigates away
+  document.querySelectorAll("form.bca-form").forEach(function (f) {
+    f.addEventListener("submit", function (ev) {
+      if (!window.fetch) return;                       // no fetch → plain POST, still works
+      ev.preventDefault();
+      var btn = ev.submitter, data = new FormData(f);
+      if (btn && btn.name) data.append(btn.name, btn.value);
+      start((btn && btn.dataset.working) || "Working…");
+      fetch(f.getAttribute("action"), { method: "POST", body: data, headers: { "X-Requested-With": "fetch" } })
+        .then(function () { setTimeout(poll, 400); })
+        .catch(function () { stop(); adopsToast && adopsToast("err", "That didn't reach the server — try again."); });
+    });
+  });
+  if (st.running) { start("Working…"); }
+  document.addEventListener("visibilitychange", function () { if (!document.hidden && timer) poll(); });
+})();
+</script>
 {% endblock %}

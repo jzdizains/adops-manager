@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
-from .. import bc_assets, config, jobs, queries
+from .. import bc_assets, config, jobs, models, queries
 from ..database import get_db
 from ..templating import render
 
@@ -50,6 +50,27 @@ def bc_assets_page(request: Request, db: Session = Depends(get_db)):
         "watch": [dict(w, **bc_assets.stage(db, w["bc_id"], snap)) for w in bc_assets.watchlist(db)],
         "owner_email": getattr(getattr(request.state, "user", None), "email", "") or config.OWNER_EMAIL,
         "connecting": bool(jobs.pending(db, "bc_assets_connect")),
+    })
+
+
+@router.get("/bc-assets/state.json")
+def bc_assets_state(db: Session = Depends(get_db)):
+    """Tiny poll for the page: is something running, what is it doing, and has the audit
+    changed since the page was drawn. No TikTok calls — one job row and one setting."""
+    from fastapi.responses import JSONResponse
+    job = (db.query(models.Job)
+           .filter(models.Job.kind.in_(("bc_assets_scan", "bc_assets_wire", "bc_assets_connect")))
+           .order_by(models.Job.id.desc()).first())
+    snap = bc_assets.snapshot(db)
+    return JSONResponse({
+        "ok": True,
+        "at": snap.get("at", ""),
+        "running": bool(job and job.status in ("queued", "running")),
+        "kind": job.kind if job else "",
+        "title": (job.title or "") if job else "",
+        "status": (job.status or "") if job else "",
+        "progress": (job.progress or "") if job else "",
+        "detail": (job.detail or "") if job else "",
     })
 
 

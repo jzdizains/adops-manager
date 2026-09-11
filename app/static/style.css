@@ -1099,6 +1099,11 @@ table.data.aud thead th:first-child { white-space: nowrap; }
 .ref-chip button:hover { color: var(--err); }
 .ref-up-lbl.disabled { opacity: .45; pointer-events: none; }
 .ai-refs[hidden] { display: none; }
+/* a page that is doing something says so where you are looking — not on the Jobs page */
+.spin-inline { width: 16px; height: 16px; flex: none; border-radius: 50%; border: 2px solid var(--border-strong);
+               border-top-color: var(--accent); animation: ph-spin .9s linear infinite; }
+#bcaLive[hidden] { display: none !important; }
+.bca-row-working { opacity: .6; }
 .hf-check { margin-top: 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
 .hf-check[hidden] { display: none; }
 .hf-check-row { display: flex; gap: 8px; align-items: baseline; padding: 6px 10px; font-size: 12.5px; border-bottom: 1px solid var(--border-soft); }
