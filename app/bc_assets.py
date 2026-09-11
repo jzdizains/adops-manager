@@ -37,6 +37,7 @@ SNAPSHOT_AT_KEY = "bc_assets_snapshot_at"   # just the timestamp, so the page's 
                                             # never has to parse the whole snapshot
 WATCH_KEY = "bc_assets_watchlist"   # satellite BCs being connected, in order
 MAIN_BC_KEY = "main_bc_id"          # set on the page; guessed from the pixels when empty
+PIXELS_KEY = "bc_assets_pixel_ids"  # which of the main BC's pixels this flow uses (empty = all)
 
 
 def _now_iso() -> str:
@@ -64,6 +65,25 @@ def main_bc_id(db: Session) -> str:
         if getattr(p, "owner_bc_id", ""):
             counts[p.owner_bc_id] = counts.get(p.owner_bc_id, 0) + 1
     return max(counts, key=counts.get) if counts else ""
+
+
+def chosen_pixels(db: Session) -> set[str]:
+    """Which of the main BC's pixels the assets flow works with.
+
+    Empty means all of them, which is what every existing install gets. Choosing one
+    matters more than it looks: an unchosen pixel is not read during the audit (one
+    refused call and one note fewer per pixel) and, more importantly, is never linked
+    to an ad account — a Connect run used to push every pixel the BC owned onto every
+    account it touched.
+    """
+    raw = queries.get_setting(db, PIXELS_KEY, "")
+    return {x.strip() for x in raw.split(",") if x.strip()}
+
+
+def set_chosen_pixels(db: Session, ids) -> None:
+    clean = sorted({str(i).strip() for i in (ids or []) if str(i).strip()})
+    queries.upsert_setting(db, PIXELS_KEY, ",".join(clean))
+    db.commit()
 
 
 def watchlist(db: Session) -> list[dict]:
@@ -146,38 +166,68 @@ def _bcs_for_token(token: str) -> dict[str, dict]:
     return out
 
 
-def _pixel_linked(token: str, main: str, p: dict) -> tuple[list[str], str, bool]:
+def _pixel_linked(db: Session, token: str, main: str, p: dict) -> tuple[list[str], str, bool]:
     """Which ad accounts a BC pixel is linked to — (ids, note, could_we_read_it).
 
-    /bc/pixel/link/get/ is the documented way and it is tried first. On this account it
-    answers 40002 "You don't have permission to the asset(...)" for every pixel, even
-    though the very same token links pixels with /bc/pixel/link/update/ successfully.
-    So a second route is tried: the endpoint that already reads profile links, asked
-    about a PIXEL asset instead.
+    Two sources, because the documented one does not answer on every account:
 
-    The third return value is the important one. A read that failed is NOT an empty
-    result, and rendering it as "no pixel" is what sent three rounds of debugging after
-    a wiring bug that did not exist.
+      1. /bc/pixel/link/get/ with the pixel CODE. Correct per the docs, and TikTok
+         resolves the code to the right asset — it simply refuses some setups with
+         40002 "You don't have permission to the asset(<id>)", even for a Business
+         Center Admin whose token links pixels with /bc/pixel/link/update/ fine. That
+         is an asset-permission setting inside the BC, not something the API can fix.
+      2. What the pixel sweep already learned from the ACCOUNT side (/pixel/list/ per
+         ad account, which has no such restriction), stored in pixel_links.
+
+    Two routes were tried and are now gone, because TikTok answered them plainly:
+    /bc/asset/advertiser/assigned/ rejects asset_type PIXEL outright ("correct is
+    MANAGED_BUSINESS_ACCOUNT, TT_ACCOUNT"), and passing the asset id as pixel_code
+    gets "Invalid value of 'pixel_code': related asset ID is missing". Keeping either
+    would burn a call per pixel per audit to be told the same thing again.
+
+    The third return value is the one that matters: a read that FAILED is not an empty
+    result, and rendering it as "no pixel" is what sent several rounds of debugging
+    after a wiring bug that did not exist.
     """
-    tries = []
     code = (p.get("code") or "").strip()
-    asset_id = (p.get("id") or "").strip()
+    note = ""
     if code:
-        tries.append(("/bc/pixel/link/get/ (pixel_code)",
-                      lambda: tiktok_api.bc_pixel_linked_advertisers(token, main, code)))
-    if asset_id:
-        tries.append(("/bc/asset/advertiser/assigned/ (asset_type PIXEL)",
-                      lambda: tiktok_api.bc_tt_account_advertisers(token, main, asset_id, "PIXEL")))
-        if asset_id != code:
-            tries.append(("/bc/pixel/link/get/ (asset id)",
-                          lambda: tiktok_api.bc_pixel_linked_advertisers(token, main, asset_id)))
-    errs = []
-    for label, call in tries:
         try:
-            return [str(x) for x in (call() or [])], "; ".join(errs), True
+            return [str(x) for x in tiktok_api.bc_pixel_linked_advertisers(token, main, code)], "", True
         except tiktok_api.TikTokError as e:
-            errs.append(f"{label}: {e.message} (code {e.code})")
-    return [], "; ".join(errs), False
+            note = f"/bc/pixel/link/get/: {e.message} (code {e.code})"
+    local = _pixel_linked_locally(db, p)
+    if local is not None:
+        p["source"] = "accounts sweep"
+        return local, note, True
+    return [], note or "no pixel code on this asset", False
+
+
+def _pixel_linked_locally(db: Session, p: dict) -> list[str] | None:
+    """The account-side answer, if the pixel sweep has ever run. None means we have
+    nothing stored for this pixel and genuinely do not know."""
+    try:
+        from sqlalchemy import or_
+        code, pid = (p.get("code") or "").strip(), (p.get("id") or "").strip()
+        clauses = []
+        if code:
+            clauses.append(models.PixelLink.pixel_code == code)
+        if pid:
+            clauses.append(models.PixelLink.pixel_id == pid)
+        if not clauses:
+            return None
+        rows = (db.query(models.PixelLink.advertiser_id)
+                .filter(or_(*clauses) if len(clauses) > 1 else clauses[0]).all())
+        if not rows:
+            # nothing stored for THIS pixel — but if the sweep has stored nothing at all,
+            # that is "never run", not "linked to no accounts"
+            if not db.query(models.PixelLink.id).first():
+                return None
+            return []
+        return sorted({str(r[0]) for r in rows if r[0]})
+    except Exception:      # noqa: BLE001 — a missing table on an old DB must not break the audit
+        log.debug("local pixel links unavailable", exc_info=True)
+        return None
 
 
 def scan(db: Session, on_progress=None, should_stop=None) -> dict:
@@ -250,16 +300,28 @@ def scan(db: Session, on_progress=None, should_stop=None) -> dict:
     snap["shared_via"] = shared_via
 
     # ---- 3. what each pixel / profile is already linked to
+    use = chosen_pixels(db)
+    snap["chosen_pixels"] = sorted(use)
+    for p in snap["pixels"]:
+        p["use"] = (not use) or p["id"] in use or p.get("code") in use
     for p in snap["pixels"]:
         if should_stop and should_stop():
             snap["errors"].append("stopped")
             return _store(db, snap)
-        p["linked"], note, ok = _pixel_linked(token, main, p)
+        if not p["use"]:
+            p["linked"], p["read_ok"] = [], True    # not used → not read, and not a gap
+            continue
+        p["linked"], note, ok = _pixel_linked(db, token, main, p)
         p["read_ok"] = ok
         if note:
             p["error"] = note
         if not ok:
-            snap["errors"].append(f"could not read which ad accounts pixel “{p['name']}” is linked to: {note}")
+            snap["errors"].append(
+                f"could not read which ad accounts pixel “{p['name']}” is linked to: {note}. "
+                "Run the pixel sync on the Pixels page — it reads this from the ad accounts, "
+                "which TikTok does allow.")
+        elif p.get("source") == "accounts sweep":
+            snap["pixel_source"] = "accounts sweep"
     for pr in snap["profiles"]:
         if should_stop and should_stop():
             snap["errors"].append("stopped")
@@ -271,10 +333,12 @@ def scan(db: Session, on_progress=None, should_stop=None) -> dict:
     say("read the existing links")
 
     # ---- 4. one row per ad account the dashboard manages
+    used_pixels = [p for p in snap["pixels"] if p.get("use")]
     pixel_linked: dict[str, list[str]] = {}
-    for p in snap["pixels"]:
+    for p in used_pixels:
         for adv in p["linked"]:
             pixel_linked.setdefault(adv, []).append(p["name"])
+    n_pixels = len(used_pixels)
     profile_linked: dict[str, list[str]] = {}
     for pr in snap["profiles"]:
         for adv in pr["linked"]:
@@ -282,7 +346,7 @@ def scan(db: Session, on_progress=None, should_stop=None) -> dict:
     n_profiles = len(snap["profiles"])
     # every pixel read failed → "no pixel" is not something we know, it is something we
     # could not find out. The two must never look the same on the page.
-    pixels_unreadable = bool(snap["pixels"]) and not any(p.get("read_ok") for p in snap["pixels"])
+    pixels_unreadable = bool(used_pixels) and not any(p.get("read_ok") for p in used_pixels)
     snap["pixels_unreadable"] = pixels_unreadable
     for a in db.query(models.AdAccount).order_by(models.AdAccount.advertiser_name).all():
         adv = a.advertiser_id
@@ -297,19 +361,22 @@ def scan(db: Session, on_progress=None, should_stop=None) -> dict:
             "shared_via": shared_via.get(adv, ""),
             "pixels": sorted(pixel_linked.get(adv, [])),
             "pixels_unknown": pixels_unreadable,
+            "pixels_missing": 0 if pixels_unreadable else max(0, n_pixels - len(pixel_linked.get(adv, []))),
             "profiles": have,
             "profiles_missing": max(0, n_profiles - len(have)),
         })
     ready = (0 if pixels_unreadable else
-             sum(1 for r in snap["accounts"] if r["in_main_bc"] and r["pixels"] and not r["profiles_missing"]))
+             sum(1 for r in snap["accounts"]
+                 if r["in_main_bc"] and not r["pixels_missing"] and not r["profiles_missing"]))
     snap["summary"] = {
         "accounts": len(snap["accounts"]),
         "in_main_bc": sum(1 for r in snap["accounts"] if r["in_main_bc"]),
-        "with_pixel": sum(1 for r in snap["accounts"] if r["pixels"]),
+        "with_pixel": sum(1 for r in snap["accounts"] if r["pixels"] and not r["pixels_missing"]),
         "all_profiles": sum(1 for r in snap["accounts"] if n_profiles and not r["profiles_missing"]),
         "ready": ready,
         "profiles": n_profiles,
-        "pixels": len(snap["pixels"]),
+        "pixels": n_pixels,
+        "pixels_owned": len(snap["pixels"]),
     }
     say(f"{ready} of {len(snap['accounts'])} account(s) fully wired")
     return _store(db, snap)
@@ -589,7 +656,9 @@ def connect_bc(db: Session, bc_id: str, role: str = "OPERATOR", dry_run: bool = 
         return _store_wire(db, report)
 
     snap = snapshot(db)
-    pixels, profiles = snap.get("pixels") or [], snap.get("profiles") or []
+    pixels = [p for p in (snap.get("pixels") or []) if p.get("use", True)]
+    profiles = snap.get("profiles") or []
+    report["pixels_used"] = [p.get("name") for p in pixels]
     if not (pixels or profiles):
         report["error"] = "Run the audit first — the dashboard doesn't know the main BC's pixels or profiles yet."
         return _store_wire(db, report)
@@ -809,8 +878,9 @@ def wire(db: Session, advertiser_id: str, role: str = "OPERATOR", dry_run: bool 
 
     snap = snapshot(db)
     row = next((r for r in (snap.get("accounts") or []) if r["advertiser_id"] == str(advertiser_id)), {})
-    pixels = snap.get("pixels") or []
+    pixels = [p for p in (snap.get("pixels") or []) if p.get("use", True)]
     profiles = snap.get("profiles") or []
+    report["pixels_used"] = [p.get("name") for p in pixels]
     if not (pixels or profiles):
         report["error"] = "Run the audit first — the dashboard doesn't know this BC's pixels or profiles yet."
         return _store_wire(db, report)

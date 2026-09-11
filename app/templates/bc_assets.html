@@ -28,8 +28,8 @@
   <div class="kpi"><div class="lab">Ad accounts</div><div class="val">{{ snap.summary.accounts }}</div><div class="sub">the dashboard manages</div></div>
   <div class="kpi"><div class="lab">In the main BC</div><div class="val {{ 'bad' if snap.summary.in_main_bc < snap.summary.accounts }}">{{ snap.summary.in_main_bc }}</div><div class="sub">shared in — assets can be linked</div></div>
   <div class="kpi"><div class="lab">With a pixel</div>
-    {% if snap.pixels_unreadable %}<div class="val">?</div><div class="sub">TikTok refused the read — see Diagnostics</div>
-    {% else %}<div class="val {{ 'bad' if snap.summary.with_pixel < snap.summary.accounts }}">{{ snap.summary.with_pixel }}</div><div class="sub">of {{ snap.summary.pixels }} pixel(s) in the BC</div>{% endif %}</div>
+    {% if snap.pixels_unreadable %}<div class="val">?</div><div class="sub">TikTok refused the read — <a href="/pixels">run the pixel sync</a></div>
+    {% else %}<div class="val {{ 'bad' if snap.summary.with_pixel < snap.summary.accounts }}">{{ snap.summary.with_pixel }}</div><div class="sub">all {{ snap.summary.pixels }} pixel(s) in use{% if snap.summary.pixels_owned and snap.summary.pixels_owned != snap.summary.pixels %} (of {{ snap.summary.pixels_owned }} owned){% endif %}{% if snap.pixel_source %} · from the accounts sweep{% endif %}</div>{% endif %}</div>
   <div class="kpi"><div class="lab">Every profile</div><div class="val {{ 'bad' if snap.summary.all_profiles < snap.summary.accounts }}">{{ snap.summary.all_profiles }}</div><div class="sub">{{ snap.summary.profiles }} profile(s) to link</div></div>
   <div class="kpi"><div class="lab">Fully wired</div><div class="val {{ 'good' if snap.summary.ready == snap.summary.accounts else 'bad' }}">{{ snap.summary.ready }}</div><div class="sub">nothing left to do</div></div>
 </div>
@@ -107,20 +107,32 @@
 {% if snap.pixels or snap.profiles %}
 <div class="card" style="margin-top:12px;">
   <div class="card-header"><span class="card-title">What the main BC owns</span>
-    <span class="card-meta">{{ snap.pixels|length }} pixel(s) · {{ snap.profiles|length }} profile(s)</span></div>
+    <span class="card-meta">{% if snap.chosen_pixels %}{{ snap.chosen_pixels|length }} of {% endif %}{{ snap.pixels|length }} pixel(s) in use · {{ snap.profiles|length }} profile(s)</span></div>
+  <form method="post" action="/bc-assets/pixels" class="bca-form">
   <table class="table">
-    <thead><tr><th>Asset</th><th>Type</th><th>ID</th><th>Linked to</th></tr></thead>
+    <thead><tr><th style="width:34px;">Use</th><th>Asset</th><th>Type</th><th>ID</th><th>Linked to</th></tr></thead>
     <tbody>
     {% for p in snap.pixels %}
-      <tr><td>{{ p.name }}</td><td><span class="pill mute">pixel</span></td><td class="mono" style="font-size:11.5px;">{{ p.id }}</td>
-          <td>{{ p.linked|length }} ad account(s){% if p.error %} <span class="muted">· {{ p.error }}</span>{% endif %}</td></tr>
+      <tr{% if not p.use %} class="muted"{% endif %}>
+          <td><input type="checkbox" name="pixel_ids" value="{{ p.id }}"{% if p.use %} checked{% endif %}
+                     title="Link this pixel to ad accounts, and read it during the audit"></td>
+          <td>{{ p.name }}</td><td><span class="pill mute">pixel</span></td><td class="mono" style="font-size:11.5px;">{{ p.id }}</td>
+          <td>{% if not p.use %}<span class="muted">not used — not read, never linked</span>
+              {% else %}{{ p.linked|length }} ad account(s){% if p.error %} <span class="muted">· {{ p.error }}</span>{% endif %}{% endif %}</td></tr>
     {% endfor %}
     {% for p in snap.profiles %}
-      <tr><td>{{ p.handle or p.name }}</td><td><span class="pill mute">profile</span></td><td class="mono" style="font-size:11.5px;">{{ p.id }}</td>
+      <tr><td></td><td>{{ p.handle or p.name }}</td><td><span class="pill mute">profile</span></td><td class="mono" style="font-size:11.5px;">{{ p.id }}</td>
           <td>{{ p.linked|length }} ad account(s){% if p.error %} <span class="muted">· {{ p.error }}</span>{% endif %}</td></tr>
     {% endfor %}
     </tbody>
   </table>
+  <div class="hint" style="padding:8px 14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+    <button class="btn sm" type="submit">Save which pixels to use</button>
+    <span>Only ticked pixels are linked to ad accounts and read during the audit. Untick a pixel you
+      aren't using and it stops being pushed onto every account — and stops producing a permission
+      error you don't care about. All unticked means all of them.</span>
+  </div>
+  </form>
 </div>
 {% endif %}
 

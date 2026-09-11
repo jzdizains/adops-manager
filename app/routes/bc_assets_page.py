@@ -162,6 +162,17 @@ def bc_assets_connect(bc_id: str = Form(""), role: str = Form("OPERATOR"), mode:
                  else "Connecting in the background — the report appears here when it finishes.")
 
 
+@router.post("/bc-assets/pixels")
+def bc_assets_pixels(pixel_ids: list[str] = Form(default=[]), db: Session = Depends(get_db)):
+    """Which of the main BC's pixels this flow uses. Nothing selected = all of them."""
+    ids = [v for v in pixel_ids if str(v).strip()]
+    bc_assets.set_chosen_pixels(db, ids)
+    if not ids:
+        return _back(ok="Using every pixel the main Business Center owns. Run the audit to refresh.")
+    return _back(ok=f"Using {len(ids)} pixel(s). Only these are read and linked from now on — "
+                    "run the audit to refresh.")
+
+
 @router.post("/bc-assets/main")
 def bc_assets_main(bc_id: str = Form(""), db: Session = Depends(get_db)):
     """Which BC owns the pixel and the profiles (everything else is measured against it)."""

@@ -15,6 +15,48 @@ from . import config, models, queries, tiktok_api
 
 REMIND_EVERY = timedelta(hours=24)
 
+# Business Centers whose wallet TikTok refuses to show us. Being a Business Center Admin
+# is not the same as having a finance role there, and on a BC without one every sweep
+# spends two calls to be told "You don't have finance permission" — twice per BC, every
+# time, forever. So the refusal is remembered and that BC is skipped, and re-tried after
+# RETRY_FINANCE so a role granted later starts working on its own.
+FINANCE_BLOCK_KEY = "finance_blocked_bcs"
+RETRY_FINANCE = timedelta(days=7)
+
+
+def _finance_blocked(db: Session) -> dict:
+    import json as _json
+    try:
+        return _json.loads(queries.get_setting(db, FINANCE_BLOCK_KEY, "") or "{}")
+    except ValueError:
+        return {}
+
+
+def finance_skip(db: Session) -> set[str]:
+    """BC ids to skip this sweep — refused recently enough that asking again is waste."""
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    out = set()
+    for bc_id, at in _finance_blocked(db).items():
+        try:
+            when = datetime.fromisoformat(at)
+        except (TypeError, ValueError):
+            continue
+        if now - when < RETRY_FINANCE:
+            out.add(str(bc_id))
+    return out
+
+
+def note_finance_refusal(db: Session, bc_id: str, message: str) -> bool:
+    """True when this error was a finance-permission refusal (and is now remembered)."""
+    if "finance permission" not in (message or "").lower():
+        return False
+    import json as _json
+    blocked = _finance_blocked(db)
+    blocked[str(bc_id)] = datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds")
+    queries.set_setting(db, FINANCE_BLOCK_KEY, _json.dumps(blocked))
+    return True
+
+
 
 def bc_portal_url(bc_id: str) -> str:
     """Deep link to this BC in TikTok's Business Center portal (verified
@@ -47,7 +89,10 @@ def sync_bc_balances(db: Session) -> int:
         return 0
     updated = 0
     now = datetime.now(timezone.utc)
+    skip = finance_skip(db)
     for bc in db.query(models.BusinessCenter).all():
+        if bc.bc_id in skip:
+            continue
         try:
             bal, cur = tiktok_api.parse_bc_balance(
                 tiktok_api.get_bc_balance(token, bc.bc_id))
@@ -56,7 +101,8 @@ def sync_bc_balances(db: Session) -> int:
                 bc.currency = cur
             bc.last_synced_at = now
             updated += 1
-        except tiktok_api.TikTokError:
+        except tiktok_api.TikTokError as e:
+            note_finance_refusal(db, bc.bc_id, e.message)
             continue
     db.commit()
     return updated
@@ -88,13 +134,19 @@ def sync_account_balances(db: Session) -> int:
     accounts = {a.advertiser_id: a for a in db.query(models.AdAccount).all()}
     updated = 0
     errors: list[str] = []
+    skip = finance_skip(db)
     for bc in db.query(models.BusinessCenter).all():
+        if bc.bc_id in skip:
+            continue
         page = 1
         while True:
             try:
                 data = tiktok_api.get_advertiser_balances(token, bc.bc_id, page=page)
             except tiktok_api.TikTokError as e:
-                errors.append(f"BC {bc.bc_id} balances failed (code {e.code}: {str(e.message)[:60]})")
+                if note_finance_refusal(db, bc.bc_id, e.message):
+                    errors.append(f"BC {bc.bc_id}: no finance role here — skipping it for a week")
+                else:
+                    errors.append(f"BC {bc.bc_id} balances failed (code {e.code}: {str(e.message)[:60]})")
                 break
             items = (data.get("list") or data.get("balance_list")
                      or data.get("advertiser_balances") or [])

@@ -188,13 +188,22 @@ def sync_pixels_inventory(db: Session, scope: str = "all") -> dict:
                              "friendly": "Not connected.", "action": "Reconnect TikTok (Ad accounts → Connect)."})
             continue
         try:
-            for p in tiktok_api.list_pixels(acct.access_token, acct.advertiser_id):
+            found = tiktok_api.list_pixels(acct.access_token, acct.advertiser_id)
+            # this account's pixel list IS the answer to "which accounts carry this pixel",
+            # asked from the side that always answers — record it while we have it
+            db.query(models.PixelLink).filter(
+                models.PixelLink.advertiser_id == acct.advertiser_id).delete(
+                    synchronize_session=False)
+            for p in found:
                 pid = str(p.get("pixel_id", ""))
                 if not pid:
                     continue
                 _upsert(db, pid, name=p.get("pixel_name", ""),
                         code=p.get("pixel_code", ""),
                         owner_adv=acct.advertiser_id)
+                db.add(models.PixelLink(pixel_id=pid, pixel_code=str(p.get("pixel_code", "")),
+                                        pixel_name=str(p.get("pixel_name", "")),
+                                        advertiser_id=acct.advertiser_id))
                 seen.add(pid)
             ok_accounts += 1
         except tiktok_api.TikTokError as e:

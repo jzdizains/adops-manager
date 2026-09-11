@@ -28,6 +28,7 @@ if "sqlalchemy" not in sys.modules:
     sa = types.ModuleType("sqlalchemy"); orm = types.ModuleType("sqlalchemy.orm")
     class Session: pass
     orm.Session = Session; sa.orm = orm
+    sa.or_ = lambda *clauses: clauses          # the audit ORs its pixel lookup clauses
     sys.modules["sqlalchemy"], sys.modules["sqlalchemy.orm"] = sa, orm
 
 # ---- a package shell so `from . import models, queries, tiktok_api` resolves ----
@@ -45,7 +46,12 @@ class AdAccount:
         self.access_token, self.owner_bc_id, self.enabled = access_token, owner_bc_id, enabled
 class PixelRecord:
     def __init__(self, owner_bc_id): self.owner_bc_id = owner_bc_id
-models.AdAccount, models.PixelRecord = AdAccount, PixelRecord
+class _PLCol(_Col):
+    _is_pixel_link_col = True
+class PixelLink:
+    _is_pixel_link_col = True
+    pixel_id = pixel_code = advertiser_id = id = _PLCol()
+models.AdAccount, models.PixelRecord, models.PixelLink = AdAccount, PixelRecord, PixelLink
 sys.modules["app.models"] = models
 
 STORE, ACCOUNTS, PIXELS = {}, [], []
@@ -75,8 +81,11 @@ class _Q:
     def order_by(self, *a, **k): return self
     def all(self): return list(self.rows)
     def first(self): return self.rows[0] if self.rows else None
+PIXEL_LINKS_TABLE = []
 class DB:
-    def query(self, model):
+    def query(self, model, *rest):
+        if model is PixelLink or getattr(model, "_is_pixel_link_col", False):
+            return _Q(PIXEL_LINKS_TABLE)
         return _Q(ACCOUNTS if model is AdAccount else PIXELS)
     def commit(self): pass
     def rollback(self): pass
@@ -129,6 +138,7 @@ def _pixel_linked(tok, bc, code, max_pages=40):
             break
     return out
 tiktok_api.bc_pixel_linked_advertisers = _pixel_linked
+_pixel_linked = _pixel_linked
 TT_LINKS = {"TT1": ["A1"]}
 tiktok_api.bc_tt_account_advertisers = (lambda tok, bc, aid, asset_type="TT_ACCOUNT", max_pages=20:
                                         list(TT_LINKS.get(aid, [])))
@@ -257,8 +267,7 @@ _tt = tiktok_api.bc_tt_account_advertisers
 def _no_permission(*a, **k):
     raise TikTokError("You don't have permission to the asset(PX1).", 40002)
 tiktok_api.bc_pixel_linked_advertisers = _no_permission
-tiktok_api.bc_tt_account_advertisers = (lambda tok, bc, aid, asset_type="TT_ACCOUNT", max_pages=20:
-                                        _no_permission() if asset_type == "PIXEL" else list(TT_LINKS.get(aid, [])))
+PIXEL_LINKS_TABLE.clear()          # the pixel sweep has never run — we truly do not know
 snap = bc_assets.scan(db)
 row = next(r for r in snap["accounts"] if r["advertiser_id"] == "A1")
 check("the account is marked unknown, not empty", row.get("pixels_unknown") is True, str(row))
@@ -272,14 +281,52 @@ check("the run says the column is unknown", "unknown, not empty" in rep.get("sum
 check("and does NOT claim a missing pixel link",
       "no pixel link came back" not in rep.get("summary", ""), rep.get("summary"))
 
-print("\n-- and the second route is used when the first is refused --")
-tiktok_api.bc_tt_account_advertisers = (lambda tok, bc, aid, asset_type="TT_ACCOUNT", max_pages=20:
-                                        ["A1", "A2"] if asset_type == "PIXEL" else list(TT_LINKS.get(aid, [])))
+print("\n-- with the BC read still refused, the accounts sweep answers instead --")
+PIXEL_LINKS_TABLE[:] = [("A1",), ("A2",)]      # what /pixel/list/ told us, account by account
 snap = bc_assets.scan(db)
 row = next(r for r in snap["accounts"] if r["advertiser_id"] == "A1")
-check("the fallback answered", row["pixels"] == ["Main pixel"], str(row["pixels"]))
+check("the stored mapping answered", row["pixels"] == ["Main pixel"], str(row["pixels"]))
 check("so nothing is unknown any more", not row.get("pixels_unknown"), str(row))
+check("the page says where the answer came from", snap.get("pixel_source") == "accounts sweep",
+      str(snap.get("pixel_source")))
+PIXEL_LINKS_TABLE.clear()
 tiktok_api.bc_pixel_linked_advertisers, tiktok_api.bc_tt_account_advertisers = _pl, _tt
+
+print("\n-- only the chosen pixel is read, linked, or counted --")
+reset(shared=True)
+PIXELS_TWO = [{"asset_id": "PX1", "pixel_code": "CODE1", "asset_name": "Main pixel"},
+              {"asset_id": "PX2", "pixel_code": "CODE2", "asset_name": "Spare pixel"}]
+_assets_one = tiktok_api.bc_assets_admin
+def _assets_two(tok, bc_id, kind, max_pages=20):
+    if bc_id == MAIN and kind == "PIXEL":
+        return PIXELS_TWO
+    return _assets_one(tok, bc_id, kind, max_pages)
+tiktok_api.bc_assets_admin = _assets_two
+read_for = []
+tiktok_api.bc_pixel_linked_advertisers = lambda tok, bc, code, max_pages=40: (read_for.append(code) or ["A1"])
+
+bc_assets.set_chosen_pixels(db, ["PX1"])
+snap = bc_assets.scan(db)
+check("only the chosen pixel is read from TikTok", read_for == ["CODE1"], str(read_for))
+check("the spare is marked unused",
+      [p["use"] for p in snap["pixels"]] == [True, False], str([p.get("use") for p in snap["pixels"]]))
+check("the count measures the pixels in use", snap["summary"]["pixels"] == 1, str(snap["summary"]))
+check("and still says how many are owned", snap["summary"]["pixels_owned"] == 2, str(snap["summary"]))
+
+reset(shared=True)
+rep = bc_assets.connect_bc(db, SAT, dry_run=False)
+linked = [w for w in world["writes"] if w[0] == "pixel"]
+check("only the chosen pixel is linked to the ad account",
+      all(w[1] == "CODE1" for w in linked) and linked, str(linked))
+check("the report names the pixels it used", rep.get("pixels_used") == ["Main pixel"],
+      str(rep.get("pixels_used")))
+
+bc_assets.set_chosen_pixels(db, [])
+snap = bc_assets.scan(db)
+check("clearing the choice goes back to all of them",
+      all(p["use"] for p in snap["pixels"]), str([p.get("use") for p in snap["pixels"]]))
+tiktok_api.bc_assets_admin = _assets_one
+tiktok_api.bc_pixel_linked_advertisers = _pixel_linked
 
 print("\n-- the page's poll never parses the whole snapshot --")
 check("snapshot_at is the stored timestamp",

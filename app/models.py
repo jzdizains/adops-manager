@@ -952,3 +952,24 @@ class DiagEvent(Base):
     seen = Column(Boolean, default=False, index=True)
 
     __table_args__ = (Index("ix_diag_lookup", "kind", "where", "code"),)
+
+
+class PixelLink(Base):
+    """Which ad account carries which pixel — learned from the ACCOUNT side.
+
+    The Business Center read (/bc/pixel/link/get/) answers 40002 "You don't have
+    permission to the asset(...)" on some setups even for a BC Admin whose token links
+    pixels successfully. /pixel/list/ on the ad account itself has no such restriction,
+    and the pixel sweep already calls it for every account — so the answer is recorded
+    here as it goes by, and the assets audit can read it without a single extra call.
+    """
+    __tablename__ = "pixel_links"
+
+    id = Column(Integer, primary_key=True)
+    pixel_id = Column(String, index=True, default="")
+    pixel_code = Column(String, index=True, default="")
+    pixel_name = Column(String, default="")
+    advertiser_id = Column(String, index=True, default="")
+    seen_at = Column(DateTime, default=utcnow)
+
+    __table_args__ = (UniqueConstraint("pixel_id", "advertiser_id", name="uq_pixel_link"),)
