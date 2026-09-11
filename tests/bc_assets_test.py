@@ -98,6 +98,83 @@ r = c.post("/bc-assets/main", data={"bc_id": " 999x "}, follow_redirects=False)
 check("the main BC id is cleaned to digits before it is stored", queries.get_setting(SessionLocal(), bc_assets.MAIN_BC_KEY, "") == "999" and r.status_code == 303)
 r = c.post("/bc-assets/scan", follow_redirects=False)
 check("the audit runs as a background job, not during the request", r.status_code == 303 and SessionLocal().query(models.Job).filter_by(kind="bc_assets_scan").count() == 1)
+# ---- writing: one account, preview then send -------------------------------------
+sent = []
+def rec_partner(token, bc_id, partner_id, advertiser_ids=None, advertiser_role="OPERATOR"):
+    sent.append(("partner_add", token, bc_id, partner_id, list(advertiser_ids or []), advertiser_role)); return {}
+def rec_pixel(token, bc_id, pixel_code, advertiser_ids, relation_status="LINK"):
+    sent.append(("pixel", token, bc_id, pixel_code, list(advertiser_ids), relation_status)); return {}
+def rec_profile(token, bc_id, asset_id, advertiser_id, asset_type="TT_ACCOUNT"):
+    sent.append(("profile", token, bc_id, asset_id, advertiser_id)); return {}
+W = [mock.patch.object(tiktok_api, "list_business_centers", side_effect=fake_bcs),
+     mock.patch.object(tiktok_api, "bc_partner_add", side_effect=rec_partner),
+     mock.patch.object(tiktok_api, "bc_pixel_link_update", side_effect=rec_pixel),
+     mock.patch.object(tiktok_api, "bc_tt_account_link", side_effect=rec_profile)]
+for p_ in W: p_.start()
+try:
+    prev = bc_assets.wire(db, "A2", role="OPERATOR", dry_run=True)
+finally:
+    for p_ in W: p_.stop()
+eps = [st["request"].get("endpoint") for st in prev["steps"] if st.get("request")]
+check("preview sends nothing and lists every request it would make",
+      sent == [] and eps == ["/bc/partner/add/", "/bc/pixel/link/update/", "/bc/asset/advertiser/assign/"], str(eps))
+check("the share is addressed to the OWNING bc with the main bc as the partner",
+      prev["steps"][0]["request"]["bc_id"] == SAT and prev["steps"][0]["request"]["partner_id"] == MAIN
+      and prev["steps"][0]["request"]["advertiser_role"] == "OPERATOR", str(prev["steps"][0]["request"]))
+check("the pixel request uses pixel_code + relation_status (the v1.3 fields)",
+      prev["steps"][1]["request"]["relation_status"] == "LINK" and "pixel_code" in prev["steps"][1]["request"])
+for p_ in W: p_.start()
+try:
+    run = bc_assets.wire(db, "A2", role="OPERATOR", dry_run=False)
+finally:
+    for p_ in W: p_.stop()
+check("send makes exactly those calls, the satellite token sharing and the main token linking",
+      [c[0] for c in sent] == ["partner_add", "pixel", "profile"] and sent[0][1] == "tok-sat" and sent[1][1] == "tok-main", str(sent))
+check("the run is summarised and stored for the page", "ok" in (run.get("summary") or "") and bc_assets.last_wire(db)["advertiser_id"] == "A2")
+sent.clear()
+for p_ in W: p_.start()
+try:
+    again = bc_assets.wire(db, "A1", dry_run=False)      # already has pixel + both profiles
+finally:
+    for p_ in W: p_.stop()
+check("an account that is already wired sends nothing — pressing Wire twice is harmless",
+      sent == [] and all(st["ok"] for st in again["steps"]), str([st["detail"] for st in again["steps"]]))
+def refuse(*a, **k):
+    raise tiktok_api.TikTokError("40001", "no permission for this BC")
+with mock.patch.object(tiktok_api, "list_business_centers", side_effect=fake_bcs), \
+     mock.patch.object(tiktok_api, "bc_partner_add", side_effect=rec_partner), \
+     mock.patch.object(tiktok_api, "bc_pixel_link_update", side_effect=refuse), \
+     mock.patch.object(tiktok_api, "bc_tt_account_link", side_effect=rec_profile):
+    hurt = bc_assets.wire(db, "A2", dry_run=False)
+check("a step TikTok refuses is recorded with its reason and the rest still run",
+      any(st["ok"] is False and "no permission" in st["detail"] for st in hurt["steps"]) and "failed" in hurt["summary"], hurt["summary"])
+bad = bc_assets.wire(db, "9999", dry_run=True)
+check("an ad account the dashboard doesn't manage is refused before anything is attempted",
+      (bad.get("error") or "").startswith("9999 is not"), str(bad.get("error")))
+r = c.post("/bc-assets/wire", data={"advertiser_id": "A2", "mode": "preview"}, follow_redirects=False)
+check("Preview runs as a background job (never during the request)",
+      r.status_code == 303 and SessionLocal().query(models.Job).filter_by(kind="bc_assets_wire").count() == 1)
+
+# ---- the journey for a brand-new Business Center ---------------------------------
+bc_assets.watch_add(db, SAT2 := "333", "batch 12")
+with mock.patch.object(tiktok_api, "list_business_centers", side_effect=fake_bcs):
+    st = bc_assets.stage(db, SAT2)
+check("a BC no stored token can see reads as invisible — invite and accept still to do",
+      st["code"] == "invisible" and "not visible" in st["what"], str(st))
+blocked = bc_assets.connect_bc(db, SAT2, dry_run=True)
+check("connecting a BC we can't reach is refused with the invite instruction, nothing attempted",
+      "Admin of" in (blocked.get("error") or ""), str(blocked.get("error")))
+blocked_inv = bc_assets.invite(db, SAT2, "janis@glitchy.ai")
+check("inviting into a BC we can't reach is refused, saying the first invite comes from that BC",
+      "own login" in (blocked_inv.get("error") or ""), str(blocked_inv.get("error")))
+check("the satellite BC stays on the list until it's connected, and can be dropped",
+      [w["bc_id"] for w in bc_assets.watchlist(db)] == [SAT2])
+with mock.patch.object(tiktok_api, "list_business_centers", side_effect=fake_bcs):
+    ready = bc_assets.stage(db, SAT)
+check("a BC we are Admin of reads as ready to connect", ready["code"] in ("ready", "connected"), str(ready))
+bc_assets.watch_remove(db, SAT2)
+check("removing from the list changes nothing on TikTok", bc_assets.watchlist(db) == [] and sent == [])
+
 db.close()
 print("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}")
 sys.exit(1 if fails else 0)

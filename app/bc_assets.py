@@ -33,6 +33,7 @@ from . import models, queries, tiktok_api
 log = logging.getLogger("adops.bc_assets")
 
 SNAPSHOT_KEY = "bc_assets_snapshot"
+WATCH_KEY = "bc_assets_watchlist"   # satellite BCs being connected, in order
 MAIN_BC_KEY = "main_bc_id"          # set on the page; guessed from the pixels when empty
 
 
@@ -61,6 +62,58 @@ def main_bc_id(db: Session) -> str:
         if getattr(p, "owner_bc_id", ""):
             counts[p.owner_bc_id] = counts.get(p.owner_bc_id, 0) + 1
     return max(counts, key=counts.get) if counts else ""
+
+
+def watchlist(db: Session) -> list[dict]:
+    """Satellite BCs we are connecting. A brand-new BC is invisible to the API until its
+    invitation is accepted, so it lives here from the moment the operator adds its id."""
+    raw = queries.get_setting(db, WATCH_KEY, "")
+    try:
+        rows = json.loads(raw) if raw else []
+    except ValueError:
+        rows = []
+    return [r for r in rows if isinstance(r, dict) and r.get("bc_id")]
+
+
+def watch_add(db: Session, bc_id: str, label: str = "") -> None:
+    rows = watchlist(db)
+    bc_id = "".join(ch for ch in str(bc_id) if ch.isdigit())
+    if bc_id and not any(r["bc_id"] == bc_id for r in rows):
+        rows.append({"bc_id": bc_id, "label": label.strip()[:80], "added": _now_iso()})
+        queries.upsert_setting(db, WATCH_KEY, json.dumps(rows[:200]))
+        db.commit()
+
+
+def watch_remove(db: Session, bc_id: str) -> None:
+    rows = [r for r in watchlist(db) if r["bc_id"] != str(bc_id)]
+    queries.upsert_setting(db, WATCH_KEY, json.dumps(rows))
+    db.commit()
+
+
+def stage(db: Session, bc_id: str, snap: dict | None = None) -> dict:
+    """Where a satellite BC is in the journey, from the last audit only (no API calls):
+      invisible  → the dashboard's token can't see it: invite + accept still to do
+      no_admin   → visible, but the token isn't Admin there (invited as Standard?)
+      ready      → Admin: the dashboard can share its ad accounts in
+      connected  → every ad account it owns that we know of is already in the main BC
+    """
+    snap = snap if snap is not None else snapshot(db)
+    bcs = {b["bc_id"]: b for b in (snap.get("bcs") or [])}
+    row = bcs.get(str(bc_id))
+    accounts = [a for a in (snap.get("accounts") or []) if a.get("owner_bc") == str(bc_id)]
+    shared = [a for a in accounts if a.get("in_main_bc")]
+    if not row:
+        code, what = "invisible", "not visible to the dashboard yet"
+    elif (row.get("role") or "").upper() != "ADMIN":
+        code, what = "no_admin", f"visible, but your role there is {row.get('role') or 'unknown'} — Admin is needed"
+    elif accounts and len(shared) == len(accounts):
+        code, what = "connected", f"all {len(accounts)} known ad account(s) shared into the main BC"
+    else:
+        code, what = "ready", ("Admin — ready to connect"
+                               + (f" · {len(accounts) - len(shared)} known account(s) still to share" if accounts else ""))
+    return {"bc_id": str(bc_id), "name": (row or {}).get("name", ""), "role": (row or {}).get("role", ""),
+            "code": code, "what": what, "accounts": len(accounts), "shared": len(shared),
+            "portal": f"https://business.tiktok.com/manage/overview?org_id={bc_id}"}
 
 
 def _bcs_for_token(token: str) -> dict[str, dict]:
@@ -218,6 +271,310 @@ def _store(db: Session, snap: dict) -> dict:
 
 def snapshot(db: Session) -> dict:
     raw = queries.get_setting(db, SNAPSHOT_KEY, "")
+    if not raw:
+        return {}
+    try:
+        return json.loads(raw)
+    except ValueError:
+        return {}
+
+
+# ---------------------------------------------------------------------------
+# Writes — ONE ad account at a time, preview first.
+#   1. the satellite BC shares the ad account with the main BC   /bc/partner/add/
+#   2. the main BC links its pixel(s) to it                      /bc/pixel/link/update/
+#   3. the main BC links every TikTok profile to it              /bc/asset/advertiser/assign/
+# Step 1 must be called with an ADMIN token OF THE OWNING BC ("a Business Center can
+# only share assets it owns"); steps 2 and 3 with an Admin token of the main BC.
+# Every step reports the exact request and TikTok's verbatim answer, and a preview
+# run sends nothing at all.
+# ---------------------------------------------------------------------------
+WIRE_KEY = "bc_assets_last_wire"
+
+
+def _admin_tokens(db: Session) -> tuple[dict[str, str], dict[str, dict], list[str]]:
+    """({bc_id: admin token}, {bc_id: info}, notes) across every stored token."""
+    admin: dict[str, str] = {}
+    seen: dict[str, dict] = {}
+    notes: list[str] = []
+    for token, _accounts in tokens(db):
+        try:
+            bcs = _bcs_for_token(token)
+        except tiktok_api.TikTokError as e:
+            notes.append(f"a token could not list Business Centers: {e.message} (code {e.code})")
+            continue
+        for bid, info in bcs.items():
+            seen.setdefault(bid, info)
+            if info["role"].upper() == "ADMIN":
+                admin.setdefault(bid, token)
+    return admin, seen, notes
+
+
+def _account_steps(report: dict, step, main: str, main_token: str, advertiser_id: str,
+                   pixels: list[dict], profiles: list[dict], say=lambda t: None) -> None:
+    """Link the pixel(s) and every profile to ONE ad account (skipping what is already there)."""
+    for p in pixels:
+        if str(advertiser_id) in (p.get("linked") or []):
+            report["steps"].append({"step": f"Link pixel {p['name']} → {advertiser_id}", "ok": True,
+                                    "detail": "already linked — skipped", "request": {}})
+            continue
+        code = p.get("code") or p["id"]
+        say(f"linking pixel {p['name']} to {advertiser_id}")
+        step(f"Link pixel {p['name']} → {advertiser_id}",
+             {"endpoint": "/bc/pixel/link/update/", "bc_id": main, "pixel_code": code,
+              "advertiser_ids": [str(advertiser_id)], "relation_status": "LINK"},
+             lambda c=code: tiktok_api.bc_pixel_link_update(main_token, main, c, [str(advertiser_id)], "LINK"))
+    for pr in profiles:
+        label = pr.get("handle") or pr.get("name") or pr["id"]
+        if str(advertiser_id) in (pr.get("linked") or []):
+            report["steps"].append({"step": f"Link profile {label} → {advertiser_id}", "ok": True,
+                                    "detail": "already linked — skipped", "request": {}})
+            continue
+        say(f"linking profile {label} to {advertiser_id}")
+        step(f"Link profile {label} → {advertiser_id}",
+             {"endpoint": "/bc/asset/advertiser/assign/", "bc_id": main, "asset_type": "TT_ACCOUNT",
+              "asset_id": pr["id"], "advertiser_id": str(advertiser_id)},
+             lambda a=pr["id"]: tiktok_api.bc_tt_account_link(main_token, main, a, str(advertiser_id)))
+
+
+def _stepper(report: dict, dry_run: bool):
+    """Records one call — or, in a preview, only what would have been sent."""
+    def step(name: str, request: dict, run) -> bool:
+        if dry_run:
+            report["steps"].append({"step": name, "ok": None, "detail": "not sent (preview)", "request": request})
+            return True
+        try:
+            answer = run()
+            report["steps"].append({"step": name, "ok": True, "detail": "TikTok accepted it",
+                                    "request": request, "answer": str(answer)[:300]})
+            return True
+        except tiktok_api.TikTokError as e:
+            report["steps"].append({"step": name, "ok": False,
+                                    "detail": f"{e.message} (code {e.code})", "request": request})
+            return False
+        except Exception as e:      # noqa: BLE001 — a bug here must not kill the job
+            report["steps"].append({"step": name, "ok": False, "detail": f"{type(e).__name__}: {e}",
+                                    "request": request})
+            return False
+    return step
+
+
+def connect_bc(db: Session, bc_id: str, role: str = "OPERATOR", dry_run: bool = True,
+               email: str = "", on_progress=None) -> dict:
+    """One Business Center, one button: share every ad account it owns into the main BC,
+    then give each of them the pixel and every profile. Needs an Admin token of THIS BC —
+    which is what accepting the invite as Admin gives the dashboard."""
+    def say(t: str) -> None:
+        if on_progress:
+            try:
+                on_progress(t)
+            except Exception:      # noqa: BLE001
+                pass
+
+    report: dict = {"at": _now_iso(), "bc_id": str(bc_id), "dry_run": bool(dry_run), "role": role,
+                    "kind": "bc", "steps": []}
+    main = main_bc_id(db)
+    if not main:
+        report["error"] = "No main Business Center is set."
+        return _store_wire(db, report)
+    if str(bc_id) == main:
+        report["error"] = "That IS the main Business Center — its own ad accounts need no sharing."
+        return _store_wire(db, report)
+    if role not in tiktok_api.ADVERTISER_ROLES:
+        role = "OPERATOR"
+
+    admin, seen, notes = _admin_tokens(db)
+    report["notes"] = notes
+    report["bc_name"] = (seen.get(str(bc_id)) or {}).get("name", str(bc_id))
+    main_token = admin.get(main)
+    sat_token = admin.get(str(bc_id))
+    if not main_token:
+        report["error"] = f"No stored token is Admin of the main Business Center ({main})."
+        return _store_wire(db, report)
+    if not sat_token:
+        report["error"] = (f"No stored token is Admin of {report['bc_name']} yet — invite "
+                           f"{email or 'your email'} there as Admin, accept it, then re-run the audit "
+                           "so this dashboard's token picks up the access.")
+        return _store_wire(db, report)
+
+    snap = snapshot(db)
+    pixels, profiles = snap.get("pixels") or [], snap.get("profiles") or []
+    if not (pixels or profiles):
+        report["error"] = "Run the audit first — the dashboard doesn't know the main BC's pixels or profiles yet."
+        return _store_wire(db, report)
+
+    step = _stepper(report, dry_run)
+    say("listing the Business Center's ad accounts")
+    try:
+        owned = [str(a.get("asset_id")) for a in tiktok_api.bc_assets_admin(sat_token, str(bc_id), "ADVERTISER")
+                 if a.get("asset_id")]
+    except tiktok_api.TikTokError as e:
+        report["error"] = f"could not list that BC's ad accounts: {e.message} (code {e.code})"
+        return _store_wire(db, report)
+    already = {r["advertiser_id"] for r in (snap.get("accounts") or []) if r.get("in_main_bc")}
+    todo = [a for a in owned if a not in already]
+    report["accounts"] = owned
+    if not owned:
+        report["error"] = "That Business Center has no ad accounts."
+        return _store_wire(db, report)
+
+    # 1. share them in (batched — TikTok takes up to 50 asset ids per call)
+    for i in range(0, len(todo), 50):
+        batch = todo[i:i + 50]
+        say(f"sharing {len(batch)} ad account(s) into the main BC")
+        step(f"Share {len(batch)} ad account(s) into the main BC",
+             {"endpoint": "/bc/partner/add/", "bc_id": str(bc_id), "partner_id": main,
+              "asset_type": "ADVERTISER", "asset_ids": batch, "advertiser_role": role},
+             lambda b=batch: tiktok_api.bc_partner_add(sat_token, str(bc_id), main, b, role))
+    if not todo:
+        report["steps"].append({"step": "Share ad accounts into the main BC", "ok": True,
+                                "detail": f"all {len(owned)} already shared — skipped", "request": {}})
+
+    # 2. pixel + profiles for each
+    for adv in owned:
+        _account_steps(report, step, main, main_token, adv, pixels, profiles, say)
+
+    done = [s for s in report["steps"] if s["ok"] is True]
+    bad = [s for s in report["steps"] if s["ok"] is False]
+    report["summary"] = (f"{len(report['steps'])} step(s) previewed for {len(owned)} ad account(s) — nothing sent"
+                         if dry_run else
+                         f"{len(owned)} ad account(s) · {len(done)} step(s) ok" + (f", {len(bad)} failed" if bad else ""))
+    return _store_wire(db, report)
+
+
+def members(db: Session, bc_id: str) -> dict:
+    """Who is in a Business Center (including pending invites). Read-only."""
+    admin, seen, notes = _admin_tokens(db)
+    token = admin.get(str(bc_id)) or queries.any_access_token(db)
+    if not token:
+        return {"error": "TikTok isn't connected.", "members": []}
+    try:
+        rows = tiktok_api.bc_member_list(token, str(bc_id))
+    except tiktok_api.TikTokError as e:
+        return {"error": f"{e.message} (code {e.code})", "members": []}
+    return {"members": [{"user_id": str(m.get("user_id") or ""), "email": m.get("user_email") or "",
+                         "name": m.get("user_name") or "", "role": m.get("user_role") or "",
+                         "status": m.get("relation_status") or ""} for m in rows],
+            "bc_name": (seen.get(str(bc_id)) or {}).get("name", str(bc_id)), "notes": notes}
+
+
+def invite(db: Session, bc_id: str, email: str, role: str = "ADMIN") -> dict:
+    """Invite an email into a BC as Admin (or Standard). Only possible where a stored token
+    is already Admin of that BC — TikTok has no 'invite myself' and no accept endpoint, so a
+    brand-new BC's first invite is sent from that BC's own login."""
+    report: dict = {"at": _now_iso(), "bc_id": str(bc_id), "kind": "invite", "dry_run": False,
+                    "steps": [], "email": email}
+    admin, seen, notes = _admin_tokens(db)
+    report["notes"] = notes
+    report["bc_name"] = (seen.get(str(bc_id)) or {}).get("name", str(bc_id))
+    token = admin.get(str(bc_id))
+    if not token:
+        report["error"] = (f"No stored token is Admin of {report['bc_name']}, so TikTok won't accept an "
+                           "invitation from here — send the first invite from that Business Center's own login.")
+        return _store_wire(db, report)
+    if "@" not in (email or ""):
+        report["error"] = "That doesn't look like an email address."
+        return _store_wire(db, report)
+    step = _stepper(report, False)
+    step(f"Invite {email} as {role.title()}",
+         {"endpoint": "/bc/member/invite/", "bc_id": str(bc_id), "emails": [email], "user_role": role},
+         lambda: tiktok_api.bc_member_invite(token, str(bc_id), [email], role))
+    bad = [s for s in report["steps"] if s["ok"] is False]
+    report["summary"] = ("invitation sent — accept it in TikTok, then re-run the audit"
+                         if not bad else "TikTok refused the invitation")
+    return _store_wire(db, report)
+
+
+def wire(db: Session, advertiser_id: str, role: str = "OPERATOR", dry_run: bool = True,
+         on_progress=None) -> dict:
+    """Give one ad account the pixel and every profile. Returns a report; never raises."""
+    def say(t: str) -> None:
+        if on_progress:
+            try:
+                on_progress(t)
+            except Exception:      # noqa: BLE001
+                pass
+
+    report: dict = {"at": _now_iso(), "advertiser_id": str(advertiser_id), "dry_run": bool(dry_run),
+                    "role": role, "steps": []}
+
+    step = _stepper(report, dry_run)
+
+    acct = (db.query(models.AdAccount)
+            .filter(models.AdAccount.advertiser_id == str(advertiser_id)).first())
+    if acct is None:
+        report["error"] = f"{advertiser_id} is not an ad account this dashboard manages."
+        return _store_wire(db, report)
+    report["account_name"] = acct.advertiser_name or acct.advertiser_id
+    main = main_bc_id(db)
+    if not main:
+        report["error"] = "No main Business Center is set."
+        return _store_wire(db, report)
+    if role not in tiktok_api.ADVERTISER_ROLES:
+        role = "OPERATOR"
+
+    admin, seen, notes = _admin_tokens(db)
+    report["notes"] = notes
+    main_token = admin.get(main)
+    if not main_token:
+        report["error"] = ("None of the stored tokens is Admin of the main Business Center "
+                           f"({main}) — the pixel and profile links need one.")
+        return _store_wire(db, report)
+
+    snap = snapshot(db)
+    row = next((r for r in (snap.get("accounts") or []) if r["advertiser_id"] == str(advertiser_id)), {})
+    pixels = snap.get("pixels") or []
+    profiles = snap.get("profiles") or []
+    if not (pixels or profiles):
+        report["error"] = "Run the audit first — the dashboard doesn't know this BC's pixels or profiles yet."
+        return _store_wire(db, report)
+
+    # ---- 1. share the ad account into the main BC (only when it isn't there yet)
+    owner = acct.owner_bc_id or ""
+    if row.get("in_main_bc"):
+        report["steps"].append({"step": "Share the ad account into the main BC", "ok": True,
+                                "detail": "already there — skipped", "request": {}})
+    elif not owner:
+        report["steps"].append({"step": "Share the ad account into the main BC", "ok": False,
+                                "detail": "this account's owning Business Center is unknown — sync accounts first",
+                                "request": {}})
+    elif owner == main:
+        report["steps"].append({"step": "Share the ad account into the main BC", "ok": True,
+                                "detail": "the main BC owns it — nothing to share", "request": {}})
+    elif owner not in admin:
+        report["steps"].append({"step": "Share the ad account into the main BC", "ok": False,
+                                "request": {"bc_id": owner, "partner_id": main},
+                                "detail": (f"no stored token is Admin of {seen.get(owner, {}).get('name', owner)} — "
+                                           "TikTok only lets a BC share what it owns, so that BC has to authorize once")})
+    else:
+        say("sharing the ad account into the main BC")
+        step("Share the ad account into the main BC",
+             {"endpoint": "/bc/partner/add/", "bc_id": owner, "partner_id": main,
+              "asset_type": "ADVERTISER", "asset_ids": [str(advertiser_id)], "advertiser_role": role},
+             lambda: tiktok_api.bc_partner_add(admin[owner], owner, main, [str(advertiser_id)], role))
+
+    # ---- 2 + 3. the pixel(s) and every profile
+    _account_steps(report, step, main, main_token, str(advertiser_id), pixels, profiles, say)
+
+    done = [s for s in report["steps"] if s["ok"] is True]
+    bad = [s for s in report["steps"] if s["ok"] is False]
+    report["summary"] = (f"{len(report['steps'])} step(s) previewed — nothing sent" if dry_run
+                         else f"{len(done)} step(s) ok" + (f", {len(bad)} failed" if bad else ""))
+    return _store_wire(db, report)
+
+
+def _store_wire(db: Session, report: dict) -> dict:
+    try:
+        queries.upsert_setting(db, WIRE_KEY, json.dumps(report)[:200_000])
+        db.commit()
+    except Exception as e:      # noqa: BLE001
+        db.rollback()
+        log.warning("could not store the wiring report: %s", e)
+    return report
+
+
+def last_wire(db: Session) -> dict:
+    raw = queries.get_setting(db, WIRE_KEY, "")
     if not raw:
         return {}
     try:

@@ -221,6 +221,32 @@ def _bc_assets_scan(db: Session, p: dict, job: models.Job) -> dict:
     return {"ok": not snap.get("errors"), "detail": detail, "href": "/bc-assets"}
 
 
+@jobs.handler("bc_assets_wire")
+def _bc_assets_wire(db: Session, p: dict, job: models.Job) -> dict:
+    """One ad account: share it into the main BC, link the pixel, link every profile."""
+    from . import bc_assets
+    rep = bc_assets.wire(db, str(p.get("advertiser_id") or ""), role=str(p.get("role") or "OPERATOR"),
+                         dry_run=bool(p.get("dry_run", True)),
+                         on_progress=lambda t: jobs.progress(db, job, t))
+    if rep.get("error"):
+        return {"ok": False, "detail": rep["error"], "href": "/bc-assets"}
+    bad = [s for s in rep.get("steps", []) if s.get("ok") is False]
+    return {"ok": not bad, "detail": rep.get("summary", ""), "href": "/bc-assets"}
+
+
+@jobs.handler("bc_assets_connect")
+def _bc_assets_connect(db: Session, p: dict, job: models.Job) -> dict:
+    """A whole Business Center: share its ad accounts into the main BC, then link everything."""
+    from . import bc_assets
+    rep = bc_assets.connect_bc(db, str(p.get("bc_id") or ""), role=str(p.get("role") or "OPERATOR"),
+                               dry_run=bool(p.get("dry_run", True)), email=str(p.get("email") or ""),
+                               on_progress=lambda t: jobs.progress(db, job, t))
+    if rep.get("error"):
+        return {"ok": False, "detail": rep["error"], "href": "/bc-assets"}
+    bad = [s for s in rep.get("steps", []) if s.get("ok") is False]
+    return {"ok": not bad, "detail": rep.get("summary", ""), "href": "/bc-assets"}
+
+
 @jobs.handler("audience_sync")
 def _audience_sync(db: Session, p: dict, job: models.Job) -> dict:
     from . import audience

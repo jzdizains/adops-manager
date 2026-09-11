@@ -36,6 +36,47 @@
 </div>
 {% endif %}
 
+<div class="card" style="margin-top:12px;">
+  <div class="card-header"><span class="card-title">Connect a Business Center</span>
+    <span class="card-meta">a brand-new BC can't be reached by the API until you're a member of it — this walks it through</span></div>
+  <form method="post" action="/bc-assets/bc/add" class="form-row" style="align-items:flex-end;">
+    <label class="field" style="max-width:260px;"><span class="field-label">Business Center ID</span>
+      <input type="text" name="bc_id" placeholder="7676193627814510609" inputmode="numeric" required></label>
+    <label class="field" style="max-width:220px;"><span class="field-label">Label <span class="muted">(optional)</span></span>
+      <input type="text" name="label" placeholder="batch 12 · hotmail 4"></label>
+    <button class="btn" type="submit">＋ Add to the list</button>
+  </form>
+
+  {% for w in watch %}
+  <div class="attn-row" style="align-items:flex-start;flex-wrap:wrap;gap:8px;">
+    <span class="attn-dot" style="color:var(--{{ 'ok' if w.code == 'connected' else ('warn' if w.code in ('ready','no_admin') else 'text-dim') }});">●</span>
+    <span style="font-weight:600;min-width:190px;">{{ w.name or w.label or w.bc_id }}
+      <div class="muted mono" style="font-size:11px;font-weight:400;">{{ w.bc_id }}</div></span>
+    <span class="muted" style="font-size:12px;flex:1;min-width:220px;">
+      {% if w.code == 'invisible' %}<b>Step 1.</b> In that Business Center (its own login) → Members → invite <span class="mono">{{ owner_email }}</span> as <b>Admin</b>. <b>Step 2.</b> Accept the invite as that email. Then press Re-check.
+      {% elif w.code == 'no_admin' %}{{ w.what }} — re-invite yourself as Admin there, accept, then Re-check.
+      {% else %}{{ w.what }}{% endif %}
+    </span>
+    <span style="display:inline-flex;gap:4px;align-items:center;flex-wrap:wrap;">
+      <a class="btn sm ghost" href="{{ w.portal }}" target="_blank" rel="noopener" title="Open this Business Center on TikTok">Open BC ↗</a>
+      {% if w.code in ('ready', 'connected') %}
+      <form method="post" action="/bc-assets/connect" style="display:inline-flex;gap:4px;align-items:center;">
+        <input type="hidden" name="bc_id" value="{{ w.bc_id }}"><input type="hidden" name="email" value="{{ owner_email }}">
+        <select name="role" style="width:auto;font-size:11.5px;padding:3px 6px;">{% for rl in roles %}<option value="{{ rl }}">{{ rl|capitalize }}</option>{% endfor %}</select>
+        <button class="btn sm" type="submit" name="mode" value="preview"{% if connecting %} disabled{% endif %}>Preview</button>
+        <button class="btn sm primary" type="submit" name="mode" value="send"{% if connecting %} disabled{% endif %}>Connect</button>
+      </form>
+      {% else %}
+      <form method="post" action="/bc-assets/scan" style="display:inline;"><button class="btn sm" type="submit"{% if running %} disabled{% endif %}>Re-check</button></form>
+      {% endif %}
+      <form method="post" action="/bc-assets/bc/remove" style="display:inline;"><input type="hidden" name="bc_id" value="{{ w.bc_id }}"><button class="btn sm ghost" type="submit" title="Remove from this list">✕</button></form>
+    </span>
+  </div>
+  {% else %}
+  <div class="hint" style="padding:10px 14px;">Add a Business Center id to start. The dashboard can't invite itself into a brand-new BC — TikTok only accepts an invitation sent from inside that BC — so the first two steps happen there; everything after is one button.</div>
+  {% endfor %}
+</div>
+
 {% if snap.bcs %}
 <div class="card" style="margin-top:12px;">
   <div class="card-header"><span class="card-title">Business Centers the dashboard can see</span>
@@ -77,6 +118,24 @@
 </div>
 {% endif %}
 
+{% if wire %}
+<div class="card" style="margin-top:12px;">
+  <div class="card-header"><span class="card-title">{{ 'Preview' if wire.dry_run else 'Wiring run' }} — {{ wire.account_name or wire.advertiser_id }}</span>
+    <span class="card-meta">{{ wire.summary or wire.error }} · {{ wire.at|ago }}{% if wire.dry_run %} · nothing was sent{% endif %}</span></div>
+  {% if wire.error %}<div class="attn-row"><span class="attn-dot" style="color:var(--err);">●</span><span>{{ wire.error }}</span></div>{% endif %}
+  {% for s in wire.steps %}
+  <div class="attn-row">
+    <span class="attn-dot" style="color:var(--{{ 'ok' if s.ok else ('err' if s.ok is false else 'text-dim') }});">●</span>
+    <span style="font-weight:600;">{{ s.step }}</span>
+    <span class="muted" style="font-size:12px;">{{ s.detail }}</span>
+    {% if s.request %}<span class="clip mono" style="font-size:11px;max-width:420px;" title="{{ s.request }}">{{ s.request.endpoint or '' }} {{ s.request }}</span>{% endif %}
+  </div>
+  {% endfor %}
+  {% for n in wire.notes or [] %}<div class="attn-row"><span class="attn-dot" style="color:var(--warn);">●</span><span class="muted">{{ n }}</span></div>{% endfor %}
+  <div class="hint" style="padding:8px 14px;">{% if wire.dry_run %}Nothing has been sent. Press <b>Wire</b> on that row to run exactly these requests.{% else %}Run the audit again to refresh the table.{% endif %}</div>
+</div>
+{% endif %}
+
 <div class="card" style="margin-top:12px;">
   <div class="card-header"><span class="card-title">Ad accounts</span>
     <span class="card-meta">
@@ -89,7 +148,7 @@
   <div class="empty"><div class="empty-title">{{ 'Every account is fully wired' if show == 'gaps' else 'No ad accounts' }}</div>{{ 'Pixel and every profile are linked everywhere the dashboard manages.' if show == 'gaps' else 'Connect an ad account first.' }}</div>
   {% else %}
   <table class="table">
-    <thead><tr><th>Ad account</th><th>Owner BC</th><th>In main BC</th><th>Pixel</th><th>Profiles</th></tr></thead>
+    <thead><tr><th>Ad account</th><th>Owner BC</th><th>In main BC</th><th>Pixel</th><th>Profiles</th><th></th></tr></thead>
     <tbody>
     {% for r in rows %}
       <tr>
@@ -101,11 +160,19 @@
         <td>{% if snap.summary.profiles and not r.profiles_missing %}<span class="pill ok">all {{ r.profiles|length }}</span>
             {% elif r.profiles %}<span class="pill warn">{{ r.profiles|length }} of {{ snap.summary.profiles }}</span>
             {% else %}<span class="pill err">none</span>{% endif %}</td>
+        <td style="white-space:nowrap;">
+          <form method="post" action="/bc-assets/wire" style="display:inline-flex;gap:4px;align-items:center;">
+            <input type="hidden" name="advertiser_id" value="{{ r.advertiser_id }}">
+            <select name="role" style="width:auto;font-size:11.5px;padding:3px 6px;" title="Role the main BC gets on this ad account">{% for rl in roles %}<option value="{{ rl }}">{{ rl|capitalize }}</option>{% endfor %}</select>
+            <button class="btn sm" type="submit" name="mode" value="preview"{% if wiring %} disabled{% endif %} title="Show the exact requests — nothing is sent">Preview</button>
+            <button class="btn sm primary" type="submit" name="mode" value="send"{% if wiring %} disabled{% endif %} title="Share into the main BC, link the pixel and every profile">Wire</button>
+          </form>
+        </td>
       </tr>
     {% endfor %}
     </tbody>
   </table>
   {% endif %}
-  <div class="hint" style="padding:10px 14px;">This page only reads. Once it shows the real picture we wire the three writes behind it — share an ad account into the main BC, link the pixel, link every profile — one account at a time before any sweep.</div>
+  <div class="hint" style="padding:10px 14px;"><b>Preview</b> shows the exact requests and sends nothing. <b>Wire</b> runs them for that one account: share it into the main BC (needs an Admin token of the BC that owns it), link the pixel, link every profile. Steps that are already done are skipped, so pressing it twice is harmless.</div>
 </div>
 {% endblock %}

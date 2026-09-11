@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
-from .. import bc_assets, jobs, queries
+from .. import bc_assets, config, jobs, queries
 from ..database import get_db
 from ..templating import render
 
@@ -44,6 +44,12 @@ def bc_assets_page(request: Request, db: Session = Depends(get_db)):
                       if not r.get("in_main_bc") or not r.get("pixels") or r.get("profiles_missing")),
         "main_bc": snap.get("main_bc") or bc_assets.main_bc_id(db),
         "running": bool(jobs.pending(db, "bc_assets_scan")),
+        "wiring": bool(jobs.pending(db, "bc_assets_wire")),
+        "wire": bc_assets.last_wire(db),
+        "roles": ("OPERATOR", "ADMIN", "ANALYST"),
+        "watch": [dict(w, **bc_assets.stage(db, w["bc_id"], snap)) for w in bc_assets.watchlist(db)],
+        "owner_email": getattr(getattr(request.state, "user", None), "email", "") or config.OWNER_EMAIL,
+        "connecting": bool(jobs.pending(db, "bc_assets_connect")),
     })
 
 
@@ -56,6 +62,69 @@ def bc_assets_scan(db: Session = Depends(get_db)):
                                      href="/bc-assets")
     return _back(ok="Reading the Business Centers in the background — watch it on the Jobs page."
                  if created else f"A scan is already {job.status}.")
+
+
+@router.post("/bc-assets/wire")
+def bc_assets_wire(advertiser_id: str = Form(""), role: str = Form("OPERATOR"),
+                   mode: str = Form("preview"), db: Session = Depends(get_db)):
+    """Give ONE ad account the pixel and every profile. `preview` sends nothing —
+    it only records the exact requests that a `send` would make."""
+    adv = "".join(ch for ch in (advertiser_id or "") if ch.isdigit())
+    if not adv:
+        return _back(err="Give the ad account id first.")
+    if not queries.any_access_token(db):
+        return _back(err="Connect TikTok first.")
+    job, created = jobs.enqueue_once(db, "bc_assets_wire",
+                                     f"{'Preview' if mode != 'send' else 'Wire'} assets for {adv}",
+                                     {"advertiser_id": adv, "role": role, "dry_run": mode != "send"},
+                                     href="/bc-assets")
+    if not created:
+        return _back(ok=f"A wiring run is already {job.status}.")
+    return _back(ok=("Previewing — nothing is sent; the exact requests appear here in a moment."
+                     if mode != "send" else "Sending to TikTok — the answers appear here in a moment."))
+
+
+@router.post("/bc-assets/bc/add")
+def bc_assets_bc_add(bc_id: str = Form(""), label: str = Form(""), db: Session = Depends(get_db)):
+    """Put a satellite BC on the list. A brand-new one isn't visible to the API yet — the
+    list is how the dashboard tracks it through invite → accept → connect."""
+    clean = "".join(ch for ch in (bc_id or "") if ch.isdigit())
+    if not clean:
+        return _back(err="A Business Center ID is a number — copy it from that BC's Settings.")
+    bc_assets.watch_add(db, clean, label)
+    return _back(ok=f"Added {clean}. Next: invite your email into it as Admin, accept, then Re-check.")
+
+
+@router.post("/bc-assets/bc/remove")
+def bc_assets_bc_remove(bc_id: str = Form(""), db: Session = Depends(get_db)):
+    bc_assets.watch_remove(db, "".join(ch for ch in (bc_id or "") if ch.isdigit()))
+    return _back(ok="Removed from the list (nothing on TikTok was changed).")
+
+
+@router.post("/bc-assets/invite")
+def bc_assets_invite(bc_id: str = Form(""), email: str = Form(""), role: str = Form("ADMIN"),
+                     db: Session = Depends(get_db)):
+    """Invite an email into a BC — only works where a stored token is already Admin there."""
+    rep = bc_assets.invite(db, "".join(ch for ch in (bc_id or "") if ch.isdigit()), email.strip(),
+                           "ADMIN" if role != "STANDARD" else "STANDARD")
+    return _back(err=rep["error"]) if rep.get("error") else _back(ok=rep.get("summary", "Invitation sent."))
+
+
+@router.post("/bc-assets/connect")
+def bc_assets_connect(bc_id: str = Form(""), role: str = Form("OPERATOR"), mode: str = Form("preview"),
+                      email: str = Form(""), db: Session = Depends(get_db)):
+    """One Business Center, one button: share all its ad accounts in, then pixel + profiles."""
+    clean = "".join(ch for ch in (bc_id or "") if ch.isdigit())
+    if not clean:
+        return _back(err="Which Business Center?")
+    job, created = jobs.enqueue_once(db, "bc_assets_connect",
+                                     f"{'Preview' if mode != 'send' else 'Connect'} Business Center {clean}",
+                                     {"bc_id": clean, "role": role, "dry_run": mode != "send", "email": email},
+                                     href="/bc-assets")
+    if not created:
+        return _back(ok=f"A run is already {job.status}.")
+    return _back(ok="Previewing — nothing is sent." if mode != "send"
+                 else "Connecting in the background — the report appears here when it finishes.")
 
 
 @router.post("/bc-assets/main")
