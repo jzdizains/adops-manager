@@ -34,7 +34,7 @@ _current: dict = {}      # job id → job (for progress updates)
 
 # Two lanes, two worker threads: long sweeps over every account (minutes) must
 # never make a launch or a bid change wait behind them.
-SLOW_KINDS = {"issues_scan", "appeals_refresh", "pixels_sync", "pixel_link_all", "audience_sync", "music_sync", "identities_sync", "spark_authorize"}
+SLOW_KINDS = {"issues_scan", "appeals_refresh", "pixels_sync", "pixel_link_all", "audience_sync", "music_sync", "identities_sync", "spark_authorize", "bc_assets_scan"}
 LANES = ("fast", "slow")
 CANCELLED = "cancelled"
 

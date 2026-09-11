@@ -115,7 +115,7 @@
     <div class="fmenu">{% for k, lbl in range_labels.items() %}<a data-val="{{ k }}" class="{{ 'sel' if range_key == k }}">{{ lbl }}</a>{% endfor %}</div>
     <input type="hidden" name="range" value="{{ range_key }}">
   </div>
-  <span id="customDates" style="display:{{ 'inline-flex' if range_key == 'custom' else 'none' }};gap:6px;"><input type="date" name="start" value="{{ start }}"><input type="date" name="end" value="{{ end }}"></span>
+  <span id="customDates" style="display:{{ 'inline-flex' if range_key == 'custom' else 'none' }};gap:6px;align-items:center;"><input type="date" name="start" id="dtStart" value="{{ start }}"><input type="date" name="end" id="dtEnd" value="{{ end }}"><button type="button" class="btn sm primary" id="dtApply">Apply</button></span>
   <div class="fsel" data-fsel>
     <button type="button"><span class="k">Show</span> <span class="v">{{ origin_labels[origin] }}</span> <span class="chev">▾</span></button>
     <div class="fmenu">{% for k, lbl in origin_labels.items() %}<a data-val="{{ k }}" class="{{ 'sel' if origin == k }}">{{ lbl }}</a>{% endfor %}</div>

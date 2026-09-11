@@ -3,6 +3,8 @@ can change them on the /settings page without redeploying. The background
 worker re-reads them every sweep, so changes apply within a minute."""
 from __future__ import annotations
 
+import re
+
 import json
 import secrets
 
@@ -51,6 +53,7 @@ DEFAULTS: dict = {
     "launch_pace_sec": 1.0,        # pause between accounts in a direct batch (rate-limit safety)
     # --- sources / postback ---------------------------------------------------
     "url_param": "source",         # query param appended to the landing URL
+    "url_param_extra": "",         # extra names the OFFER link should also carry the source under (Glitchy sub ids)
     "source_mode": "campaign",     # campaign = ?source=__CAMPAIGN_NAME__ (TikTok fills the campaign
                                    #   name at click time; names made URL-safe + unique)
                                    # static   = per spark/creative source (legacy)
@@ -143,6 +146,8 @@ def save_settings(db: Session, values: dict):
     clean["slow_every_n_sweeps"] = max(clean["slow_every_n_sweeps"], 1)
     if clean["url_param"] == "":
         clean["url_param"] = "source"
+    clean["url_param_extra"] = ",".join(
+        w for w in re.findall(r"[A-Za-z0-9_]+", str(clean.get("url_param_extra") or ""))[:4])
     if clean.get("source_mode") not in ("campaign", "static"):
         clean["source_mode"] = "campaign"
     if clean.get("tracking_mode") not in ("direct", "redirect", "clickflare"):

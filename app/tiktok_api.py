@@ -402,20 +402,25 @@ def bc_pixel_transfer(access_token: str, bc_id: str, advertiser_id: str,
     })
 
 
-def bc_pixel_link_update(access_token: str, bc_id: str, pixel_id: str,
-                         advertiser_ids: list[str], operation: str = "LINK") -> dict:
-    """Link (or UNLINK) a BC-owned pixel to ad accounts under the BC."""
+def bc_pixel_link_update(access_token: str, bc_id: str, pixel_code: str,
+                         advertiser_ids: list[str], relation_status: str = "LINK") -> dict:
+    """Link (or UNLINK) a BC-owned pixel to ad accounts under the BC.
+    v1.3 names these fields `pixel_code` and `relation_status` (LINK | UNLINK) — the pixel's
+    CODE, not its numeric id (doc: "Link a pixel to ad accounts / Unlink")."""
     return api_post("/bc/pixel/link/update/", access_token, {
-        "bc_id": bc_id, "pixel_id": pixel_id,
-        "advertiser_ids": advertiser_ids, "operation": operation,
+        "bc_id": str(bc_id), "pixel_code": str(pixel_code),
+        "advertiser_ids": [str(a) for a in advertiser_ids],
+        "relation_status": relation_status,
     })
 
 
-def bc_pixel_link_get(access_token: str, bc_id: str, pixel_id: str,
-                      page: int = 1, page_size: int = 100) -> dict:
-    """Which ad accounts a BC-owned pixel is linked to."""
+def bc_pixel_link_get(access_token: str, bc_id: str, pixel_code: str,
+                      page: int = 1, page_size: int = 50) -> dict:
+    """Which ad accounts a BC-owned pixel is linked to (v1.3: bc_id + pixel_code;
+    BC endpoints cap page_size at 50)."""
     return api_get("/bc/pixel/link/get/", access_token, {
-        "bc_id": bc_id, "pixel_id": pixel_id, "page": page, "page_size": page_size,
+        "bc_id": str(bc_id), "pixel_code": str(pixel_code),
+        "page": page, "page_size": min(page_size, 50),
     })
 
 
@@ -1183,3 +1188,55 @@ def get_hourly_report(access_token: str, advertiser_id: str, *, metrics: list[st
     return get_report_pages(access_token, advertiser_id, report_type="BASIC", data_level="AUCTION_CAMPAIGN",
                             dimensions=["campaign_id", "stat_time_hour"], metrics=metrics,
                             start_date=day, end_date=day)
+
+
+# ---------------------------------------------------------------------------
+# Business Center asset inventory + TikTok-account (profile) ↔ ad account links
+# (API Reference → BC Assets, read Sep 2026):
+#   GET  /bc/asset/admin/get/           every asset of a type in the BC (Admin only) —
+#                                       /bc/asset/get/ returns only what the TOKEN'S USER
+#                                       has been assigned, which is not what an audit needs
+#   GET  /bc/asset/advertiser/assigned/ ad accounts a TikTok account is linked to
+#   POST /bc/asset/advertiser/assign/   link a TikTok account to ONE ad account in the SAME BC
+# Pixel ↔ ad account lives above (bc_pixel_link_get / bc_pixel_link_update).
+# ---------------------------------------------------------------------------
+TT_ASSET_TYPES = ("TT_ACCOUNT", "MANAGED_BUSINESS_ACCOUNT")
+
+
+def bc_assets_admin(access_token: str, bc_id: str, asset_type: str, max_pages: int = 20) -> list[dict]:
+    """Every asset of one type in a BC, as its Admin (50 per page)."""
+    out: list[dict] = []
+    for page in range(1, max_pages + 1):
+        data = api_get_retry("/bc/asset/admin/get/", access_token, {
+            "bc_id": bc_id, "asset_type": asset_type, "page": page, "page_size": 50}) or {}
+        batch = data.get("list") or []
+        out.extend(batch)
+        info = data.get("page_info") or {}
+        if len(batch) < 50 or (info.get("total_page") and page >= int(info["total_page"])):
+            break
+    return out
+
+
+def bc_tt_account_advertisers(access_token: str, bc_id: str, asset_id: str,
+                              asset_type: str = "TT_ACCOUNT", max_pages: int = 20) -> list[str]:
+    """Ad account ids a TikTok account is linked to (ad delivery) in this BC."""
+    out: list[str] = []
+    for page in range(1, max_pages + 1):
+        data = api_get_retry("/bc/asset/advertiser/assigned/", access_token, {
+            "bc_id": bc_id, "asset_id": str(asset_id), "asset_type": asset_type,
+            "page": page, "page_size": 50}) or {}
+        batch = data.get("list") or []
+        out.extend(str(x.get("advertiser_id")) for x in batch if x.get("advertiser_id"))
+        info = data.get("page_info") or {}
+        if len(batch) < 50 or (info.get("total_page") and page >= int(info["total_page"])):
+            break
+    return out
+
+
+def bc_tt_account_link(access_token: str, bc_id: str, asset_id: str, advertiser_id: str,
+                       asset_type: str = "TT_ACCOUNT") -> dict:
+    """Link a TikTok account (profile) to ONE ad account of the same BC, so ads can
+    run under that identity. Admin of the BC required."""
+    return api_post("/bc/asset/advertiser/assign/", access_token, {
+        "bc_id": str(bc_id), "asset_id": str(asset_id), "asset_type": asset_type,
+        "advertiser_id": str(advertiser_id)})

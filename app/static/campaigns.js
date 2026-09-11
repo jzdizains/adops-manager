@@ -11,7 +11,16 @@
 
   // ---- filters: chip dropdowns + segmented state/group -----------------------
   var form = $("#filterForm");
-  function submit() { form.submit(); }
+  function submit() {
+    // "Custom" with only half a range would quietly show today's numbers under a Custom
+    // label — keep the range the page was loaded with until both dates are set.
+    var r = form.querySelector("[name=range]");
+    if (r && r.value === "custom") {
+      var a = $("#dtStart"), b = $("#dtEnd");
+      if (!(a && b && a.value && b.value)) r.value = state.range || "today";
+    }
+    form.submit();
+  }
   $$("[data-fsel]").forEach(function (fs) {
     var btn = fs.querySelector("button"), input = fs.querySelector("input[type=hidden]");
     btn.addEventListener("click", function (e) { e.stopPropagation(); var open = fs.classList.contains("open"); $$("[data-fsel].open").forEach(function (o) { o.classList.remove("open"); }); if (!open) fs.classList.add("open"); });
@@ -24,6 +33,31 @@
       });
     });
   });
+  // Custom range: the two date inputs only changed the form — nothing reloaded the page, so
+  // picking dates looked like it did nothing. Apply (or Enter in either box) runs the filter.
+  (function () {
+    var box = $("#customDates"); if (!box) return;
+    var s0 = $("#dtStart"), e0 = $("#dtEnd"), apply = $("#dtApply");
+    function ready() { return !!(s0.value && e0.value); }
+    function sync() {
+      if (s0.value) e0.min = s0.value;    // the end box opens on the start date; a back-to-front
+                                          // pair is still accepted (the server swaps it)
+      apply.disabled = !ready();
+      apply.title = ready() ? "" : "Pick both dates";
+    }
+    function run() {
+      if (!ready()) { (s0.value ? e0 : s0).focus(); return; }
+      form.querySelector("[name=range]").value = "custom";
+      submit();
+    }
+    [s0, e0].forEach(function (i) {
+      i.addEventListener("change", sync);
+      i.addEventListener("input", sync);
+      i.addEventListener("keydown", function (ev) { if (ev.key === "Enter") { ev.preventDefault(); run(); } });
+    });
+    apply.addEventListener("click", run);
+    sync();
+  })();
   document.addEventListener("click", function () { $$("[data-fsel].open").forEach(function (o) { o.classList.remove("open"); }); });
   $$("#stateSeg button").forEach(function (b) { b.addEventListener("click", function () { form.querySelector("[name=state]").value = b.dataset.state; submit(); }); });
   $$("#groupSeg button").forEach(function (b) { b.addEventListener("click", function () { form.querySelector("[name=group]").value = b.dataset.group; submit(); }); });

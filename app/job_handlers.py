@@ -202,8 +202,23 @@ def _pixel_link_all(db: Session, p: dict, job: models.Job) -> dict:
     token = queries.any_access_token(db)
     if not rec or not token or not rec.owner_bc_id:
         return {"ok": False, "detail": "pixel not found, not BC-owned, or TikTok not connected"}
-    ok_count, failed = pixels._link_pixel_to_bc_accounts(db, token, rec.owner_bc_id, rec.pixel_id)
+    ok_count, failed = pixels._link_pixel_to_bc_accounts(db, token, rec.owner_bc_id, rec.pixel_code or rec.pixel_id)
     return {"ok": not failed, "detail": f"linked to {ok_count} account(s)" + (f", failed: {' '.join(failed[:8])}" if failed else ""), "href": "/pixels"}
+
+
+@jobs.handler("bc_assets_scan")
+def _bc_assets_scan(db: Session, p: dict, job: models.Job) -> dict:
+    """Read-only: which ad accounts have the pixel and the profiles (see bc_assets)."""
+    from . import bc_assets
+    snap = bc_assets.scan(db, on_progress=lambda t: jobs.progress(db, job, t),
+                          should_stop=lambda: jobs.should_stop(db, job))
+    s = snap.get("summary") or {}
+    detail = (f"{s.get('ready', 0)} of {s.get('accounts', 0)} account(s) fully wired · "
+              f"{s.get('in_main_bc', 0)} in the main BC · {s.get('with_pixel', 0)} with a pixel"
+              if s else "nothing read")
+    if snap.get("errors"):
+        detail += f" · {len(snap['errors'])} note(s)"
+    return {"ok": not snap.get("errors"), "detail": detail, "href": "/bc-assets"}
 
 
 @jobs.handler("audience_sync")

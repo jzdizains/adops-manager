@@ -22,7 +22,7 @@ SIDEBAR = [
 ]
 FOOTER = [
     ("/jobs", "jobs", "Jobs", ("/jobs",)),
-    ("/settings", "settings", "Settings", ("/settings", "/accounts", "/pixels", "/creators", "/partners", "/locations", "/cookies", "/oauth", "/escape-test", "/campaigns/source-check")),
+    ("/settings", "settings", "Settings", ("/settings", "/accounts", "/pixels", "/creators", "/partners", "/locations", "/cookies", "/oauth", "/escape-test", "/campaigns/source-check", "/bc-assets")),
 ]
 
 # ---- section tabs: (href, label) — 'on' is decided by path + query -----------
@@ -32,7 +32,7 @@ SECTIONS = {
     "launch": [("/super-launcher", "Super Launcher"), ("/campaigns/launch", "Single campaign"), ("/queue", "Queue")],
     "creatives": [("/creatives", "Creatives"), ("/spark-codes", "Spark codes"), ("/ad-texts", "Ad texts"),
                   ("/instant-pages", "Instant pages"), ("/lead-forms", "Lead forms")],
-    "settings": [("/settings", "Settings"), ("/accounts", "Ad accounts"), ("/pixels", "Pixels"), ("/creators", "Creators"), ("/partners", "Partners"), ("/locations", "Locations"),
+    "settings": [("/settings", "Settings"), ("/accounts", "Ad accounts"), ("/pixels", "Pixels"), ("/creators", "Creators"), ("/partners", "Partners"), ("/bc-assets", "Assets"), ("/locations", "Locations"),
                  ("/cookies", "Cookies")],
     "tools": [("/campaigns/source-check", "Source check"), ("/escape-test", "Escape test")],
 }
@@ -40,7 +40,7 @@ _SECTION_OF = {
     "/monitor": "health", "/issues": "health", "/appeals": "health", "/automation": "health",
     "/super-launcher": "launch", "/campaigns/launch": "launch", "/queue": "launch", "/campaigns/result": "launch",
     "/creatives": "creatives", "/spark-codes": "creatives", "/ad-texts": "creatives", "/instant-pages": "creatives", "/lead-forms": "creatives",
-    "/settings": "settings", "/accounts": "settings", "/pixels": "settings", "/creators": "settings", "/partners": "settings", "/locations": "settings",
+    "/settings": "settings", "/accounts": "settings", "/pixels": "settings", "/creators": "settings", "/partners": "settings", "/bc-assets": "settings", "/locations": "settings",
     "/cookies": "settings", "/oauth": "settings",
     "/campaigns/source-check": "tools", "/escape-test": "tools",
 }
@@ -78,6 +78,7 @@ JUMP = [
     ("/pixels", "Pixels", "System", "tracking pixel events"),
     ("/creators", "Creators", "System", "identity identities spark authorize creator tiktok profile link"),
     ("/partners", "Partners", "System", "business center partner share assets"),
+    ("/bc-assets", "Assets", "System", "pixel profile linked ad accounts business center audit"),
     ("/locations", "Locations", "System", "geo targeting countries regions"),
     ("/cookies", "TikTok cookies", "System", "session cookies browser"),
     ("/oauth/connect", "Connect TikTok", "System", "oauth authorize token"),

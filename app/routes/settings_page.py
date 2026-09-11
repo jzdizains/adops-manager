@@ -44,7 +44,9 @@ def settings_page(request: Request, db: Session = Depends(get_db)):
     from .. import background
     from .. import tracking
     track_base = tracking.base_url(db, s) or base_url
-    pass_script = (Path(__file__).resolve().parent.parent / "static" / "pass-source.js").read_text().replace("__ADOPS_TRACK_HOST__", track_base)
+    pass_script = ((Path(__file__).resolve().parent.parent / "static" / "pass-source.js").read_text()
+                   .replace("__ADOPS_TRACK_HOST__", track_base)
+                   .replace("__ADOPS_EXTRA_PARAMS__", s.get("url_param_extra", "")))
     ad_url_example = tracking.ad_url("https://your-prelander.com/", s["url_param"], "__CAMPAIGN_NAME__", s.get("tracking_mode", "direct"), track_base)
     # round-trip check: did the click id actually survive Glitchy? (last 20 postbacks)
     recent = db.query(models.PostbackEvent).order_by(models.PostbackEvent.id.desc()).limit(20).all()

@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Assets</h1>
+    <div class="muted">Which ad accounts carry the pixel and your TikTok profiles{% if snap.at %} · read {{ snap.at|ago }}{% else %} · never read yet{% endif %}</div></div>
+  <div class="actions">
+    <form method="post" action="/bc-assets/scan"><button class="btn" type="submit"{% if running %} disabled{% endif %}>{{ '↻ Reading…' if running else '↻ Run audit' }}</button></form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><span class="card-title">Main Business Center</span>
+    <span class="card-meta">the one that owns the pixel and the profiles — everything is measured against it</span></div>
+  <form method="post" action="/bc-assets/main" class="form-row" style="align-items:flex-end;">
+    <label class="field" style="max-width:320px;"><span class="field-label">Business Center ID</span>
+      <input type="text" name="bc_id" value="{{ main_bc }}" placeholder="7658285881817202708" inputmode="numeric">
+      <span class="hint">{% if snap.main_bc_name %}{{ snap.main_bc_name }} · {% endif %}Leave empty to let the dashboard guess it from the pixels it knows.</span></label>
+    <button class="btn" type="submit">Save</button>
+  </form>
+</div>
+
+{% if snap.at %}
+<div class="kpis" style="margin-top:12px;">
+  <div class="kpi"><div class="lab">Ad accounts</div><div class="val">{{ snap.summary.accounts }}</div><div class="sub">the dashboard manages</div></div>
+  <div class="kpi"><div class="lab">In the main BC</div><div class="val {{ 'bad' if snap.summary.in_main_bc < snap.summary.accounts }}">{{ snap.summary.in_main_bc }}</div><div class="sub">shared in — assets can be linked</div></div>
+  <div class="kpi"><div class="lab">With a pixel</div><div class="val {{ 'bad' if snap.summary.with_pixel < snap.summary.accounts }}">{{ snap.summary.with_pixel }}</div><div class="sub">of {{ snap.summary.pixels }} pixel(s) in the BC</div></div>
+  <div class="kpi"><div class="lab">Every profile</div><div class="val {{ 'bad' if snap.summary.all_profiles < snap.summary.accounts }}">{{ snap.summary.all_profiles }}</div><div class="sub">{{ snap.summary.profiles }} profile(s) to link</div></div>
+  <div class="kpi"><div class="lab">Fully wired</div><div class="val {{ 'good' if snap.summary.ready == snap.summary.accounts else 'bad' }}">{{ snap.summary.ready }}</div><div class="sub">nothing left to do</div></div>
+</div>
+{% endif %}
+
+{% if snap.errors %}
+<div class="card" style="margin-top:12px;">
+  <div class="card-header"><span class="card-title">Notes from the last audit</span></div>
+  {% for e in snap.errors %}<div class="attn-row"><span class="attn-dot" style="color:var(--warn);">●</span><span>{{ e }}</span></div>{% endfor %}
+</div>
+{% endif %}
+
+{% if snap.bcs %}
+<div class="card" style="margin-top:12px;">
+  <div class="card-header"><span class="card-title">Business Centers the dashboard can see</span>
+    <span class="card-meta">{{ snap.bcs|length }} · Admin is needed on the main one to link assets</span></div>
+  <table class="table">
+    <thead><tr><th>Business Center</th><th>ID</th><th>Your role</th><th>Tokens</th><th>Seen through</th></tr></thead>
+    <tbody>
+    {% for b in snap.bcs %}
+      <tr>
+        <td>{{ b.name }}{% if b.bc_id == snap.main_bc %} <span class="pill ok">main</span>{% endif %}</td>
+        <td class="mono" style="font-size:11.5px;">{{ b.bc_id }}</td>
+        <td>{% if b.role == 'ADMIN' %}<span class="pill ok">Admin</span>{% else %}<span class="pill mute">{{ b.role or '—' }}</span>{% endif %}</td>
+        <td class="mono">{{ b.tokens }}</td>
+        <td class="muted" style="font-size:11.5px;">{{ b.accounts|join(', ') }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{% if snap.pixels or snap.profiles %}
+<div class="card" style="margin-top:12px;">
+  <div class="card-header"><span class="card-title">What the main BC owns</span>
+    <span class="card-meta">{{ snap.pixels|length }} pixel(s) · {{ snap.profiles|length }} profile(s)</span></div>
+  <table class="table">
+    <thead><tr><th>Asset</th><th>Type</th><th>ID</th><th>Linked to</th></tr></thead>
+    <tbody>
+    {% for p in snap.pixels %}
+      <tr><td>{{ p.name }}</td><td><span class="pill mute">pixel</span></td><td class="mono" style="font-size:11.5px;">{{ p.id }}</td>
+          <td>{{ p.linked|length }} ad account(s){% if p.error %} <span class="muted">· {{ p.error }}</span>{% endif %}</td></tr>
+    {% endfor %}
+    {% for p in snap.profiles %}
+      <tr><td>{{ p.handle or p.name }}</td><td><span class="pill mute">profile</span></td><td class="mono" style="font-size:11.5px;">{{ p.id }}</td>
+          <td>{{ p.linked|length }} ad account(s){% if p.error %} <span class="muted">· {{ p.error }}</span>{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<div class="card" style="margin-top:12px;">
+  <div class="card-header"><span class="card-title">Ad accounts</span>
+    <span class="card-meta">
+      <a class="btn sm {{ 'primary' if show == 'gaps' }}" href="/bc-assets?show=gaps">Needs work {{ n_gaps }}</a>
+      <a class="btn sm {{ 'primary' if show == 'all' }}" href="/bc-assets?show=all">All {{ n_all }}</a>
+    </span></div>
+  {% if not snap.at %}
+  <div class="empty"><div class="empty-title">Nothing read yet</div>Press “Run audit” — it reads your Business Centers and reports what is linked where. It only reads; nothing is changed on TikTok.</div>
+  {% elif not rows %}
+  <div class="empty"><div class="empty-title">{{ 'Every account is fully wired' if show == 'gaps' else 'No ad accounts' }}</div>{{ 'Pixel and every profile are linked everywhere the dashboard manages.' if show == 'gaps' else 'Connect an ad account first.' }}</div>
+  {% else %}
+  <table class="table">
+    <thead><tr><th>Ad account</th><th>Owner BC</th><th>In main BC</th><th>Pixel</th><th>Profiles</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr>
+        <td>{{ r.name }}{% if not r.enabled %} <span class="pill mute">hidden</span>{% endif %}
+            <div class="muted mono" style="font-size:11px;">{{ r.advertiser_id }}</div></td>
+        <td class="muted" style="font-size:12px;">{{ r.owner_bc_name or r.owner_bc or '—' }}</td>
+        <td>{% if r.in_main_bc %}<span class="pill ok">yes</span>{% else %}<span class="pill err">no</span>{% endif %}</td>
+        <td>{% if r.pixels %}<span class="pill ok">{{ r.pixels|join(', ') }}</span>{% else %}<span class="pill err">none</span>{% endif %}</td>
+        <td>{% if snap.summary.profiles and not r.profiles_missing %}<span class="pill ok">all {{ r.profiles|length }}</span>
+            {% elif r.profiles %}<span class="pill warn">{{ r.profiles|length }} of {{ snap.summary.profiles }}</span>
+            {% else %}<span class="pill err">none</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  <div class="hint" style="padding:10px 14px;">This page only reads. Once it shows the real picture we wire the three writes behind it — share an ad account into the main BC, link the pixel, link every profile — one account at a time before any sweep.</div>
+</div>
+{% endblock %}

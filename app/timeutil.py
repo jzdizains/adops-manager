@@ -44,9 +44,14 @@ def range_bounds(range_key: str, start: str | None = None, end: str | None = Non
     range_key: today | yesterday | 7d | 30d | mtd | custom
     """
     if range_key == "custom" and start and end:
-        s = datetime.strptime(start, "%Y-%m-%d").replace(tzinfo=TZ)
-        e = datetime.strptime(end, "%Y-%m-%d").replace(tzinfo=TZ) + timedelta(days=1)
-        return s.astimezone(timezone.utc), e.astimezone(timezone.utc)
+        try:
+            s = datetime.strptime(start, "%Y-%m-%d").replace(tzinfo=TZ)
+            e = datetime.strptime(end, "%Y-%m-%d").replace(tzinfo=TZ)
+        except ValueError:          # a typed-in date that isn't one → today, never a 500
+            return local_midnight_utc(0), local_midnight_utc(1)
+        if e < s:
+            s, e = e, s             # dates picked back to front still give that range
+        return s.astimezone(timezone.utc), (e + timedelta(days=1)).astimezone(timezone.utc)
     if range_key == "yesterday":
         return local_midnight_utc(-1), local_midnight_utc(0)
     if range_key == "7d":

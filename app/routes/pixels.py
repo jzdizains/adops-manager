@@ -22,7 +22,7 @@ router = APIRouter()
 
 
 def _link_pixel_to_bc_accounts(db: Session, token: str, bc_id: str,
-                               pixel_id: str,
+                               pixel_code: str,
                                only: list[str] | None = None) -> tuple[int, list[str]]:
     """Link a BC-owned pixel to accounts under the BC (all enabled, or `only`).
     Batches of 20 with per-account fallback so one bad account is isolated."""
@@ -33,12 +33,12 @@ def _link_pixel_to_bc_accounts(db: Session, token: str, bc_id: str,
     for i in range(0, len(targets), 20):
         batch = targets[i:i + 20]
         try:
-            tiktok_api.bc_pixel_link_update(token, bc_id, pixel_id, batch, "LINK")
+            tiktok_api.bc_pixel_link_update(token, bc_id, pixel_code, batch, "LINK")
             ok_count += len(batch)
         except tiktok_api.TikTokError:
             for adv in batch:
                 try:
-                    tiktok_api.bc_pixel_link_update(token, bc_id, pixel_id, [adv], "LINK")
+                    tiktok_api.bc_pixel_link_update(token, bc_id, pixel_code, [adv], "LINK")
                     ok_count += 1
                 except tiktok_api.TikTokError as e:
                     failed.append(f"{adv}({e.code})")
@@ -252,7 +252,7 @@ def link_one(record_id: int, advertiser_id: str = Form(...), db: Session = Depen
     token = queries.any_access_token(db)
     if not p or not token or not p.owner_bc_id:
         return RedirectResponse("/pixels?err=missing", status_code=303)
-    ok_count, failed = _link_pixel_to_bc_accounts(db, token, p.owner_bc_id, p.pixel_id,
+    ok_count, failed = _link_pixel_to_bc_accounts(db, token, p.owner_bc_id, p.pixel_code or p.pixel_id,
                                                   only=[advertiser_id])
     if failed:
         return RedirectResponse(f"/pixels?err=Link+failed:+{failed[0]}", status_code=303)
@@ -392,7 +392,8 @@ def provision(pixel_name: str = Form(...), advertiser_id: str = Form(...),
             if rec:
                 rec.owner_bc_id = acct.owner_bc_id
                 db.commit()
-            ok_count, failed = _link_pixel_to_bc_accounts(db, token, acct.owner_bc_id, pixel_id)
+            ok_count, failed = _link_pixel_to_bc_accounts(db, token, acct.owner_bc_id,
+                                                          pixel_code or (rec.pixel_code if rec else "") or pixel_id)
             steps.append({"step": "Link to all BC accounts", "ok": not failed,
                           "detail": f"linked {ok_count}"
                           + (f" · failed: {', '.join(failed[:6])}" if failed else "")})

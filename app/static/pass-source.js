@@ -19,6 +19,11 @@
  */
 (function () {
   var KEY = "adops_pass", ALWAYS_WIN = { source: 1, ttclid: 1, clid: 1 }, SEP = "~";
+  // extra names the offer link should carry the same value under (a network that reads sub1/s1
+  // instead of source). Filled in by Settings → Tracking, or window.ADOPS_EXTRA before this script.
+  var EXTRA = (window.ADOPS_EXTRA || "__ADOPS_EXTRA_PARAMS__");
+  EXTRA = /__ADOPS/.test(EXTRA) ? [] : String(EXTRA).split(",").map(function (x) { return x.trim(); }).filter(Boolean);
+  EXTRA.forEach(function (n) { ALWAYS_WIN[n] = 1; });
   var TRACK_HOST = window.ADOPS_TRACK || "__ADOPS_TRACK_HOST__";
   if (/__ADOPS/.test(TRACK_HOST)) { try { var cs = document.currentScript; TRACK_HOST = cs && /^https?:/.test(cs.src) ? cs.src.replace(/\/static\/.*$/, "") : ""; } catch (e) { TRACK_HOST = ""; } }
 
@@ -38,6 +43,7 @@
     var o = {};
     for (var k in p) if (k !== "tt_cid" && k !== "tt_aid" && k !== "tt_ad") o[k] = p[k];
     if (o.source && (o.clid || o.ttclid)) o.source = o.source + SEP + (o.clid || o.ttclid);
+    if (o.source) EXTRA.forEach(function (n) { o[n] = o.source; });
     return o;
   }
 
@@ -64,6 +70,11 @@
   save(params);
   if (!Object.keys(params).length) return;
   var out = outgoing(params);
+  // Pages often want the values themselves — the TikTok pixel's identify() needs ttclid, for
+  // instance. Expose them (and keep them fresh once the click id arrives) rather than making
+  // every page re-parse the URL: window.adopsParams.ttclid / .source / .clid
+  function expose() { try { window.adopsParams = params; } catch (e) {} }
+  expose();
 
   // register the click once per ad click (a new ttclid / source) → short click id
   function register() {
@@ -71,7 +82,7 @@
     var body = JSON.stringify({ source: params.source || "", ttclid: params.ttclid || "", tt_cid: params.tt_cid || "", tt_aid: params.tt_aid || "", tt_ad: params.tt_ad || "", url: location.href.slice(0, 900), ref: document.referrer.slice(0, 400) });
     fetch(TRACK_HOST + "/t/click", { method: "POST", mode: "cors", credentials: "omit", keepalive: true, headers: { "Content-Type": "text/plain" }, body: body })
       .then(function (r) { return r.json(); })
-      .then(function (d) { if (d && d.click_id) { params.clid = d.click_id; save(params); out = outgoing(params); refresh(); } })
+      .then(function (d) { if (d && d.click_id) { params.clid = d.click_id; save(params); out = outgoing(params); expose(); refresh(); try { document.dispatchEvent(new CustomEvent("adops:click", { detail: params })); } catch (e) {} } })
       .catch(function () {});   // unreachable → links keep the raw ttclid packed (still attributable)
   }
 
@@ -100,8 +111,15 @@
   }
 
   function isOutbound(a) {
-    // rewrite links that leave this page's origin, plus anything marked data-pass
-    return a.hasAttribute("data-pass") || (a.host && a.host !== location.host);
+    // EVERY http(s) link gets the parameters — not just the ones leaving this host. A prelander
+    // very often exits through a link on its OWN domain (/go, /out, a page-builder route) that
+    // redirects to the offer server-side; those used to lose the source completely. Opt a link
+    // out with data-pass="off".
+    if (a.getAttribute("data-pass") === "off") return false;
+    if (a.hasAttribute("data-pass")) return true;
+    var href = a.getAttribute("href") || "";
+    if (/^(#|javascript:|mailto:|tel:|sms:)/i.test(href)) return false;
+    return a.protocol === "http:" || a.protocol === "https:";
   }
   function fixLinks(root) {
     (root.querySelectorAll ? root.querySelectorAll("a[href]") : []).forEach(function (a) {
