@@ -31,8 +31,12 @@ def bc_assets_page(request: Request, db: Session = Depends(get_db)):
     accounts = snap.get("accounts") or []
     show = request.query_params.get("show", "gaps")
     if show == "gaps":
+        # a pixel the audit could not READ is not a gap — it is an unknown, and listing
+        # all 428 accounts as "needs work" because of one refused call is noise, not signal
         rows = [r for r in accounts
-                if not r.get("in_main_bc") or not r.get("pixels") or r.get("profiles_missing")]
+                if not r.get("in_main_bc")
+                or (not r.get("pixels") and not r.get("pixels_unknown"))
+                or r.get("profiles_missing")]
     elif show == "disabled":
         rows = [r for r in accounts if not r.get("enabled")]
     else:
@@ -41,7 +45,9 @@ def bc_assets_page(request: Request, db: Session = Depends(get_db)):
         "title": "Assets", "active": "settings", "snap": snap, "rows": rows, "show": show,
         "n_all": len(accounts),
         "n_gaps": sum(1 for r in accounts
-                      if not r.get("in_main_bc") or not r.get("pixels") or r.get("profiles_missing")),
+                      if not r.get("in_main_bc")
+                      or (not r.get("pixels") and not r.get("pixels_unknown"))
+                      or r.get("profiles_missing")),
         "main_bc": snap.get("main_bc") or bc_assets.main_bc_id(db),
         "running": bool(jobs.pending(db, "bc_assets_scan")),
         "wiring": bool(jobs.pending(db, "bc_assets_wire")),

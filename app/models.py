@@ -925,3 +925,30 @@ class AssistantMessage(Base):
     role = Column(String, default="user")            # user | assistant
     content = Column(Text, default="[]")             # JSON list of API content blocks
     created_at = Column(DateTime, default=utcnow, index=True)
+
+
+# ---------------------------------------------------------------------------
+# Diagnostics — every error the app or TikTok produced, kept verbatim.
+#
+# The point is that nobody should ever have to screenshot an error code again:
+# whatever TikTok actually answered is recorded here, with the endpoint that
+# answered it and the request that provoked it (tokens stripped). Repeats of the
+# same error are counted on ONE row rather than filling the table.
+# ---------------------------------------------------------------------------
+
+class DiagEvent(Base):
+    __tablename__ = "diag_events"
+
+    id = Column(Integer, primary_key=True)
+    kind = Column(String, index=True, default="tiktok")   # tiktok | job | app
+    where = Column(String, index=True, default="")        # endpoint, job kind, or route
+    code = Column(String, default="")                     # TikTok's code, verbatim
+    message = Column(Text, default="")                    # TikTok's message, verbatim
+    context = Column(Text, default="{}")                  # request params / ids, redacted, JSON
+    request_id = Column(String, default="")               # TikTok's request_id — what support asks for
+    n = Column(Integer, default=1)                        # how many times this exact error repeated
+    first_at = Column(DateTime, default=utcnow, index=True)
+    last_at = Column(DateTime, default=utcnow, index=True)
+    seen = Column(Boolean, default=False, index=True)
+
+    __table_args__ = (Index("ix_diag_lookup", "kind", "where", "code"),)

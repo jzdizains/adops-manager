@@ -27,7 +27,9 @@
 <div class="kpis" style="margin-top:12px;">
   <div class="kpi"><div class="lab">Ad accounts</div><div class="val">{{ snap.summary.accounts }}</div><div class="sub">the dashboard manages</div></div>
   <div class="kpi"><div class="lab">In the main BC</div><div class="val {{ 'bad' if snap.summary.in_main_bc < snap.summary.accounts }}">{{ snap.summary.in_main_bc }}</div><div class="sub">shared in — assets can be linked</div></div>
-  <div class="kpi"><div class="lab">With a pixel</div><div class="val {{ 'bad' if snap.summary.with_pixel < snap.summary.accounts }}">{{ snap.summary.with_pixel }}</div><div class="sub">of {{ snap.summary.pixels }} pixel(s) in the BC</div></div>
+  <div class="kpi"><div class="lab">With a pixel</div>
+    {% if snap.pixels_unreadable %}<div class="val">?</div><div class="sub">TikTok refused the read — see Diagnostics</div>
+    {% else %}<div class="val {{ 'bad' if snap.summary.with_pixel < snap.summary.accounts }}">{{ snap.summary.with_pixel }}</div><div class="sub">of {{ snap.summary.pixels }} pixel(s) in the BC</div>{% endif %}</div>
   <div class="kpi"><div class="lab">Every profile</div><div class="val {{ 'bad' if snap.summary.all_profiles < snap.summary.accounts }}">{{ snap.summary.all_profiles }}</div><div class="sub">{{ snap.summary.profiles }} profile(s) to link</div></div>
   <div class="kpi"><div class="lab">Fully wired</div><div class="val {{ 'good' if snap.summary.ready == snap.summary.accounts else 'bad' }}">{{ snap.summary.ready }}</div><div class="sub">nothing left to do</div></div>
 </div>
@@ -160,7 +162,9 @@
         {% else %}
         <td>{% if c.in_main_bc %}<span class="pill ok">yes</span>{% if c.shared_via %} <span class="muted" style="font-size:11px;">shared in from {{ c.shared_via }}</span>{% endif %}
             {% else %}<span class="pill err">no</span>{% endif %}</td>
-        <td>{% if c.pixels %}<span class="pill ok">{{ c.pixels|join(', ') }}</span>{% else %}<span class="pill err">none</span>{% endif %}</td>
+        <td>{% if c.pixels %}<span class="pill ok">{{ c.pixels|join(', ') }}</span>
+            {% elif c.pixels_unknown %}<span class="pill mute" title="TikTok refused the read">couldn't read</span>
+            {% else %}<span class="pill err">none</span>{% endif %}</td>
         <td>{% if c.profiles_total and c.profiles >= c.profiles_total %}<span class="pill ok">all {{ c.profiles }}</span>
             {% elif c.profiles %}<span class="pill warn">{{ c.profiles }} of {{ c.profiles_total }}</span>
             {% else %}<span class="pill err">none</span>{% endif %}</td>
@@ -195,7 +199,9 @@
             <div class="muted mono" style="font-size:11px;">{{ r.advertiser_id }}</div></td>
         <td class="muted" style="font-size:12px;">{{ r.owner_bc_name or r.owner_bc or '—' }}</td>
         <td>{% if r.in_main_bc %}<span class="pill ok">yes</span>{% if r.shared_via %} <span class="clip muted" style="font-size:11px;" title="shared in by partner Business Center {{ r.shared_via }}">shared in</span>{% endif %}{% else %}<span class="pill err">no</span>{% endif %}</td>
-        <td>{% if r.pixels %}<span class="pill ok">{{ r.pixels|join(', ') }}</span>{% else %}<span class="pill err">none</span>{% endif %}</td>
+        <td>{% if r.pixels %}<span class="pill ok">{{ r.pixels|join(', ') }}</span>
+            {% elif r.pixels_unknown %}<span class="pill mute" title="TikTok refused the read — this is unknown, not empty">couldn't read</span>
+            {% else %}<span class="pill err">none</span>{% endif %}</td>
         <td>{% if snap.summary.profiles and not r.profiles_missing %}<span class="pill ok">all {{ r.profiles|length }}</span>
             {% elif r.profiles %}<span class="pill warn">{{ r.profiles|length }} of {{ snap.summary.profiles }}</span>
             {% else %}<span class="pill err">none</span>{% endif %}</td>

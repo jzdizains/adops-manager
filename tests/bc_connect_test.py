@@ -91,7 +91,7 @@ STORE["main_bc_id"] = MAIN
 BCS = {"tok-main": [{"bc_info": {"bc_id": MAIN, "name": "Main BC"}, "user_role": "ADMIN"}],
        "tok-sat": [{"bc_info": {"bc_id": SAT, "name": "Satellite BC"}, "user_role": "ADMIN"}]}
 
-world = {"shared": False, "writes": [], "partner_added": []}
+world = {"shared": False, "writes": [], "partner_added": [], "share_types_seen": set()}
 
 def reset(shared):
     world["shared"], world["writes"], world["partner_added"] = shared, [], []
@@ -132,8 +132,19 @@ tiktok_api.bc_pixel_linked_advertisers = _pixel_linked
 TT_LINKS = {"TT1": ["A1"]}
 tiktok_api.bc_tt_account_advertisers = (lambda tok, bc, aid, asset_type="TT_ACCOUNT", max_pages=20:
                                         list(TT_LINKS.get(aid, [])))
-tiktok_api.bc_partner_asset_get = (lambda tok, bc, partner, asset_type="ADVERTISER", share_type="SHARED_TO_ME":
-                                   [{"asset_id": "A2"}] if world["shared"] else [])
+tiktok_api.SHARE_TYPES = ("SHARED", "SHARING")
+def _partner_asset_get(tok, bc, partner, asset_type="ADVERTISER", share_type="SHARED"):
+    # TikTok refuses anything outside its enum — reproduce that, so a wrong value can never
+    # pass a test and reach the dashboard again:
+    #   "share_type: value is not one of the allowed values ... correct is SHARED, SHARING"
+    if share_type not in ("SHARED", "SHARING"):
+        raise TikTokError("share_type: value is not one of the allowed values, value is "
+                          f"{share_type} ,correct is SHARED, SHARING", 40002)
+    world["share_types_seen"].add(share_type)
+    if share_type == "SHARING":
+        return []                       # the main BC shares nothing outward
+    return [{"asset_id": "A2"}] if world["shared"] else []
+tiktok_api.bc_partner_asset_get = _partner_asset_get
 tiktok_api.bc_partner_list = lambda tok, bc: ([{"partner_id": SAT}] if world["shared"] else [])
 
 def _partner_add(tok, bc_id, partner_id, ids, role):
@@ -213,6 +224,11 @@ check("and says it came in through a partner", row.get("shared_via") == SAT, str
 check("and the main BC does not own it — only the partner read finds it",
       "A2" not in {a["asset_id"] for a in _assets(None, MAIN, "ADVERTISER")})
 
+check("both halves of the share relationship are read",
+      world["share_types_seen"] == {"SHARED", "SHARING"}, str(world["share_types_seen"]))
+check("an owned account is never labelled shared-in",
+      not any(r.get("shared_via") for r in snap["accounts"] if r["advertiser_id"] == "A1"))
+
 print("\n-- a pixel link past the first page is still seen --")
 reset(shared=True)
 bc_assets.scan(db)
@@ -233,6 +249,37 @@ check("it is not counted as wired", rep.get("confirmed") == [], str(rep.get("con
 check("the summary names the gap", "not every profile came back" in rep.get("summary", ""), rep.get("summary"))
 check("the breakdown is per account", any(c["advertiser_id"] == "A2" and c["ok"] is False
                                           for c in rep.get("checks", [])), str(rep.get("checks")))
+
+print("\n-- a pixel read TikTok refuses is unknown, never 'none' --")
+reset(shared=True)
+_pl = tiktok_api.bc_pixel_linked_advertisers
+_tt = tiktok_api.bc_tt_account_advertisers
+def _no_permission(*a, **k):
+    raise TikTokError("You don't have permission to the asset(PX1).", 40002)
+tiktok_api.bc_pixel_linked_advertisers = _no_permission
+tiktok_api.bc_tt_account_advertisers = (lambda tok, bc, aid, asset_type="TT_ACCOUNT", max_pages=20:
+                                        _no_permission() if asset_type == "PIXEL" else list(TT_LINKS.get(aid, [])))
+snap = bc_assets.scan(db)
+row = next(r for r in snap["accounts"] if r["advertiser_id"] == "A1")
+check("the account is marked unknown, not empty", row.get("pixels_unknown") is True, str(row))
+check("the snapshot says the pixel read failed", snap.get("pixels_unreadable") is True)
+check("nothing is counted as fully wired on an unknown",
+      snap["summary"]["ready"] == 0, str(snap["summary"]))
+check("the failure is reported, not swallowed",
+      any("linked to" in e for e in snap["errors"]), str(snap["errors"])[:200])
+rep = bc_assets.connect_bc(db, SAT, dry_run=False)
+check("the run says the column is unknown", "unknown, not empty" in rep.get("summary", ""), rep.get("summary"))
+check("and does NOT claim a missing pixel link",
+      "no pixel link came back" not in rep.get("summary", ""), rep.get("summary"))
+
+print("\n-- and the second route is used when the first is refused --")
+tiktok_api.bc_tt_account_advertisers = (lambda tok, bc, aid, asset_type="TT_ACCOUNT", max_pages=20:
+                                        ["A1", "A2"] if asset_type == "PIXEL" else list(TT_LINKS.get(aid, [])))
+snap = bc_assets.scan(db)
+row = next(r for r in snap["accounts"] if r["advertiser_id"] == "A1")
+check("the fallback answered", row["pixels"] == ["Main pixel"], str(row["pixels"]))
+check("so nothing is unknown any more", not row.get("pixels_unknown"), str(row))
+tiktok_api.bc_pixel_linked_advertisers, tiktok_api.bc_tt_account_advertisers = _pl, _tt
 
 print("\n-- the page's poll never parses the whole snapshot --")
 check("snapshot_at is the stored timestamp",

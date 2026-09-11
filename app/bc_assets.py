@@ -146,6 +146,40 @@ def _bcs_for_token(token: str) -> dict[str, dict]:
     return out
 
 
+def _pixel_linked(token: str, main: str, p: dict) -> tuple[list[str], str, bool]:
+    """Which ad accounts a BC pixel is linked to — (ids, note, could_we_read_it).
+
+    /bc/pixel/link/get/ is the documented way and it is tried first. On this account it
+    answers 40002 "You don't have permission to the asset(...)" for every pixel, even
+    though the very same token links pixels with /bc/pixel/link/update/ successfully.
+    So a second route is tried: the endpoint that already reads profile links, asked
+    about a PIXEL asset instead.
+
+    The third return value is the important one. A read that failed is NOT an empty
+    result, and rendering it as "no pixel" is what sent three rounds of debugging after
+    a wiring bug that did not exist.
+    """
+    tries = []
+    code = (p.get("code") or "").strip()
+    asset_id = (p.get("id") or "").strip()
+    if code:
+        tries.append(("/bc/pixel/link/get/ (pixel_code)",
+                      lambda: tiktok_api.bc_pixel_linked_advertisers(token, main, code)))
+    if asset_id:
+        tries.append(("/bc/asset/advertiser/assigned/ (asset_type PIXEL)",
+                      lambda: tiktok_api.bc_tt_account_advertisers(token, main, asset_id, "PIXEL")))
+        if asset_id != code:
+            tries.append(("/bc/pixel/link/get/ (asset id)",
+                          lambda: tiktok_api.bc_pixel_linked_advertisers(token, main, asset_id)))
+    errs = []
+    for label, call in tries:
+        try:
+            return [str(x) for x in (call() or [])], "; ".join(errs), True
+        except tiktok_api.TikTokError as e:
+            errs.append(f"{label}: {e.message} (code {e.code})")
+    return [], "; ".join(errs), False
+
+
 def scan(db: Session, on_progress=None, should_stop=None) -> dict:
     """Read the whole picture and store it as a snapshot. Never raises."""
     def say(t: str) -> None:
@@ -220,10 +254,12 @@ def scan(db: Session, on_progress=None, should_stop=None) -> dict:
         if should_stop and should_stop():
             snap["errors"].append("stopped")
             return _store(db, snap)
-        try:
-            p["linked"] = tiktok_api.bc_pixel_linked_advertisers(token, main, p.get("code") or p["id"])
-        except tiktok_api.TikTokError as e:
-            p["error"] = f"{e.message} (code {e.code})"
+        p["linked"], note, ok = _pixel_linked(token, main, p)
+        p["read_ok"] = ok
+        if note:
+            p["error"] = note
+        if not ok:
+            snap["errors"].append(f"could not read which ad accounts pixel “{p['name']}” is linked to: {note}")
     for pr in snap["profiles"]:
         if should_stop and should_stop():
             snap["errors"].append("stopped")
@@ -244,6 +280,10 @@ def scan(db: Session, on_progress=None, should_stop=None) -> dict:
         for adv in pr["linked"]:
             profile_linked.setdefault(adv, []).append(pr["handle"] or pr["name"])
     n_profiles = len(snap["profiles"])
+    # every pixel read failed → "no pixel" is not something we know, it is something we
+    # could not find out. The two must never look the same on the page.
+    pixels_unreadable = bool(snap["pixels"]) and not any(p.get("read_ok") for p in snap["pixels"])
+    snap["pixels_unreadable"] = pixels_unreadable
     for a in db.query(models.AdAccount).order_by(models.AdAccount.advertiser_name).all():
         adv = a.advertiser_id
         have = sorted(profile_linked.get(adv, []))
@@ -256,10 +296,12 @@ def scan(db: Session, on_progress=None, should_stop=None) -> dict:
             "in_main_bc": adv in in_main,
             "shared_via": shared_via.get(adv, ""),
             "pixels": sorted(pixel_linked.get(adv, [])),
+            "pixels_unknown": pixels_unreadable,
             "profiles": have,
             "profiles_missing": max(0, n_profiles - len(have)),
         })
-    ready = sum(1 for r in snap["accounts"] if r["in_main_bc"] and r["pixels"] and not r["profiles_missing"])
+    ready = (0 if pixels_unreadable else
+             sum(1 for r in snap["accounts"] if r["in_main_bc"] and r["pixels"] and not r["profiles_missing"]))
     snap["summary"] = {
         "accounts": len(snap["accounts"]),
         "in_main_bc": sum(1 for r in snap["accounts"] if r["in_main_bc"]),
@@ -397,13 +439,32 @@ def _asset_ids(items) -> set[str]:
     return out
 
 
+def _partner_shared_ids(token: str, bc_id: str, partner_id: str) -> tuple[set[str], str]:
+    """Ad account ids that exist between bc_id and partner_id, whichever side shared them.
+
+    TikTok's share_type enum is SHARED / SHARING, and its documentation does not say which
+    way round they read. It does not need to: in this setup the main BC shares nothing
+    outward, so one of the two lists is empty and reading both is exactly as correct as
+    knowing which is which — without the guess. A note is only raised if BOTH refuse.
+    """
+    ids: set[str] = set()
+    errs: list[str] = []
+    for st in tiktok_api.SHARE_TYPES:
+        try:
+            ids |= _asset_ids(tiktok_api.bc_partner_asset_get(token, bc_id, str(partner_id),
+                                                              "ADVERTISER", st))
+        except tiktok_api.TikTokError as e:
+            errs.append(f"{st}: {e.message} (code {e.code})")
+    return ids, ("; ".join(errs) if len(errs) == len(tiktok_api.SHARE_TYPES) else "")
+
+
 def main_bc_advertisers(token: str, main: str,
                         say=lambda t: None) -> tuple[set[str], dict[str, str], list[str]]:
     """Every ad account the MAIN Business Center can actually use, however it got there.
 
     Two ways an ad account is usable from the main BC, and the audit used to see only the
     first: the BC owns it (/bc/asset/admin/get/), or a partner BC shared it in
-    (/bc/partner/asset/get/, SHARED_TO_ME — which is exactly what Connect sets up).
+    (/bc/partner/asset/get/ — which is exactly what Connect sets up).
     Reading only the owned list meant every account connected through a partnership was
     reported as "not in the main BC" forever, no matter how well the run had worked.
 
@@ -421,17 +482,17 @@ def main_bc_advertisers(token: str, main: str,
     except tiktok_api.TikTokError as e:
         notes.append(f"could not list the main BC's partners: {e.message} (code {e.code})")
         partners = []
+    owned = set(ids)
     pids = sorted(_partner_ids(partners))[:60]           # a run must stay bounded
     for i, pid in enumerate(pids, 1):
         say(f"reading partner {i} of {len(pids)}'s shared ad accounts")
-        try:
-            shared = _asset_ids(tiktok_api.bc_partner_asset_get(token, main, pid,
-                                                                "ADVERTISER", "SHARED_TO_ME"))
-        except tiktok_api.TikTokError as e:
-            notes.append(f"could not read what partner {pid} shares: {e.message} (code {e.code})")
+        shared, err = _partner_shared_ids(token, main, pid)
+        if err:
+            notes.append(f"could not read what partner {pid} shares: {err}")
             continue
         for a in shared:
-            via.setdefault(a, pid)
+            if a not in owned:                           # an account the main BC owns is not
+                via.setdefault(a, pid)                   # "shared in", whichever list it appears on
         ids |= shared
     return ids, via, notes
 
@@ -465,12 +526,11 @@ def _usable_from_main(main_token: str, main: str, bc_id: str) -> tuple[set[str],
     except tiktok_api.TikTokError as e:
         ok_owned = False
         notes.append(f"could not re-read the main BC's ad accounts: {e.message} (code {e.code})")
-    try:
-        ids |= _asset_ids(tiktok_api.bc_partner_asset_get(main_token, main, str(bc_id),
-                                                          "ADVERTISER", "SHARED_TO_ME"))
-    except tiktok_api.TikTokError as e:
+    shared, err = _partner_shared_ids(main_token, main, str(bc_id))
+    ids |= shared
+    if err:
         ok_shared = False
-        notes.append(f"could not read the partner share: {e.message} (code {e.code})")
+        notes.append(f"could not read the partner share: {err}")
     # Both reads have to answer before an absence means anything. If either failed, an id
     # missing from this set proves nothing — carry on and let TikTok refuse the link itself,
     # rather than skipping work that would have succeeded.
@@ -569,7 +629,7 @@ def connect_bc(db: Session, bc_id: str, role: str = "OPERATOR", dry_run: bool = 
         report["steps"].append({"step": "Check what arrives in the main Business Center", "ok": None,
                                 "detail": "a preview can't tell — TikTok only answers this after the share is sent",
                                 "request": {"endpoint": "/bc/partner/asset/get/", "bc_id": main,
-                                            "partner_id": str(bc_id), "share_type": "SHARED_TO_ME"}})
+                                            "partner_id": str(bc_id), "share_type": "SHARED + SHARING"}})
         linkable = list(owned)
     else:
         say("checking what actually arrived in the main Business Center")
@@ -586,7 +646,7 @@ def connect_bc(db: Session, bc_id: str, role: str = "OPERATOR", dry_run: bool = 
                        if not waiting else
                        f"{len(linkable)} of {len(owned)} usable — {len(waiting)} still not visible to the main BC"),
             "request": {"endpoint": "/bc/partner/asset/get/", "bc_id": main,
-                        "partner_id": str(bc_id), "share_type": "SHARED_TO_ME"}})
+                        "partner_id": str(bc_id), "share_type": "SHARED + SHARING"}})
         if waiting:
             hint = _partnership_note(main_token, main, str(bc_id))
             report["approval_needed"] = True
@@ -629,10 +689,13 @@ def connect_bc(db: Session, bc_id: str, role: str = "OPERATOR", dry_run: bool = 
             if not r:
                 checks.append({"advertiser_id": a, "name": a, "known": False})
                 continue
-            full = bool(r.get("in_main_bc") and r.get("pixels") and not r.get("profiles_missing"))
+            unknown = bool(r.get("pixels_unknown"))
+            full = bool(r.get("in_main_bc") and (r.get("pixels") or unknown)
+                        and not r.get("profiles_missing"))
             if full:
                 confirmed.append(a)
             checks.append({"advertiser_id": a, "name": r.get("name") or a, "known": True, "ok": full,
+                           "pixels_unknown": unknown,
                            "in_main_bc": bool(r.get("in_main_bc")),
                            "shared_via": r.get("shared_via", ""),
                            "pixels": list(r.get("pixels") or []),
@@ -650,11 +713,15 @@ def connect_bc(db: Session, bc_id: str, role: str = "OPERATOR", dry_run: bool = 
                 why = []
                 if any(not c["in_main_bc"] for c in miss):
                     why.append("the main BC still doesn't list it")
-                if any(not c["pixels"] for c in miss):
+                if any(not c["pixels"] and not c["pixels_unknown"] for c in miss):
                     why.append("no pixel link came back")
                 if any(c["profiles"] < c["profiles_total"] for c in miss):
                     why.append("not every profile came back")
-                report["summary"] += " Still missing: " + "; ".join(why) + "."
+                if why:
+                    report["summary"] += " Still missing: " + "; ".join(why) + "."
+            if any(c.get("pixels_unknown") for c in known):
+                report["summary"] += (" TikTok would not say which ad accounts the pixels are linked to "
+                                      "— the pixel column is unknown, not empty. See Diagnostics.")
         elif not waiting:
             report["summary"] += (" These ad accounts aren't in the dashboard yet — sync ad accounts "
                                   "to see their pixel and profile status here.")
@@ -787,7 +854,7 @@ def wire(db: Session, advertiser_id: str, role: str = "OPERATOR", dry_run: bool 
                     "step": "Check it arrived in the main Business Center", "ok": False,
                     "detail": "not visible to the main BC yet — the pixel and profiles can't be linked until it is",
                     "request": {"endpoint": "/bc/partner/asset/get/", "bc_id": main,
-                                "partner_id": owner, "share_type": "SHARED_TO_ME"}})
+                                "partner_id": owner, "share_type": "SHARED + SHARING"}})
                 report.setdefault("notes", []).append(report["approval_hint"])
 
     # ---- 2 + 3. the pixel(s) and every profile

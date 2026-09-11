@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Diagnostics</h1>
+    <div class="muted">Every error the app or TikTok produced — in TikTok's own words, with the request that caused it</div></div>
+  <div class="actions">
+    <a class="btn ghost" href="/diagnostics.json{% if kind or q %}?kind={{ kind }}&q={{ q }}{% endif %}" target="_blank" rel="noopener">Raw feed ↗</a>
+    {% if unseen %}<form method="post" action="/diagnostics/seen" style="display:inline;"><button class="btn" type="submit">Mark {{ unseen }} as read</button></form>{% endif %}
+  </div>
+</div>
+
+<div class="card">
+  <form method="get" action="/diagnostics" class="form-row" style="align-items:flex-end;">
+    <label class="field" style="max-width:220px;"><span class="field-label">Source</span>
+      <select name="kind">{% for val, label in kinds %}<option value="{{ val }}"{% if val == kind %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+    <label class="field" style="max-width:320px;"><span class="field-label">Contains</span>
+      <input type="search" name="q" value="{{ q }}" placeholder="share_type, 40002, /bc/partner/…"></label>
+    <button class="btn" type="submit">Filter</button>
+    {% if kind or q %}<a class="btn ghost" href="/diagnostics">Clear</a>{% endif %}
+  </form>
+</div>
+
+{% if not rows %}
+<div class="card" style="margin-top:12px;">
+  <div class="empty"><div class="empty-title">Nothing to report</div>
+    No errors recorded{% if kind or q %} for this filter{% endif %}. This page fills itself as the app runs — there is nothing to switch on.</div>
+</div>
+{% else %}
+<div class="card" style="margin-top:12px;">
+  <div class="card-header"><span class="card-title">{{ rows|length }} error{{ '' if rows|length == 1 else 's' }}</span>
+    <span class="card-meta">newest first · repeats of one error are counted, not repeated</span></div>
+  <table class="table">
+    <thead><tr><th>When</th><th>Where</th><th>Code</th><th>What TikTok said</th><th>Request</th></tr></thead>
+    <tbody>
+      {% for e in rows %}
+      <tr>
+        <td style="white-space:nowrap;">{{ e.last_at|ago }}
+          {% if e.n > 1 %}<div><span class="pill warn">×{{ e.n }}</span></div>{% endif %}</td>
+        <td><span class="pill mute">{{ e.kind }}</span>
+          <div class="mono" style="font-size:11.5px;">{{ e.where }}</div></td>
+        <td class="mono" style="font-size:11.5px;">{{ e.code }}</td>
+        <td style="max-width:520px;">
+          <span data-expand="{{ e.message }}">{{ e.message }}</span>
+          {% if e.request_id %}<div class="muted mono" style="font-size:11px;">request_id {{ e.request_id }}</div>{% endif %}
+        </td>
+        <td><span class="clip mono" style="font-size:11px;max-width:260px;" data-expand="{{ e.context|tojson }}">{{ e.context|tojson }}</span></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% endblock %}

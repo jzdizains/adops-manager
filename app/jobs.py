@@ -178,6 +178,15 @@ def run_job(db: Session, job: models.Job) -> None:
         res = fn(db, payload, job) or {}
         job.status = "done" if res.get("ok", True) else "error"
         job.detail = str(res.get("detail") or "")[:600]
+        if job.status == "error":
+            # a handler that reports failure without raising — the BC runs do exactly this
+            try:
+                from . import diag
+                diag.record("job", job.kind, "reported-failure", job.detail,
+                            {"job_id": job.id, "title": job.title,
+                             "payload": json.loads(job.payload or "{}")})
+            except Exception:      # noqa: BLE001
+                pass
         if res.get("href"):
             job.href = str(res["href"])
     except Exception as e:  # noqa: BLE001 — a job must never kill the worker
@@ -186,6 +195,13 @@ def run_job(db: Session, job: models.Job) -> None:
         job = db.merge(job)
         job.status = "error"
         job.detail = f"{type(e).__name__}: {str(e)[:400]}"
+        try:
+            from . import diag
+            diag.record("job", job.kind, type(e).__name__, str(e)[:1500],
+                        {"job_id": job.id, "title": job.title,
+                         "payload": json.loads(job.payload or "{}")})
+        except Exception:      # noqa: BLE001
+            pass
     job.finished_at = _now()
     job.progress = ""
     _progress_at.pop(job.id, None)     # the throttle map must not grow with every job

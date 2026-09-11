@@ -38,14 +38,53 @@ def _endpoint(resp: httpx.Response) -> str:
     return p.split("/v1.3", 1)[1] if "/v1.3" in p else p
 
 
+def _request_context(resp: httpx.Response) -> dict:
+    """What we asked for, so an error is readable without guessing. The access token
+    travels in a header and is never part of this; diag.redact strips the rest."""
+    ctx: dict = {}
+    try:
+        req = resp.request
+        ctx["method"] = req.method
+        params = dict(req.url.params)
+        if params:
+            ctx["params"] = params
+        if req.method == "POST":
+            raw = req.content or b""
+            if raw and len(raw) <= 4000:
+                try:
+                    ctx["body"] = json.loads(raw)
+                except ValueError:
+                    ctx["body"] = raw.decode("utf-8", "replace")[:400]
+            elif raw:
+                ctx["body"] = f"[{len(raw)} bytes]"
+        ctx["http_status"] = resp.status_code
+    except Exception:      # noqa: BLE001 — context is a nicety, never a failure
+        pass
+    return ctx
+
+
+def _note(resp: httpx.Response, code: Any, message: str, request_id: str = "") -> None:
+    try:
+        from . import diag
+        diag.record("tiktok", _endpoint(resp), code, message,
+                    _request_context(resp), request_id)
+    except Exception:      # noqa: BLE001
+        pass
+
+
 def _parse(resp: httpx.Response) -> Any:
     try:
         body = resp.json()
     except Exception:
+        _note(resp, "HTTP", f"Non-JSON response (HTTP {resp.status_code}): {resp.text[:300]}")
         raise TikTokError("HTTP", f"Non-JSON response (HTTP {resp.status_code})",
                           data=resp.text[:500], path=_endpoint(resp))
     code = body.get("code")
     if code != 0:
+        # Recorded BEFORE it is raised: some callers handle a TikTok error on purpose
+        # (retries, batch-halving, availability probes) and the feed should still show
+        # what TikTok said — that is exactly where the surprises hide.
+        _note(resp, code, body.get("message", ""), body.get("request_id", ""))
         raise TikTokError(code, body.get("message", ""), body.get("request_id", ""), body.get("data"),
                           path=_endpoint(resp))
     return body.get("data", {})
@@ -256,12 +295,17 @@ def bc_partner_add(access_token: str, bc_id: str, partner_id: str,
     return api_post("/bc/partner/add/", access_token, payload)
 
 
+# TikTok's own words, from the 40002 it answers on a wrong value:
+#   "share_type: value is not one of the allowed values ... correct is SHARED, SHARING"
+SHARE_TYPES = ("SHARED", "SHARING")
+
+
 def bc_partner_asset_get(access_token: str, bc_id: str, partner_id: str,
                          asset_type: str = "ADVERTISER",
-                         share_type: str = "SHARED_TO_ME") -> list[dict]:
+                         share_type: str = "SHARED") -> list[dict]:
     """GET /bc/partner/asset/get/ — the assets actually shared between bc_id and
-    partner_id. `share_type` is SHARED_TO_ME (assets the partner gave us) or
-    SHARED_BY_ME (assets we gave the partner).
+    partner_id. `share_type` is SHARED or SHARING (the two halves of the relationship);
+    read both and union them rather than betting on which way round they are named.
 
     This is the only honest answer to "did the share go through?": /bc/partner/add/
     returns 0 as soon as TikTok has *recorded* the request, and a partnership the
