@@ -41,8 +41,19 @@ def bc_assets_page(request: Request, db: Session = Depends(get_db)):
         rows = [r for r in accounts if not r.get("enabled")]
     else:
         rows = accounts
+    # Business Centers present in the table, for the filter — name them from the audit so a BC
+    # the dashboard can no longer see still filters to the accounts it owns
+    bc_names: dict[str, str] = {}
+    for r in accounts:
+        key = r.get("owner_bc") or ""
+        bc_names.setdefault(key, r.get("owner_bc_name") or key or "No Business Center")
+    bc_filter = sorted(({"id": k, "name": v,
+                         "n": sum(1 for r in accounts if (r.get("owner_bc") or "") == k)}
+                        for k, v in bc_names.items()),
+                       key=lambda b: (b["id"] == "", b["name"].lower()))
     return render(request, "bc_assets.html", {
         "title": "Assets", "active": "settings", "snap": snap, "rows": rows, "show": show,
+        "bc_filter": bc_filter,
         "n_all": len(accounts),
         "n_gaps": sum(1 for r in accounts
                       if not r.get("in_main_bc")

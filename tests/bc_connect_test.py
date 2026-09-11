@@ -41,9 +41,12 @@ class _Col:                    # AdAccount.access_token etc. are class attribute
     def __ne__(self, o): return self
 class AdAccount:
     access_token = id = advertiser_name = enabled = _Col()
-    def __init__(self, advertiser_id, advertiser_name, access_token, owner_bc_id, enabled=True):
+    def __init__(self, advertiser_id, advertiser_name, access_token, owner_bc_id, enabled=True,
+                 created_at=None):
         self.advertiser_id, self.advertiser_name = advertiser_id, advertiser_name
         self.access_token, self.owner_bc_id, self.enabled = access_token, owner_bc_id, enabled
+        from datetime import datetime, timezone
+        self.created_at = created_at or datetime.now(timezone.utc).replace(tzinfo=None)
 class PixelRecord:
     def __init__(self, owner_bc_id): self.owner_bc_id = owner_bc_id
 class _PLCol(_Col):
@@ -327,6 +330,24 @@ check("clearing the choice goes back to all of them",
       all(p["use"] for p in snap["pixels"]), str([p.get("use") for p in snap["pixels"]]))
 tiktok_api.bc_assets_admin = _assets_one
 tiktok_api.bc_pixel_linked_advertisers = _pixel_linked
+
+print("\n-- the audit carries when each account was connected, for the page's filter --")
+reset(shared=True)
+snap = bc_assets.scan(db)
+check("every account row has a connected date",
+      all(r.get("added") for r in snap["accounts"]), str(snap["accounts"][0]))
+check("it is an ISO timestamp the page can parse",
+      snap["accounts"][0]["added"].count("-") == 2 and "T" in snap["accounts"][0]["added"],
+      snap["accounts"][0]["added"])
+
+print("\n-- an account with no recorded date does not break the audit --")
+ACCOUNTS[0].created_at = None
+snap = bc_assets.scan(db)
+check("the row is still produced", len(snap["accounts"]) == 2, str(len(snap["accounts"])))
+check("with an empty date rather than a crash", snap["accounts"][0]["added"] == "",
+      repr(snap["accounts"][0]["added"]))
+from datetime import datetime as _dt, timezone as _tz
+ACCOUNTS[0].created_at = _dt.now(_tz.utc).replace(tzinfo=None)
 
 print("\n-- the page's poll never parses the whole snapshot --")
 check("snapshot_at is the stored timestamp",

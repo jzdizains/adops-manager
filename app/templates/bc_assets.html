@@ -202,14 +202,32 @@
   {% elif not rows %}
   <div class="empty"><div class="empty-title">{{ 'Every account is fully wired' if show == 'gaps' else 'No ad accounts' }}</div>{{ 'Pixel and every profile are linked everywhere the dashboard manages.' if show == 'gaps' else 'Connect an ad account first.' }}</div>
   {% else %}
+  <div class="filterbar" id="acaBar" style="padding:10px 14px;border-bottom:1px solid var(--line);">
+    <div class="search-wrap" style="max-width:250px;"><input type="search" id="acaQ" placeholder="Name, advertiser id or BC…"></div>
+    <select id="acaBc" style="width:auto;max-width:260px;" title="Only accounts owned by this Business Center">
+      <option value="">Every Business Center</option>
+      {% for b in bc_filter %}<option value="{{ b.id }}">{{ b.name }} ({{ b.n }})</option>{% endfor %}
+    </select>
+    <div class="seg" id="acaNew">
+      <button type="button" data-days="" class="on">Any age</button>
+      <button type="button" data-days="1">Today</button>
+      <button type="button" data-days="7">7 days</button>
+      <button type="button" data-days="30">30 days</button>
+    </div>
+    <label class="muted" style="font-size:12px;display:inline-flex;gap:5px;align-items:center;cursor:pointer;">
+      <input type="checkbox" id="acaNewest"> Newest first</label>
+    <span class="muted" id="acaShown" style="margin-left:auto;font-size:12px;"></span>
+  </div>
   <table class="table">
-    <thead><tr><th>Ad account</th><th>Owner BC</th><th>In main BC</th><th>Pixel</th><th>Profiles</th><th></th></tr></thead>
-    <tbody>
+    <thead><tr><th>Ad account</th><th>Owner BC</th><th>Connected</th><th>In main BC</th><th>Pixel</th><th>Profiles</th><th></th></tr></thead>
+    <tbody id="acaBody">
     {% for r in rows %}
-      <tr>
+      <tr class="aca-row" data-bc="{{ r.owner_bc or '' }}" data-added="{{ r.added or '' }}"
+          data-search="{{ (r.name or '')|lower }} {{ r.advertiser_id }} {{ (r.owner_bc_name or '')|lower }} {{ r.owner_bc or '' }}">
         <td>{{ r.name }}{% if not r.enabled %} <span class="pill mute">hidden</span>{% endif %}
             <div class="muted mono" style="font-size:11px;">{{ r.advertiser_id }}</div></td>
         <td class="muted" style="font-size:12px;">{{ r.owner_bc_name or r.owner_bc or '—' }}</td>
+        <td class="muted" style="font-size:12px;white-space:nowrap;">{% if r.added %}{{ r.added|ago }}{% else %}<span title="connected before the dashboard started recording this">—</span>{% endif %}</td>
         <td>{% if r.in_main_bc %}<span class="pill ok">yes</span>{% if r.shared_via %} <span class="clip muted" style="font-size:11px;" title="shared in by partner Business Center {{ r.shared_via }}">shared in</span>{% endif %}{% else %}<span class="pill err">no</span>{% endif %}</td>
         <td>{% if r.pixels %}<span class="pill ok">{{ r.pixels|join(', ') }}</span>
             {% elif r.pixels_unknown %}<span class="pill mute" title="TikTok refused the read — this is unknown, not empty">couldn't read</span>
@@ -229,6 +247,7 @@
     {% endfor %}
     </tbody>
   </table>
+  <div class="empty" id="acaEmpty" hidden><div class="empty-title">No ad account matches</div>Try a different Business Center, a wider age range, or clear the search.</div>
   {% endif %}
   <div class="hint" style="padding:10px 14px;"><b>Preview</b> shows the exact requests and sends nothing. <b>Wire</b> runs them for that one account: share it into the main BC (needs an Admin token of the BC that owns it), link the pixel, link every profile. Steps that are already done are skipped, so pressing it twice is harmless.</div>
 </div>
@@ -323,4 +342,6 @@
   document.addEventListener("visibilitychange", function () { if (!document.hidden && timer) poll(); });
 })();
 </script>
+<script src="/static/bc-accounts-filter.js?v={{ STATIC_V }}"></script>
+
 {% endblock %}

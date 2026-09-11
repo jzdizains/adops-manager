@@ -355,6 +355,7 @@ def scan(db: Session, on_progress=None, should_stop=None) -> dict:
             "advertiser_id": adv,
             "name": a.advertiser_name or adv,
             "enabled": bool(a.enabled),
+            "added": a.created_at.isoformat(timespec="seconds") if a.created_at else "",
             "owner_bc": a.owner_bc_id or "",
             "owner_bc_name": (seen_bcs.get(a.owner_bc_id or "") or {}).get("name", ""),
             "in_main_bc": adv in in_main,
