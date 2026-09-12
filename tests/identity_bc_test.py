@@ -43,8 +43,11 @@ models.AdAccount = AdAccount
 sys.modules["app.models"] = models
 tiktok_api = types.ModuleType("app.tiktok_api")
 class TikTokError(Exception):
-    def __init__(self, message="boom", code=40002):
-        super().__init__(message); self.message, self.code = message, code
+    """Same shape as app.tiktok_api.TikTokError — (code, message, request_id, data, path)."""
+    def __init__(self, code=40002, message="boom", request_id="", data=None, path=""):
+        super().__init__(f"{code}: {message}")
+        self.code, self.message = code, message
+        self.request_id, self.data, self.path = request_id, data, path
 tiktok_api.TikTokError = TikTokError
 sys.modules["app.tiktok_api"] = tiktok_api
 bc_assets = types.ModuleType("app.bc_assets")
@@ -60,7 +63,7 @@ helpers = types.ModuleType("app.routes.campaigns")
 # the real module resolves `from .. import bc_assets` against its package — give the
 # extracted helpers the same package context so the tested code path is the shipped one
 helpers.__package__ = "app.routes"
-helpers.__dict__.update({"models": models, "tiktok_api": tiktok_api, "Session": object,
+helpers.__dict__.update({"models": models, "tiktok_api": tiktok_api, "Session": object, "re": re,
                          "__package__": "app.routes", "__name__": "app.routes.campaigns"})
 routes_pkg = types.ModuleType("app.routes"); routes_pkg.__path__ = [os.path.join(ROOT, "app", "routes")]
 sys.modules["app.routes"] = routes_pkg
@@ -75,7 +78,7 @@ def fake_list(token, adv, identity_type=None, identity_authorized_bc_id=""):
         return []                                   # no TT_USER identities on this account
     if identity_authorized_bc_id == MAIN:
         return [dict(p) for p in PROFILES]          # the profiles live in the MAIN BC
-    raise TikTokError("You no longer have access to the TikTok account used in this ad.", 40002)
+    raise TikTokError(40002, "You no longer have access to the TikTok account used in this ad.")
 tiktok_api.list_identities = fake_list
 
 print("\n-- both Business Centers are asked, not just the account's owner --")
@@ -111,9 +114,10 @@ bc_assets.main_bc_id = lambda db: MAIN
 check("no db at all is survived", helpers._bc_candidates(None, acct) == [SAT],
       str(helpers._bc_candidates(None, acct)))
 
-print("\n-- an identity found under no BC still falls back rather than sending nothing --")
-check("falls back to the owner BC",
-      helpers._bc_of(acct, {"identity_type": "BC_AUTH_TT"}) == SAT)
+print("\n-- an identity no Business Center answered for sends no BC at all --")
+check("it does not borrow the account's owner BC",
+      helpers._bc_of(acct, {"identity_type": "BC_AUTH_TT"}) == "",
+      repr(helpers._bc_of(acct, {"identity_type": "BC_AUTH_TT"})))
 
 # ---- and the error must stop reading as a broken connection ----------------------------
 print("\n-- the carousel path sends the identity's BC too, not the account's owner --")
@@ -140,6 +144,66 @@ except ConfigError as e:
 except Exception as e:
     check("it raises a readable config error", False, repr(e))
 tiktok_api.list_identities = _orig
+
+print("\n-- an identity the unfiltered call returned still gets its BC attributed --")
+UNFILTERED = [{"identity_id": "IDENT-A", "display_name": "Emma"}]
+def fake_list2(token, adv, identity_type=None, identity_authorized_bc_id=""):
+    if identity_type != "BC_AUTH_TT":
+        return [dict(i) for i in UNFILTERED]        # no identity_type, no BC — as TikTok sends it
+    if identity_authorized_bc_id == MAIN:
+        return [{"identity_id": "IDENT-A", "display_name": "Emma"}]
+    return [{"identity_id": "IDENT-SAT", "display_name": "Sabrina"}]
+tiktok_api.list_identities = fake_list2
+got = helpers._account_identities(acct, db=object())
+a = next(i for i in got if i["identity_id"] == "IDENT-A")
+check("the already-listed identity is attributed to the main BC", a.get("_bc") == MAIN, str(a))
+check("and it is not left to borrow the owner BC", helpers._bc_of(acct, a) == MAIN, str(a))
+check("the satellite's own profile is kept too",
+      any(i["identity_id"] == "IDENT-SAT" for i in got), str(got))
+
+print("\n-- candidates are ordered: known main BC first, guesses last --")
+cands = helpers.identity_candidates(object(), acct)
+check("main BC profile first", cands[0]["identity_id"] == "IDENT-A", str(cands))
+check("it carries the main BC", cands[0].get("identity_authorized_bc_id") == MAIN, str(cands[0]))
+check("the satellite profile is a fallback, not dropped",
+      any(c["identity_id"] == "IDENT-SAT" for c in cands), str(cands))
+
+print("\n-- a refused identity falls through to the next; anything else raises at once --")
+calls = []
+def make_create(refuse_ids):
+    def _create(token, adv, payload):
+        calls.append(payload["identity_id"])
+        if payload["identity_id"] in refuse_ids:
+            raise TikTokError(40002, "You no longer have access to the TikTok account used in this ad.")
+        return {"ad_ids": ["AD1"]}
+    return _create
+tiktok_api.create_ad = make_create({"IDENT-A"})
+res, used = helpers.create_ad_trying_identities(acct, lambda i: {"identity_id": i["identity_id"]}, cands)
+check("it moved on to the next profile", used["identity_id"] == "IDENT-SAT", str(used))
+check("and tried the best one first", calls[0] == "IDENT-A", str(calls))
+
+calls.clear()
+tiktok_api.create_ad = make_create({"IDENT-A", "IDENT-SAT"})
+try:
+    helpers.create_ad_trying_identities(acct, lambda i: {"identity_id": i["identity_id"]}, cands)
+    check("all refused raises", False, "no error")
+except TikTokError as e:
+    check("all refused raises, naming what was tried", "tried" in e.message and "Emma" in e.message,
+          e.message[:160])
+
+calls.clear()
+def _other_error(token, adv, payload):
+    calls.append(payload["identity_id"])
+    raise TikTokError(40002, "Budget is too low.")
+tiktok_api.create_ad = _other_error
+try:
+    helpers.create_ad_trying_identities(acct, lambda i: {"identity_id": i["identity_id"]}, cands)
+    check("an unrelated error raises", False, "no error")
+except TikTokError as e:
+    check("an unrelated error raises immediately", e.message == "Budget is too low.", e.message)
+check("and is NOT retried across identities", len(calls) == 1, str(calls))
+
+tiktok_api.list_identities = fake_list
 
 print("\n-- the error is explained as an identity problem, not a dead connection --")
 for m in list(sys.modules):

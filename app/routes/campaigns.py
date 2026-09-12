@@ -136,10 +136,15 @@ def _main_bc(db: Session | None) -> str:
 
 
 def _bc_of(acct: models.AdAccount, ident: dict) -> str:
-    """The BC id to send WITH this identity — the one it was actually found under."""
+    """The BC id to send WITH this identity — the one it was actually found under.
+
+    When no Business Center answered for it we say so by sending nothing, rather than
+    borrowing the ad account's owner BC. That borrowed id was the bug: it named a
+    Business Center that had never had the profile.
+    """
     if ident.get("identity_type") != "BC_AUTH_TT":
         return ""
-    return str(ident.get("_bc") or acct.owner_bc_id or "")
+    return str(ident.get("_bc") or "")
 
 
 def _account_identities(acct: models.AdAccount, db: Session | None = None) -> list[dict]:
@@ -148,7 +153,7 @@ def _account_identities(acct: models.AdAccount, db: Session | None = None) -> li
     was shared from — so every candidate is tried and each identity remembers the BC it
     answered under, in `_bc`."""
     identities = tiktok_api.list_identities(acct.access_token, acct.advertiser_id)
-    seen = {i.get("identity_id") for i in identities}
+    by_id = {i.get("identity_id"): i for i in identities}
     for bc in _bc_candidates(db, acct):
         try:
             bc_idents = tiktok_api.list_identities(
@@ -158,11 +163,49 @@ def _account_identities(acct: models.AdAccount, db: Session | None = None) -> li
             continue
         for i in bc_idents:
             i.setdefault("identity_type", "BC_AUTH_TT")
-            i["_bc"] = bc                      # the BC this identity really answered under
-            if i.get("identity_id") not in seen:
+            have = by_id.get(i.get("identity_id"))
+            if have is not None:
+                # the unfiltered call already returned this one with NO Business Center
+                # attached. Attribute it now — guessing the account's owner BC here is
+                # what made TikTok answer "you no longer have access to the TikTok
+                # account used in this ad" for a profile shared from a different BC.
+                have.setdefault("_bc", bc)
+                have.setdefault("identity_type", "BC_AUTH_TT")
+            else:
+                i["_bc"] = bc
                 identities.append(i)
-                seen.add(i.get("identity_id"))
+                by_id[i.get("identity_id")] = i
     return identities
+
+
+def identity_candidates(db: Session | None, acct: models.AdAccount) -> list[dict]:
+    """Every identity this ad account could publish under, best first.
+
+    "Best" means most likely to be accepted: a profile whose Business Center we KNOW
+    (because that BC answered for it) beats one we would have to guess at, and the main
+    Business Center — which owns the shared profiles — beats the rest. The launcher walks
+    this list rather than betting on one, because TikTok only reveals which identities are
+    really usable when an ad is created with them.
+    """
+    main = _main_bc(db)
+    idents = _account_identities(acct, db)
+
+    def rank(i: dict) -> tuple:
+        bc, itype = i.get("_bc") or "", i.get("identity_type") or ""
+        return (0 if bc and bc == main else (1 if bc else 2),
+                0 if itype == "BC_AUTH_TT" else 1)
+
+    out = []
+    for ident in sorted(idents, key=rank):
+        ref = {"identity_id": ident["identity_id"],
+               "identity_type": ident.get("identity_type", "TT_USER"),
+               "_name": str(ident.get("display_name") or ident.get("identity_name")
+                            or ident.get("username") or "")[:80]}
+        bc = _bc_of(acct, ident)
+        if bc:
+            ref["identity_authorized_bc_id"] = bc
+        out.append(ref)
+    return out
 
 
 def _identity_lists_item(acct: models.AdAccount, identity: dict, item_id: str) -> dict | None:
@@ -866,20 +909,45 @@ def resolve_account_identity(db: Session, acct: models.AdAccount) -> dict:
             f"Account {acct.advertiser_name or acct.advertiser_id} has no TikTok "
             "identity — connect a TikTok account to it (or the Business Center) "
             "before launching library creatives.")
-    for ident in identities:
-        if ident.get("identity_type") == "BC_AUTH_TT":
-            out = {"identity_id": ident["identity_id"], "identity_type": "BC_AUTH_TT"}
-            bc = _bc_of(acct, ident)       # the BC this profile answered under, not the
-            if bc:                          # ad account's owner — they are different BCs
-                out["identity_authorized_bc_id"] = bc
-            return out
-    first = identities[0]
-    out = {"identity_id": first["identity_id"],
-           "identity_type": first.get("identity_type", "TT_USER")}
-    bc = _bc_of(acct, first)
-    if bc:
-        out["identity_authorized_bc_id"] = bc
-    return out
+    ranked = identity_candidates(db, acct)
+    return ranked[0] if ranked else {
+        "identity_id": identities[0]["identity_id"],
+        "identity_type": identities[0].get("identity_type", "TT_USER")}
+
+
+_IDENTITY_REFUSED = re.compile(
+    r"no longer have access to the TikTok account used in this ad|"
+    r"select a new identity and creative material", re.I)
+
+
+def create_ad_trying_identities(acct: models.AdAccount, build, candidates: list[dict]):
+    """Create the ad, walking the identity candidates until TikTok accepts one.
+
+    Only the identity refusal is retried — every other error is raised straight away, so a
+    real problem is never buried under four attempts. Which profile an ad account may
+    publish as is not knowable from the listings alone (a profile can be listed and still
+    refused), so this asks instead of guessing, and the error names what was tried.
+    """
+    tried: list[str] = []
+    last: Exception | None = None
+    for ident in (candidates or [{}])[:4]:
+        try:
+            return tiktok_api.create_ad(acct.access_token, acct.advertiser_id, build(ident)), ident
+        except tiktok_api.TikTokError as e:
+            if not _IDENTITY_REFUSED.search(e.message or ""):
+                raise
+            label = ident.get("_name") or (ident.get("identity_id") or "?")[-6:]
+            tried.append(f"{label} (BC {ident.get('identity_authorized_bc_id') or 'none sent'})")
+            last = e
+    if last is not None:
+        raise tiktok_api.TikTokError(
+            getattr(last, "code", 40002),
+            (getattr(last, "message", "") or "")
+            + " — tried " + ("; ".join(tried) if tried else "no identity")
+            + ". None of this ad account's profiles was accepted as the ad's identity.",
+            getattr(last, "request_id", ""), getattr(last, "data", None),
+            getattr(last, "path", "/ad/create/"))
+    raise tiktok_api.TikTokError(40002, "No identity to create the ad with.")
 
 
 def _resolve_cover(acct: models.AdAccount, video_id: str, poster: str,
@@ -1242,6 +1310,7 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
         # every slide into THIS account, resolve the identity — before creating anything
         creative_video_id = creative_cover_id = ""
         creative_identity: dict = {}
+        identity_choices: list[dict] = []       # ordered fallbacks; TikTok picks the winner
         if use_carousel:
             reuse = bool(fields.get("allow_creative_reuse"))
             if fields.get("creative_id"):
@@ -1284,7 +1353,9 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                 db.flush()
                 fields = dict(fields); fields["ad_text"] = pool_text.text
             carousel_image_ids = [_upload_image_to_account(db, acct, img)[0] for img in slides]
-            creative_identity = resolve_account_identity(db, acct)
+            identity_choices = identity_candidates(db, acct)
+            creative_identity = (identity_choices[0] if identity_choices
+                                 else resolve_account_identity(db, acct))
         if use_library:
             settings = get_settings(db)
             reuse = bool(fields.get("allow_creative_reuse"))
@@ -1335,7 +1406,9 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                 fields["ad_text"] = pool_text.text
             db.commit()
             # ads publish under the account's own TikTok identity (dark post)
-            creative_identity = resolve_account_identity(db, acct)
+            identity_choices = identity_candidates(db, acct)
+            creative_identity = (identity_choices[0] if identity_choices
+                                 else resolve_account_identity(db, acct))
             creative_video_id, creative_cover_id = _upload_creative_to_account(db, acct, creative)
             if not creative_cover_id:
                 # TikTok rejects a video ad with no cover ("You must upload an
@@ -1551,10 +1624,12 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                                 for c in p["creatives"]]
                         return p
                     if carousel is not None:
-                        ad_payload = _uniq(build_carousel_ad_payload(
-                            fields, adgroup_id, creative_identity,
-                            carousel_image_ids, carousel.music_id))
-                        tiktok_api.create_ad(acct.access_token, acct.advertiser_id, ad_payload)
+                        _, creative_identity = create_ad_trying_identities(
+                            acct,
+                            lambda ident: _uniq(build_carousel_ad_payload(
+                                fields, adgroup_id, ident,
+                                carousel_image_ids, carousel.music_id)),
+                            identity_choices or [creative_identity])
                         creative_committed = True
                         ad_created = True
                         if not carousel.used_campaign_id:
@@ -1562,10 +1637,12 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                         if pool_text is not None and not pool_text.used_campaign_id:
                             pool_text.used_campaign_id = campaign_id
                     elif creative is not None:
-                        ad_payload = _uniq(build_library_ad_payload(
-                            fields, adgroup_id, creative_identity,
-                            creative_video_id, creative_cover_id))
-                        tiktok_api.create_ad(acct.access_token, acct.advertiser_id, ad_payload)
+                        _, creative_identity = create_ad_trying_identities(
+                            acct,
+                            lambda ident: _uniq(build_library_ad_payload(
+                                fields, adgroup_id, ident,
+                                creative_video_id, creative_cover_id)),
+                            identity_choices or [creative_identity])
                         creative_committed = True
                         ad_created = True
                         if not creative.used_campaign_id:
