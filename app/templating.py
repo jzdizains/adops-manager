@@ -73,7 +73,12 @@ def _money(v, digits: int = 2):
     return ("−" + s) if v < 0 else s
 
 
-templates.env.filters.update({"local": _local, "ago": _ago, "money": _money})
+def _strip_key(q):
+    from .routes.postback import strip_key
+    return strip_key(q or "")
+
+
+templates.env.filters.update({"local": _local, "ago": _ago, "money": _money, "strip_key": _strip_key})
 
 
 def render(request: Request, name: str, ctx: dict | None = None):

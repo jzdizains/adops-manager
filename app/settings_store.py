@@ -154,6 +154,11 @@ def save_settings(db: Session, values: dict):
         clean["tracking_mode"] = "direct"
     clean["clickflare_field"] = min(max(int(clean.get("clickflare_field") or 3), 1), 20)
     clean["tracking_domain"] = str(clean.get("tracking_domain") or "").strip().lower().replace("https://", "").replace("http://", "").strip("/")
+    # a TikTok test_event_code is a short token from Events Manager → Test events (e.g.
+    # TEST1234). Anything else (an email, a sentence) would mark EVERY forwarded event as
+    # a test event, which TikTok never counts for optimisation — so it is dropped here.
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", str(clean.get("events_test_code") or "")):
+        clean["events_test_code"] = ""
     if clean.get("events_event_mode") not in ("campaign", "fixed"):
         clean["events_event_mode"] = "campaign"
     if not clean.get("appeal_reason"):

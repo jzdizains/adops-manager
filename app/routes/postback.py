@@ -27,6 +27,7 @@ P&L joins revenue-per-source (postbacks) against spend-per-source
 """
 from __future__ import annotations
 
+import re
 from datetime import timedelta, timezone as dt_timezone
 
 from fastapi import APIRouter, Depends, Request
@@ -59,6 +60,14 @@ OPT_EVENT_TO_WEB_EVENT = {
 }
 LEGACY_EVENT_NAMES = {"CompletePayment": "Purchase"}   # normalise old pixel names typed into Settings
 
+# Optimization events the LANDER's own pixel already fires in the browser (a CTA click,
+# a page view). A postback is a real conversion at the network, so mirroring one of
+# these would (a) report the same ClickButton twice for every converter — the browser
+# copy and this one carry different event_ids, so TikTok can't dedupe them — and
+# (b) never tell TikTok the conversion happened. For these the postback fires the
+# conversion event from Settings instead.
+BROWSER_FIRED = {"BUTTON", "ON_WEB_DETAIL"}
+
 
 def _launch_for_source(db: Session, source: str):
     """The most recent successful launch that carries this source (campaign name)."""
@@ -78,6 +87,8 @@ def event_name_for(db: Session, source: str, settings: dict, log=None) -> tuple[
         return fixed, "fixed"
     log = log or _launch_for_source(db, source)
     opt = (getattr(log, "optimization_event", "") or "") if log else ""
+    if opt in BROWSER_FIRED:
+        return fixed, f"campaign optimises for {opt}, which the lander's pixel fires itself — the postback reports the conversion"
     ev = OPT_EVENT_TO_WEB_EVENT.get(opt, "")
     if ev:
         return ev, f"campaign optimises for {opt}"
@@ -168,6 +179,15 @@ def unpack_source(raw: str) -> tuple[str, str]:
     return name.strip(), packed.strip()
 
 
+_KEY_RE = re.compile(r"(^|&)key=[^&]*")
+
+
+def strip_key(query: str) -> str:
+    """The postback URL carries this dashboard's postback password as `key=`. It is a
+    credential: it must never be stored with the event (or shown on the P&L page)."""
+    return _KEY_RE.sub(lambda m: m.group(1) + "key=***", query or "")
+
+
 def _is_macro(v: str) -> bool:
     """True for an UNREPLACED macro the network sent literally: '{ttclid}',
     '{transaction_id}', '__CLICKID__'."""
@@ -177,9 +197,14 @@ def _is_macro(v: str) -> bool:
 
 def _clean_ttclid(v: str) -> str:
     """An unreplaced macro must never be stored as a click id — TikTok would
-    just reject the event."""
+    just reject the event. Length is capped well above anything TikTok is known to
+    send (see tracking.TTCLID_MAX); a truncated click id is not a shorter one, it is a
+    wrong one, and it fails server-side matching with no visible error."""
     v = (v or "").strip()
-    return "" if (not v or _is_macro(v)) else v[:500]
+    if not v or _is_macro(v):
+        return ""
+    tracking.note_long_ttclid(v, "postback")
+    return v[:tracking.TTCLID_MAX]
 
 
 def _num(v, cast=float, default=0):
@@ -232,7 +257,7 @@ async def postback(request: Request, db: Session = Depends(get_db)):
         ttclid=ttclid,
         click_id=click.click_id if click else "",
         event=(q.get("event") or "").strip()[:60],
-        raw_query=str(request.url.query)[:2000],
+        raw_query=strip_key(str(request.url.query))[:2000],
     )
     if s["postback_mode"] == "snapshot":
         # replace today's totals for this source instead of accumulating

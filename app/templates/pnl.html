@@ -75,7 +75,7 @@
         <td class="mono muted" style="font-size:11px;">{{ (e.txn or "—")[:14] }}</td>
         <td class="mono muted" style="font-size:11px;">{% if e.click_id %}<span class="clip" style="display:inline;" title="click {{ e.click_id }} → TikTok click id {{ e.ttclid or '(none)' }}">{{ e.click_id }}</span>{% elif e.ttclid %}<span class="clip" style="display:inline;" title="{{ e.ttclid }}">{{ e.ttclid[:10] }}…</span>{% else %}—{% endif %}</td>
         <td>{% if e.forward_status and e.forward_status.startswith('sent') %}<span class="pill ok" title="{{ e.forward_status }}">sent</span>{% elif e.forward_status and e.forward_status.startswith('error') %}<span class="pill err" title="{{ e.forward_status }}">error</span>{% elif e.forward_status %}<span class="pill dim" title="{{ e.forward_status }}">skipped</span>{% else %}<span class="muted">—</span>{% endif %}</td>
-        <td style="text-align:right;">{% if e.raw_query %}<button type="button" class="btn sm ghost pnl-raw" data-raw="{{ e.raw_query }}">raw</button>{% endif %}</td>
+        <td style="text-align:right;">{% if e.raw_query %}<button type="button" class="btn sm ghost pnl-raw" data-raw="{{ e.raw_query|strip_key }}">raw</button>{% endif %}</td>
       </tr>
       {% endfor %}
       </tbody></table></div>

@@ -44,6 +44,30 @@ def is_click_id(v: str) -> bool:
     return bool(v) and bool(CLICK_ID_RE.match(v))
 
 
+# TikTok publishes no maximum length for ttclid. 500 was a guess, and a guess that
+# TRUNCATES is the dangerous kind: a cut-off click id is stored happily, passes every
+# check, and is then silently unmatched by the Events API with nothing anywhere saying
+# why. The cap is now far above any plausible value, and anything approaching it is
+# recorded in Diagnostics instead of being quietly trimmed.
+TTCLID_MAX = 2000
+TTCLID_NOTE_OVER = 400        # longer than we have ever seen — worth knowing about
+
+
+def note_long_ttclid(v: str, where: str) -> None:
+    """Say so when a click id is unusually long, BEFORE it can be truncated anywhere."""
+    if len(v or "") <= TTCLID_NOTE_OVER:
+        return
+    try:
+        from . import diag
+        diag.record("app", where, "ttclid-length",
+                    f"a TikTok click id arrived {len(v)} characters long "
+                    f"(we store up to {TTCLID_MAX}) — if Events API matching is failing, "
+                    "this is the first thing to check",
+                    {"length": len(v), "cap": TTCLID_MAX, "head": (v or "")[:40]})
+    except Exception:      # noqa: BLE001 — a note must never break a click
+        pass
+
+
 def _clean(v, n: int) -> str:
     v = (v or "").strip()
     return "" if ("{" in v or "}" in v or v.startswith("__")) else v[:n]     # unreplaced macros never get stored
@@ -69,7 +93,8 @@ def record_click(db: Session, *, source: str, ttclid: str = "", tt_campaign_id: 
         cid = new_click_id()
         if not db.query(models.Click.id).filter_by(click_id=cid).first():
             break
-    row = models.Click(click_id=cid, source=source, ttclid=_clean(ttclid, 500), tt_campaign_id=tt_campaign_id,
+    note_long_ttclid(ttclid, "click")
+    row = models.Click(click_id=cid, source=source, ttclid=_clean(ttclid, TTCLID_MAX), tt_campaign_id=tt_campaign_id,
                        tt_adgroup_id=_clean(tt_adgroup_id, 40), tt_ad_id=_clean(tt_ad_id, 40), advertiser_id=adv,
                        ip=(ip or "")[:64], user_agent=(user_agent or "")[:300], url=(url or "")[:1000],
                        referrer=(referrer or "")[:500], how=how)
