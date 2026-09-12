@@ -38,6 +38,16 @@ _PERMISSION_HINTS = re.compile(r"permission|not authorized|no access|无权限",
 
 # 40002 messages with a KNOWN cause — matched on TikTok's wording, checked in order
 _MESSAGE_HINTS: list[tuple[re.Pattern, str, str]] = [
+    # "the TikTok account used in this ad" is the IDENTITY (the profile the ad runs as),
+    # not the ad account. Reading it as a broken ad-account connection sends the operator
+    # to reconnect something that was never disconnected.
+    (re.compile(r"no longer have access to the TikTok account used in this ad|"
+                r"select a new identity and creative material", re.I),
+     "The ad account can't use that TikTok profile as the ad's identity.",
+     "This is about the PROFILE the ad runs as, not the ad account's connection — nothing needs "
+     "reconnecting. Either the profile isn't shared to this ad account, or it is shared from a "
+     "different Business Center than the one sent with it. Open Assets, check the profile is linked "
+     "to this ad account, run the audit, then Retry failed."),
     (re.compile(r"only photo posts can be delivered as carousel", re.I),
      "This spark post is a VIDEO, but the ad was sent as a carousel.",
      "The spark code was marked as a carousel (photo post). The launcher now reads the post's real "
@@ -90,6 +100,10 @@ def fix_for(log) -> dict | None:
     code = str(getattr(log, "error_code", "") or "")
     msg = (getattr(log, "error_message", "") or "")
     low = msg.lower()
+    # `error_message` is already the plain-English translation, so match the raw TikTok
+    # wording too — otherwise the 40002 friendly text ("…lacks permission…") makes every
+    # 40002 look like a broken connection.
+    raw = (getattr(log, "error_technical", "") or "").lower()
     adv = getattr(log, "advertiser_id", "") or ""
     spark_id = getattr(log, "spark_code_id", None)
     template_id = getattr(log, "template_id", None)
@@ -112,6 +126,10 @@ def fix_for(log) -> dict | None:
         return {"label": "Open Presets", "href": "/presets", "why": "The preset's settings need a change."}
     if code == "ASSET":
         return {"label": "Open Creatives", "href": "/creatives", "why": "The instant page / lead form / creative wasn't found on this account."}
+    if re.search(r"tiktok account used in this ad|select a new identity|"
+                 r"tiktok profile as the ad's identity", low + " " + raw):
+        return {"label": "Open Assets", "href": "/bc-assets?show=all",
+                "why": "The profile the ad runs as isn't usable on this ad account — check it is linked there."}
     if code in ("40105", "40113", "40102") or "token" in low or "permission" in low or "reconnect" in low:
         return {"label": "Reconnect the account", "href": f"/accounts?q={adv}", "why": "The connection to this ad account needs renewing."}
     if code == "40100":

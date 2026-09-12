@@ -109,28 +109,59 @@ class SparkResolveError(Exception):
 # Spark identity resolution (§9.2–9.4) — never guess.
 # ---------------------------------------------------------------------------
 
-def _bc_id_for(acct: models.AdAccount, identity_type: str) -> str:
-    """TikTok requires identity_authorized_bc_id on every BC_AUTH_TT call."""
-    return (acct.owner_bc_id or "") if identity_type == "BC_AUTH_TT" else ""
+def _bc_candidates(db: Session | None, acct: models.AdAccount) -> list[str]:
+    """Business Centers that might have authorized a TikTok profile for this ad account.
+
+    The ad account's OWNER is only one of them. In the shared-asset setup the profiles are
+    assets of the MAIN Business Center and the ad account is owned by a satellite — so the
+    BC that authorized the identity is not the BC that owns the account. Asking with the
+    wrong one makes TikTok answer "You no longer have access to the TikTok account used in
+    this ad", which reads like a broken connection and is not one.
+    """
+    out: list[str] = []
+    for bc in (acct.owner_bc_id or "", _main_bc(db)):
+        if bc and bc not in out:
+            out.append(bc)
+    return out
 
 
-def _account_identities(acct: models.AdAccount) -> list[dict]:
-    """All identities usable on this account. BC-authorized TikTok accounts
-    (BC_AUTH_TT) only list when queried WITH the BC id — merge both queries."""
+def _main_bc(db: Session | None) -> str:
+    if db is None:
+        return ""
+    try:
+        from .. import bc_assets
+        return bc_assets.main_bc_id(db)
+    except Exception:      # noqa: BLE001 — identity resolution must not depend on this
+        return ""
+
+
+def _bc_of(acct: models.AdAccount, ident: dict) -> str:
+    """The BC id to send WITH this identity — the one it was actually found under."""
+    if ident.get("identity_type") != "BC_AUTH_TT":
+        return ""
+    return str(ident.get("_bc") or acct.owner_bc_id or "")
+
+
+def _account_identities(acct: models.AdAccount, db: Session | None = None) -> list[dict]:
+    """All identities usable on this account. BC-authorized TikTok accounts (BC_AUTH_TT)
+    only list when queried WITH a BC id, and which BC that is depends on where the profile
+    was shared from — so every candidate is tried and each identity remembers the BC it
+    answered under, in `_bc`."""
     identities = tiktok_api.list_identities(acct.access_token, acct.advertiser_id)
-    if acct.owner_bc_id:
+    seen = {i.get("identity_id") for i in identities}
+    for bc in _bc_candidates(db, acct):
         try:
             bc_idents = tiktok_api.list_identities(
                 acct.access_token, acct.advertiser_id,
-                identity_type="BC_AUTH_TT",
-                identity_authorized_bc_id=acct.owner_bc_id)
+                identity_type="BC_AUTH_TT", identity_authorized_bc_id=bc)
         except tiktok_api.TikTokError:
-            bc_idents = []
-        seen = {i.get("identity_id") for i in identities}
+            continue
         for i in bc_idents:
             i.setdefault("identity_type", "BC_AUTH_TT")
+            i["_bc"] = bc                      # the BC this identity really answered under
             if i.get("identity_id") not in seen:
                 identities.append(i)
+                seen.add(i.get("identity_id"))
     return identities
 
 
@@ -141,7 +172,7 @@ def _identity_lists_item(acct: models.AdAccount, identity: dict, item_id: str) -
         data = tiktok_api.list_tt_videos(
             acct.access_token, acct.advertiser_id,
             identity["identity_id"], identity.get("identity_type", "TT_USER"),
-            identity_authorized_bc_id=_bc_id_for(acct, identity.get("identity_type", "")))
+            identity_authorized_bc_id=_bc_of(acct, identity))
         for item in data.get("list", []):
             info = item.get("item_info", item)
             if str(info.get("item_id", "")) == str(item_id):
@@ -227,7 +258,7 @@ def resolve_spark(db: Session, acct: models.AdAccount, spark: models.SparkCode) 
     code_rejected = ""          # TikTok's own words when it refuses the pasted code (wrong / expired / revoked)
     diag.append(f"account BC: {acct.owner_bc_id or 'NONE RECORDED — run a sync (Monitor page)'}")
     try:
-        identities = _account_identities(acct)
+        identities = _account_identities(acct, db)
     except tiktok_api.TikTokError as e:
         raise SparkResolveError(
             f"Could not list identities on account {acct.advertiser_id} "
@@ -241,7 +272,7 @@ def resolve_spark(db: Session, acct: models.AdAccount, spark: models.SparkCode) 
         itype = ident.get("identity_type", "TT_USER")
         ref = {"identity_id": ident["identity_id"], "identity_type": itype,
                "item_id": str(item_id), "item_type": item_type or ""}
-        bc = _bc_id_for(acct, itype)
+        bc = _bc_of(acct, ident)
         if bc:
             ref["identity_authorized_bc_id"] = bc
         return ref
@@ -253,7 +284,7 @@ def resolve_spark(db: Session, acct: models.AdAccount, spark: models.SparkCode) 
             data = tiktok_api.list_tt_videos(
                 acct.access_token, acct.advertiser_id,
                 ident["identity_id"], itype,
-                identity_authorized_bc_id=_bc_id_for(acct, itype))
+                identity_authorized_bc_id=_bc_of(acct, ident))
         except tiktok_api.TikTokError as e:
             diag.append(f"{itype} post list FAILED: code {e.code} {e.message[:60]}")
             continue
@@ -313,7 +344,7 @@ def resolve_spark(db: Session, acct: models.AdAccount, spark: models.SparkCode) 
         # authorizing a code creates/extends an AUTH_CODE identity for the creator on this
         # advertiser — it was NOT in the list fetched above, so fetch again before probing
         try:
-            fresh = _account_identities(acct)
+            fresh = _account_identities(acct, db)
             new = [i for i in fresh if i.get("identity_id") not in {x.get("identity_id") for x in identities}]
             identities = fresh
             diag.append("identities after authorize: " + (", ".join(
@@ -344,7 +375,7 @@ def resolve_spark(db: Session, acct: models.AdAccount, spark: models.SparkCode) 
                     vinfo = tiktok_api.identity_video_info(
                         acct.access_token, acct.advertiser_id,
                         ident["identity_id"], itype, item_id,
-                        identity_authorized_bc_id=_bc_id_for(acct, itype))
+                        identity_authorized_bc_id=_bc_of(acct, ident))
                     diag.append(f"probe {itype}: OWNS item {item_id}")
                     return _remember(_ref(ident, item_id, item_media_type(vinfo)))
                 except tiktok_api.TikTokError as e:
@@ -365,7 +396,7 @@ def resolve_spark(db: Session, acct: models.AdAccount, spark: models.SparkCode) 
                 data = tiktok_api.list_tt_videos(
                     acct.access_token, acct.advertiser_id,
                     ident["identity_id"], itype,
-                    identity_authorized_bc_id=_bc_id_for(acct, itype))
+                    identity_authorized_bc_id=_bc_of(acct, ident))
             except tiktok_api.TikTokError:
                 continue
             for item in data.get("list", []):
@@ -388,7 +419,7 @@ def resolve_spark(db: Session, acct: models.AdAccount, spark: models.SparkCode) 
             data = tiktok_api.list_tt_videos(
                 acct.access_token, acct.advertiser_id,
                 ident["identity_id"], ident.get("identity_type", "TT_USER"),
-                identity_authorized_bc_id=_bc_id_for(acct, ident.get("identity_type", "")))
+                identity_authorized_bc_id=_bc_of(acct, ident))
             for item in data.get("list", []):
                 info = item.get("item_info", item)
                 all_items.append((ident, str(info.get("item_id", ""))))
@@ -829,7 +860,7 @@ def resolve_account_identity(db: Session, acct: models.AdAccount) -> dict:
     TikTok no longer supports custom identities — non-spark ads must use a real
     TikTok account identity ("only show as ads" dark posts). Prefer the
     BC-linked identity (BC_AUTH_TT), else the first available one."""
-    identities = _account_identities(acct)
+    identities = _account_identities(acct, db)
     if not identities:
         raise ConfigError(
             f"Account {acct.advertiser_name or acct.advertiser_id} has no TikTok "

@@ -37,7 +37,7 @@ TYPE_HELP = {
 def fetch_account(db: Session, acct: models.AdAccount) -> list[models.IdentityRecord]:
     """Pull the account's identities from TikTok and replace the cached rows."""
     from .routes.campaigns import _account_identities
-    found = _account_identities(acct)
+    found = _account_identities(acct, db)
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     db.query(models.IdentityRecord).filter_by(advertiser_id=acct.advertiser_id).delete()
     rows = []
@@ -51,7 +51,10 @@ def fetch_account(db: Session, acct: models.AdAccount) -> list[models.IdentityRe
             advertiser_id=acct.advertiser_id, identity_id=iid, identity_type=itype,
             display_name=str(i.get("display_name") or i.get("identity_name") or i.get("username") or "")[:200],
             profile_image=str(i.get("profile_image") or i.get("profile_image_url") or i.get("avatar_icon_web_uri") or "")[:1000],
-            bc_id=(acct.owner_bc_id or "") if itype == "BC_AUTH_TT" else "", fetched_at=now)
+            # the BC this identity actually answered under — NOT the account's owner BC,
+            # which is a different Business Center whenever the profile was shared in
+            bc_id=(str(i.get("_bc") or acct.owner_bc_id or "") if itype == "BC_AUTH_TT" else ""),
+            fetched_at=now)
         db.add(row)
         rows.append(row)
     db.flush()
@@ -86,7 +89,7 @@ def authorize(db: Session, acct: models.AdAccount, code: str) -> dict:
     """Authorise a spark code on ONE account and verify which identity now owns the
     post. Returns {ok, item_id, identity, message, steps[]} — never raises for TikTok
     refusals; the message says what TikTok said and what to do."""
-    from .routes.campaigns import _BAD_CODE_RE, _account_identities, _bc_id_for, item_media_type
+    from .routes.campaigns import _BAD_CODE_RE, _account_identities, item_media_type
     steps: list[dict] = []
     code = (code or "").strip()
     if not code:
@@ -132,7 +135,7 @@ def authorize(db: Session, acct: models.AdAccount, code: str) -> dict:
         for r in sorted(rows, key=lambda r: {"AUTH_CODE": 0, "TT_USER": 1, "BC_AUTH_TT": 2}.get(r.identity_type, 3)):
             try:
                 vinfo = tiktok_api.identity_video_info(acct.access_token, acct.advertiser_id, r.identity_id, r.identity_type, item_id,
-                                                       identity_authorized_bc_id=_bc_id_for(acct, r.identity_type))
+                                                       identity_authorized_bc_id=(r.bc_id or ""))
                 owner, item_type = r, item_media_type(vinfo)
                 break
             except tiktok_api.TikTokError:
