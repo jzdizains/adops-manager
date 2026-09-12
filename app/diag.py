@@ -35,6 +35,15 @@ _lock = Lock()
 
 _SECRET_HINTS = ("token", "secret", "key", "password", "passwd", "auth", "signature", "cookie")
 
+# Fields whose NAME trips a hint but which carry no credential — ids and enums that are
+# the whole point of reading the feed. `identity_authorized_bc_id` is a Business Center id
+# and matched "auth", so the one field needed to debug an identity error was the one field
+# blanked out. Over-redaction is safer than under, but only until it hides the answer.
+_SAFE_FIELDS = {
+    "identity_authorized_bc_id", "authorized_bc_id", "identity_id", "identity_type",
+    "auth_status", "authorization_status", "author", "author_name",
+}
+
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
@@ -47,7 +56,10 @@ def redact(value: Any, depth: int = 0) -> Any:
     if isinstance(value, dict):
         out = {}
         for k, v in list(value.items())[:40]:
-            if any(h in str(k).lower() for h in _SECRET_HINTS):
+            key = str(k).lower()
+            if key in _SAFE_FIELDS:
+                out[str(k)] = redact(v, depth + 1)
+            elif any(h in key for h in _SECRET_HINTS):
                 out[str(k)] = "[redacted]"
             else:
                 out[str(k)] = redact(v, depth + 1)

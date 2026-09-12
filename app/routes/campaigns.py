@@ -869,12 +869,17 @@ def resolve_account_identity(db: Session, acct: models.AdAccount) -> dict:
     for ident in identities:
         if ident.get("identity_type") == "BC_AUTH_TT":
             out = {"identity_id": ident["identity_id"], "identity_type": "BC_AUTH_TT"}
-            if acct.owner_bc_id:
-                out["identity_authorized_bc_id"] = acct.owner_bc_id
+            bc = _bc_of(acct, ident)       # the BC this profile answered under, not the
+            if bc:                          # ad account's owner — they are different BCs
+                out["identity_authorized_bc_id"] = bc
             return out
     first = identities[0]
-    return {"identity_id": first["identity_id"],
-            "identity_type": first.get("identity_type", "TT_USER")}
+    out = {"identity_id": first["identity_id"],
+           "identity_type": first.get("identity_type", "TT_USER")}
+    bc = _bc_of(acct, first)
+    if bc:
+        out["identity_authorized_bc_id"] = bc
+    return out
 
 
 def _resolve_cover(acct: models.AdAccount, video_id: str, poster: str,

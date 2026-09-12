@@ -43,6 +43,19 @@ check("no refresh token", '"refresh_token": "r"' not in blob, blob)
 check("the useful ids survive", "pixel_code" in blob and "A1" in blob, blob)
 check("redaction is visible, not silent", "[redacted]" in blob, blob)
 
+print("\n-- but a field that only LOOKS like a credential is kept --")
+diag.RECENT.clear(); stored.clear()
+diag.record("tiktok", "/ad/create/", 40002, "no access to the TikTok account used in this ad", {
+    "body": {"identity_id": "835bce4-b023-58b4-8950-ba41997dc211",
+             "identity_type": "BC_AUTH_TT",
+             "identity_authorized_bc_id": "7658285881817202708",
+             "access_token": "act.SECRET"}})
+kept = stored[-1]["context"]["body"]
+check("the Business Center id survives", kept["identity_authorized_bc_id"] == "7658285881817202708",
+      str(kept))
+check("the identity survives", kept["identity_id"].startswith("835bce4"), str(kept))
+check("and the real token still does not", kept["access_token"] == "[redacted]", str(kept))
+
 print("\n-- a credential-looking key at any depth is caught --")
 deep = diag.redact({"a": {"b": {"c": {"session_token": "x", "keep": "y"}}}})
 check("nested token redacted", deep["a"]["b"]["c"]["session_token"] == "[redacted]", str(deep))

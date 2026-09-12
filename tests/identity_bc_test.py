@@ -36,8 +36,9 @@ pkg = types.ModuleType("app"); pkg.__path__ = [os.path.join(ROOT, "app")]
 sys.modules["app"] = pkg
 models = types.ModuleType("app.models")
 class AdAccount:
-    def __init__(self, advertiser_id, owner_bc_id, access_token="tok"):
+    def __init__(self, advertiser_id, owner_bc_id, access_token="tok", advertiser_name=""):
         self.advertiser_id, self.owner_bc_id, self.access_token = advertiser_id, owner_bc_id, access_token
+        self.advertiser_name = advertiser_name
 models.AdAccount = AdAccount
 sys.modules["app.models"] = models
 tiktok_api = types.ModuleType("app.tiktok_api")
@@ -115,6 +116,31 @@ check("falls back to the owner BC",
       helpers._bc_of(acct, {"identity_type": "BC_AUTH_TT"}) == SAT)
 
 # ---- and the error must stop reading as a broken connection ----------------------------
+print("\n-- the carousel path sends the identity's BC too, not the account's owner --")
+sys.modules["app.routes"] = routes_pkg
+start2 = src.index("def resolve_account_identity(")
+end2 = src.index("def _resolve_cover(")
+class ConfigError(Exception): pass
+helpers.__dict__["ConfigError"] = ConfigError
+exec(compile(src[start2:end2], "campaigns-identity", "exec"), helpers.__dict__)
+
+got = helpers.resolve_account_identity(object(), acct)
+check("it picks the BC-authorized profile", got["identity_type"] == "BC_AUTH_TT", str(got))
+check("and sends the MAIN BC with it", got.get("identity_authorized_bc_id") == MAIN, str(got))
+check("never the ad account's owner BC", got.get("identity_authorized_bc_id") != SAT, str(got))
+
+print("\n-- with no identity at all it refuses clearly rather than sending a broken ad --")
+_orig = tiktok_api.list_identities
+tiktok_api.list_identities = lambda *a, **k: []
+try:
+    helpers.resolve_account_identity(object(), acct)
+    check("it raises", False, "no error raised")
+except ConfigError as e:
+    check("it raises a readable config error", "no TikTok" in str(e), str(e)[:80])
+except Exception as e:
+    check("it raises a readable config error", False, repr(e))
+tiktok_api.list_identities = _orig
+
 print("\n-- the error is explained as an identity problem, not a dead connection --")
 for m in list(sys.modules):
     if m.startswith("app.error_messages"):
