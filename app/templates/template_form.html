@@ -54,6 +54,16 @@
         <div data-chip-picker data-name="special_industries" data-options='{{ special_industries|tojson }}' data-selected='{{ blob.get("special_industries", [])|tojson }}'></div>
         <span class="hint">Only when the offer touches housing, employment or credit.</span></div>
     </div>
+    <div class="pb-sub" style="margin-top:10px;">
+      <div class="pb-sub-h">Budget strategy</div>
+      <select name="campaign_budget_mode" id="budgetMode" hidden><option value="ABO" {{ 'selected' if not t or t.campaign_budget_mode == 'ABO' }}>ABO</option><option value="BUDGET_MODE_DAY" {{ 'selected' if t and t.campaign_budget_mode == 'BUDGET_MODE_DAY' }}>CBO day</option><option value="BUDGET_MODE_TOTAL" {{ 'selected' if t and t.campaign_budget_mode == 'BUDGET_MODE_TOTAL' }}>CBO total</option></select>
+      <div class="pb-cards" id="budgetCards">
+        <button type="button" class="pb-card" data-val="ABO"><b>Ad group budget · ABO</b><span class="muted">a budget on every ad group — the usual choice for testing</span></button>
+        <button type="button" class="pb-card" data-val="BUDGET_MODE_DAY"><b>Campaign budget · CBO daily</b><span class="muted">one budget per day, TikTok spreads it across ad groups</span></button>
+        <button type="button" class="pb-card" data-val="BUDGET_MODE_TOTAL"><b>Campaign budget · CBO lifetime</b><span class="muted">one total for the whole run</span></button>
+      </div>
+      <span class="hint">The amounts are set in step 4 · Budget &amp; bidding.</span>
+    </div>
   </div>
   <div class="pf-foot"><span></span><button type="button" class="btn" data-next="location">Next · Destination →</button></div>
   </section>
@@ -140,12 +150,7 @@
   <section class="stab" data-tab="budget" hidden>
   <div class="card">
     <div class="card-header"><span class="card-title">4 · Budget &amp; bidding</span><span class="card-meta" id="pbBudgetMeta"></span></div>
-    <select name="campaign_budget_mode" id="budgetMode" hidden><option value="ABO" {{ 'selected' if not t or t.campaign_budget_mode == 'ABO' }}>ABO</option><option value="BUDGET_MODE_DAY" {{ 'selected' if t and t.campaign_budget_mode == 'BUDGET_MODE_DAY' }}>CBO day</option><option value="BUDGET_MODE_TOTAL" {{ 'selected' if t and t.campaign_budget_mode == 'BUDGET_MODE_TOTAL' }}>CBO total</option></select>
-    <div class="pb-cards" id="budgetCards">
-      <button type="button" class="pb-card" data-val="ABO"><b>ABO</b><span class="muted">a budget on every ad group</span></button>
-      <button type="button" class="pb-card" data-val="BUDGET_MODE_DAY"><b>CBO · daily</b><span class="muted">one campaign budget per day, TikTok spreads it</span></button>
-      <button type="button" class="pb-card" data-val="BUDGET_MODE_TOTAL"><b>CBO · lifetime</b><span class="muted">one total for the whole run</span></button>
-    </div>
+    <div class="hint" style="margin-bottom:4px;">Strategy: <b id="pbStrategyEcho">—</b> · <button type="button" class="btn sm ghost" data-next="campaign">change it in step 1</button></div>
     <div class="form-row-3" style="margin-top:12px;">
       <label class="field" id="cboBudgetField"><span class="field-label">Campaign budget ($)</span><input type="number" step="0.01" name="campaign_budget" id="pbCbo" value="{{ t.campaign_budget if t and t.campaign_budget else '' }}"></label>
       <label class="field" id="aboBudgetField"><span class="field-label">Ad group budget ($)</span>

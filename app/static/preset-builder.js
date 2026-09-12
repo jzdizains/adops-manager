@@ -41,7 +41,17 @@
 
   // ---- budget mode + ladder --------------------------------------------------------------------
   var budget = bindCards("budgetCards", "budgetMode", syncBudget);
-  function syncBudget() { var abo = $("#budgetMode").value === "ABO"; $("#cboBudgetField").hidden = abo; $("#aboBudgetField").hidden = !abo; }
+  var STRATEGY_LABEL = { ABO: "Ad group budget (ABO)", BUDGET_MODE_DAY: "Campaign budget · daily (CBO)",
+                         BUDGET_MODE_TOTAL: "Campaign budget · lifetime (CBO)" };
+  function syncBudget() {
+    // the choice lives in step 1, where TikTok Ads Manager puts it; step 4 holds the
+    // amounts and echoes the choice so the two are never read apart
+    var mode = $("#budgetMode").value, abo = mode === "ABO";
+    $("#cboBudgetField").hidden = abo;
+    $("#aboBudgetField").hidden = !abo;
+    var echo = $("#pbStrategyEcho");
+    if (echo) echo.textContent = STRATEGY_LABEL[mode] || mode;
+  }
   syncBudget();
   var ladderInput = $("#ladderInput"), ladder = $("#ladder");
   function ladderVals() { return ladderInput.value.replace(/,/g, " ").split(/\s+/).filter(Boolean).map(Number).filter(function (v) { return v > 0; }); }
