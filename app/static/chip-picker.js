@@ -15,6 +15,11 @@
 
     var wrap = document.createElement("div");
     wrap.className = "cp-wrap";
+    // data-all="All" adds a first chip meaning NO RESTRICTION. Selecting nothing already
+    // means that to TikTok — the field is simply left out — but a picker with no chip lit
+    // looks unset rather than deliberate, and there was no way back to it in one click.
+    var allLabel = el.dataset.all || "";
+    var allChip = null, chips = [];
 
     function syncInputs() {
       wrap.querySelectorAll("input[type=hidden]").forEach(function (i) { i.remove(); });
@@ -23,6 +28,21 @@
         input.type = "hidden"; input.name = name; input.value = v;
         wrap.appendChild(input);
       });
+      if (allChip) { allChip.classList.toggle("active", selected.size === 0); }
+    }
+
+    if (allLabel) {
+      allChip = document.createElement("button");
+      allChip.type = "button";
+      allChip.className = "cp-chip";
+      allChip.textContent = allLabel;
+      allChip.title = "No restriction — every option";
+      allChip.addEventListener("click", function () {
+        selected.clear();
+        chips.forEach(function (c) { c.classList.remove("active"); });
+        syncInputs();
+      });
+      wrap.appendChild(allChip);
     }
 
     options.forEach(function (opt) {
@@ -36,6 +56,7 @@
         else { selected.add(value); chip.classList.add("active"); }
         syncInputs();
       });
+      chips.push(chip);
       wrap.appendChild(chip);
     });
 

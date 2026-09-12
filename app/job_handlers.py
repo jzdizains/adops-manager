@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
-from . import jobs, models
+import json
+
+from . import jobs, models, queries
 
 
 @jobs.handler("launch")
@@ -204,6 +206,24 @@ def _pixel_link_all(db: Session, p: dict, job: models.Job) -> dict:
         return {"ok": False, "detail": "pixel not found, not BC-owned, or TikTok not connected"}
     ok_count, failed = pixels._link_pixel_to_bc_accounts(db, token, rec.owner_bc_id, rec.pixel_code or rec.pixel_id)
     return {"ok": not failed, "detail": f"linked to {ok_count} account(s)" + (f", failed: {' '.join(failed[:8])}" if failed else ""), "href": "/pixels"}
+
+
+@jobs.handler("adgroup_duplicate")
+def _adgroup_duplicate(db: Session, p: dict, job: models.Job) -> dict:
+    """Duplicate one ad group, with its ads, inside the same campaign."""
+    from . import adgroup_copy
+    acct = (db.query(models.AdAccount)
+            .filter_by(advertiser_id=str(p.get("advertiser_id") or "")).first())
+    if acct is None or not acct.access_token:
+        return {"ok": False, "detail": "that ad account is not connected", "href": "/status"}
+    rep = adgroup_copy.duplicate(db, acct, str(p.get("campaign_id") or ""),
+                                 str(p.get("adgroup_id") or ""), int(p.get("copies") or 1),
+                                 on_progress=lambda t: jobs.progress(db, job, t))
+    queries.set_setting(db, "adgroup_duplicate_last", json.dumps(rep)[:200_000])
+    db.commit()
+    if rep.get("error"):
+        return {"ok": False, "detail": rep["error"], "href": "/status"}
+    return {"ok": not rep.get("errors"), "detail": rep.get("summary", ""), "href": "/status"}
 
 
 @jobs.handler("bc_assets_scan")

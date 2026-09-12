@@ -117,7 +117,8 @@
       <label class="field"><span class="field-label">Spending power</span><select name="spending_power">{% for v, label in spending_power_options %}<option value="{{ v }}" {{ 'selected' if blob.get('spending_power', '') == v }}>{{ label }}</option>{% endfor %}</select></label>
     </div>
     <div class="form-row">
-      <div class="field"><span class="field-label">Connection</span><div data-chip-picker data-name="network_types" data-options='{{ network_options|tojson }}' data-selected='{{ blob.get("network_types", [])|tojson }}'></div></div>
+      <div class="field"><span class="field-label">Connection type</span><div data-chip-picker data-all="All" data-name="network_types" data-options='{{ network_options|tojson }}' data-selected='{{ blob.get("network_types", [])|tojson }}'></div>
+        <span class="hint">“All” leaves the connection unrestricted — the same as TikTok's default.</span></div>
       <div class="field"><span class="field-label">Placements</span>
         <div style="display:flex;flex-direction:column;gap:8px;">
           <label class="sw"><input type="checkbox" name="search_enabled" value="1" {{ 'checked' if blob.get('search_enabled') }}><span class="tog"></span><span>Also show in TikTok search results</span></label>

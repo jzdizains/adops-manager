@@ -228,6 +228,64 @@
     });
   });
 
+  // ---- ad groups inside the drawer: list + duplicate ------------------------------------
+  function loadAdgroups(adv, cid) {
+    var box = $("#dwAgs");
+    if (!box) return;
+    UI.get("/campaigns/" + adv + "/" + cid + "/adgroups.json").then(function (d) {
+      box = $("#dwAgs"); if (!box) return;                  // drawer closed while loading
+      if (!d || !d.ok) { box.textContent = (d && d.error) || "Couldn't read the ad groups."; return; }
+      if (!d.adgroups.length) { box.textContent = "This campaign has no ad groups."; return; }
+      box.classList.remove("muted");
+      box.innerHTML = d.adgroups.map(function (g) {
+        var live = g.operation_status === "ENABLE";
+        return '<div class="dw-ag" data-ag="' + esc(g.adgroup_id) + '" style="display:flex;gap:8px;align-items:center;padding:5px 0;border-bottom:1px solid var(--border-soft);">' +
+          '<span class="pill ' + (live ? "ok" : "mute") + '" style="flex:none;">' + (live ? "on" : "off") + "</span>" +
+          '<span style="min-width:0;flex:1;"><b style="font-size:12.5px;">' + esc(g.name) + "</b>" +
+          '<div class="muted" style="font-size:11px;">' + g.ads + " ad" + (g.ads === 1 ? "" : "s") +
+          (g.budget ? " · $" + g.budget.toFixed(2) + (g.budget_mode === "BUDGET_MODE_TOTAL" ? " total" : "/day") : "") +
+          (g.bid_price ? " · bid $" + g.bid_price.toFixed(2) : "") +
+          (g.secondary_status ? " · " + esc(g.secondary_status) : "") + "</div></span>" +
+          '<input type="number" class="dw-ag-n" min="1" max="' + d.max_copies + '" value="1" title="How many copies" style="width:52px;flex:none;padding:3px 6px;font-size:12px;">' +
+          '<button type="button" class="btn sm dw-ag-dup" style="flex:none;"' + (d.running ? " disabled" : "") + '>Duplicate</button></div>';
+      }).join("") +
+        '<div class="muted" style="font-size:11px;margin-top:6px;">A copy includes the ad group\'s settings and its ads, in this same campaign. ' +
+        'Copies start in the same state as the original — duplicating a live ad group creates live ad groups that can spend.</div>';
+    }, function () {
+      var b = $("#dwAgs"); if (b) b.textContent = "Couldn't read the ad groups.";
+    });
+  }
+
+  document.addEventListener("click", function (e) {
+    var btn = e.target.closest && e.target.closest(".dw-ag-dup");
+    if (!btn || !drawer) return;
+    var row = btn.closest(".dw-ag"), adv = drawer._adv, cid = drawer._cid;
+    var n = Math.max(1, Math.min(parseInt(row.querySelector(".dw-ag-n").value, 10) || 1, 20));
+    var name = (row.querySelector("b") || {}).textContent || "this ad group";
+    var live = !!row.querySelector(".pill.ok");
+    UI.confirm({
+      title: "Duplicate " + name + " ×" + n + "?",
+      text: "The copy includes its ads, in the same campaign. "
+        + (live ? "This ad group is LIVE, so the copies start live and can begin spending straight away."
+                : "It is paused, so the copies start paused."),
+      ok: "Duplicate", danger: live,
+    }).then(function (yes) {
+      if (!yes) return;
+      btn.disabled = true; btn.textContent = "Duplicating…";
+      UI.post("/campaigns/" + adv + "/" + cid + "/adgroups/" + row.dataset.ag + "/duplicate", { copies: n })
+        .then(function (r) {
+          adopsToast && adopsToast(r.ok ? "ok" : "err", r.ok ? r.msg : (r.error || "That didn't work"));
+          if (!r.ok) { btn.disabled = false; btn.textContent = "Duplicate"; return; }
+          var tick = setInterval(function () {
+            if (!drawer) { clearInterval(tick); return; }
+            UI.get("/campaigns/" + adv + "/" + cid + "/adgroups.json").then(function (d2) {
+              if (d2 && d2.ok && !d2.running) { clearInterval(tick); loadAdgroups(adv, cid); }
+            });
+          }, 3000);
+        });
+    });
+  });
+
   // ---- drawer --------------------------------------------------------------------------
   var drawer = null;
   function renamePop(anchor, row) {
@@ -246,6 +304,7 @@
     if (drawer) drawer.close();
     var adv = row.dataset.adv, cid = row.dataset.cid;
     drawer = UI.drawer({ title: row.dataset.name, sub: "Loading…", body: '<div class="muted">Loading…</div>', onClose: function () { drawer = null; } });
+    drawer._adv = adv; drawer._cid = cid;      // the ad-group actions need to know which campaign
     UI.get("/campaigns/" + adv + "/" + cid + "/detail").then(function (d) {
       if (!drawer) return;
       if (d.error) { drawer.body.innerHTML = '<div class="flash err">' + esc(d.error) + "</div>"; return; }
@@ -267,10 +326,12 @@
         '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;"><div><div class="drawer-sec">Ad group budgets (each)</div><div style="display:flex;gap:6px;"><input type="text" inputmode="decimal" id="dwBudget" value="' + (c.budget ? c.budget.toFixed(2) : "") + '" placeholder="25.00"><button type="button" class="btn sm" id="dwBudgetSave">Save</button></div></div>' +
         '<div><div class="drawer-sec">Cost cap</div><div style="display:flex;gap:6px;"><input type="text" inputmode="decimal" id="dwCap" placeholder="9.50"><button type="button" class="btn sm" id="dwCapSave">Save</button></div><div class="muted" id="dwCapCur" style="font-size:10.5px;margin-top:3px;">reading…</div></div></div>' +
         (d.creative ? '<div style="display:flex;gap:10px;align-items:center;"><span class="thumb previewBtn" style="width:34px;height:46px;border-radius:6px;background:var(--accent-soft);display:grid;place-items:center;color:var(--accent-ink);cursor:pointer;flex:none;" data-src="' + esc(d.creative.file) + '" data-name="' + esc(d.creative.name) + '">▶</span><div style="min-width:0;font-size:12px;"><b>' + esc(d.creative.name) + '</b><div class="muted" style="font-size:11px;">library ' + esc(d.creative.kind) + ' · <a href="/creatives?view=performance">performance</a></div></div></div>' : (d.spark ? '<div style="font-size:12px;"><b>✦ ' + esc(d.spark) + '</b> <span class="muted">spark code</span></div>' : "")) +
+        '<div><div class="drawer-sec">Ad groups</div><div id="dwAgs" class="muted" style="font-size:12px;">Loading…</div></div>' +
         '<div><div class="drawer-sec">Note</div><textarea id="dwNote" rows="2" style="min-height:52px;font-family:var(--font-sans);font-size:12.5px;" placeholder="Why you scaled it, what to watch…">' + esc(d.note) + '</textarea><div class="muted" id="dwNoteSt" style="font-size:10.5px;margin-top:2px;">saves on its own</div></div>' +
         '<div><div class="drawer-sec">Timeline</div>' + (d.timeline.length ? d.timeline.map(function (t) { return '<div style="display:flex;gap:8px;font-size:12px;padding:3px 0;border-bottom:1px solid var(--border-soft);"><span class="muted" style="flex:none;width:64px;">' + esc(t.ago) + '</span><span style="min-width:0;"><b>' + esc(t.action) + "</b> " + esc(t.detail) + (t.who ? ' <span class="muted">· ' + esc(t.who) + "</span>" : "") + "</span></div>"; }).join("") : '<div class="muted">Nothing yet.</div>') + "</div>" +
         '<div style="display:flex;gap:8px;flex-wrap:wrap;"><button type="button" class="btn sm" id="dwToggle">' + (c.status === "ENABLE" ? "Pause" : "Resume") + '</button><a class="btn sm" href="' + esc(c.ads_manager_url) + '" target="_blank" rel="noopener">Ads Manager ↗</a><a class="btn sm" href="/status?account=' + esc(adv) + '">This account</a><button type="button" class="btn sm ghost" id="dwRename">Rename…</button></div>';
       drawer.body.innerHTML = html;
+      loadAdgroups(adv, cid);
       // chart
       var H = d.hourly, cur = "spend";
       function draw() { UI.hourChart($("#dwChart"), H.today[cur], H.yesterday[cur], { hourNow: H.hour_now }); }

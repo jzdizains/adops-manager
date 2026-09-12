@@ -11,11 +11,11 @@ row is marked 'split ÷N'. CVR is shown at source level (a ratio survives the
 split unchanged)."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
-from .. import live_spend, models, pnl_data, queries, timeutil
+from .. import live_spend, models, pnl_data, queries, tiktok_api, timeutil
 from ..database import get_db
 from ..templating import render
 
@@ -588,6 +588,43 @@ def campaign_detail(advertiser_id: str, campaign_id: str, db: Session = Depends(
         "note": (note.text if note else ""),
         "timeline": tl,
     })
+
+
+@router.get("/campaigns/{advertiser_id}/{campaign_id}/adgroups.json")
+def campaign_adgroups(advertiser_id: str, campaign_id: str, db: Session = Depends(get_db)):
+    """The campaign's ad groups, for the drawer. Read-only."""
+    from fastapi.responses import JSONResponse
+    from .. import adgroup_copy, jobs as jobs_mod
+    acct = db.query(models.AdAccount).filter_by(advertiser_id=advertiser_id).first()
+    if acct is None or not acct.access_token:
+        return JSONResponse({"ok": False, "error": "that ad account is not connected"}, status_code=400)
+    try:
+        rows = adgroup_copy.list_adgroups(acct, campaign_id)
+    except tiktok_api.TikTokError as e:
+        return JSONResponse({"ok": False, "error": f"{e.message} (code {e.code})"}, status_code=200)
+    job = jobs_mod.pending(db, "adgroup_duplicate")
+    return JSONResponse({"ok": True, "adgroups": rows, "max_copies": adgroup_copy.MAX_COPIES,
+                         "running": bool(job)})
+
+
+@router.post("/campaigns/{advertiser_id}/{campaign_id}/adgroups/{adgroup_id}/duplicate")
+def campaign_adgroup_duplicate(advertiser_id: str, campaign_id: str, adgroup_id: str,
+                               copies: int = Form(1), db: Session = Depends(get_db)):
+    """Queue N duplicates of one ad group, each with the source's ads, in this campaign."""
+    from fastapi.responses import JSONResponse
+    from .. import adgroup_copy, jobs as jobs_mod
+    acct = db.query(models.AdAccount).filter_by(advertiser_id=advertiser_id).first()
+    if acct is None or not acct.access_token:
+        return JSONResponse({"ok": False, "error": "that ad account is not connected"})
+    n = max(1, min(int(copies or 1), adgroup_copy.MAX_COPIES))
+    job, created = jobs_mod.enqueue_once(
+        db, "adgroup_duplicate", f"Duplicate ad group ×{n}",
+        {"advertiser_id": advertiser_id, "campaign_id": campaign_id,
+         "adgroup_id": adgroup_id, "copies": n}, href="/status")
+    if not created:
+        return JSONResponse({"ok": False, "error": f"a duplicate run is already {job.status}"})
+    return JSONResponse({"ok": True, "queued": n,
+                         "msg": f"Making {n} cop{'y' if n == 1 else 'ies'} — the drawer updates when it finishes."})
 
 
 def _ago(dt):
