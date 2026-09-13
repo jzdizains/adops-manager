@@ -279,6 +279,36 @@
     }, function () { btn.disabled = false; btn.textContent = "Appeal"; adopsToast && adopsToast("err", "Couldn't file the appeal."); });
   });
 
+  // ---- lander funnel (the P&L tab's row for this campaign, inside the drawer) ------------
+  function pctTxt(v) { return v == null ? "" : ' <span class="muted" style="font-size:10.5px;">' + Math.round(v * 100) + "%</span>"; }
+  function loadFunnel(adv, cid, range) {
+    var box = $("#dwFunnel"); if (!box) return;
+    UI.get("/campaigns/" + adv + "/" + cid + "/funnel.json?range=" + encodeURIComponent(range || "today")).then(function (d) {
+      box = $("#dwFunnel"); if (!box) return;
+      if (!d || !d.ok) { box.textContent = "Couldn't read the funnel."; return; }
+      var r = d.row;
+      if (!r) { box.textContent = d.source ? "No page beacons for this campaign in this range." : "This campaign has no source, so the pages can't be matched to it."; return; }
+      box.classList.remove("muted");
+      function step(label, n, rate, hint) { return '<div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-bottom:1px solid var(--border-soft);"><span class="muted"' + (hint ? ' title="' + esc(hint) + '"' : "") + ">" + label + '</span><span><b>' + n + "</b>" + pctTxt(rate) + "</span></div>"; }
+      box.innerHTML =
+        step("/start views", r.start_view, null, "page painted — includes preloads, previews and bots") +
+        step("engaged", r.start_engaged, r.r_engaged, "a person: visible a few seconds, or touched — % of views") +
+        step("Continue pressed", r.start_continue, r.r_continue, "% of engaged") +
+        step("/play views", r.play_view, null) +
+        step("engaged", r.play_engaged, r.r_play_engaged, "% of /play views") +
+        step("CTA clicks", r.play_cta, r.r_cta, "% of /play engaged") +
+        step("Conversions (postbacks)", r.conversions, r.r_conv, "% of CTA clicks") +
+        '<div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;"><span class="muted" title="/start views that arrived with a TikTok click id">with ttclid</span><span>' + (r.r_ttclid == null ? "—" : Math.round(r.r_ttclid * 100) + "%") + "</span></div>";
+    }, function () { var b = $("#dwFunnel"); if (b) b.textContent = "Couldn't read the funnel."; });
+  }
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest && e.target.closest("#dwFnRange button");
+    if (!b || !drawer) return;
+    $$("#dwFnRange button").forEach(function (o) { o.classList.toggle("on", o === b); });
+    var box = $("#dwFunnel"); if (box) { box.classList.add("muted"); box.textContent = "Loading…"; }
+    loadFunnel(drawer._adv, drawer._cid, b.dataset.r);
+  });
+
   function loadAdgroups(adv, cid) {
     var box = $("#dwAgs");
     if (!box) return;
@@ -376,12 +406,14 @@
         '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;"><div><div class="drawer-sec">Ad group budgets (each)</div><div style="display:flex;gap:6px;"><input type="text" inputmode="decimal" id="dwBudget" value="' + (c.budget ? c.budget.toFixed(2) : "") + '" placeholder="25.00"><button type="button" class="btn sm" id="dwBudgetSave">Save</button></div></div>' +
         '<div><div class="drawer-sec">Cost cap</div><div style="display:flex;gap:6px;"><input type="text" inputmode="decimal" id="dwCap" placeholder="9.50"><button type="button" class="btn sm" id="dwCapSave">Save</button></div><div class="muted" id="dwCapCur" style="font-size:10.5px;margin-top:3px;">reading…</div></div></div>' +
         (d.creative ? '<div style="display:flex;gap:10px;align-items:center;"><span class="thumb previewBtn" style="width:34px;height:46px;border-radius:6px;background:var(--accent-soft);display:grid;place-items:center;color:var(--accent-ink);cursor:pointer;flex:none;" data-src="' + esc(d.creative.file) + '" data-name="' + esc(d.creative.name) + '">▶</span><div style="min-width:0;font-size:12px;"><b>' + esc(d.creative.name) + '</b><div class="muted" style="font-size:11px;">library ' + esc(d.creative.kind) + ' · <a href="/creatives?view=performance">performance</a></div></div></div>' : (d.spark ? '<div style="font-size:12px;"><b>✦ ' + esc(d.spark) + '</b> <span class="muted">spark code</span></div>' : "")) +
+        '<div><div class="drawer-sec" style="display:flex;justify-content:space-between;align-items:center;">Lander funnel <span class="seg" id="dwFnRange" style="font-size:10.5px;"><button type="button" data-r="today" class="on">today</button><button type="button" data-r="yesterday">yesterday</button><button type="button" data-r="7d">7 days</button></span></div><div id="dwFunnel" class="muted" style="font-size:12px;">Loading…</div></div>' +
         '<div><div class="drawer-sec">Ad groups</div><div id="dwAgs" class="muted" style="font-size:12px;">Loading…</div></div>' +
         '<div><div class="drawer-sec">Note</div><textarea id="dwNote" rows="2" style="min-height:52px;font-family:var(--font-sans);font-size:12.5px;" placeholder="Why you scaled it, what to watch…">' + esc(d.note) + '</textarea><div class="muted" id="dwNoteSt" style="font-size:10.5px;margin-top:2px;">saves on its own</div></div>' +
         '<div><div class="drawer-sec">Timeline</div>' + (d.timeline.length ? d.timeline.map(function (t) { return '<div style="display:flex;gap:8px;font-size:12px;padding:3px 0;border-bottom:1px solid var(--border-soft);"><span class="muted" style="flex:none;width:64px;">' + esc(t.ago) + '</span><span style="min-width:0;"><b>' + esc(t.action) + "</b> " + esc(t.detail) + (t.who ? ' <span class="muted">· ' + esc(t.who) + "</span>" : "") + "</span></div>"; }).join("") : '<div class="muted">Nothing yet.</div>') + "</div>" +
         '<div style="display:flex;gap:8px;flex-wrap:wrap;"><button type="button" class="btn sm" id="dwToggle">' + (c.status === "ENABLE" ? "Pause" : "Resume") + '</button><a class="btn sm" href="' + esc(c.ads_manager_url) + '" target="_blank" rel="noopener">Ads Manager ↗</a><a class="btn sm" href="/status?account=' + esc(adv) + '">This account</a><button type="button" class="btn sm ghost" id="dwRename">Rename…</button></div>';
       drawer.body.innerHTML = html;
       loadAdgroups(adv, cid);
+      loadFunnel(adv, cid, "today");
       // chart
       var H = d.hourly, cur = "spend";
       function draw() { UI.hourChart($("#dwChart"), H.today[cur], H.yesterday[cur], { hourNow: H.hour_now }); }

@@ -103,6 +103,29 @@ check("sorted by /start views, busiest first", [r["source"] for r in out][:2] ==
 check("no-source beacons kept as their own row", any(r["source"] == "" and r["play_view"] == 3 for r in out))
 check("a postback source with no beacons does not invent a row", not any(r["source"] == "Ghost" for r in out))
 
+# ---- rows(source=…): the campaign drawer narrows the query to one source ----------
+class DBF(DB):
+    def __init__(self, groups): super().__init__(groups); self.filters = 0
+    def query(self, *a):
+        db = self
+        class Q:
+            def filter(self, *a): db.filters += 1; return self
+            def group_by(self, *a): return self
+            def __iter__(self): return iter(db.groups)
+        return Q()
+dbf = DBF([("CampA", "start", "view", 10, 10, 1)])
+fn.rows(dbf, datetime(2026, 9, 1), datetime(2026, 9, 2))
+n_all = dbf.filters
+dbf2 = DBF([("CampA", "start", "view", 10, 10, 1)])
+one = fn.rows(dbf2, datetime(2026, 9, 1), datetime(2026, 9, 2), source="CampA")
+check("source= adds exactly one more filter to the query", dbf2.filters == n_all + 1)
+check("…and still returns the row", one and one[0]["source"] == "CampA" and one[0]["start_view"] == 10)
+sp = open(os.path.join(ROOT, "app", "routes", "status.py")).read()
+check("drawer endpoint exists and narrows by source", '"/campaigns/{advertiser_id}/{campaign_id}/funnel.json"' in sp and "funnel.rows(db, s_naive, e_naive, conv, source=src)" in sp)
+check("drawer endpoint only accepts known ranges", 'if range_key not in ("today", "yesterday", "7d", "30d"):' in sp)
+js = open(os.path.join(ROOT, "app", "static", "campaigns.js")).read()
+check("drawer renders the funnel section with a range toggle", 'id="dwFunnel"' in js and 'id="dwFnRange"' in js and 'loadFunnel(adv, cid, "today")' in js)
+
 print()
 print("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}")
 sys.exit(1 if fails else 0)

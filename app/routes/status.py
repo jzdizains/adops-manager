@@ -613,6 +613,33 @@ def campaign_adgroups(advertiser_id: str, campaign_id: str, db: Session = Depend
                          "running": bool(job)})
 
 
+@router.get("/campaigns/{advertiser_id}/{campaign_id}/funnel.json")
+def campaign_funnel(advertiser_id: str, campaign_id: str, request: Request, db: Session = Depends(get_db)):
+    """The Lander funnel row for this campaign's source (the drawer). today | yesterday | 7d | 30d."""
+    from fastapi.responses import JSONResponse
+    from sqlalchemy import func as _func
+    from .. import funnel
+    src = pnl_data.campaign_source_map(db).get(campaign_id, "")
+    if not src:
+        rec = db.query(models.CampaignRecord.campaign_name).filter_by(campaign_id=campaign_id).first()
+        src = (rec[0] or "") if rec else ""
+    if not src:
+        return JSONResponse({"ok": True, "row": None, "source": ""})
+    range_key = request.query_params.get("range", "today")
+    if range_key not in ("today", "yesterday", "7d", "30d"):
+        range_key = "today"
+    start_utc, end_utc = timeutil.range_bounds(range_key)
+    s_naive, e_naive = start_utc.replace(tzinfo=None), end_utc.replace(tzinfo=None)
+    conv = {}
+    got = (db.query(_func.sum(models.PostbackEvent.revenue), _func.sum(models.PostbackEvent.conversions))
+             .filter(models.PostbackEvent.source == src, models.PostbackEvent.created_at >= s_naive,
+                     models.PostbackEvent.created_at < e_naive).first())
+    if got:
+        conv[src] = {"revenue": float(got[0] or 0), "conversions": int(got[1] or 0)}
+    rows = funnel.rows(db, s_naive, e_naive, conv, source=src)
+    return JSONResponse({"ok": True, "row": rows[0] if rows else None, "source": src, "range": range_key})
+
+
 @router.post("/campaigns/{advertiser_id}/{campaign_id}/adgroups/{adgroup_id}/appeal")
 def campaign_adgroup_appeal(advertiser_id: str, campaign_id: str, adgroup_id: str,
                             db: Session = Depends(get_db)):

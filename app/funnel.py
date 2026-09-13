@@ -85,14 +85,18 @@ def _prune(db: Session) -> None:
         pass
 
 
-def rows(db: Session, start_naive: datetime, end_naive: datetime, conversions: dict[str, dict] | None = None) -> list[dict]:
+def rows(db: Session, start_naive: datetime, end_naive: datetime, conversions: dict[str, dict] | None = None,
+         source: str | None = None) -> list[dict]:
     """One row per source: distinct visitors at each step + conversions/revenue
-    (from the postbacks, keyed by source), plus the step-to-step rates."""
+    (from the postbacks, keyed by source), plus the step-to-step rates.
+    `source` narrows the query to one campaign (the campaign drawer)."""
     q = (db.query(models.LanderEvent.source, models.LanderEvent.page, models.LanderEvent.step,
                   func.count(func.distinct(models.LanderEvent.vid)), func.count(models.LanderEvent.id),
                   func.sum(models.LanderEvent.has_ttclid))
-           .filter(models.LanderEvent.created_at >= start_naive, models.LanderEvent.created_at < end_naive)
-           .group_by(models.LanderEvent.source, models.LanderEvent.page, models.LanderEvent.step))
+           .filter(models.LanderEvent.created_at >= start_naive, models.LanderEvent.created_at < end_naive))
+    if source is not None:
+        q = q.filter(models.LanderEvent.source == source)
+    q = q.group_by(models.LanderEvent.source, models.LanderEvent.page, models.LanderEvent.step)
     by_src: dict[str, dict] = {}
     for src, page, step, visitors, hits, with_tt in q:
         r = by_src.setdefault(src or "", {"source": src or "", "start_view": 0, "start_engaged": 0, "start_continue": 0,
