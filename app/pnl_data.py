@@ -24,6 +24,21 @@ def campaign_source_map(db: Session) -> dict[str, str]:
     return out
 
 
+def campaigns_named(db: Session, sources) -> dict[str, list[str]]:
+    """source -> campaign ids whose TikTok campaign NAME is that source, for sources this
+    dashboard never launched (a campaign built by hand in Ads Manager with
+    &source=__CAMPAIGN_NAME__ on its URL). Only the given sources are looked up, so a
+    synced campaign never becomes a P&L row just by existing."""
+    wanted = {s for s in sources if s}
+    if not wanted:
+        return {}
+    out: dict[str, list[str]] = {}
+    for cid, name in (db.query(models.CampaignRecord.campaign_id, models.CampaignRecord.campaign_name)
+                      .filter(models.CampaignRecord.campaign_name.in_(list(wanted)))):
+        out.setdefault(name, []).append(cid)
+    return out
+
+
 def spend_by_source(db: Session, start_utc: datetime, end_utc: datetime) -> dict[str, float]:
     camp_source = campaign_source_map(db)
     if not camp_source:

@@ -37,7 +37,9 @@ def settings_page(request: Request, db: Session = Depends(get_db)):
     # ClickFlare → this dashboard: its traffic-source S2S postback tokens (help.clickflare.com → "traffic source S2S postback URL")
     clickflare_postback = (
         f"{base_url}/postback?key={s['postback_key']}"
-        "&source={trackingField" + str(int(s.get("clickflare_field") or 3)) + "}&revenue={payout}&txn={txid}&ttclid={external_id}&event=purchase"
+        "&source={trackingField" + str(int(s.get("clickflare_field") or 3)) + "}"
+        + ("&cid={trackingField" + str(int(s.get("clickflare_cid_field") or 0)) + "}" if int(s.get("clickflare_cid_field") or 0) else "")
+        + "&revenue={payout}&txn={txid}&ttclid={external_id}&event=purchase"
     )
     from pathlib import Path
 

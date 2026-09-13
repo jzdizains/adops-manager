@@ -66,6 +66,7 @@ DEFAULTS: dict = {
                                    # clickflare = ClickFlare is the tracker; it postbacks every conversion here
     "tracking_domain": "",         # public host the landers/ads reach this app on (empty = POSTBACK_HOST or this site)
     "clickflare_field": 3,         # ClickFlare tracking field that holds the TikTok campaign name (3 in ClickFlare's TikTok template)
+    "clickflare_cid_field": 4,     # …and the TikTok campaign ID (4 in the same template) — the fallback when the name is missing/renamed
     "events_api_enabled": False,   # forward postbacks with a ttclid to TikTok
     "events_pixel_code": "",       # pixel ID to fire to; empty = auto-resolve
                                    # from the source's launch (PixelCache)
@@ -153,6 +154,8 @@ def save_settings(db: Session, values: dict):
     if clean.get("tracking_mode") not in ("direct", "redirect", "clickflare"):
         clean["tracking_mode"] = "direct"
     clean["clickflare_field"] = min(max(int(clean.get("clickflare_field") or 3), 1), 20)
+    _cidf = clean.get("clickflare_cid_field")
+    clean["clickflare_cid_field"] = min(max(int(4 if _cidf in (None, "") else _cidf), 0), 20)   # 0 = don't send
     clean["tracking_domain"] = str(clean.get("tracking_domain") or "").strip().lower().replace("https://", "").replace("http://", "").strip("/")
     # a TikTok test_event_code is a short token from Events Manager → Test events (e.g.
     # TEST1234). Anything else (an email, a sentence) would mark EVERY forwarded event as

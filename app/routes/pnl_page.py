@@ -51,6 +51,9 @@ def _slices(db: Session, start_utc, end_utc) -> dict:
     cids_by_src: dict[str, list[str]] = {}
     for cid, src in src_map.items():
         cids_by_src.setdefault(src, []).append(cid)
+    # postbacks whose source is a campaign this dashboard didn't launch: join by campaign name
+    for src, cids in pnl_data.campaigns_named(db, [s for s in rev_by_src if s not in cids_by_src]).items():
+        cids_by_src[src] = cids
 
     # ---- by source ----------------------------------------------------------------------------
     sparks = {sp.source: sp for sp in db.query(models.SparkCode).filter(models.SparkCode.source != "") if sp.source}
@@ -174,6 +177,8 @@ def pnl(request: Request, db: Session = Depends(get_db)):
     for lg in (db.query(models.LaunchLog).filter(models.LaunchLog.ok == True, models.LaunchLog.source != "").order_by(models.LaunchLog.id.desc())):  # noqa: E712
         known.setdefault(lg.source, lg)
     names = {r.campaign_id: r.campaign_name for r in db.query(models.CampaignRecord).all()}
+    camp_adv = {r.campaign_id: r.advertiser_id for r in db.query(models.CampaignRecord.campaign_id, models.CampaignRecord.advertiser_id)}
+    by_name = pnl_data.campaigns_named(db, [e.source for e in recent if e.source not in known])
     match: dict[int, dict] = {}
     for e in recent:
         if e.source == UNATTRIBUTED:
@@ -181,6 +186,9 @@ def pnl(request: Request, db: Session = Depends(get_db)):
         elif e.source in known:
             lg = known[e.source]
             match[e.id] = {"state": "ok", "advertiser_id": lg.advertiser_id, "campaign_id": lg.campaign_id, "name": names.get(lg.campaign_id) or lg.source}
+        elif e.source in by_name:
+            cid = by_name[e.source][0]
+            match[e.id] = {"state": "ok", "advertiser_id": camp_adv.get(cid, ""), "campaign_id": cid, "name": e.source, "via": "name"}
         else:
             close = difflib.get_close_matches(e.source, list(known), n=1, cutoff=0.6)
             match[e.id] = {"state": "nomatch", "closest": close[0] if close else ""}

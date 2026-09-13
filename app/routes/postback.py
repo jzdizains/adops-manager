@@ -188,6 +188,26 @@ def strip_key(query: str) -> str:
     return _KEY_RE.sub(lambda m: m.group(1) + "key=***", query or "")
 
 
+def source_for_campaign_id(db: Session, campaign_id: str) -> str:
+    """The source (campaign name) a TikTok campaign id belongs to: the launch that
+    created it, else the synced campaign's name."""
+    log = (db.query(models.LaunchLog)
+           .filter(models.LaunchLog.ok == True, models.LaunchLog.campaign_id == campaign_id,   # noqa: E712
+                   models.LaunchLog.source != "")
+           .order_by(models.LaunchLog.id.desc()).first())
+    if log:
+        return log.source
+    rec = db.query(models.CampaignRecord.campaign_name).filter_by(campaign_id=campaign_id).first()
+    return (rec[0] or "") if rec else ""
+
+
+def source_known(db: Session, source: str) -> bool:
+    """Is this source the name of a campaign we launched or synced?"""
+    if _launch_for_source(db, source):
+        return True
+    return bool(db.query(models.CampaignRecord.id).filter_by(campaign_name=source).first())
+
+
 def _is_macro(v: str) -> bool:
     """True for an UNREPLACED macro the network sent literally: '{ttclid}',
     '{transaction_id}', '__CLICKID__'."""
@@ -228,6 +248,19 @@ async def postback(request: Request, db: Session = Depends(get_db)):
     ttclid = _clean_ttclid(q.get("ttclid") or q.get("click_id") or "") or (click.ttclid if click else "") or ("" if click_id else _clean_ttclid(packed))
     if click and not source:
         source = click.source
+    if _is_macro(source):
+        # the tracker sent its token literally ('{trackingField3}') — that visit never
+        # carried the campaign name. It must not become a "campaign" of its own on the
+        # P&L; it is revenue with no owner (unless the campaign id below rescues it).
+        source = ""
+    cid_param = (q.get("cid") or q.get("campaign_id") or "").strip()[:40]
+    if cid_param and not _is_macro(cid_param) and cid_param.isdigit():
+        # the TikTok campaign ID (ClickFlare tracking field 4) outlives a rename and a
+        # missing name: when the name is absent or matches nothing we launched, the id
+        # says which campaign it was.
+        by_id = source_for_campaign_id(db, cid_param)
+        if by_id and (not source or not source_known(db, source)):
+            source = by_id
     if not source:
         # Glitchy fired but its {source} macro was EMPTY — the click that reached
         # Glitchy never carried ?source=. Keep the revenue (as unattributed) and
