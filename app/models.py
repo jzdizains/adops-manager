@@ -541,6 +541,29 @@ class SpendSnapshot(Base):
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
 
+class AdgroupSnapshot(Base):
+    """Per-AD-GROUP per-local-day metrics + the ad group's status as last seen.
+    Filled by the same sweep that fills SpendSnapshot (one ad-group-level report
+    call per account). Powers "Ad groups: active only" on the Campaigns page and
+    the per-ad-group numbers in the drawer. Kept KEEP_DAYS (adgroup_stats)."""
+    __tablename__ = "adgroup_snapshots"
+    __table_args__ = (UniqueConstraint("adgroup_id", "day", name="uq_adgroup_day"),)
+
+    id = Column(Integer, primary_key=True)
+    advertiser_id = Column(String, index=True, nullable=False)
+    campaign_id = Column(String, index=True, nullable=False)
+    adgroup_id = Column(String, index=True, nullable=False)
+    adgroup_name = Column(String, default="")
+    operation_status = Column(String, default="")          # ENABLE | DISABLE as of the last sweep
+    created_time = Column(String, default="")              # TikTok create_time (UTC text)
+    day = Column(String, index=True, nullable=False)       # YYYY-MM-DD in business TZ
+    spend = Column(Float, default=0.0)
+    impressions = Column(Integer, default=0)
+    clicks = Column(Integer, default=0)
+    conversions = Column(Integer, default=0)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+
 # ---------------------------------------------------------------------------
 # Automation logs
 # ---------------------------------------------------------------------------
