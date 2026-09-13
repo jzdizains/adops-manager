@@ -31,7 +31,7 @@ sys.modules["sqlalchemy"], sys.modules["sqlalchemy.orm"] = sa, orm
 pkg = types.ModuleType("app"); pkg.__path__ = [os.path.join(ROOT, "app")]; sys.modules["app"] = pkg
 models = types.ModuleType("app.models")
 class LanderEvent:
-    created_at = _Col(); source = _Col(); page = _Col(); step = _Col(); vid = _Col(); id = _Col(); has_ttclid = _Col()
+    created_at = _Col(); source = _Col(); page = _Col(); step = _Col(); vid = _Col(); id = _Col(); has_ttclid = _Col(); via = _Col()
     def __init__(self, **k): self.__dict__.update(k)
 models.LanderEvent = LanderEvent
 sys.modules["app.models"] = models
@@ -40,14 +40,15 @@ import importlib
 fn = importlib.import_module("app.funnel")
 
 class DB:
-    def __init__(self, groups=None): self.added = []; self.groups = groups or []; self.deleted = 0
+    def __init__(self, groups=None, arrived=None): self.added = []; self.groups = groups or []; self.arrived = arrived or []; self.deleted = 0
     def add(self, r): self.added.append(r)
-    def query(self, *a):
+    def query(self, *cols):
         db = self
+        two = len(cols) == 2          # the "arrived via Continue" query selects (source, count)
         class Q:
             def filter(self, *a): return self
             def group_by(self, *a): return self
-            def __iter__(self): return iter(db.groups)
+            def __iter__(self): return iter(db.arrived if two else db.groups)
             def delete(self, **k): db.deleted += 1; return 0
         return Q()
 
@@ -89,16 +90,21 @@ groups = [
     ("CampA", "play", "view", 50, 55, 0), ("CampA", "play", "engaged", 40, 40, 0), ("CampA", "play", "cta", 10, 12, 0),
     ("CampB", "start", "view", 20, 20, 5), ("", "play", "view", 3, 3, 0),
 ]
-out = fn.rows(DB(groups), datetime(2026, 9, 1), datetime(2026, 9, 2), {"CampA": {"conversions": 2, "revenue": 10.0}, "Ghost": {"conversions": 9}})
+out = fn.rows(DB(groups, arrived=[("CampA", 45)]), datetime(2026, 9, 1), datetime(2026, 9, 2), {"CampA": {"conversions": 2, "revenue": 10.0}, "Ghost": {"conversions": 9}})
 a = next(r for r in out if r["source"] == "CampA")
 check("distinct visitors per step", (a["start_view"], a["start_engaged"], a["start_continue"], a["play_view"], a["play_engaged"], a["play_cta"]) == (100, 80, 60, 50, 40, 10))
 check("hits summed separately", a["hits"] == 130 + 80 + 61 + 55 + 40 + 12)
-check("rates are against the ENGAGED count of each page", (a["r_engaged"], a["r_continue"], round(a["r_arrive"], 3), a["r_play_engaged"], a["r_cta"], a["r_conv"]) == (0.8, 0.75, 0.667, 0.8, 0.25, 0.2), str({k: a[k] for k in a if k.startswith("r_")}))
+check("rates are against the ENGAGED count of each page", (a["r_engaged"], a["r_continue"], a["r_play_engaged"], a["r_cta"], a["r_conv"]) == (0.8, 0.75, 0.8, 0.25, 0.2), str({k: a[k] for k in a if k.startswith("r_")}))
+check("hand-off: arrived via Continue ÷ presses", a["play_arrived"] == 45 and a["r_arrive"] == 0.75, str(a))
+ok, _ = fn.accept(DB(), {"page": "play", "step": "view", "via": "continue"})
+ok2, _ = fn.accept(DB(), {"page": "play", "step": "view", "via": "whatever"})
+d1 = DB(); fn.accept(d1, {"page": "play", "step": "view", "via": "continue"}); d2 = DB(); fn.accept(d2, {"page": "play", "step": "view", "via": "x"})
+check("via is stored only as 'continue' or blank", ok and ok2 and d1.added[0].via == "continue" and d2.added[0].via == "")
 check("engaged is an accepted step on both pages", fn.accept(DB(), {"page": "start", "step": "engaged"})[0] and fn.accept(DB(), {"page": "play", "step": "engaged"})[0])
 check("ttclid share from /start views", a["with_ttclid"] == 90 and a["r_ttclid"] == 0.9)
 check("conversions joined by source", a["conversions"] == 2 and a["revenue"] == 10.0)
 b = next(r for r in out if r["source"] == "CampB")
-check("missing steps are 0 and rates None", b["start_engaged"] == 0 and b["r_engaged"] == 0 and b["r_continue"] is None and b["r_arrive"] is None and b["conversions"] == 0)
+check("missing steps are 0 and rates None", b["start_engaged"] == 0 and b["r_engaged"] == 0 and b["r_continue"] is None and b["r_arrive"] is None and b["play_arrived"] == 0 and b["conversions"] == 0)
 check("sorted by /start views, busiest first", [r["source"] for r in out][:2] == ["CampA", "CampB"])
 check("no-source beacons kept as their own row", any(r["source"] == "" and r["play_view"] == 3 for r in out))
 check("a postback source with no beacons does not invent a row", not any(r["source"] == "Ghost" for r in out))
@@ -106,19 +112,20 @@ check("a postback source with no beacons does not invent a row", not any(r["sour
 # ---- rows(source=…): the campaign drawer narrows the query to one source ----------
 class DBF(DB):
     def __init__(self, groups): super().__init__(groups); self.filters = 0
-    def query(self, *a):
+    def query(self, *cols):
         db = self
+        two = len(cols) == 2
         class Q:
             def filter(self, *a): db.filters += 1; return self
             def group_by(self, *a): return self
-            def __iter__(self): return iter(db.groups)
+            def __iter__(self): return iter([] if two else db.groups)
         return Q()
 dbf = DBF([("CampA", "start", "view", 10, 10, 1)])
 fn.rows(dbf, datetime(2026, 9, 1), datetime(2026, 9, 2))
 n_all = dbf.filters
 dbf2 = DBF([("CampA", "start", "view", 10, 10, 1)])
 one = fn.rows(dbf2, datetime(2026, 9, 1), datetime(2026, 9, 2), source="CampA")
-check("source= adds exactly one more filter to the query", dbf2.filters == n_all + 1)
+check("source= adds one more filter to each of the two queries", dbf2.filters == n_all + 2)
 check("…and still returns the row", one and one[0]["source"] == "CampA" and one[0]["start_view"] == 10)
 sp = open(os.path.join(ROOT, "app", "routes", "status.py")).read()
 check("drawer endpoint exists and narrows by source", '"/campaigns/{advertiser_id}/{campaign_id}/funnel.json"' in sp and "funnel.rows(db, s_naive, e_naive, conv, source=src)" in sp)

@@ -53,6 +53,7 @@ for (const [page, sel, step] of [["play", "a.cta", "cta"], ["start", "#ctaBtn", 
   check(page + ": exactly one view beacon", r.sent.filter(s => parse(s).step === "view").length === 1, r.sent.length);
   let v = parse(r.sent[0]);
   check(page + ": view carries page/source/vid/ttclid/cid", v.page === page && v.source === "Camp_120000_a1111" && v.vid === "vid-1" && v.ttclid === 1 && v.cid === "777", JSON.stringify(v));
+  check(page + ": via is sent (empty when not a hand-off)", "via" in v && v.via === "", JSON.stringify(v));
   check(page + ": posts to the dashboard beacon endpoint", r.sent[0].url === "https://adops-manager.onrender.com/t/lp");
   check(page + ": body is text/plain (no CORS preflight)", r.sent[0].blob.type === "text/plain");
   // engaged: visible for 4 s (8 ticks of 500 ms) → one 'engaged'; more ticks never repeat it
@@ -101,6 +102,41 @@ for (const [page, sel, step] of [["play", "a.cta", "cta"], ["start", "#ctaBtn", 
   check(page + ": view sent once even when load and the fallback both fire", r.sent.filter(s => parse(s).step === "view").length === 1);
   v = parse(r.sent[0]);
   check(page + ": visitor id falls back to the cookie; no ttclid → 0; no source → ''", v.vid === "vid-2" && v.ttclid === 0 && v.source === "" && v.cid === "", JSON.stringify(v));
+}
+// ---- the hand-off ---------------------------------------------------------------------
+{
+  const play = fs.readFileSync(path.join(LANDER, "play", "index.html"), "utf8");
+  const start = fs.readFileSync(path.join(LANDER, "start", "index.html"), "utf8");
+  // /start: destination() carries via=continue and the visitor id
+  const d0 = start.indexOf("  function myVid()"), d1 = start.indexOf("  btn.setAttribute('href', destination());");
+  const dctx = { window: { localStorage: { getItem: k => k === "tmp_vid" ? "3f2c9a1e-7b4d-4c1e-9a8f-1d2e3f4a5b6c" : null }, location: { search: "?ttclid=E_C_P_x&source=Camp&cpid=1" } }, document: { cookie: "" }, URLSearchParams };
+  dctx.window.window = dctx.window;
+  vm.createContext(dctx); vm.runInContext(start.slice(d0, d1) + "\nthis.destination = destination;", dctx);
+  const dest = new URL(dctx.destination());
+  check("start: /play URL keeps the original params", dest.pathname === "/play/" && dest.searchParams.get("ttclid") === "E_C_P_x" && dest.searchParams.get("source") === "Camp" && dest.searchParams.get("cpid") === "1");
+  check("start: …and adds via=continue + svid", dest.searchParams.get("via") === "continue" && dest.searchParams.get("svid") === "3f2c9a1e-7b4d-4c1e-9a8f-1d2e3f4a5b6c", dest.search);
+  check("start: href is refreshed on the click (id minted after load)", /btn\.setAttribute\('href', dest\);/.test(start));
+  // /play: the adopt script runs BEFORE the pixel loader and stores svid
+  const ai = play.indexOf("Hand-off from /start"), pi = play.indexOf("TikTok Pixel Code Start");
+  check("play: adopt script sits before the pixel code", ai > 0 && ai < pi);
+  const ablock = [...play.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1]).find(s => s.includes("Hand-off from /start"));
+  function adopt(search) {
+    const st = { ls: {}, cookie: "" };
+    const c = { location: { search, protocol: "https:" }, window: { localStorage: { setItem: (k, v) => { st.ls[k] = v; } } }, document: { get cookie() { return st.cookie; }, set cookie(v) { st.cookie = v; } }, URLSearchParams };
+    vm.createContext(c); vm.runInContext(ablock, c); return st;
+  }
+  let st = adopt("?via=continue&svid=3f2c9a1e-7b4d-4c1e-9a8f-1d2e3f4a5b6c&source=Camp");
+  check("play: adopts the visitor id into localStorage + cookie", st.ls.tmp_vid === "3f2c9a1e-7b4d-4c1e-9a8f-1d2e3f4a5b6c" && /tmp_vid=3f2c9a1e-7b4d-4c1e-9a8f-1d2e3f4a5b6c/.test(st.cookie) && /Secure/.test(st.cookie), JSON.stringify(st));
+  st = adopt("?svid=%3Cscript%3E");
+  check("play: an odd svid is ignored", !st.ls.tmp_vid && st.cookie === "");
+  st = adopt("?svid=short");
+  check("play: a too-short svid is ignored", !st.ls.tmp_vid && st.cookie === "");
+  st = adopt("?source=Camp");
+  check("play: no svid → nothing written", !st.ls.tmp_vid && st.cookie === "");
+  // /play beacon reports via=continue on a hand-off visit
+  let r = run("play", { search: "?via=continue&svid=3f2c9a1e-7b4d-4c1e-9a8f-1d2e3f4a5b6c&source=Camp_120000_a1111", ls: { tmp_vid: "3f2c9a1e-7b4d-4c1e-9a8f-1d2e3f4a5b6c" } });
+  r.timers.forEach(t => t.fn());
+  check("play: view beacon says via=continue with the shared visitor id", parse(r.sent[0]).via === "continue" && parse(r.sent[0]).vid === "3f2c9a1e-7b4d-4c1e-9a8f-1d2e3f4a5b6c", r.sent[0].blob.text);
 }
 console.log(fails ? `\n${fails} FAILED` : "\nALL PASS");
 process.exit(fails ? 1 : 0);

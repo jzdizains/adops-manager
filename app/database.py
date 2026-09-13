@@ -43,6 +43,7 @@ if config.DATABASE_URL.startswith("sqlite"):
 # Everything currently in models.py is covered by create_all; entries below
 # exist so FUTURE columns can be added without wiping the live DB.
 schema_additions: dict[str, dict[str, str]] = {
+    "lander_events": {"via": "VARCHAR DEFAULT ''"},
     # example: "templates": {"campaign_name_pattern": "TEXT DEFAULT ''"},
     "templates": {"campaign_name_pattern": "TEXT DEFAULT ''"},
     "jobs": {"cancel_requested": "BOOLEAN DEFAULT 0", "quiet": "BOOLEAN DEFAULT 0"},

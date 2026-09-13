@@ -7,7 +7,8 @@ never blocks the page, survives navigation):
     /start   view      the prelander was painted
     /start   engaged   a person: the page was VISIBLE for a few seconds, or was touched/scrolled
     /start   continue  Continue was pressed
-    /play    view      the lander was painted
+    /play    view      the lander was painted (via=continue when it came through /start's button,
+                       carrying /start's visitor id so both pages count ONE person)
     /play    engaged   (same rule)
     /play    cta       an offer CTA was pressed
 
@@ -66,7 +67,8 @@ def accept(db: Session, d: dict) -> tuple[bool, str]:
     row = models.LanderEvent(
         source=_clean(d.get("source"), 200), page=page, step=step,
         vid=_clean(d.get("vid"), 64), has_ttclid=bool(d.get("ttclid")),
-        campaign_id=_clean(d.get("cid"), 40))
+        campaign_id=_clean(d.get("cid"), 40),
+        via="continue" if str(d.get("via") or "") == "continue" else "")
     db.add(row)
     _prune(db)
     return True, ""
@@ -97,10 +99,19 @@ def rows(db: Session, start_naive: datetime, end_naive: datetime, conversions: d
     if source is not None:
         q = q.filter(models.LanderEvent.source == source)
     q = q.group_by(models.LanderEvent.source, models.LanderEvent.page, models.LanderEvent.step)
+    # /play visitors who came through /start's Continue button (the hand-off), per source
+    aq = (db.query(models.LanderEvent.source, func.count(func.distinct(models.LanderEvent.vid)))
+            .filter(models.LanderEvent.created_at >= start_naive, models.LanderEvent.created_at < end_naive,
+                    models.LanderEvent.page == "play", models.LanderEvent.step == "view",
+                    models.LanderEvent.via == "continue"))
+    if source is not None:
+        aq = aq.filter(models.LanderEvent.source == source)
+    arrived = {(src or ""): int(n or 0) for src, n in aq.group_by(models.LanderEvent.source)}
     by_src: dict[str, dict] = {}
     for src, page, step, visitors, hits, with_tt in q:
         r = by_src.setdefault(src or "", {"source": src or "", "start_view": 0, "start_engaged": 0, "start_continue": 0,
-                                          "play_view": 0, "play_engaged": 0, "play_cta": 0, "hits": 0, "with_ttclid": 0})
+                                          "play_arrived": 0, "play_view": 0, "play_engaged": 0, "play_cta": 0, "hits": 0, "with_ttclid": 0})
+        r["play_arrived"] = arrived.get(src or "", 0)
         r[f"{page}_{step}"] = int(visitors or 0)
         r["hits"] += int(hits or 0)
         if page == "start" and step == "view":
@@ -116,7 +127,7 @@ def rows(db: Session, start_naive: datetime, end_naive: datetime, conversions: d
         # people, not paints: every rate is against the engaged count of its page
         r["r_engaged"] = _rate(r["start_engaged"], r["start_view"])
         r["r_continue"] = _rate(r["start_continue"], r["start_engaged"])
-        r["r_arrive"] = _rate(r["play_engaged"], r["start_continue"])
+        r["r_arrive"] = _rate(r["play_arrived"], r["start_continue"])      # the hand-off: pressed → arrived
         r["r_play_engaged"] = _rate(r["play_engaged"], r["play_view"])
         r["r_cta"] = _rate(r["play_cta"], r["play_engaged"])
         r["r_conv"] = _rate(r["conversions"], r["play_cta"])

@@ -43,6 +43,10 @@ check("group row shows the union once, sorted by name", (holders[3].innerHTML.ma
 check("campaign row shows only its own", (holders[0].innerHTML.match(/class="ctag /g) || []).length === 1 && holders[0].innerHTML.includes("winner"));
 check("a campaign with no tags renders empty", holders[2].innerHTML === "");
 
+// a click on the + or a pill must never open the campaign drawer
+check("row click-to-open ignores the tag controls", /openDrawer\(row\); \}/.test(src) && /closest\("input, button, a, \.previewBtn, \.tog, \.ctag, \.ctag-add, \.pop"\)/.test(src));
+check("tag handlers stop the other document listeners", (src.match(/stopImmediatePropagation\(\)/g) || []).length >= 2);
+
 // setTag posts the targets AND every campaign whose holder must repaint
 (async () => {
   ctx._reply = { ok: true, tags: { c1: [{ id: 1, name: "winner", color: "green" }] } };

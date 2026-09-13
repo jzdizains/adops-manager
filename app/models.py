@@ -499,6 +499,7 @@ class LanderEvent(Base):
     vid = Column(String, default="")                     # the page's stable visitor id (tmp_vid)
     has_ttclid = Column(Boolean, default=False)          # a TikTok click id was on the URL
     campaign_id = Column(String, default="")             # tt_cid / cid when the page had one
+    via = Column(String, default="")                     # "continue" when /play was reached through /start's button
 
 
 class Click(Base):

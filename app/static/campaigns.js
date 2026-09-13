@@ -190,10 +190,10 @@
   }
   document.addEventListener("click", function (e) {
     var add = e.target.closest && e.target.closest(".ctag-add");
-    if (add) { e.preventDefault(); e.stopPropagation(); tagPopup(add, add.previousElementSibling); return; }
+    if (add) { e.preventDefault(); e.stopImmediatePropagation(); tagPopup(add, add.previousElementSibling); return; }
     var x = e.target.closest && e.target.closest(".ctag-x");
     if (x) {
-      e.preventDefault(); e.stopPropagation();
+      e.preventDefault(); e.stopImmediatePropagation();
       var pill = x.closest(".ctag"), holder = pill.closest(".ctags");
       if (holder) setTag(holder, pill.dataset.tag, false);
     }
@@ -404,7 +404,8 @@
         bar("people", r.start_engaged, r.r_engaged, "visible a few seconds, or touched — % of views") +
         bar("pressed Continue", r.start_continue, r.r_continue, "% of people", "fn-act") +
         '<div class="fn-page">/play <span class="muted">lander</span></div>' +
-        bar("views", r.play_view, null, "page painted", "fn-dim") +
+        bar("arrived via Continue", r.play_arrived, r.r_arrive, "people who came through /start's button — % of presses (the hand-off)", "fn-act") +
+        bar("views", r.play_view, null, "page painted — includes direct visits, preloads and bots", "fn-dim") +
         bar("people", r.play_engaged, r.r_play_engaged, "% of views") +
         bar("clicked offer", r.play_cta, r.r_cta, "% of people", "fn-act") +
         '<div class="fn-page">Glitchy</div>' +
@@ -564,7 +565,7 @@
     var a = e.target.closest && e.target.closest(".open-drawer");
     if (a) { e.preventDefault(); openDrawer(a.closest(".camp-row")); return; }
     var row = e.target.closest && e.target.closest(".camp-row");
-    if (row && !e.target.closest("input, button, a, .previewBtn, .tog")) { openDrawer(row); }
+    if (row && !e.target.closest("input, button, a, .previewBtn, .tog, .ctag, .ctag-add, .pop")) { openDrawer(row); }
   });
 
   // ---- creative preview modal ------------------------------------------------------------

@@ -82,9 +82,9 @@
     {% else %}<div class="empty"><div class="empty-title">No postbacks received yet</div>Paste the postback URL from <a href="/settings#tracking">Settings</a> into Glitchy — the first conversion shows up here within seconds.</div>{% endif %}
   </div>
   <div class="pnl-tab" data-tab="funnel" {{ 'hidden' if tab != 'funnel' }}>
-    <div class="muted" style="font-size:12px;padding:8px 14px 0;">What the pages see, per campaign, distinct visitors: prelander painted → <b>engaged</b> (a person: visible a few seconds, or touched) → Continue pressed → lander painted → engaged → offer CTA pressed → Glitchy conversions (postbacks). "views" include preloads and bots; every rate is measured against the engaged count of its page. <span id="funnelAt"></span></div>
+    <div class="muted" style="font-size:12px;padding:8px 14px 0;">What the pages see, per campaign, distinct visitors: prelander painted → <b>engaged</b> (a person: visible a few seconds, or touched) → Continue pressed → arrived on the lander through that button → lander painted → engaged → offer CTA pressed → Glitchy conversions (postbacks). "views" include preloads and bots; every rate is measured against the engaged count of its page. <span id="funnelAt"></span></div>
     <div class="table-scroll"><table class="data dense" id="funnelTable">
-      <thead><tr><th>Campaign (source)</th><th class="num" title="page painted — includes preloads, previews and bots">/start views</th><th class="num" title="a person: visible for a few seconds, or touched / scrolled">engaged</th><th class="num" title="% of engaged">Continue</th><th class="num">/play views</th><th class="num">engaged</th><th class="num" title="% of /play engaged">CTA clicks</th><th class="num" title="% of CTA clicks">Conv</th><th class="num">Revenue</th><th class="num" title="/start views that arrived with a TikTok click id">with ttclid</th></tr></thead>
+      <thead><tr><th>Campaign (source)</th><th class="num" title="page painted — includes preloads, previews and bots">/start views</th><th class="num" title="a person: visible for a few seconds, or touched / scrolled">engaged</th><th class="num" title="% of engaged">Continue</th><th class="num" title="/play visitors who came through /start's button — % of Continue presses (the hand-off)">arrived</th><th class="num">/play views</th><th class="num">engaged</th><th class="num" title="% of /play engaged">CTA clicks</th><th class="num" title="% of CTA clicks">Conv</th><th class="num">Revenue</th><th class="num" title="/start views that arrived with a TikTok click id">with ttclid</th></tr></thead>
       <tbody>
       {% for r in funnel %}
       <tr class="pnl-row" data-search="{{ r.source|lower }}">
@@ -92,6 +92,7 @@
         <td class="num">{{ r.start_view }}</td>
         <td class="num">{{ r.start_engaged }}{% if r.r_engaged is not none %} <span class="muted" style="font-size:10.5px;">{{ '%.0f'|format(r.r_engaged * 100) }}%</span>{% endif %}</td>
         <td class="num">{{ r.start_continue }}{% if r.r_continue is not none %} <span class="muted" style="font-size:10.5px;">{{ '%.0f'|format(r.r_continue * 100) }}%</span>{% endif %}</td>
+        <td class="num">{{ r.play_arrived }}{% if r.r_arrive is not none %} <span class="muted" style="font-size:10.5px;">{{ '%.0f'|format(r.r_arrive * 100) }}%</span>{% endif %}</td>
         <td class="num">{{ r.play_view }}</td>
         <td class="num">{{ r.play_engaged }}{% if r.r_play_engaged is not none %} <span class="muted" style="font-size:10.5px;">{{ '%.0f'|format(r.r_play_engaged * 100) }}%</span>{% endif %}</td>
         <td class="num">{{ r.play_cta }}{% if r.r_cta is not none %} <span class="muted" style="font-size:10.5px;">{{ '%.0f'|format(r.r_cta * 100) }}%</span>{% endif %}</td>
@@ -175,7 +176,7 @@
     tb.innerHTML = rows.map(function (r) {
       return '<tr class="pnl-row" data-search="' + UI.esc((r.source || "").toLowerCase()) + '"><td class="mono" style="font-size:12px;">' + UI.esc(r.source || "(no source)") + "</td>" +
         '<td class="num">' + r.start_view + "</td><td class=\"num\">" + r.start_engaged + pct(r.r_engaged) + "</td><td class=\"num\">" + r.start_continue + pct(r.r_continue) + "</td>" +
-        '<td class="num">' + r.play_view + "</td><td class=\"num\">" + r.play_engaged + pct(r.r_play_engaged) + "</td><td class=\"num\">" + r.play_cta + pct(r.r_cta) + "</td>" +
+        '<td class="num">' + r.play_arrived + pct(r.r_arrive) + "</td><td class=\"num\">" + r.play_view + "</td><td class=\"num\">" + r.play_engaged + pct(r.r_play_engaged) + "</td><td class=\"num\">" + r.play_cta + pct(r.r_cta) + "</td>" +
         '<td class="num">' + r.conversions + pct(r.r_conv) + "</td><td class=\"num\">" + UI.money(r.revenue, 0) + "</td>" +
         '<td class="num muted">' + (r.r_ttclid == null ? "—" : Math.round(r.r_ttclid * 100) + "%") + "</td></tr>";
     }).join("");
