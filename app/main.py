@@ -37,7 +37,7 @@ SECURITY_HEADERS = {
 }
 
 
-POSTBACK_ONLY_PATHS = ("/postback", "/health", "/t/escape", "/t/click", "/t/c", "/pub/src/", "/static")
+POSTBACK_ONLY_PATHS = ("/postback", "/health", "/t/escape", "/t/click", "/t/lp", "/t/c", "/pub/src/", "/static")
 
 
 _AUTH_CACHE: dict = {}          # (uid, fp) -> (expires_at, User)  — a few seconds, cleared on logout/password change

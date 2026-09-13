@@ -53,6 +53,29 @@ async def click_register(request: Request, db: Session = Depends(get_db)):
     return JSONResponse({"ok": True, "click_id": row.click_id}, headers=CORS)
 
 
+@router.options("/t/lp")
+def lp_preflight():
+    return Response(status_code=204, headers=CORS)
+
+
+@router.post("/t/lp")
+async def lander_beacon(request: Request, db: Session = Depends(get_db)):
+    """Lander funnel beacon (see funnel.py). Always answers 204 fast — the page has
+    already moved on; a bad beacon is dropped, never argued with."""
+    from .. import funnel
+    raw = (await request.body())[:2000]
+    try:
+        d = json.loads(raw.decode("utf-8", "ignore") or "{}")
+        if not isinstance(d, dict):
+            d = {}
+    except ValueError:
+        d = {}
+    stored, _why = funnel.accept(db, d)
+    if stored:
+        db.commit()
+    return Response(status_code=204, headers=CORS)
+
+
 @router.get("/t/c")
 def click_redirect(request: Request, db: Session = Depends(get_db)):
     q = dict(request.query_params)

@@ -485,6 +485,22 @@ class PostbackEvent(Base):
     created_at = Column(DateTime, default=utcnow, index=True)
 
 
+class LanderEvent(Base):
+    """One beacon from a lander page (the funnel: view / continue on the prelander,
+    view / cta on the lander). Public pages can't keep data, so they send one tiny
+    sendBeacon per step here. Counted by DISTINCT visitor per step and source."""
+    __tablename__ = "lander_events"
+
+    id = Column(Integer, primary_key=True)
+    created_at = Column(DateTime, default=utcnow, index=True)
+    source = Column(String, default="", index=True)      # campaign name (P&L join key)
+    page = Column(String, default="")                    # start | play
+    step = Column(String, default="")                    # view | continue | cta
+    vid = Column(String, default="")                     # the page's stable visitor id (tmp_vid)
+    has_ttclid = Column(Boolean, default=False)          # a TikTok click id was on the URL
+    campaign_id = Column(String, default="")             # tt_cid / cid when the page had one
+
+
 class Click(Base):
     """One row per ad click that reached a lander — the tracker's click id
     (RedTrack/ClickFlare model). Stores TikTok's ttclid + the ad ids at click

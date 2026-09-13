@@ -26,7 +26,7 @@
 
 <div class="card" style="padding:0;overflow:hidden;">
   <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border-soft);flex-wrap:wrap;">
-    <div class="seg" id="pnlTabs">{% for k, lbl, n in [('source', 'By source', slices.source|length), ('bc', 'Business Center', slices.bc|length), ('account', 'Account', slices.account|length), ('creative', 'Creative', slices.creative|length), ('spark', 'Spark', slices.spark|length), ('postbacks', 'Postbacks', recent|length), ('clicks', 'Clicks', clicks|length)] %}<button type="button" data-tab="{{ k }}" class="{{ 'on' if tab == k }}">{{ lbl }} <span class="n">{{ n }}</span></button>{% endfor %}</div>
+    <div class="seg" id="pnlTabs">{% for k, lbl, n in [('source', 'By source', slices.source|length), ('bc', 'Business Center', slices.bc|length), ('account', 'Account', slices.account|length), ('creative', 'Creative', slices.creative|length), ('spark', 'Spark', slices.spark|length), ('postbacks', 'Postbacks', recent|length), ('clicks', 'Clicks', clicks|length), ('funnel', 'Lander funnel', funnel|length)] %}<button type="button" data-tab="{{ k }}" class="{{ 'on' if tab == k }}">{{ lbl }} <span class="n">{{ n }}</span></button>{% endfor %}</div>
     <div class="search-wrap" style="max-width:220px;margin-left:auto;"><input type="text" id="pnlQ" placeholder="Filter rows…"></div>
     <span class="muted" style="font-size:12px;">sorted by profit</span>
   </div>
@@ -80,6 +80,27 @@
       {% endfor %}
       </tbody></table></div>
     {% else %}<div class="empty"><div class="empty-title">No postbacks received yet</div>Paste the postback URL from <a href="/settings#tracking">Settings</a> into Glitchy — the first conversion shows up here within seconds.</div>{% endif %}
+  </div>
+  <div class="pnl-tab" data-tab="funnel" {{ 'hidden' if tab != 'funnel' }}>
+    <div class="muted" style="font-size:12px;padding:8px 14px 0;">What the pages see, per campaign, distinct visitors: prelander painted → Continue pressed → lander painted → offer CTA pressed → Glitchy conversions (postbacks). Each rate is the step over the one before it. <span id="funnelAt"></span></div>
+    <div class="table-scroll"><table class="data dense" id="funnelTable">
+      <thead><tr><th>Campaign (source)</th><th class="num">/start views</th><th class="num">Continue</th><th class="num">/play views</th><th class="num">CTA clicks</th><th class="num">Conv</th><th class="num">Revenue</th><th class="num" title="/start views that arrived with a TikTok click id">with ttclid</th></tr></thead>
+      <tbody>
+      {% for r in funnel %}
+      <tr class="pnl-row" data-search="{{ r.source|lower }}">
+        <td class="mono" style="font-size:12px;">{{ r.source or '(no source)' }}</td>
+        <td class="num">{{ r.start_view }}</td>
+        <td class="num">{{ r.start_continue }}{% if r.r_continue is not none %} <span class="muted" style="font-size:10.5px;">{{ '%.0f'|format(r.r_continue * 100) }}%</span>{% endif %}</td>
+        <td class="num">{{ r.play_view }}{% if r.r_arrive is not none %} <span class="muted" style="font-size:10.5px;">{{ '%.0f'|format(r.r_arrive * 100) }}%</span>{% endif %}</td>
+        <td class="num">{{ r.play_cta }}{% if r.r_cta is not none %} <span class="muted" style="font-size:10.5px;">{{ '%.0f'|format(r.r_cta * 100) }}%</span>{% endif %}</td>
+        <td class="num">{{ r.conversions }}{% if r.r_conv is not none %} <span class="muted" style="font-size:10.5px;">{{ '%.0f'|format(r.r_conv * 100) }}%</span>{% endif %}</td>
+        <td class="num">{{ money0(r.revenue) }}</td>
+        <td class="num muted">{% if r.r_ttclid is not none %}{{ '%.0f'|format(r.r_ttclid * 100) }}%{% else %}—{% endif %}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    <div class="empty" id="funnelEmpty" {{ 'hidden' if funnel }}><div class="empty-title">No page beacons in this range yet</div>The lander pages send one beacon per step once lander v3 is live; until then this table stays empty while everything else keeps working.</div>
   </div>
   <div class="pnl-tab" data-tab="clicks" {{ 'hidden' if tab != 'clicks' }}>
     {% if clicks %}
@@ -145,6 +166,25 @@
     $("#pnlEmpty").hidden = !q || n > 0;
   }
   $("#pnlQ").addEventListener("input", filter);
+  // lander funnel: refresh itself every minute while that tab is open (no page reload)
+  function pct(v) { return v == null ? "" : ' <span class="muted" style="font-size:10.5px;">' + Math.round(v * 100) + "%</span>"; }
+  function drawFunnel(rows) {
+    var tb = $("#funnelTable tbody"); if (!tb) return;
+    tb.innerHTML = rows.map(function (r) {
+      return '<tr class="pnl-row" data-search="' + UI.esc((r.source || "").toLowerCase()) + '"><td class="mono" style="font-size:12px;">' + UI.esc(r.source || "(no source)") + "</td>" +
+        '<td class="num">' + r.start_view + "</td><td class=\"num\">" + r.start_continue + pct(r.r_continue) + "</td><td class=\"num\">" + r.play_view + pct(r.r_arrive) + "</td>" +
+        '<td class="num">' + r.play_cta + pct(r.r_cta) + "</td><td class=\"num\">" + r.conversions + pct(r.r_conv) + "</td><td class=\"num\">" + UI.money(r.revenue, 0) + "</td>" +
+        '<td class="num muted">' + (r.r_ttclid == null ? "—" : Math.round(r.r_ttclid * 100) + "%") + "</td></tr>";
+    }).join("");
+    $("#funnelEmpty").hidden = rows.length > 0;
+    filter();
+  }
+  function refreshFunnel() {
+    var t = $$(".pnl-tab").find(function (x) { return x.dataset.tab === "funnel"; });
+    if (!t || t.hidden || document.hidden) return;
+    UI.get("/pnl/funnel.json?{{ qs }}").then(function (r) { if (r && r.rows) { drawFunnel(r.rows); $("#funnelAt").textContent = "updated " + r.at; } });
+  }
+  setInterval(refreshFunnel, 60000);
   document.addEventListener("click", function (e) { var b = e.target.closest(".pnl-raw"); if (b) UI.modal({ title: "Raw postback query", body: '<div class="mono" style="font-size:11.5px;word-break:break-all;color:var(--text-dim);">' + UI.esc(b.dataset.raw).replace(/&amp;/g, " &amp;") + "</div>" }); });
 })();
 </script>{% endblock %}

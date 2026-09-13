@@ -18,7 +18,7 @@ from fastapi.responses import Response
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from .. import creative_perf, hourly, models, pnl_data, timeutil
+from .. import creative_perf, funnel, hourly, models, pnl_data, timeutil
 from ..database import get_db
 from ..templating import render
 
@@ -193,8 +193,9 @@ def pnl(request: Request, db: Session = Depends(get_db)):
             close = difflib.get_close_matches(e.source, list(known), n=1, cutoff=0.6)
             match[e.id] = {"state": "nomatch", "closest": close[0] if close else ""}
     tab = request.query_params.get("by", "source")
-    if tab not in ("source", "bc", "account", "creative", "spark", "postbacks", "clicks"):
+    if tab not in ("source", "bc", "account", "creative", "spark", "postbacks", "clicks", "funnel"):
         tab = "source"
+    funnel_rows = _funnel_rows(db, start_utc, end_utc)
     clicks = db.query(models.Click).order_by(models.Click.id.desc()).limit(60).all()
     acct_names = {a.advertiser_id: (a.advertiser_name or a.advertiser_id) for a in db.query(models.AdAccount)}
     return render(request, "pnl.html", {
@@ -202,6 +203,7 @@ def pnl(request: Request, db: Session = Depends(get_db)):
         "totals": totals, "prior": prior, "d_profit": delta(totals["profit"], prior["profit"]), "d_rev": delta(totals["revenue"], prior["revenue"]), "d_spend": delta(totals["spend"], prior["spend"]),
         "epc": (totals["revenue"] / totals["clicks"]) if totals["clicks"] else 0.0, "active_accounts": active_accounts, "best": best, "n_days": n_days,
         "chart_json": json.dumps(chart), "slices": slices, "tab": tab, "recent": recent, "match": match, "clicks": clicks, "acct_names": acct_names,
+        "funnel": funnel_rows,
         "winners": sum(1 for r in slices["source"] if r["profit"] > 0), "n_sources": len(slices["source"]),
         "qs": f"range={range_key}" + (f"&start={start}&end={end}" if start and end else ""),
     })
@@ -221,3 +223,23 @@ def pnl_export(request: Request, db: Session = Depends(get_db)):
         w.writerow([r["name"], r["sub"], f"{r['spend']:.2f}", f"{r['revenue']:.2f}", f"{r['profit']:.2f}", f"{r['roas']:.2f}", r["conversions"], r["clicks"]])
     fname = f"pnl_{by}_{timeutil.local_date_str(start_utc)}_{timeutil.local_date_str(end_utc - timeutil.timedelta(seconds=1))}.csv"
     return Response(buf.getvalue(), media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+
+
+def _funnel_rows(db: Session, start_utc, end_utc) -> list[dict]:
+    """Lander funnel rows for the range, conversions joined from the postbacks."""
+    s_naive, e_naive = start_utc.replace(tzinfo=None), end_utc.replace(tzinfo=None)
+    conv: dict[str, dict] = {}
+    for src, rv, cv in (db.query(models.PostbackEvent.source, func.sum(models.PostbackEvent.revenue), func.sum(models.PostbackEvent.conversions))
+                        .filter(models.PostbackEvent.created_at >= s_naive, models.PostbackEvent.created_at < e_naive)
+                        .group_by(models.PostbackEvent.source)):
+        conv[src] = {"revenue": float(rv or 0), "conversions": int(cv or 0)}
+    return funnel.rows(db, s_naive, e_naive, conv)
+
+
+@router.get("/pnl/funnel.json")
+def pnl_funnel_json(request: Request, db: Session = Depends(get_db)):
+    """The funnel tab refreshes itself from here (every minute while open) — no page reload."""
+    range_key = request.query_params.get("range", "today")
+    start_utc, end_utc = timeutil.range_bounds(range_key, request.query_params.get("start"), request.query_params.get("end"))
+    return {"rows": _funnel_rows(db, start_utc, end_utc), "at": timeutil.now_local().strftime("%H:%M:%S")}
+
