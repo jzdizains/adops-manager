@@ -5,9 +5,14 @@ The pages are static (Hostinger), so they cannot keep data. Each page sends ONE
 never blocks the page, survives navigation):
 
     /start   view      the prelander was painted
+    /start   engaged   a person: the page was VISIBLE for a few seconds, or was touched/scrolled
     /start   continue  Continue was pressed
     /play    view      the lander was painted
+    /play    engaged   (same rule)
     /play    cta       an offer CTA was pressed
+
+"view" counts everything that painted the page — preloaders, link previews and bots
+included — so the step rates are measured against "engaged", the humans.
 
 Counted by DISTINCT visitor (the page's stable `tmp_vid`) per step and source, so a
 reload is not a second view. Conversions come from the postbacks (same source).
@@ -26,8 +31,9 @@ from sqlalchemy.orm import Session
 from . import models
 
 PAGES = ("start", "play")
-STEPS = ("view", "continue", "cta")
-STEP_ORDER = (("start", "view"), ("start", "continue"), ("play", "view"), ("play", "cta"))
+STEPS = ("view", "engaged", "continue", "cta")
+STEP_ORDER = (("start", "view"), ("start", "engaged"), ("start", "continue"),
+              ("play", "view"), ("play", "engaged"), ("play", "cta"))
 KEEP_DAYS = 30
 MAX_PER_MINUTE = 1200          # beacons accepted per minute, in total — far above real traffic, far below a flood
 
@@ -89,8 +95,8 @@ def rows(db: Session, start_naive: datetime, end_naive: datetime, conversions: d
            .group_by(models.LanderEvent.source, models.LanderEvent.page, models.LanderEvent.step))
     by_src: dict[str, dict] = {}
     for src, page, step, visitors, hits, with_tt in q:
-        r = by_src.setdefault(src or "", {"source": src or "", "start_view": 0, "start_continue": 0, "play_view": 0, "play_cta": 0,
-                                          "hits": 0, "with_ttclid": 0})
+        r = by_src.setdefault(src or "", {"source": src or "", "start_view": 0, "start_engaged": 0, "start_continue": 0,
+                                          "play_view": 0, "play_engaged": 0, "play_cta": 0, "hits": 0, "with_ttclid": 0})
         r[f"{page}_{step}"] = int(visitors or 0)
         r["hits"] += int(hits or 0)
         if page == "start" and step == "view":
@@ -103,9 +109,12 @@ def rows(db: Session, start_naive: datetime, end_naive: datetime, conversions: d
     for r in by_src.values():
         r.setdefault("conversions", 0)
         r.setdefault("revenue", 0.0)
-        r["r_continue"] = _rate(r["start_continue"], r["start_view"])
-        r["r_arrive"] = _rate(r["play_view"], r["start_continue"])
-        r["r_cta"] = _rate(r["play_cta"], r["play_view"])
+        # people, not paints: every rate is against the engaged count of its page
+        r["r_engaged"] = _rate(r["start_engaged"], r["start_view"])
+        r["r_continue"] = _rate(r["start_continue"], r["start_engaged"])
+        r["r_arrive"] = _rate(r["play_engaged"], r["start_continue"])
+        r["r_play_engaged"] = _rate(r["play_engaged"], r["play_view"])
+        r["r_cta"] = _rate(r["play_cta"], r["play_engaged"])
         r["r_conv"] = _rate(r["conversions"], r["play_cta"])
         r["r_ttclid"] = _rate(r["with_ttclid"], r["start_view"])
         out.append(r)

@@ -22,8 +22,9 @@ function run(page, opts) {
   const src = beaconBlock(html);
   const sent = [], timers = [], listeners = {}, winListeners = {};
   const target = { closest: sel => (opts.clickMatches && opts.clickMatches === sel) ? { tag: "a" } : null };
+  const intervals = [];
   const document = {
-    readyState: opts.readyState || "complete", cookie: opts.cookie || "",
+    readyState: opts.readyState || "complete", cookie: opts.cookie || "", visibilityState: opts.visibility || "visible",
     addEventListener: (t, fn) => { (listeners[t] = listeners[t] || []).push(fn); },
   };
   const window = {
@@ -31,6 +32,8 @@ function run(page, opts) {
     localStorage: { getItem: k => (opts.ls || {})[k] || null },
     navigator: { sendBeacon: (url, blob) => { sent.push({ url, blob }); return true; } },
     setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
+    setInterval: (fn, ms) => { intervals.push({ fn, ms, on: true }); return intervals.length; },
+    clearInterval: id => { if (intervals[id - 1]) intervals[id - 1].on = false; },
     addEventListener: (t, fn) => { (winListeners[t] = winListeners[t] || []).push(fn); },
     URLSearchParams, Blob: class { constructor(parts, o) { this.text = parts.join(""); this.type = o && o.type; } },
     JSON,
@@ -38,7 +41,8 @@ function run(page, opts) {
   window.window = window;
   const ctx = vm.createContext(Object.assign(Object.create(null), window));
   vm.runInContext(src, ctx);
-  return { sent, timers, listeners, winListeners, target };
+  const tickAll = n => { for (let i = 0; i < n; i++) intervals.filter(x => x.on).forEach(x => x.fn()); };
+  return { sent, timers, listeners, winListeners, target, intervals, tickAll, document };
 }
 const parse = s => JSON.parse(s.blob.text);
 
@@ -51,9 +55,37 @@ for (const [page, sel, step] of [["play", "a.cta", "cta"], ["start", "#ctaBtn", 
   check(page + ": view carries page/source/vid/ttclid/cid", v.page === page && v.source === "Camp_120000_a1111" && v.vid === "vid-1" && v.ttclid === 1 && v.cid === "777", JSON.stringify(v));
   check(page + ": posts to the dashboard beacon endpoint", r.sent[0].url === "https://adops-manager.onrender.com/t/lp");
   check(page + ": body is text/plain (no CORS preflight)", r.sent[0].blob.type === "text/plain");
+  // engaged: visible for 4 s (8 ticks of 500 ms) → one 'engaged'; more ticks never repeat it
+  check(page + ": no 'engaged' before 4 s", !r.sent.some(s => parse(s).step === "engaged"));
+  r.tickAll(7); check(page + ": still none at 3.5 s", !r.sent.some(s => parse(s).step === "engaged"));
+  r.tickAll(1); check(page + ": 'engaged' at 4 s of visibility", r.sent.filter(s => parse(s).step === "engaged").length === 1);
+  r.tickAll(20); check(page + ": 'engaged' sent once", r.sent.filter(s => parse(s).step === "engaged").length === 1);
+  check(page + ": engaged carries the same source/vid", (() => { const e = parse(r.sent.find(s => parse(s).step === "engaged")); return e.source === "Camp_120000_a1111" && e.vid === "vid-1"; })());
   // the click
   (r.listeners.click || []).forEach(fn => fn({ target: r.target }));
   check(page + ": clicking the CTA sends '" + step + "'", r.sent.some(s => parse(s).step === step));
+  check(page + ": order of steps is view, engaged, " + step, r.sent.map(s => parse(s).step).join(",") === "view,engaged," + step, r.sent.map(s => parse(s).step).join(","));
+
+  // a touch counts as engaged immediately
+  let t = run(page, { search: "?source=Camp_120000_a1111", ls: { tmp_vid: "vid-t" } });
+  t.timers.forEach(x => x.fn());
+  (t.winListeners.touchstart || []).forEach(fn => fn({}));
+  check(page + ": a touch sends 'engaged' at once", t.sent.map(s => parse(s).step).join(",") === "view,engaged", t.sent.map(s => parse(s).step).join(","));
+  t.tickAll(10); check(page + ": …and the timer does not send it again", t.sent.filter(s => parse(s).step === "engaged").length === 1);
+  check(page + ": touch/scroll/pointer/key listeners are passive one-shots", ["touchstart", "scroll", "pointerdown", "keydown"].every(k => (t.winListeners[k] || []).length === 1));
+
+  // a hidden (prerendered) page: view fires, engaged never does while hidden
+  let h = run(page, { search: "?source=Camp_120000_a1111", ls: { tmp_vid: "vid-h" }, visibility: "hidden" });
+  h.timers.forEach(x => x.fn()); h.tickAll(20);
+  check(page + ": hidden page → view only, no 'engaged'", h.sent.map(s => parse(s).step).join(",") === "view", h.sent.map(s => parse(s).step).join(","));
+  h.document.visibilityState = "visible"; (h.listeners.visibilitychange || []).forEach(fn => fn()); h.tickAll(8);
+  check(page + ": once shown, 4 visible seconds → 'engaged'", h.sent.map(s => parse(s).step).join(",") === "view,engaged", h.sent.map(s => parse(s).step).join(","));
+
+  // a click on the CTA without any prior engaged proves a person too — engaged goes first
+  let c = run(page, { search: "", ls: { tmp_vid: "vid-c" }, clickMatches: sel });
+  c.timers.forEach(x => x.fn());
+  (c.listeners.click || []).forEach(fn => fn({ target: c.target }));
+  check(page + ": CTA click → 'engaged' then '" + step + "'", c.sent.map(s => parse(s).step).join(",") === "view,engaged," + step, c.sent.map(s => parse(s).step).join(","));
   // a click somewhere else sends nothing
   const before = r.sent.length;
   (r.listeners.click || []).forEach(fn => fn({ target: { closest: () => null } }));
