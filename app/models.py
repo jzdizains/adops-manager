@@ -888,6 +888,27 @@ class HourlyMetric(Base):
     updated_at = Column(DateTime, default=utcnow)
 
 
+class Tag(Base):
+    """An operator-made label (name + one of a fixed palette of colours). Shared by
+    every operator; deleting a tag removes it from every campaign."""
+    __tablename__ = "tags"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String, unique=True, nullable=False)
+    color = Column(String, default="grey")
+    created_at = Column(DateTime, default=utcnow)
+
+
+class CampaignTag(Base):
+    """Tag ↔ campaign (by TikTok campaign id, so it survives renames and re-syncs)."""
+    __tablename__ = "campaign_tags"
+    __table_args__ = (UniqueConstraint("campaign_id", "tag_id", name="uq_campaign_tag"),)
+
+    id = Column(Integer, primary_key=True)
+    campaign_id = Column(String, index=True, nullable=False)
+    tag_id = Column(Integer, index=True, nullable=False)
+
+
 class Note(Base):
     """A free-text note pinned to any object (campaign, creative, account,
     preset…): kind + ref_id identify it. One note per object, edited in place."""

@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
-from .. import appeals as appeals_mod, live_spend, models, pnl_data, queries, tiktok_api, timeutil
+from .. import appeals as appeals_mod, live_spend, models, pnl_data, queries, tags as tags_mod, tiktok_api, timeutil
 from ..database import get_db
 from ..templating import render
 
@@ -418,6 +418,8 @@ def status_page(request: Request, db: Session = Depends(get_db)):
 
     return render(request, "status.html", {
         "rejections": appeals_mod.by_campaign(db),
+        "tags_by_cid": tags_mod.by_campaign(db, [row["r"].campaign_id for row in rows]),
+        "tag_colors": tags_mod.COLORS,
         "group": group, "grouped": grouped, "notes": notes, "state_counts": state_counts, "trend": trend,
         "pace": pace_by_cid, "pace_tot": pace_tot,
         "deltas": deltas, "spark_json": _json2.dumps(spark),
@@ -699,3 +701,65 @@ def campaign_adgroup_duplicate(advertiser_id: str, campaign_id: str, adgroup_id:
 def _ago(dt):
     from ..templating import _ago as _f
     return _f(dt)
+
+
+# ---------------------------------------------------------------------------
+# campaign tags (Campaigns page pop-up)
+# ---------------------------------------------------------------------------
+
+@router.get("/tags.json")
+def tags_list(db: Session = Depends(get_db)):
+    from fastapi.responses import JSONResponse
+    return JSONResponse({"ok": True, "tags": tags_mod.all_tags(db), "colors": list(tags_mod.COLORS)})
+
+
+@router.post("/tags")
+def tags_create(name: str = Form(""), color: str = Form("grey"), db: Session = Depends(get_db)):
+    from fastapi.responses import JSONResponse
+    t, err = tags_mod.create(db, name, color)
+    if err:
+        return JSONResponse({"ok": False, "error": err})
+    db.commit()
+    return JSONResponse({"ok": True, "tag": tags_mod.as_dict(t)})
+
+
+@router.post("/tags/{tag_id}")
+def tags_update(tag_id: int, name: str = Form(None), color: str = Form(None), db: Session = Depends(get_db)):
+    from fastapi.responses import JSONResponse
+    t, err = tags_mod.update(db, tag_id, name=name, color=color)
+    if err:
+        return JSONResponse({"ok": False, "error": err})
+    db.commit()
+    return JSONResponse({"ok": True, "tag": tags_mod.as_dict(t)})
+
+
+@router.post("/tags/{tag_id}/delete")
+def tags_delete(tag_id: int, db: Session = Depends(get_db)):
+    from fastapi.responses import JSONResponse
+    n = tags_mod.delete(db, tag_id)
+    db.commit()
+    return JSONResponse({"ok": True, "removed_from": n})
+
+
+@router.post("/campaigns/tags")
+async def campaigns_tag(request: Request, db: Session = Depends(get_db)):
+    """Put one tag on / take it off one or many campaigns: form fields
+    campaign_ids (repeated or comma-joined), tag_id, on (1|0)."""
+    from fastapi.responses import JSONResponse
+    form = await request.form()
+    ids: list[str] = []
+    for v in form.getlist("campaign_ids"):
+        ids.extend(x.strip() for x in str(v).split(",") if x.strip())
+    try:
+        tag_id = int(form.get("tag_id") or 0)
+    except (TypeError, ValueError):
+        tag_id = 0
+    on = str(form.get("on") or "1") in ("1", "true", "on", "yes")
+    changed, err = tags_mod.set_on(db, ids, tag_id, on)
+    if err:
+        return JSONResponse({"ok": False, "error": err})
+    db.commit()
+    # `also`: campaigns whose rows must be repainted too (a group row's other members)
+    also = [x.strip() for x in str(form.get("also") or "").split(",") if x.strip()][:2000]
+    return JSONResponse({"ok": True, "changed": changed, "tags": tags_mod.by_campaign(db, list(set(ids) | set(also)))})
+

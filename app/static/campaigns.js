@@ -100,8 +100,106 @@
   }
   document.addEventListener("click", function (e) {
     var g = e.target.closest && e.target.closest(".grp-row");
-    if (!g || e.target.closest("input, .previewBtn, a")) return;
+    if (!g || e.target.closest("input, .previewBtn, a, .ctag, .ctag-add, .pop")) return;
     openGroups[g.dataset.gkey] = !openGroups[g.dataset.gkey]; applyGroups();
+  });
+
+  // ---- campaign tags -------------------------------------------------------------
+  // <span class="ctags" data-cid|data-cids> holds the pills; the "+" opens the pop-up.
+  // Toggling a tag posts one small request and repaints the affected rows in place.
+  var TAG_COLORS = ["green", "red", "amber", "blue", "purple", "pink", "teal", "grey"];
+  function tagPill(t, groupRow) {
+    return '<span class="ctag ctag-' + esc(t.color) + '" data-tag="' + t.id + '">' + esc(t.name) +
+      '<span class="ctag-x" title="' + (groupRow ? "Remove from every campaign in this group" : "Remove tag") + '">×</span></span>';
+  }
+  function cidsOf(holder) { return holder.dataset.cid ? [holder.dataset.cid] : (holder.dataset.cids || "").split(",").filter(Boolean); }
+  function holdersTouching(cids) {
+    // every pill holder (campaign row or group row) that shows any of these campaigns
+    var set = {}; cids.forEach(function (c) { set[c] = 1; });
+    return $$(".ctags").filter(function (h) { return cidsOf(h).some(function (c) { return set[c]; }); });
+  }
+  function repaintTags(holders, tagsByCid) {
+    // campaign rows show their own tags, group rows the union of their campaigns'
+    holders.forEach(function (h) {
+      var seen = {}, out = [];
+      cidsOf(h).forEach(function (c) { (tagsByCid[c] || []).forEach(function (t) { if (!seen[t.id]) { seen[t.id] = 1; out.push(t); } }); });
+      h.innerHTML = out.sort(function (a, b) { return a.name.toLowerCase() < b.name.toLowerCase() ? -1 : 1; }).map(function (t) { return tagPill(t, !!h.dataset.cids); }).join("");
+    });
+  }
+  function currentTagIds(holder) { return $$(".ctag", holder).map(function (p) { return p.dataset.tag; }); }
+  function setTag(holder, tagId, on) {
+    var cids = cidsOf(holder), holders = holdersTouching(cids), all = {};
+    holders.forEach(function (h) { cidsOf(h).forEach(function (c) { all[c] = 1; }); });
+    return UI.post("/campaigns/tags", { campaign_ids: cids.join(","), also: Object.keys(all).join(","), tag_id: tagId, on: on ? 1 : 0 }).then(function (r) {
+      if (!r || !r.ok) { adopsToast && adopsToast("err", (r && r.error) || "Couldn't change the tag."); return false; }
+      var map = {}; Object.keys(all).forEach(function (c) { map[c] = []; });
+      Object.keys(r.tags || {}).forEach(function (c) { map[c] = r.tags[c]; });
+      repaintTags(holders, map);
+      return true;
+    });
+  }
+  function tagPopup(anchor, holder) {
+    var groupRow = !!holder.dataset.cids, color = "green";
+    UI.get("/tags.json").then(function (d) {
+      var tags = (d && d.tags) || [], have = {}; currentTagIds(holder).forEach(function (id) { have[id] = 1; });
+      var list = tags.length ? tags.map(function (t) {
+        return '<label class="tp-row"><input type="checkbox" data-tag="' + t.id + '"' + (have[t.id] ? " checked" : "") + '>' + tagPill(t, false).replace(/<span class="ctag-x"[^>]*>×<\/span>/, "") +
+          '<span class="tp-del" data-del="' + t.id + '" title="Delete this tag everywhere">delete</span></label>';
+      }).join("") : '<div class="muted" style="padding:2px 4px 6px;">No tags yet — make one below.</div>';
+      var html = '<div class="tagpop"><div class="muted" style="font-size:11px;margin-bottom:4px;">' + (groupRow ? "Tags for every campaign in this group" : "Tags for this campaign") + "</div>" + list +
+        '<div class="tp-sep"></div><div class="muted" style="font-size:11px;">New tag</div>' +
+        '<input type="text" class="tp-name" maxlength="32" placeholder="e.g. winner, iOS test, no prelander" style="width:100%;box-sizing:border-box;margin-top:4px;">' +
+        '<div class="tp-sw">' + TAG_COLORS.map(function (c) { return '<span data-c="' + c + '" class="' + (c === color ? "on" : "") + '" title="' + c + '"></span>'; }).join("") + "</div>" +
+        '<div style="display:flex;justify-content:flex-end;"><button type="button" class="btn sm primary tp-add">Add</button></div></div>';
+      var p = UI.popover(anchor, html, {});
+      // colour swatches: paint each with its own palette colour
+      $$(".tp-sw span", p).forEach(function (sw) { var probe = document.createElement("span"); probe.className = "ctag ctag-" + sw.dataset.c; probe.style.position = "absolute"; probe.style.visibility = "hidden"; document.body.appendChild(probe); sw.style.background = getComputedStyle(probe).color; probe.remove(); sw.classList.toggle("on", sw.dataset.c === color); });
+      p.addEventListener("change", function (e) {
+        var cb = e.target.closest && e.target.closest("input[type=checkbox][data-tag]");
+        if (cb) { cb.disabled = true; setTag(holder, cb.dataset.tag, cb.checked).then(function (ok) { cb.disabled = false; if (!ok) cb.checked = !cb.checked; }); }
+      });
+      p.addEventListener("click", function (e) {
+        var sw = e.target.closest && e.target.closest(".tp-sw span");
+        if (sw) { color = sw.dataset.c; $$(".tp-sw span", p).forEach(function (o) { o.classList.toggle("on", o === sw); }); return; }
+        var del = e.target.closest && e.target.closest(".tp-del");
+        if (del) {
+          e.preventDefault();
+          UI.confirm({ title: "Delete this tag everywhere?", text: "It comes off every campaign that carries it. This can't be undone.", ok: "Delete", danger: true }).then(function (yes) {
+            if (!yes) return;
+            UI.post("/tags/" + del.dataset.del + "/delete", {}).then(function (r) {
+              if (!r || !r.ok) { adopsToast && adopsToast("err", "Couldn't delete the tag."); return; }
+              $$('.ctag[data-tag="' + del.dataset.del + '"]').forEach(function (x) { x.remove(); });
+              del.closest(".tp-row").remove();
+            });
+          });
+          return;
+        }
+        if (e.target.closest && e.target.closest(".tp-add")) add();
+      });
+      function add() {
+        var inp = p.querySelector(".tp-name"), name = inp.value.trim();
+        if (!name) { inp.focus(); return; }
+        UI.post("/tags", { name: name, color: color }).then(function (r) {
+          if (!r || !r.ok) { adopsToast && adopsToast("err", (r && r.error) || "Couldn't create the tag."); return; }
+          setTag(holder, r.tag.id, true).then(function () { p.remove(); tagPopup(anchor, holder); });
+        });
+      }
+      p.querySelector(".tp-name").addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); add(); } });
+      p.querySelector(".tp-name").focus();
+    });
+  }
+  document.addEventListener("click", function (e) {
+    var add = e.target.closest && e.target.closest(".ctag-add");
+    if (add) { e.preventDefault(); e.stopPropagation(); tagPopup(add, add.previousElementSibling); return; }
+    var x = e.target.closest && e.target.closest(".ctag-x");
+    if (x) {
+      e.preventDefault(); e.stopPropagation();
+      var pill = x.closest(".ctag"), holder = pill.closest(".ctags");
+      if (holder) setTag(holder, pill.dataset.tag, false);
+    }
+  });
+  document.addEventListener("keydown", function (e) {
+    if ((e.key === "Enter" || e.key === " ") && e.target.classList && e.target.classList.contains("ctag-add")) { e.preventDefault(); tagPopup(e.target, e.target.previousElementSibling); }
   });
 
   // ---- selection + bulk bar ----------------------------------------------------
@@ -289,16 +387,29 @@
       var r = d.row;
       if (!r) { box.textContent = d.source ? "No page beacons for this campaign in this range." : "This campaign has no source, so the pages can't be matched to it."; return; }
       box.classList.remove("muted");
-      function step(label, n, rate, hint) { return '<div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-bottom:1px solid var(--border-soft);"><span class="muted"' + (hint ? ' title="' + esc(hint) + '"' : "") + ">" + label + '</span><span><b>' + n + "</b>" + pctTxt(rate) + "</span></div>"; }
+      // a real funnel: every bar is relative to the top (/start views), so the drop-off
+      // is visible at a glance; the number is the count, the small text the step rate
+      var top = Math.max(r.start_view, r.play_view, 1);
+      function bar(label, n, rate, hint, cls) {
+        var w = Math.max(n > 0 ? 2 : 0, Math.round(n / top * 100));
+        return '<div class="fn-row' + (cls ? " " + cls : "") + '"' + (hint ? ' title="' + esc(hint) + '"' : "") + '>' +
+          '<span class="fn-lab">' + label + '</span>' +
+          '<span class="fn-bar"><i style="width:' + w + '%"></i></span>' +
+          '<span class="fn-n">' + n + '</span>' +
+          '<span class="fn-rate">' + (rate == null ? "" : Math.round(rate * 100) + "%") + '</span></div>';
+      }
       box.innerHTML =
-        step("/start views", r.start_view, null, "page painted — includes preloads, previews and bots") +
-        step("engaged", r.start_engaged, r.r_engaged, "a person: visible a few seconds, or touched — % of views") +
-        step("Continue pressed", r.start_continue, r.r_continue, "% of engaged") +
-        step("/play views", r.play_view, null) +
-        step("engaged", r.play_engaged, r.r_play_engaged, "% of /play views") +
-        step("CTA clicks", r.play_cta, r.r_cta, "% of /play engaged") +
-        step("Conversions (postbacks)", r.conversions, r.r_conv, "% of CTA clicks") +
-        '<div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;"><span class="muted" title="/start views that arrived with a TikTok click id">with ttclid</span><span>' + (r.r_ttclid == null ? "—" : Math.round(r.r_ttclid * 100) + "%") + "</span></div>";
+        '<div class="fn-page">/start <span class="muted">prelander</span></div>' +
+        bar("views", r.start_view, null, "page painted — includes preloads, previews and bots", "fn-dim") +
+        bar("people", r.start_engaged, r.r_engaged, "visible a few seconds, or touched — % of views") +
+        bar("pressed Continue", r.start_continue, r.r_continue, "% of people", "fn-act") +
+        '<div class="fn-page">/play <span class="muted">lander</span></div>' +
+        bar("views", r.play_view, null, "page painted", "fn-dim") +
+        bar("people", r.play_engaged, r.r_play_engaged, "% of views") +
+        bar("clicked offer", r.play_cta, r.r_cta, "% of people", "fn-act") +
+        '<div class="fn-page">Glitchy</div>' +
+        bar("conversions", r.conversions, r.r_conv, "postbacks — % of offer clicks", "fn-conv") +
+        '<div class="fn-foot"><span>with TikTok click id</span><b>' + (r.r_ttclid == null ? "—" : Math.round(r.r_ttclid * 100) + "%") + '</b><span class="muted" style="margin-left:auto;">% = of the step above it</span></div>';
     }, function () { var b = $("#dwFunnel"); if (b) b.textContent = "Couldn't read the funnel."; });
   }
   document.addEventListener("click", function (e) {
