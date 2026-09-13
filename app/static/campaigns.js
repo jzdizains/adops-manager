@@ -229,6 +229,56 @@
   });
 
   // ---- ad groups inside the drawer: list + duplicate ------------------------------------
+  // TikTok review rejection + appeal state for one ad group (from adgroups.json)
+  function appealPill(a) {
+    if (!a) return "";
+    var cls = a.status === "appealing" ? "warn" : (a.status === "successful" || a.status === "done" || a.status === "cleared") ? "ok" : "err";
+    var txt = a.status === "appealing" ? "appeal filed" + (a.filed_ago ? " " + a.filed_ago : "") + " · waiting for TikTok"
+      : a.status === "failed" ? "appeal rejected by TikTok"
+      : (a.status === "successful" || a.status === "done") ? a.label
+      : "rejected by TikTok";
+    return '<span class="pill ' + cls + '">' + esc(txt) + "</span>";
+  }
+  function appealBlock(g) {
+    var a = g.appeal;
+    if (!a && !g.rejected_live) return "";
+    var h = '<div class="dw-ag-appeal" style="margin-top:4px;font-size:11.5px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;">' + (a ? appealPill(a) : '<span class="pill err">rejected by TikTok</span>');
+    if (a && a.reasons) h += '<span class="muted" style="flex-basis:100%;">' + esc(a.reasons) + (a.suggestion ? " — " + esc(a.suggestion) : "") + "</span>";
+    if (a && a.status === "error" && a.error) h += '<span style="flex-basis:100%;color:var(--err);">last attempt: ' + esc(a.error) + "</span>";
+    if (!a || a.can_appeal) h += '<button type="button" class="btn sm primary dw-ag-appeal-btn" style="padding:2px 9px;">Appeal' + (a && a.status === "error" ? " again" : "") + "</button>";
+    return h + "</div>";
+  }
+  function pollAppeal(row, id, tries) {
+    UI.get("/appeals/" + id + "/state.json").then(function (r) {
+      var a = r && r.appeal;
+      if (!a) return;
+      if (a.status === "appealing" || a.status === "error" || tries <= 0) {
+        var box = row.querySelector(".dw-ag-appeal");
+        if (box) box.outerHTML = appealBlock({ appeal: a, rejected_live: true });
+        if (a.status === "appealing") adopsToast && adopsToast("ok", "Appeal filed — TikTok usually answers within a day.");
+        else if (a.status === "error") adopsToast && adopsToast("err", "TikTok refused the appeal: " + (a.error || "see the ad group"));
+        else adopsToast && adopsToast("ok", "Still filing in the background — the Appeals page will show the answer.");
+        return;
+      }
+      setTimeout(function () { pollAppeal(row, id, tries - 1); }, 2500);
+    });
+  }
+  document.addEventListener("click", function (e) {
+    var btn = e.target.closest && e.target.closest(".dw-ag-appeal-btn");
+    if (!btn || !drawer) return;
+    var row = btn.closest(".dw-ag"), adv = drawer._adv, cid = drawer._cid, agid = row.dataset.ag;
+    btn.disabled = true; btn.textContent = "Filing…";
+    UI.post("/campaigns/" + adv + "/" + cid + "/adgroups/" + agid + "/appeal", {}).then(function (r) {
+      if (!r || !r.ok) {
+        btn.disabled = false; btn.textContent = "Appeal";
+        adopsToast && adopsToast("err", (r && r.error) || "Couldn't file the appeal.");
+        if (r && r.appeal) { var box = row.querySelector(".dw-ag-appeal"); if (box) box.outerHTML = appealBlock({ appeal: r.appeal, rejected_live: true }); }
+        return;
+      }
+      pollAppeal(row, r.appeal.id, 24);      // ~60 s
+    }, function () { btn.disabled = false; btn.textContent = "Appeal"; adopsToast && adopsToast("err", "Couldn't file the appeal."); });
+  });
+
   function loadAdgroups(adv, cid) {
     var box = $("#dwAgs");
     if (!box) return;
@@ -245,7 +295,7 @@
           '<div class="muted" style="font-size:11px;">' + g.ads + " ad" + (g.ads === 1 ? "" : "s") +
           (g.budget ? " · $" + g.budget.toFixed(2) + (g.budget_mode === "BUDGET_MODE_TOTAL" ? " total" : "/day") : "") +
           (g.bid_price ? " · bid $" + g.bid_price.toFixed(2) : "") +
-          (g.secondary_status ? " · " + esc(g.secondary_status) : "") + "</div></span>" +
+          (g.secondary_status ? " · " + esc(g.secondary_status) : "") + "</div>" + appealBlock(g) + "</span>" +
           '<input type="number" class="dw-ag-n" min="1" max="' + d.max_copies + '" value="1" title="How many copies" style="width:52px;flex:none;padding:3px 6px;font-size:12px;">' +
           '<button type="button" class="btn sm dw-ag-dup" style="flex:none;"' + (d.running ? " disabled" : "") + '>Duplicate</button></div>';
       }).join("") +

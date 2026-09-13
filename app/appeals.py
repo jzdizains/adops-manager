@@ -417,3 +417,73 @@ def summary(db: Session) -> dict:
         "lost": counts.get("failed", 0), "cleared": counts.get("cleared", 0) + counts.get("dismissed", 0),
         "today": filed_today(db), "total": len(rows),
     }
+
+
+# ---------------------------------------------------------------------------
+# the campaign page (drawer badge + one-click appeal)
+# ---------------------------------------------------------------------------
+
+ATTENTION = ("pending", "skipped", "error", "appealing", "failed")   # rejections the campaign row should show
+
+
+def by_campaign(db: Session) -> dict[str, dict]:
+    """campaign_id -> {"open": n, "appealing": n, "failed": n} over rejections that are
+    still on TikTok (not gone). One GROUP BY, never rows into Python."""
+    from sqlalchemy import func
+    out: dict[str, dict] = {}
+    q = (db.query(models.Appeal.campaign_id, models.Appeal.status, func.count(models.Appeal.id))
+           .filter(models.Appeal.gone == False, models.Appeal.status.in_(ATTENTION))      # noqa: E712
+           .group_by(models.Appeal.campaign_id, models.Appeal.status))
+    for cid, status, n in q:
+        d = out.setdefault(cid or "", {"open": 0, "appealing": 0, "failed": 0})
+        key = "open" if status in ("pending", "skipped", "error") else status
+        d[key] += int(n or 0)
+    return out
+
+
+def row_state(row: models.Appeal | None) -> dict | None:
+    """What the drawer shows for one ad group's rejection."""
+    if row is None:
+        return None
+    from .templating import _ago
+    return {
+        "id": row.id, "status": row.status, "label": STATUS_LABELS.get(row.status, row.status),
+        "reasons": (row.reasons or "")[:400], "suggestion": (row.suggestion or "")[:300],
+        "ads_n": int(row.ads_n or 0), "ad_name": (row.ad_name or "")[:120],
+        "rejected_status": row.rejected_status or "", "error": (row.error or "")[:200],
+        "filed_by": row.filed_by or "", "filed_ago": _ago(row.submitted_at) if row.submitted_at else "",
+        "can_appeal": row.status in ("pending", "skipped", "error"),
+    }
+
+
+def rows_for_campaign(db: Session, advertiser_id: str, campaign_id: str) -> dict[str, models.Appeal]:
+    """adgroup_id -> its latest rejection row (not gone) in this campaign."""
+    out: dict[str, models.Appeal] = {}
+    for row in (db.query(models.Appeal)
+                  .filter(models.Appeal.advertiser_id == advertiser_id,
+                          models.Appeal.campaign_id == str(campaign_id),
+                          models.Appeal.gone == False)                                   # noqa: E712
+                  .order_by(models.Appeal.id.asc())):
+        out[row.adgroup_id] = row          # ascending → the last one wins = the latest
+    return out
+
+
+def track_adgroup_now(db: Session, acct, campaign_id: str, adgroup_id: str) -> models.Appeal | None:
+    """The scan hasn't seen this ad group yet: read its ads from TikTok right now and
+    run the same sync for just this ad group, so the operator can appeal from the
+    drawer without waiting for the next scan. Returns the row, or None when TikTok
+    reports nothing appealable."""
+    ads = tiktok_api.list_ads(acct.access_token, acct.advertiser_id, page_size=100,
+                              filtering={"adgroup_ids": [str(adgroup_id)]}) or {}
+    rejected = []
+    for ad in (ads.get("list") or []):
+        if is_appealable(str(ad.get("secondary_status") or "")):
+            ad = dict(ad)
+            ad.update({"advertiser_id": acct.advertiser_id, "advertiser_name": acct.advertiser_name or "",
+                       "access_token": acct.access_token, "campaign_id": str(campaign_id)})
+            rejected.append(ad)
+    if not rejected:
+        return None
+    sync(db, rejected, scanned_advertisers=None)
+    return _latest_row(db, acct.advertiser_id, str(adgroup_id))
+

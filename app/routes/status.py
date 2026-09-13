@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
-from .. import live_spend, models, pnl_data, queries, tiktok_api, timeutil
+from .. import appeals as appeals_mod, live_spend, models, pnl_data, queries, tiktok_api, timeutil
 from ..database import get_db
 from ..templating import render
 
@@ -417,6 +417,7 @@ def status_page(request: Request, db: Session = Depends(get_db)):
         grouped = sorted(buckets.values(), key=gkey, reverse=sort != "name")
 
     return render(request, "status.html", {
+        "rejections": appeals_mod.by_campaign(db),
         "group": group, "grouped": grouped, "notes": notes, "state_counts": state_counts, "trend": trend,
         "pace": pace_by_cid, "pace_tot": pace_tot,
         "deltas": deltas, "spark_json": _json2.dumps(spark),
@@ -603,8 +604,49 @@ def campaign_adgroups(advertiser_id: str, campaign_id: str, db: Session = Depend
     except tiktok_api.TikTokError as e:
         return JSONResponse({"ok": False, "error": f"{e.message} (code {e.code})"}, status_code=200)
     job = jobs_mod.pending(db, "adgroup_duplicate")
+    # TikTok review rejections per ad group (from the issue scan), with the appeal state
+    tracked = appeals_mod.rows_for_campaign(db, advertiser_id, campaign_id)
+    for g in rows:
+        g["appeal"] = appeals_mod.row_state(tracked.get(g["adgroup_id"]))
+        g["rejected_live"] = "deny" in (g.get("secondary_status") or "") or "reject" in (g.get("secondary_status") or "")
     return JSONResponse({"ok": True, "adgroups": rows, "max_copies": adgroup_copy.MAX_COPIES,
                          "running": bool(job)})
+
+
+@router.post("/campaigns/{advertiser_id}/{campaign_id}/adgroups/{adgroup_id}/appeal")
+def campaign_adgroup_appeal(advertiser_id: str, campaign_id: str, adgroup_id: str,
+                            db: Session = Depends(get_db)):
+    """One-click appeal from the campaign drawer. Uses the rejection the issue scan
+    tracked (or reads it from TikTok right now if the scan hasn't been by), then files
+    through the same job the Appeals page uses — one appeal per rejection, never twice."""
+    from fastapi.responses import JSONResponse
+    from .. import jobs as jobs_mod
+    acct = db.query(models.AdAccount).filter_by(advertiser_id=advertiser_id).first()
+    if acct is None or not acct.access_token:
+        return JSONResponse({"ok": False, "error": "that ad account is not connected"})
+    row = appeals_mod.rows_for_campaign(db, advertiser_id, campaign_id).get(str(adgroup_id))
+    if row is None:
+        try:
+            row = appeals_mod.track_adgroup_now(db, acct, campaign_id, adgroup_id)
+        except tiktok_api.TikTokError as e:
+            return JSONResponse({"ok": False, "error": f"couldn't read the ad group's review state: {e.message} (code {e.code})"})
+    if row is None:
+        return JSONResponse({"ok": False, "error": "TikTok reports nothing appealable on this ad group right now"})
+    if row.status == "appealing":
+        return JSONResponse({"ok": False, "error": "an appeal is already on file for this ad group — TikTok allows one per rejection", "appeal": appeals_mod.row_state(row)})
+    if row.status in ("successful", "done", "failed", "dismissed"):
+        return JSONResponse({"ok": False, "error": f"this rejection was already handled ({appeals_mod.STATUS_LABELS.get(row.status, row.status)}) — TikTok allows one appeal per rejection", "appeal": appeals_mod.row_state(row)})
+    jobs_mod.enqueue(db, "appeals_file", f"Appeal “{(row.ad_name or row.adgroup_id)[:50]}”",
+                     {"ids": [row.id], "reason": ""}, href="/appeals")
+    return JSONResponse({"ok": True, "appeal": appeals_mod.row_state(row)})
+
+
+@router.get("/appeals/{row_id}/state.json")
+def appeal_state(row_id: int, db: Session = Depends(get_db)):
+    """Cheap poll for the drawer while the appeal job runs."""
+    from fastapi.responses import JSONResponse
+    row = db.get(models.Appeal, row_id)
+    return JSONResponse({"ok": row is not None, "appeal": appeals_mod.row_state(row)})
 
 
 @router.post("/campaigns/{advertiser_id}/{campaign_id}/adgroups/{adgroup_id}/duplicate")
