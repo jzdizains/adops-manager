@@ -33,6 +33,14 @@
       });
     });
   });
+  // Ad groups: all / active only — a hidden field on the filter form, submitted like the others
+  $$("#agSeg button").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var input = form.querySelector("[name=ag]"); if (!input) return;
+      if ((input.value || "") === (b.dataset.ag || "")) return;
+      input.value = b.dataset.ag || ""; $$("#agSeg button").forEach(function (o) { o.classList.toggle("on", o === b); }); submit();
+    });
+  });
   // Custom range: the two date inputs only changed the form — nothing reloaded the page, so
   // picking dates looked like it did nothing. Apply (or Enter in either box) runs the filter.
   (function () {
@@ -429,18 +437,25 @@
       if (!d || !d.ok) { box.textContent = (d && d.error) || "Couldn't read the ad groups."; return; }
       if (!d.adgroups.length) { box.textContent = "This campaign has no ad groups."; return; }
       box.classList.remove("muted");
+      function agStats(g) {
+        var st = g.stats; if (!st || !st.has) return "";
+        var cpa = st.conversions ? " · CPA " + money(st.spend / st.conversions) : "";
+        return '<div class="dw-ag-stats" style="font-size:11px;margin-top:2px;">today: <b>' + money(st.spend) + "</b> spend · " + st.clicks + " click" + (st.clicks === 1 ? "" : "s") +
+          " · " + st.conversions + " conv" + cpa + (st.revenue || st.pb_conversions ? ' · <span style="color:var(--ok);font-weight:600;">' + money(st.revenue) + "</span> revenue (" + st.pb_conversions + " postback" + (st.pb_conversions === 1 ? "" : "s") + ")" : "") + "</div>";
+      }
       box.innerHTML = d.adgroups.map(function (g) {
         var live = g.operation_status === "ENABLE";
-        return '<div class="dw-ag" data-ag="' + esc(g.adgroup_id) + '" style="display:flex;gap:8px;align-items:center;padding:5px 0;border-bottom:1px solid var(--border-soft);">' +
+        return '<div class="dw-ag" data-ag="' + esc(g.adgroup_id) + '" style="display:flex;gap:8px;align-items:center;padding:5px 0;border-bottom:1px solid var(--border-soft);' + (live ? "" : "opacity:.55;") + '">' +
           '<span class="pill ' + (live ? "ok" : "mute") + '" style="flex:none;">' + (live ? "on" : "off") + "</span>" +
           '<span style="min-width:0;flex:1;"><b style="font-size:12.5px;">' + esc(g.name) + "</b>" +
           '<div class="muted" style="font-size:11px;">' + g.ads + " ad" + (g.ads === 1 ? "" : "s") +
           (g.budget ? " · $" + g.budget.toFixed(2) + (g.budget_mode === "BUDGET_MODE_TOTAL" ? " total" : "/day") : "") +
           (g.bid_price ? " · bid $" + g.bid_price.toFixed(2) : "") +
-          (g.secondary_status ? " · " + esc(g.secondary_status) : "") + "</div>" + appealBlock(g) + "</span>" +
+          (g.secondary_status ? " · " + esc(g.secondary_status) : "") + "</div>" + agStats(g) + appealBlock(g) + "</span>" +
           '<input type="number" class="dw-ag-n" min="1" max="' + d.max_copies + '" value="1" title="How many copies" style="width:52px;flex:none;padding:3px 6px;font-size:12px;">' +
           '<button type="button" class="btn sm dw-ag-dup" style="flex:none;"' + (d.running ? " disabled" : "") + '>Duplicate</button></div>';
       }).join("") +
+        (d.unsplit && (d.unsplit.revenue || d.unsplit.conversions) ? '<div class="muted" style="font-size:11px;margin-top:6px;color:var(--warn);">' + money(d.unsplit.revenue) + " revenue (" + d.unsplit.conversions + " postback" + (d.unsplit.conversions === 1 ? "" : "s") + ") arrived without an ad group id today — from before the postback URL carried it — and can't be assigned to a row above.</div>" : "") +
         '<div class="muted" style="font-size:11px;margin-top:6px;">A copy includes the ad group\'s settings and its ads, in this same campaign. ' +
         'Copies start in the same state as the original — duplicating a live ad group creates live ad groups that can spend.</div>';
     }, function () {

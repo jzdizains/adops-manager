@@ -2,6 +2,8 @@
 the Status page reads ('synced X ago')."""
 from __future__ import annotations
 
+import logging
+
 from datetime import datetime
 
 from sqlalchemy.orm import Session
@@ -103,6 +105,13 @@ def sync_campaigns(db: Session, accounts: list[models.AdAccount] | None = None) 
                     db.add(snap)
                 snap.spend = _f(m, "spend")
                 snap.conversions = int(_f(m, "conversion"))
+            # per-ad-group numbers for the live campaigns (Ad groups: active only + drawer)
+            try:
+                from . import adgroup_stats as _ags
+                live_ids = [str(c.get("campaign_id") or "") for c in campaigns if c.get("operation_status") == "ENABLE"]
+                _ags.sync_account(db, acct, live_ids, today, REPORT_METRICS)
+            except Exception:      # noqa: BLE001 — never let the ad-group layer break the campaign sync
+                logging.getLogger("adops.live_spend").exception("adgroup stats failed for %s", acct.advertiser_id)
             # pace ticks (delivery velocity for the Campaigns page)
             from . import hourly as _hourly, pace as _pace
             _pace.record(db, new_recs)

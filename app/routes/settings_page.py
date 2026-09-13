@@ -39,6 +39,7 @@ def settings_page(request: Request, db: Session = Depends(get_db)):
         f"{base_url}/postback?key={s['postback_key']}"
         "&source={trackingField" + str(int(s.get("clickflare_field") or 3)) + "}"
         + ("&cid={trackingField" + str(int(s.get("clickflare_cid_field") or 0)) + "}" if int(s.get("clickflare_cid_field") or 0) else "")
+        + ("&agid={trackingField" + str(int(s.get("clickflare_agid_field") or 0)) + "}" if int(s.get("clickflare_agid_field") or 0) else "")
         + "&revenue={payout}&txn={txid}&ttclid={external_id}&event=purchase"
     )
     from pathlib import Path

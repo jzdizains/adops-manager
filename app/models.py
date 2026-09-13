@@ -481,6 +481,7 @@ class PostbackEvent(Base):
     event = Column(String, default="")                 # e.g. purchase
     forward_status = Column(String, default="")        # Events API: sent | skipped… | error…
     click_id = Column(String, default="", index=True)  # our tracker click id, when the postback carried one
+    adgroup_id = Column(String, default="", index=True)  # TikTok ad group id (ClickFlare tracking field 6), "" when unknown
     raw_query = Column(Text, default="")
     created_at = Column(DateTime, default=utcnow, index=True)
 

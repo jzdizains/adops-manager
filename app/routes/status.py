@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
-from .. import appeals as appeals_mod, live_spend, models, pnl_data, queries, tags as tags_mod, tiktok_api, timeutil
+from .. import adgroup_stats, appeals as appeals_mod, live_spend, models, pnl_data, queries, tags as tags_mod, tiktok_api, timeutil
 from ..database import get_db
 from ..templating import render
 
@@ -79,6 +79,7 @@ def status_page(request: Request, db: Session = Depends(get_db)):
     account = request.query_params.get("account", "")          # advertiser_id
     source_f = request.query_params.get("source", "").strip()  # P&L source filter
     origin = request.query_params.get("origin", "tool")        # tool | all
+    ag_mode = request.query_params.get(adgroup_stats.MODE_PARAM, "") == "active"   # numbers from ACTIVE ad groups only
     range_key = request.query_params.get("range", "today")
     start = request.query_params.get("start") or None
     end = request.query_params.get("end") or None
@@ -171,8 +172,17 @@ def status_page(request: Request, db: Session = Depends(get_db)):
     src_count: dict[str, int] = {}
     src_spend: dict[str, float] = {}
     metrics_cache: dict[str, dict] = {}
+    ag_metrics: dict[str, dict] = {}
+    ag_revenue: dict[str, dict] = {}
+    if ag_mode:
+        _s_day = timeutil.local_date_str(start_utc)
+        _e_day = timeutil.local_date_str(end_utc - _td(seconds=1))
+        _ids = [r.campaign_id for r in records]
+        ag_metrics = adgroup_stats.active_metrics(db, _ids, _s_day, _e_day)
+        ag_revenue = adgroup_stats.active_revenue(db, _ids, start_utc.replace(tzinfo=None), end_utc.replace(tzinfo=None),
+                                                  {c: sources.get(c, "") for c in _ids})
     for r in records:
-        metrics_cache[r.campaign_id] = _metrics(r)
+        metrics_cache[r.campaign_id] = ag_metrics.get(r.campaign_id) or _metrics(r) if ag_mode else _metrics(r)
         src = sources.get(r.campaign_id, "")
         if src:
             src_count[src] = src_count.get(src, 0) + 1
@@ -200,6 +210,11 @@ def status_page(request: Request, db: Session = Depends(get_db)):
         src = sources.get(r.campaign_id, "")
         src_pb = pb.get(src, {}) if src else {}
         n = src_count.get(src, 1)
+        if ag_mode:
+            # revenue by ad group id (ClickFlare field 6) — no spend-share apportioning
+            ar = ag_revenue.get(r.campaign_id, {})
+            src_pb = {"revenue": ar.get("revenue", 0.0), "conversions": ar.get("conversions", 0), "clicks": 0}
+            n = 1
         if src and n > 1:
             total = src_spend.get(src, 0.0)
             share = (m["spend"] / total) if total > 0 else (1.0 / n)
@@ -212,6 +227,9 @@ def status_page(request: Request, db: Session = Depends(get_db)):
         src_conv = int(src_pb.get("conversions", 0))
         rows.append({
             "r": r, "m": m, "account_name": name, "source": src, "blocked": blocked,
+            "ag": ({**{k: m.get(k) for k in ("active_n", "total_n", "hidden_spend", "hidden_conversions", "has_rows")},
+                    **{k: ag_revenue.get(r.campaign_id, {}).get(k, 0) for k in ("unsplit_revenue", "unsplit_conversions")}}
+                   if ag_mode else None),
             "shared_n": n if (src and n > 1) else 0,
             "revenue": revenue,
             "pb_clicks": pb_clicks,
@@ -418,6 +436,7 @@ def status_page(request: Request, db: Session = Depends(get_db)):
 
     return render(request, "status.html", {
         "rejections": appeals_mod.by_campaign(db),
+        "ag_mode": ag_mode,
         "tags_by_cid": tags_mod.by_campaign(db, [row["r"].campaign_id for row in rows]),
         "tag_colors": tags_mod.COLORS,
         "group": group, "grouped": grouped, "notes": notes, "state_counts": state_counts, "trend": trend,
@@ -608,11 +627,25 @@ def campaign_adgroups(advertiser_id: str, campaign_id: str, db: Session = Depend
     job = jobs_mod.pending(db, "adgroup_duplicate")
     # TikTok review rejections per ad group (from the issue scan), with the appeal state
     tracked = appeals_mod.rows_for_campaign(db, advertiser_id, campaign_id)
+    # today's numbers per ad group (spend/clicks/conv from the sweep, revenue from postbacks by ad group id)
+    today = timeutil.local_date_str()
+    s_utc, e_utc = timeutil.range_bounds("today")
+    stats = adgroup_stats.drawer_rows(db, campaign_id, today, today)
+    src = pnl_data.campaign_source_map(db).get(campaign_id, "")
+    rev = adgroup_stats.revenue_by_adgroup(db, src, s_utc.replace(tzinfo=None), e_utc.replace(tzinfo=None))
     for g in rows:
         g["appeal"] = appeals_mod.row_state(tracked.get(g["adgroup_id"]))
         g["rejected_live"] = "deny" in (g.get("secondary_status") or "") or "reject" in (g.get("secondary_status") or "")
+        st = stats.get(g["adgroup_id"]) or {}
+        rv = rev.get(g["adgroup_id"]) or {}
+        g["stats"] = {"spend": float(st.get("spend") or 0), "clicks": int(st.get("clicks") or 0),
+                      "conversions": int(st.get("conversions") or 0), "revenue": float(rv.get("revenue") or 0),
+                      "pb_conversions": int(rv.get("conversions") or 0), "has": bool(st)}
+        g["created"] = (st.get("created") or "")
+    unsplit = rev.get("", {})
     return JSONResponse({"ok": True, "adgroups": rows, "max_copies": adgroup_copy.MAX_COPIES,
-                         "running": bool(job)})
+                         "running": bool(job),
+                         "unsplit": {"revenue": float(unsplit.get("revenue") or 0), "conversions": int(unsplit.get("conversions") or 0)}})
 
 
 @router.get("/campaigns/{advertiser_id}/{campaign_id}/funnel.json")

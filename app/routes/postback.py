@@ -266,6 +266,9 @@ async def postback(request: Request, db: Session = Depends(get_db)):
         # Glitchy never carried ?source=. Keep the revenue (as unattributed) and
         # make the failure visible instead of silently discarding it.
         source = UNATTRIBUTED
+    agid_param = (q.get("agid") or q.get("adgroup_id") or "").strip()[:40]
+    if _is_macro(agid_param) or not agid_param.isdigit():
+        agid_param = ""                     # ClickFlare sent its token literally, or junk — unknown ad group
     txn = (q.get("txn") or q.get("transaction_id") or "").strip()[:120]
     per_event = bool(txn) or bool((q.get("event") or "").strip())
     if _is_macro(txn):
@@ -289,6 +292,7 @@ async def postback(request: Request, db: Session = Depends(get_db)):
         txn=txn,
         ttclid=ttclid,
         click_id=click.click_id if click else "",
+        adgroup_id=agid_param,
         event=(q.get("event") or "").strip()[:60],
         raw_query=strip_key(str(request.url.query))[:2000],
     )
