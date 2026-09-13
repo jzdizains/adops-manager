@@ -79,7 +79,7 @@ def status_page(request: Request, db: Session = Depends(get_db)):
     account = request.query_params.get("account", "")          # advertiser_id
     source_f = request.query_params.get("source", "").strip()  # P&L source filter
     origin = request.query_params.get("origin", "tool")        # tool | all
-    ag_mode = request.query_params.get(adgroup_stats.MODE_PARAM, "") == "active"   # numbers from ACTIVE ad groups only
+    ag_flags = adgroup_stats.flagged(db)        # campaigns whose numbers come from ACTIVE ad groups only
     range_key = request.query_params.get("range", "today")
     start = request.query_params.get("start") or None
     end = request.query_params.get("end") or None
@@ -174,15 +174,17 @@ def status_page(request: Request, db: Session = Depends(get_db)):
     metrics_cache: dict[str, dict] = {}
     ag_metrics: dict[str, dict] = {}
     ag_revenue: dict[str, dict] = {}
-    if ag_mode:
+    _ids = [r.campaign_id for r in records if r.campaign_id in ag_flags]
+    if _ids:
         _s_day = timeutil.local_date_str(start_utc)
         _e_day = timeutil.local_date_str(end_utc - _td(seconds=1))
-        _ids = [r.campaign_id for r in records]
         ag_metrics = adgroup_stats.active_metrics(db, _ids, _s_day, _e_day)
         ag_revenue = adgroup_stats.active_revenue(db, _ids, start_utc.replace(tzinfo=None), end_utc.replace(tzinfo=None),
                                                   {c: sources.get(c, "") for c in _ids})
     for r in records:
-        metrics_cache[r.campaign_id] = ag_metrics.get(r.campaign_id) or _metrics(r) if ag_mode else _metrics(r)
+        am = ag_metrics.get(r.campaign_id)
+        # a flagged campaign with no ad-group rows yet (first sync pending) keeps its full numbers
+        metrics_cache[r.campaign_id] = am if (am and am.get("has_rows")) else _metrics(r)
         src = sources.get(r.campaign_id, "")
         if src:
             src_count[src] = src_count.get(src, 0) + 1
@@ -210,7 +212,9 @@ def status_page(request: Request, db: Session = Depends(get_db)):
         src = sources.get(r.campaign_id, "")
         src_pb = pb.get(src, {}) if src else {}
         n = src_count.get(src, 1)
-        if ag_mode:
+        ag_on = r.campaign_id in ag_flags
+        ag_live = ag_on and bool((ag_metrics.get(r.campaign_id) or {}).get("has_rows"))
+        if ag_live:
             # revenue by ad group id (ClickFlare field 6) — no spend-share apportioning
             ar = ag_revenue.get(r.campaign_id, {})
             src_pb = {"revenue": ar.get("revenue", 0.0), "conversions": ar.get("conversions", 0), "clicks": 0}
@@ -227,9 +231,10 @@ def status_page(request: Request, db: Session = Depends(get_db)):
         src_conv = int(src_pb.get("conversions", 0))
         rows.append({
             "r": r, "m": m, "account_name": name, "source": src, "blocked": blocked,
-            "ag": ({**{k: m.get(k) for k in ("active_n", "total_n", "hidden_spend", "hidden_conversions", "has_rows")},
+            "ag": ({"on": True, "live": ag_live,
+                    **{k: (ag_metrics.get(r.campaign_id) or {}).get(k, 0) for k in ("active_n", "total_n", "hidden_spend", "hidden_conversions")},
                     **{k: ag_revenue.get(r.campaign_id, {}).get(k, 0) for k in ("unsplit_revenue", "unsplit_conversions")}}
-                   if ag_mode else None),
+                   if ag_on else None),
             "shared_n": n if (src and n > 1) else 0,
             "revenue": revenue,
             "pb_clicks": pb_clicks,
@@ -436,7 +441,7 @@ def status_page(request: Request, db: Session = Depends(get_db)):
 
     return render(request, "status.html", {
         "rejections": appeals_mod.by_campaign(db),
-        "ag_mode": ag_mode,
+        "ag_flags": ag_flags,
         "tags_by_cid": tags_mod.by_campaign(db, [row["r"].campaign_id for row in rows]),
         "tag_colors": tags_mod.COLORS,
         "group": group, "grouped": grouped, "notes": notes, "state_counts": state_counts, "trend": trend,
@@ -644,8 +649,18 @@ def campaign_adgroups(advertiser_id: str, campaign_id: str, db: Session = Depend
         g["created"] = (st.get("created") or "")
     unsplit = rev.get("", {})
     return JSONResponse({"ok": True, "adgroups": rows, "max_copies": adgroup_copy.MAX_COPIES,
-                         "running": bool(job),
+                         "running": bool(job), "ag_active_only": str(campaign_id) in adgroup_stats.flagged(db),
                          "unsplit": {"revenue": float(unsplit.get("revenue") or 0), "conversions": int(unsplit.get("conversions") or 0)}})
+
+
+@router.post("/campaigns/{advertiser_id}/{campaign_id}/agmode")
+def campaign_agmode(advertiser_id: str, campaign_id: str, on: str = Form("0"), db: Session = Depends(get_db)):
+    """Drawer toggle: this campaign's numbers from ACTIVE ad groups only (on=1) or all (on=0)."""
+    from fastapi.responses import JSONResponse
+    want = str(on) in ("1", "true", "on", "yes")
+    adgroup_stats.set_flag(db, campaign_id, want)
+    db.commit()
+    return JSONResponse({"ok": True, "ag_active_only": want})
 
 
 @router.get("/campaigns/{advertiser_id}/{campaign_id}/funnel.json")

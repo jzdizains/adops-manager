@@ -171,12 +171,35 @@ check("no live campaigns → no calls", ag.sync_account(DB(), acct, [], "2026-09
 
 # ---- wiring (source) ------------------------------------------------------------
 sp = open(os.path.join(ROOT, "app", "routes", "status.py")).read()
-check("page reads ?ag=active", 'request.query_params.get(adgroup_stats.MODE_PARAM, "") == "active"' in sp)
-check("active mode swaps the metrics and the revenue, no spend-share apportioning", "ag_metrics = adgroup_stats.active_metrics(db, _ids, _s_day, _e_day)" in sp and 'src_pb = {"revenue": ar.get("revenue", 0.0)' in sp and "n = 1" in sp)
+check("per-campaign flags drive the mode (no global switch)", "ag_flags = adgroup_stats.flagged(db)" in sp and "MODE_PARAM" not in sp and "_ids = [r.campaign_id for r in records if r.campaign_id in ag_flags]" in sp)
+check("flagged campaign with rows swaps metrics + revenue, no spend-share apportioning", 'src_pb = {"revenue": ar.get("revenue", 0.0)' in sp and "n = 1" in sp and 'metrics_cache[r.campaign_id] = am if (am and am.get("has_rows")) else _metrics(r)' in sp)
+check("flagged campaign WITHOUT rows keeps its full numbers (never zeros)", 'ag_live = ag_on and bool((ag_metrics.get(r.campaign_id) or {}).get("has_rows"))' in sp and "if ag_live:" in sp)
+check("drawer toggle endpoint + flag in adgroups.json", '"/campaigns/{advertiser_id}/{campaign_id}/agmode"' in sp and '"ag_active_only": str(campaign_id) in adgroup_stats.flagged(db)' in sp)
+# flag helpers
+class PrefDB:
+    def __init__(self): self.prefs = []
+    def add(self, r): self.prefs.append(r)
+    def query(self, *cols):
+        db = self
+        class Q:
+            def filter(self, *a): return self
+            def filter_by(self, **k): self.k = k; return self
+            def first(self): return next((p for p in db.prefs if p.campaign_id == self.k.get("campaign_id")), None)
+            def __iter__(self): return iter([(p.campaign_id,) for p in db.prefs if p.ag_active_only])
+        return Q()
+class CampaignPref:
+    campaign_id = _Col(); ag_active_only = _Col()
+    def __init__(self, **k): self.__dict__.update({"ag_active_only": False}); self.__dict__.update(k)
+sys.modules["app.models"].CampaignPref = CampaignPref
+pdb = PrefDB()
+ag.set_flag(pdb, "c1", True); ag.set_flag(pdb, "c2", True); ag.set_flag(pdb, "c2", False)
+check("set_flag creates once and toggles; flagged() lists only the ON ones", len(pdb.prefs) == 2 and ag.flagged(pdb) == {"c1"})
 check("drawer json carries per-ad-group stats + unsplit", 'g["stats"] = {"spend"' in sp and '"unsplit": {"revenue"' in sp)
 tpl = open(os.path.join(ROOT, "app", "templates", "status.html")).read()
-check("switch in the filter bar + hidden field + qs carries the mode", 'id="agSeg"' in tpl and 'name="ag"' in tpl and "('&ag=active' if ag_mode else '')" in tpl)
-check("row explains what was hidden and unsplit", "from paused ad groups hidden" in tpl and "unsplit revenue" in tpl and "no ad-group data for this range" in tpl)
+check("no global switch left in the template", 'id="agSeg"' not in tpl and "ag_mode" not in tpl)
+check("row explains the mode, what was hidden, unsplit, and the waiting state", "active ad groups only · " in tpl and "from paused ad groups hidden" in tpl and "unsplit revenue" in tpl and "waiting for the next sync" in tpl)
+js = open(os.path.join(ROOT, "app", "static", "campaigns.js")).read()
+check("drawer has the toggle and redraws the table in place after saving", 'id="dwAgMode"' in js and '"/agmode", { on: on ? 1 : 0 }' in js and 'refreshInPlace("refresh");        // the row' in js and "agSeg" not in js)
 pb_src = open(os.path.join(ROOT, "app", "routes", "postback.py")).read()
 check("postback stores a numeric ad group id, never a literal token", 'q.get("agid") or q.get("adgroup_id")' in pb_src and "not agid_param.isdigit()" in pb_src and "adgroup_id=agid_param," in pb_src)
 ss = open(os.path.join(ROOT, "app", "routes", "settings_page.py")).read()

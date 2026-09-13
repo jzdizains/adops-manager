@@ -913,6 +913,18 @@ class HourlyMetric(Base):
     updated_at = Column(DateTime, default=utcnow)
 
 
+class CampaignPref(Base):
+    """Per-campaign switches the operator sets from the drawer. ag_active_only: show
+    this campaign's numbers from its ACTIVE ad groups only (after pausing old ad
+    groups and creating new ones). Keyed by TikTok campaign id."""
+    __tablename__ = "campaign_prefs"
+
+    id = Column(Integer, primary_key=True)
+    campaign_id = Column(String, unique=True, nullable=False)
+    ag_active_only = Column(Boolean, default=False)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+
 class Tag(Base):
     """An operator-made label (name + one of a fixed palette of colours). Shared by
     every operator; deleting a tag removes it from every campaign."""

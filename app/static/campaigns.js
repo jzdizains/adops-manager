@@ -33,14 +33,6 @@
       });
     });
   });
-  // Ad groups: all / active only — a hidden field on the filter form, submitted like the others
-  $$("#agSeg button").forEach(function (b) {
-    b.addEventListener("click", function () {
-      var input = form.querySelector("[name=ag]"); if (!input) return;
-      if ((input.value || "") === (b.dataset.ag || "")) return;
-      input.value = b.dataset.ag || ""; $$("#agSeg button").forEach(function (o) { o.classList.toggle("on", o === b); }); submit();
-    });
-  });
   // Custom range: the two date inputs only changed the form — nothing reloaded the page, so
   // picking dates looked like it did nothing. Apply (or Enter in either box) runs the filter.
   (function () {
@@ -443,7 +435,11 @@
         return '<div class="dw-ag-stats" style="font-size:11px;margin-top:2px;">today: <b>' + money(st.spend) + "</b> spend · " + st.clicks + " click" + (st.clicks === 1 ? "" : "s") +
           " · " + st.conversions + " conv" + cpa + (st.revenue || st.pb_conversions ? ' · <span style="color:var(--ok);font-weight:600;">' + money(st.revenue) + "</span> revenue (" + st.pb_conversions + " postback" + (st.pb_conversions === 1 ? "" : "s") + ")" : "") + "</div>";
       }
-      box.innerHTML = d.adgroups.map(function (g) {
+      var anyPaused = d.adgroups.some(function (g) { return g.operation_status !== "ENABLE"; });
+      box.innerHTML = '<label class="dw-agmode" style="display:flex;align-items:center;gap:8px;font-size:12px;padding:4px 0 8px;cursor:pointer;" title="When on, this campaign\'s row shows spend, clicks, conversions and revenue from the ad groups that are ON right now — the ones you paused are left out for the whole range.">' +
+        '<input type="checkbox" id="dwAgMode"' + (d.ag_active_only ? " checked" : "") + ' style="width:auto;margin:0;"><span>Numbers from <b>active ad groups only</b></span>' +
+        (d.ag_active_only ? '<span class="pill warn" style="margin-left:auto;">on</span>' : (anyPaused ? '<span class="muted" style="margin-left:auto;font-size:11px;">some ad groups are paused</span>' : "")) + "</label>" +
+        d.adgroups.map(function (g) {
         var live = g.operation_status === "ENABLE";
         return '<div class="dw-ag" data-ag="' + esc(g.adgroup_id) + '" style="display:flex;gap:8px;align-items:center;padding:5px 0;border-bottom:1px solid var(--border-soft);' + (live ? "" : "opacity:.55;") + '">' +
           '<span class="pill ' + (live ? "ok" : "mute") + '" style="flex:none;">' + (live ? "on" : "off") + "</span>" +
@@ -462,6 +458,17 @@
       var b = $("#dwAgs"); if (b) b.textContent = "Couldn't read the ad groups.";
     });
   }
+  document.addEventListener("change", function (e) {
+    if (!e.target || e.target.id !== "dwAgMode" || !drawer) return;
+    var cb = e.target, on = cb.checked; cb.disabled = true;
+    UI.post("/campaigns/" + drawer._adv + "/" + drawer._cid + "/agmode", { on: on ? 1 : 0 }).then(function (r) {
+      cb.disabled = false;
+      if (!r || !r.ok) { cb.checked = !on; adopsToast && adopsToast("err", (r && r.error) || "Couldn't save."); return; }
+      adopsToast && adopsToast("ok", on ? "This campaign now shows active ad groups only." : "This campaign shows all ad groups again.");
+      loadAdgroups(drawer._adv, drawer._cid);
+      refreshInPlace("refresh");        // the row's numbers change — redraw the table in place
+    }, function () { cb.disabled = false; cb.checked = !on; });
+  });
 
   document.addEventListener("click", function (e) {
     var btn = e.target.closest && e.target.closest(".dw-ag-dup");

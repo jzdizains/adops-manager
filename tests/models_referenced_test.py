@@ -33,7 +33,7 @@ for dirpath, _dirs, files in os.walk(APP):
 check("every models.<Name> referenced in app/ exists", not missing, str(missing))
 
 # the ones this build depends on, by name
-for name in ("AdgroupSnapshot", "Tag", "CampaignTag", "LanderEvent", "Appeal", "PostbackEvent"):
+for name in ("AdgroupSnapshot", "CampaignPref", "Tag", "CampaignTag", "LanderEvent", "Appeal", "PostbackEvent"):
     check(f"models.{name} is defined", name in defined)
 
 # columns the new code reads must exist on their models
@@ -41,7 +41,7 @@ def has_col(model, col):
     m = re.search(rf"^class {model}\(.*?(?=^class |\Z)", models_src, re.M | re.S)
     return bool(m) and re.search(rf"^\s+{col}\s*=\s*Column\(", m.group(0), re.M) is not None
 for model, col in (("PostbackEvent", "adgroup_id"), ("LanderEvent", "via"), ("AdgroupSnapshot", "operation_status"),
-                   ("AdgroupSnapshot", "created_time"), ("Tag", "color"), ("CampaignTag", "tag_id")):
+                   ("AdgroupSnapshot", "created_time"), ("CampaignPref", "ag_active_only"), ("Tag", "color"), ("CampaignTag", "tag_id")):
     check(f"{model}.{col} column exists", has_col(model, col))
 
 print()

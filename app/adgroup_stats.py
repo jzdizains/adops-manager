@@ -5,7 +5,8 @@ accounts with live campaigns it now also pulls the AD-GROUP level (one more repo
 call) and the ad group list (status, name, created time), and upserts one
 AdgroupSnapshot per ad group per local day.
 
-"Active only" then recomputes a campaign's metrics from the ad groups whose status
+A campaign switched to "active ad groups only" (drawer toggle, CampaignPref) has its
+metrics recomputed from the ad groups whose status
 was ENABLE at the last sweep — for the whole range, so an ad group paused an hour
 ago is out for the whole day. Revenue follows the same rule through the ad group
 id ClickFlare puts on the postback (tracking field 6); conversions that arrived
@@ -27,8 +28,21 @@ from . import models, tiktok_api
 log = logging.getLogger("adops.adgroup_stats")
 
 KEEP_DAYS = 45
-MODE_PARAM = "ag"            # ?ag=active on the Campaigns page
 _prune_at = [datetime.min]
+
+
+def flagged(db: Session) -> set[str]:
+    """Campaign ids whose numbers should come from active ad groups only."""
+    return {cid for (cid,) in db.query(models.CampaignPref.campaign_id)
+            .filter(models.CampaignPref.ag_active_only == True)}          # noqa: E712
+
+
+def set_flag(db: Session, campaign_id: str, on: bool) -> None:
+    pref = db.query(models.CampaignPref).filter_by(campaign_id=str(campaign_id)).first()
+    if pref is None:
+        pref = models.CampaignPref(campaign_id=str(campaign_id))
+        db.add(pref)
+    pref.ag_active_only = bool(on)
 
 
 def _f(m: dict, key: str) -> float:
