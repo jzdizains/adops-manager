@@ -18,7 +18,8 @@ from ..templating import render
 from .launch import (
     BID_STRATEGY_OPTIONS, CLICK_ATTR_OPTIONS, CTA_OPTIONS, DESTINATIONS,
     NETWORK_OPTIONS, OBJECTIVES, OPT_GOAL_OPTIONS, OS_OPTIONS, PACING_OPTIONS,
-    PIXEL_EVENTS, SPECIAL_INDUSTRIES, SPENDING_POWER_OPTIONS, VIEW_ATTR_OPTIONS,
+    PIXEL_EVENTS, SPECIAL_INDUSTRIES, SPENDING_POWER_OPTIONS, TRAFFIC_GOAL_OPTIONS, TRAFFIC_GOALS,
+    VIEW_ATTR_OPTIONS,
 )
 
 router = APIRouter()
@@ -73,6 +74,8 @@ def parse_form(form) -> dict:
         "pixel_id": val("pixel_id"),
         "optimization_event": val("optimization_event"),
         "optimization_goal": val("optimization_goal"),
+        "traffic_goal": val("traffic_goal", "CLICK") if val("traffic_goal", "CLICK") in TRAFFIC_GOALS else "CLICK",
+        "traffic_pixel": val("traffic_pixel"),                 # Engaged session pixel (code or numeric id)
         "creative_source": val("creative_source", "spark"),    # spark | library
         "ad_text_mode": val("ad_text_mode", "fixed"),          # fixed | pool
         # Smart Creative (library source): auto-combine several videos + texts
@@ -121,6 +124,7 @@ def _form_ctx(db: Session) -> dict:
     return {
         "objectives": OBJECTIVES,
         "objective_options": OBJECTIVE_OPTIONS,
+        "traffic_goal_options": TRAFFIC_GOAL_OPTIONS,
         "objective_rules_json": _json.dumps(OBJECTIVE_RULES),
         "goal_labels_json": _json.dumps(GOAL_LABELS),
         "dest_labels_json": _json.dumps(DEST_LABELS),

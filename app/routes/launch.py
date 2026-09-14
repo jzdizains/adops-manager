@@ -106,6 +106,29 @@ CTA_OPTIONS = [
     "VISIT_STORE", "WATCH_NOW", "INTERESTED", "LISTEN_NOW", "READ_MORE",
     "VIEW_NOW", "PRE_ORDER_NOW", "GET_TICKETS_NOW", "EXPERIENCE_NOW",
 ]
+# Traffic objective — the three optimisation goals Ads Manager offers for a website
+# destination. CLICK and TRAFFIC_LANDING_PAGE_VIEW are documented API values; Engaged
+# session's API value is not published, so the launcher tries the plausible payloads in
+# order and lets TikTok decide (see campaigns.traffic_variants) — the accepted one is
+# read back from the created ad group and remembered.
+TRAFFIC_GOAL_OPTIONS = [
+    ("CLICK", "Click", "cheapest clicks to your page (CPC)"),
+    ("LPV", "Landing page view", "people most likely to load the page (oCPM)"),
+    ("ENGAGED", "Engaged session", "people most likely to stay ≥10 s or act (oCPM) — recommended by TikTok"),
+]
+TRAFFIC_GOALS = {k for k, _, _ in TRAFFIC_GOAL_OPTIONS}
+# Engaged session: (optimization_goal, optimization_event) payload candidates, tried in
+# order until TikTok accepts one; the accepted pair is remembered (setting
+# ENGAGED_SETTING_KEY) and tried first from then on. Every refusal is logged with
+# TikTok's own message, which names the allowed values.
+ENGAGED_CANDIDATES = [
+    ("ENGAGED_SESSION", ""),                       # a goal of its own, event implied (like LANDING_PAGE_VIEW)
+    ("ENGAGED_SESSION", "ENGAGED_SESSION"),        # same, with the documented pixel event spelled out
+    ("TRAFFIC_ENGAGED_SESSION", ""),               # named like TRAFFIC_LANDING_PAGE_VIEW
+    ("CONVERT", "ENGAGED_SESSION"),                # conversion goal on the documented ENGAGED_SESSION pixel event
+]
+ENGAGED_SETTING_KEY = "traffic_engaged_accepted"     # JSON {"goal": …, "event": …} once TikTok accepted one
+
 OPT_GOAL_OPTIONS = [
     ("", "Auto (from objective)"),
     ("CONVERT", "Conversions"), ("CLICK", "Clicks"), ("REACH", "Reach"),
@@ -150,6 +173,12 @@ def synthesize(template: models.Template, overrides: dict[str, Any] | None = Non
     s = adgroup_settings_of(template)
     destination = s.get("destination_type", "website")
     opt_goal, billing_event, bid_type = optimization_for(template.objective_type, destination)
+    # Traffic: the preset's optimisation goal overrides the objective default
+    traffic_goal = (s.get("traffic_goal") or "CLICK") if template.objective_type == "TRAFFIC" else ""
+    if traffic_goal == "LPV":
+        opt_goal, billing_event = "TRAFFIC_LANDING_PAGE_VIEW", "OCPM"
+    elif traffic_goal == "ENGAGED":
+        opt_goal, billing_event = ENGAGED_CANDIDATES[0][0], "OCPM"      # first candidate; TikTok decides (campaigns.traffic_variants)
 
     fields: dict[str, Any] = {
         # -- campaign level (from COLUMNS — §9.1) --
@@ -168,8 +197,10 @@ def synthesize(template: models.Template, overrides: dict[str, Any] | None = Non
         "smart_creative": bool(s.get("smart_creative")),
         "smart_creative_videos": int(s.get("smart_creative_videos") or 5),
         "smart_creative_texts": int(s.get("smart_creative_texts") or 5),
-        "optimization_goal": s.get("optimization_goal") or opt_goal,
-        "billing_event": s.get("billing_event") or billing_event,
+        # Traffic: the picked goal decides goal + billing (a stale stored value never overrides it)
+        "optimization_goal": opt_goal if traffic_goal else (s.get("optimization_goal") or opt_goal),
+        "billing_event": billing_event if traffic_goal else (s.get("billing_event") or billing_event),
+        "traffic_goal": traffic_goal,
         "bid_type": s.get("bid_type") or bid_type,
         "cost_cap_ladder": s.get("cost_cap_ladder") or [],       # list of bid prices
         "location_ids": s.get("location_ids") or [],
@@ -210,6 +241,7 @@ def synthesize(template: models.Template, overrides: dict[str, Any] | None = Non
         "pixel_code": s.get("pixel_code") or "",
         "pixel_id": s.get("pixel_id") or "",                     # numeric, if already resolved
         "optimization_event": s.get("optimization_event") or "",
+        "traffic_pixel": s.get("traffic_pixel") or "",           # Traffic · Engaged session pixel (code or id)
         # -- creative / spark --
         "creative_source": s.get("creative_source") or "spark",   # spark | library
         "ad_text_mode": s.get("ad_text_mode") or "fixed",         # fixed | pool (library only)
@@ -224,6 +256,12 @@ def synthesize(template: models.Template, overrides: dict[str, Any] | None = Non
     # …or a specific library VIDEO (same idea: runs on every account, so reusable;
     # ignored under Smart Creative, which needs several videos)
     fields["video_creative_id"] = int(s.get("video_creative_id") or 0) or None
+    if traffic_goal:
+        # Traffic never optimises for a pixel event; Engaged session takes its pixel from
+        # the Traffic block (the conversion pixel fields are hidden for this objective)
+        fields["optimization_event"] = ""
+        fields["pixel_id"] = fields["traffic_pixel"] if traffic_goal == "ENGAGED" else ""
+        fields["pixel_code"] = ""
     if overrides:
         fields.update({k: v for k, v in overrides.items() if v not in (None, "")})
     launcher_picked = (overrides or {}).get("creative_id") or (overrides or {}).get("creative_source")

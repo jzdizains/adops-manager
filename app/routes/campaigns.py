@@ -639,7 +639,13 @@ def build_campaign_payload(fields: dict, acct: models.AdAccount) -> dict:
         payload["budget_mode"] = mode                 # BUDGET_MODE_DAY | BUDGET_MODE_TOTAL
         payload["budget"] = float(fields["campaign_budget"])
         payload["bid_type"] = fields.get("bid_type", "BID_TYPE_NO_BID")
-        payload["optimization_goal"] = fields.get("optimization_goal", "CLICK")
+        if fields.get("traffic_goal") == "ENGAGED":
+            # CBO carries the goal on the campaign too. The runner puts the pair TikTok
+            # accepted last time in fields["_engaged_goal"]; with nothing remembered the
+            # first candidate goes out and campaign_goal_candidates() walks the rest.
+            payload["optimization_goal"] = fields.get("_engaged_goal") or launch_mod.ENGAGED_CANDIDATES[0][0]
+        else:
+            payload["optimization_goal"] = fields.get("optimization_goal", "CLICK")
     else:
         # ABO: TikTok now REQUIRES budget_mode on campaign create even when the
         # budget lives on the ad groups — INFINITE = no campaign-level budget
@@ -704,10 +710,14 @@ def build_adgroup_payload(fields: dict, acct: models.AdAccount, campaign_id: str
     else:
         payload["budget_mode"] = "BUDGET_MODE_INFINITE"
 
-    # bidding: ladder entries get an explicit cost cap
+    # bidding: ladder entries get an explicit cost cap — on the field TikTok reads for
+    # the billing event (bid_price for CPC/CPM/CPV, conversion_bid_price for oCPM)
     if bid_price is not None:
         payload["bid_type"] = "BID_TYPE_CUSTOM"
-        payload["conversion_bid_price"] = float(bid_price)
+        if fields.get("billing_event") == "OCPM":
+            payload["conversion_bid_price"] = float(bid_price)
+        else:
+            payload["bid_price"] = float(bid_price)
     else:
         payload["bid_type"] = fields["bid_type"]
 
@@ -748,7 +758,114 @@ def build_adgroup_payload(fields: dict, acct: models.AdAccount, campaign_id: str
         payload["optimization_event"] = "BUTTON"
     else:
         payload["promotion_type"] = "WEBSITE"
+    # Traffic · Engaged session: Ads Manager asks for the pixel here (it measures the
+    # ≥10 s / further-click session); Click and Landing page view send none
+    if fields.get("objective_type") == "TRAFFIC" and fields.get("traffic_goal") == "ENGAGED" and pixel_id:
+        payload["pixel_id"] = pixel_id
     return payload
+
+
+def is_engaged(fields: dict) -> bool:
+    return fields.get("objective_type") == "TRAFFIC" and fields.get("traffic_goal") == "ENGAGED"
+
+
+def remembered_engaged(db: Session) -> dict | None:
+    """The (goal, event) pair TikTok accepted for Engaged session last time, or None."""
+    import json as _json
+    try:
+        remembered = _json.loads(queries.get_setting(db, launch_mod.ENGAGED_SETTING_KEY) or "null")
+    except (ValueError, TypeError):
+        return None
+    if isinstance(remembered, dict) and remembered.get("goal"):
+        return {"goal": str(remembered["goal"]), "event": str(remembered.get("event") or "")}
+    return None
+
+
+def engaged_pairs(fields: dict) -> list[tuple[str, str]]:
+    """Candidate (optimization_goal, optimization_event) pairs, remembered one first.
+    A CBO campaign already created with one goal locks the ad groups to that goal."""
+    pairs = list(launch_mod.ENGAGED_CANDIDATES)
+    goal = fields.get("_engaged_goal") or ""
+    if goal:
+        first = (goal, fields.get("_engaged_event") or "")
+        pairs = [first] + [p for p in pairs if p != first]
+    if fields.get("_engaged_goal_locked") and goal:
+        pairs = [p for p in pairs if p[0] == goal]
+    return pairs
+
+
+def campaign_goal_candidates(fields: dict, camp_payload: dict) -> list[dict]:
+    """CBO + Engaged session: the campaign carries the goal, so a wrong enum fails at
+    campaign create. The payloads to try, one per distinct candidate goal, in order."""
+    if not (camp_payload.get("budget_optimize_on") and is_engaged(fields)):
+        return [camp_payload]
+    goals: list[str] = []
+    for g, _ in engaged_pairs(fields):
+        if g not in goals:
+            goals.append(g)
+    return [{**camp_payload, "optimization_goal": g} for g in goals]
+
+
+def traffic_variants(db: Session, fields: dict, base_payload: dict) -> list[dict]:
+    """Engaged session: the ad-group payloads to try, in order. The pair TikTok accepted
+    last time (setting) goes first; then the documented-adjacent candidates."""
+    if not is_engaged(fields):
+        return [base_payload]
+    if not fields.get("_engaged_goal"):
+        rem = remembered_engaged(db)
+        if rem:
+            fields = {**fields, "_engaged_goal": rem["goal"], "_engaged_event": rem["event"]}
+    out = []
+    for goal, event in engaged_pairs(fields):
+        v = {k: val for k, val in base_payload.items() if k != "optimization_event"}
+        v["optimization_goal"] = goal
+        v["billing_event"] = "OCPM"
+        if event:
+            v["optimization_event"] = event
+        if goal == "CONVERT" and not v.get("pixel_id"):
+            continue                       # a conversion goal needs the pixel; skip when the account has none
+        out.append(v)
+    return out or [base_payload]
+
+
+def _walkable(e: "tiktok_api.TikTokError", engaged: bool = False) -> bool:
+    """A TikTok complaint about the objective/goal/event — worth trying the next variant.
+    Engaged-session probing also walks on generic enum complaints (invalid / param)."""
+    msg = (e.message or "").lower()
+    words = ("objective", "promotion", "optimization", "optimisation", "event")
+    if engaged:
+        words += ("goal", "invalid", "param", "enum")
+    return any(w in msg for w in words)
+
+
+def note_engaged_refusal(fields: dict, payload: dict, e: "tiktok_api.TikTokError", level: str) -> None:
+    if not is_engaged(fields):
+        return
+    try:
+        from .. import diag
+        diag.record("app", "launch", "engaged-session-refused",
+                    f"TikTok refused {level} optimization_goal={payload.get('optimization_goal')}"
+                    + (f" / optimization_event={payload['optimization_event']}" if payload.get("optimization_event") else "")
+                    + f" — {e.message or e}"[:400],
+                    {"goal": payload.get("optimization_goal", ""), "event": payload.get("optimization_event", ""), "level": level})
+    except Exception:      # noqa: BLE001
+        pass
+
+
+def remember_traffic_goal(db: Session, fields: dict, accepted: dict) -> None:
+    """After TikTok accepted an Engaged-session ad group, remember the pair and log it."""
+    if not (fields.get("objective_type") == "TRAFFIC" and fields.get("traffic_goal") == "ENGAGED"):
+        return
+    import json as _json
+    pair = {"goal": accepted.get("optimization_goal", ""), "event": accepted.get("optimization_event", "")}
+    queries.set_setting(db, launch_mod.ENGAGED_SETTING_KEY, _json.dumps(pair))
+    try:
+        from .. import diag
+        diag.record("app", "launch", "engaged-session-accepted",
+                    f"TikTok accepted Engaged session as optimization_goal={pair['goal'] or '?'}"
+                    + (f", optimization_event={pair['event']}" if pair['event'] else "") + " — remembered for next launches", pair)
+    except Exception:      # noqa: BLE001
+        pass
 
 
 def build_ad_payload(fields: dict, adgroup_id: str, spark_ref: dict | None,
@@ -1226,10 +1343,11 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                               "spark ads always show the post's own caption.")
         needs_pixel = (fields["destination_type"] == "pixel"
                        or (fields["destination_type"] == "website"
-                           and fields.get("optimization_goal") == "CONVERT"))
+                           and fields.get("optimization_goal") == "CONVERT")
+                       or is_engaged(fields))          # Traffic · Engaged session: Ads Manager asks for the pixel
         # an Instant page / Instant form destination never needs a pixel — TikTok optimises for
         # the page's button clicks / the form itself
-        if needs_pixel and not fields.get("optimization_event"):
+        if needs_pixel and not is_engaged(fields) and not fields.get("optimization_event"):
             raise ConfigError("Conversion campaigns need a pixel + optimization event — "
                               "pick both in the preset (Optimization location section). "
                               "The event must already exist on the pixel — §9.7.")
@@ -1520,9 +1638,28 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
             if source_mode == "campaign":
                 log.source = created_name
         else:
+            if is_engaged(fields):
+                rem = remembered_engaged(db)
+                fields = {**fields, "_engaged_goal": (rem or {}).get("goal", ""),
+                          "_engaged_event": (rem or {}).get("event", "")}
             camp_payload = build_campaign_payload(fields, acct)
-            camp = tiktok_api.create_campaign(acct.access_token, acct.advertiser_id,
-                                              camp_payload)
+            camp = None
+            camp_candidates = campaign_goal_candidates(fields, camp_payload)
+            for c_i, cp in enumerate(camp_candidates):
+                try:
+                    camp = tiktok_api.create_campaign(acct.access_token, acct.advertiser_id, cp)
+                    camp_payload = cp
+                    break
+                except tiktok_api.TikTokError as e:
+                    note_engaged_refusal(fields, cp, e, "campaign")
+                    if c_i < len(camp_candidates) - 1 and _walkable(e, engaged=True):
+                        continue          # CBO + Engaged session: next candidate goal
+                    raise
+            if camp is None:   # defensive — loop always breaks or raises
+                raise tiktok_api.TikTokError("APP", "campaign not created")
+            if camp_payload.get("budget_optimize_on") and is_engaged(fields):
+                # the campaign now carries this goal — every ad group must use the same one
+                fields = {**fields, "_engaged_goal": camp_payload["optimization_goal"], "_engaged_goal_locked": True}
             campaign_id = str(camp.get("campaign_id"))
             log.campaign_id = campaign_id
             new_campaign_id = campaign_id     # remember for orphan cleanup on failure
@@ -1543,7 +1680,7 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                 base_payload = build_adgroup_payload(fields, acct, campaign_id, i, bid, pixel_id)
                 # lead-gen web accounts differ in which promotion combination they
                 # accept — try the documented one first, then graceful variants
-                variants: list[dict] = [base_payload]
+                variants: list[dict] = traffic_variants(db, fields, base_payload)
                 if base_payload.get("promotion_type") == "LEAD_GENERATION":
                     no_target = {k: v for k, v in base_payload.items()
                                  if k != "promotion_target_type"}
@@ -1580,16 +1717,21 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                         break   # created — stop trying variants
                     except tiktok_api.TikTokError as e:
                         last_err = e
-                        msg = (e.message or "").lower()
-                        # only walk to the next variant on objective/promotion
+                        note_engaged_refusal(fields, ag_payload, e, "ad group")
+                        # only walk to the next variant on objective/promotion/goal
                         # complaints; anything else is a real error — surface it
-                        if (v_i < len(variants) - 1
-                                and ("objective" in msg or "promotion" in msg or "optimization" in msg or "event" in msg)):
+                        if v_i < len(variants) - 1 and _walkable(e, engaged=is_engaged(fields)):
                             continue
                         raise
                 if ag is None:   # defensive — loop always breaks or raises
                     raise last_err or tiktok_api.TikTokError("APP", "ad group not created")
                 adgroup_id = str(ag.get("adgroup_id"))
+                if is_engaged(fields) and i == 0:
+                    remember_traffic_goal(db, fields, ag_payload)      # the payload TikTok took
+                    log.optimization_event = (str(ag_payload.get("optimization_goal", ""))
+                                              + (f" · {ag_payload['optimization_event']}" if ag_payload.get("optimization_event") else ""))[:100]
+                elif fields.get("traffic_goal") == "LPV" and i == 0:
+                    log.optimization_event = "TRAFFIC_LANDING_PAGE_VIEW"
 
                 # SMART CREATIVE: one auto-combining ad per ad group from all the
                 # reserved materials (ignores ads-per-group — TikTok rotates internally)

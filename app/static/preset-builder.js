@@ -37,6 +37,15 @@
   }
   var obj = bindCards("objCards", "objType", syncObjective);
   var dest = bindCards("destCards", "destType", syncDest);
+  // Traffic → its own optimisation goal (Click / Landing page view / Engaged session), like Ads Manager
+  var tgField = $("#trafficGoalField"), tgPixel = $("#trafficPixel");
+  function syncTrafficPixel() { if (tgPixel && tg) tgPixel.hidden = tg.sel.value !== "ENGAGED"; }
+  var tg = tgField ? bindCards("trafficGoalCards", "trafficGoal", syncTrafficPixel) : null;
+  function syncTrafficGoal() { if (tgField) tgField.hidden = objSel.value !== "TRAFFIC"; syncTrafficPixel(); }
+  objSel.addEventListener("change", syncTrafficGoal);
+  $("#objCards").addEventListener("click", syncTrafficGoal);
+  if (toClick) toClick.addEventListener("click", syncTrafficGoal);
+  syncTrafficGoal();
   syncObjective();
 
   // ---- budget mode + ladder --------------------------------------------------------------------

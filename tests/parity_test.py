@@ -29,7 +29,8 @@ _mod("app.routes.launch",
      OBJECTIVE_RULES={"TRAFFIC": {"goals": ["CLICK", "TRAFFIC_LANDING_PAGE_VIEW"]}, "WEB_CONVERSIONS": {"goals": ["CONVERT"]}},
      OBJECTIVES=["TRAFFIC", "WEB_CONVERSIONS", "LEAD_GENERATION", "REACH", "VIDEO_VIEWS"],
      PIXEL_EVENTS=[("ON_WEB_DETAIL", "v"), ("FORM", "f"), ("ON_WEB_REGISTER", "r"), ("BUTTON", "b"), ("ON_WEB_ORDER", "o"), ("SHOPPING", "s")],
-     PACING_OPTIONS=[("PACING_MODE_SMOOTH", "s"), ("PACING_MODE_FAST", "f")])
+     PACING_OPTIONS=[("PACING_MODE_SMOOTH", "s"), ("PACING_MODE_FAST", "f")],
+     ENGAGED_CANDIDATES=[("ENGAGED_SESSION", ""), ("CONVERT", "ENGAGED_SESSION")])
 recorded = []
 _mod("app.diag", record=lambda kind, where, code, message, context=None, request_id="": recorded.append((kind, where, code, context)))
 import importlib
@@ -53,8 +54,9 @@ adgroups = [{"campaign_id": "c1", "optimization_goal": "CLICK", "billing_event":
 db = DB()
 n = pr.observe(db, acct, campaigns, adgroups)
 refs = sorted(a.ref_id for a in db.added)
-check("only unknown values are reported", refs == ["objective_type:ENGAGEMENT", "optimization_event:ENGAGED_SESSION", "optimization_goal:ENGAGED_SESSION_GOAL", "placement:PLACEMENT_PANGLE"], str(refs))
-check("returns the number of new sightings", n == 4)
+check("only unknown values are reported", refs == ["objective_type:ENGAGEMENT", "optimization_goal:ENGAGED_SESSION_GOAL", "placement:PLACEMENT_PANGLE"], str(refs))
+check("a value the launcher probes itself (ENGAGED_SESSION event, v110) is not 'missing'", "optimization_event:ENGAGED_SESSION" not in refs)
+check("returns the number of new sightings", n == 3)
 check("alerts are Inbox rows of kind parity, level info", all(a.kind == "parity" and a.level == "info" for a in db.added))
 msg = next(a.message for a in db.added if a.ref_id == "optimization_goal:ENGAGED_SESSION_GOAL")
 check("the notice names the value, the campaign and the account", "ENGAGED_SESSION_GOAL" in msg and "Camp One" in msg and "Blue Bat" in msg, msg)
@@ -64,7 +66,7 @@ db2 = DB()
 check("the same values are never reported twice in one process", pr.observe(db2, acct, campaigns, adgroups) == 0 and db2.added == [])
 # a restart: the Alert row already exists (even acknowledged) → still nothing
 pr._seen_this_process.clear()
-db3 = DB(); db3.existing = {"objective_type:ENGAGEMENT", "optimization_event:ENGAGED_SESSION", "optimization_goal:ENGAGED_SESSION_GOAL", "placement:PLACEMENT_PANGLE"}
+db3 = DB(); db3.existing = {"objective_type:ENGAGEMENT", "optimization_goal:ENGAGED_SESSION_GOAL", "placement:PLACEMENT_PANGLE"}
 check("after a restart, an existing Inbox row (acknowledged or not) suppresses the repeat", pr.observe(db3, acct, campaigns, adgroups) == 0 and db3.added == [])
 # no ad groups fetched → campaigns still checked, nothing crashes
 pr._seen_this_process.clear()

@@ -47,6 +47,17 @@
         {% endfor %}
       </div>
       <span class="hint">The goal decides which destinations and events are valid — the next step only offers what TikTok accepts for it.</span></div>
+    <div class="field" id="trafficGoalField" hidden><span class="field-label">Optimization goal <span class="muted">(Traffic)</span></span>
+      <select name="traffic_goal" id="trafficGoal" hidden>{% for k, label, sub in traffic_goal_options %}<option value="{{ k }}" {{ 'selected' if blob.get('traffic_goal', 'CLICK') == k }}>{{ label }}</option>{% endfor %}</select>
+      <div class="pb-cards" id="trafficGoalCards">
+        {% for k, label, sub in traffic_goal_options %}<button type="button" class="pb-card" data-val="{{ k }}"><b>{{ label }}</b><span class="muted">{{ sub }}</span></button>{% endfor %}
+      </div>
+      <span class="hint">Same three as Ads Manager. Click bills per click (CPC); Landing page view and Engaged session bill per impression (oCPM) and optimise for the visit — TikTok counts an engaged session as ≥10 s on the page or a further click.</span>
+      <div class="pb-sub" id="trafficPixel" hidden style="margin-top:8px;">
+        <label class="field"><span class="field-label">Pixel <span class="muted">(Engaged session)</span></span>
+          <select name="traffic_pixel"><option value="">— the account's only pixel —</option>{% for px in pixels %}<option value="{{ px.pixel_code or px.pixel_id }}" {{ 'selected' if blob.get('traffic_pixel') and blob.get('traffic_pixel') in (px.pixel_code, px.pixel_id) }}>{{ px.pixel_name or px.pixel_id }}{{ ' · BC-shared' if px.owner_bc_id }}</option>{% endfor %}</select>
+          <span class="hint">Ads Manager asks for the pixel on Engaged session — it measures the ≥10 s stay. Resolved per account at launch; an account with several pixels needs one picked here. TikTok's API doesn't publish the Engaged-session value yet, so the launcher tries its candidate spellings in order, keeps the one TikTok accepts and shows it in the launch result and Diagnostics.</span></label>
+      </div></div>
     <div class="form-row" style="margin-top:6px;">
       <div class="field"><span class="field-label">Smart+</span>
         <label class="sw"><input type="checkbox" name="smart_plus" value="1" {{ 'checked' if blob.get('smart_plus') }}><span class="tog"></span><span><b>Smart+ campaign</b><span class="muted" style="display:block;font-size:11.5px;">TikTok automates targeting, placements and delivery. Needs Website/Pixel + a spark creative; one smart ad group per campaign (first cost cap is used).</span></span></label></div>
