@@ -62,6 +62,15 @@ def sync_campaigns(db: Session, accounts: list[models.AdAccount] | None = None) 
             except tiktok_api.TikTokError:
                 pass  # reporting can lag; keep the campaign list anyway
 
+            # ALL network reads finish before the first write: SQLite has one writer and
+            # every other job waits on it (the "database is locked" errors of v106–108)
+            ag_fetched = None
+            try:
+                from . import adgroup_stats as _ags
+                live_ids = [str(c.get("campaign_id") or "") for c in campaigns if c.get("operation_status") == "ENABLE"]
+                ag_fetched = _ags.fetch_account(acct, live_ids, today, REPORT_METRICS)
+            except Exception:      # noqa: BLE001
+                logging.getLogger("adops.live_spend").exception("adgroup fetch failed for %s", acct.advertiser_id)
             db.query(models.CampaignRecord).filter_by(advertiser_id=acct.advertiser_id).delete()
             new_recs: list[models.CampaignRecord] = []
             for c in campaigns:
@@ -105,13 +114,16 @@ def sync_campaigns(db: Session, accounts: list[models.AdAccount] | None = None) 
                     db.add(snap)
                 snap.spend = _f(m, "spend")
                 snap.conversions = int(_f(m, "conversion"))
-            # per-ad-group numbers for the live campaigns (Ad groups: active only + drawer)
+            # per-ad-group numbers for the live campaigns — WRITE only; the TikTok calls
+            # happened above, before this account's write transaction was opened
             try:
                 from . import adgroup_stats as _ags
-                live_ids = [str(c.get("campaign_id") or "") for c in campaigns if c.get("operation_status") == "ENABLE"]
-                _ags.sync_account(db, acct, live_ids, today, REPORT_METRICS)
+                _ags.write_account(db, acct, today, ag_fetched)
             except Exception:      # noqa: BLE001 — never let the ad-group layer break the campaign sync
                 logging.getLogger("adops.live_spend").exception("adgroup stats failed for %s", acct.advertiser_id)
+            # parity watch: any option TikTok uses that the launcher can't set → Inbox notice
+            from . import parity as _parity
+            _parity.observe(db, acct, campaigns, ag_fetched[0] if ag_fetched else None)
             # pace ticks (delivery velocity for the Campaigns page)
             from . import hourly as _hourly, pace as _pace
             _pace.record(db, new_recs)

@@ -56,13 +56,16 @@ def _f(m: dict, key: str) -> float:
 # sync (called from live_spend.sync_campaigns, per account, today)
 # ---------------------------------------------------------------------------
 
-def sync_account(db: Session, acct: models.AdAccount, campaign_ids: list[str], day: str,
-                 report_metrics: list[str]) -> int:
-    """Upsert today's ad-group rows for these campaigns. Returns rows touched.
-    Two calls: /adgroup/get/ (status, names) and the ad-group-level report.
-    Any TikTok error leaves yesterday's rows alone and is logged, never raised."""
+def fetch_account(acct: models.AdAccount, campaign_ids: list[str], day: str,
+                  report_metrics: list[str]) -> tuple[list[dict], dict[str, dict]] | None:
+    """NETWORK ONLY — no database touched. Two calls: /adgroup/get/ (status, names) and
+    the ad-group-level report. Returns (groups, metrics_by_adgroup), or None when the
+    list call failed (nothing to write; yesterday's rows stay). Must run BEFORE the
+    campaign sync opens its write transaction: SQLite has one writer, and holding the
+    lock through seconds of TikTok calls is what made other jobs fail with
+    "database is locked"."""
     if not campaign_ids or not acct.access_token:
-        return 0
+        return None
     groups: list[dict] = []
     try:
         for i in range(0, len(campaign_ids), 100):          # the filter takes up to 100 ids
@@ -77,7 +80,7 @@ def sync_account(db: Session, acct: models.AdAccount, campaign_ids: list[str], d
                 page += 1
     except tiktok_api.TikTokError as e:
         log.info("adgroup list unavailable for %s: %s", acct.advertiser_id, e)
-        return 0
+        return None
     metrics: dict[str, dict] = {}
     try:
         for r in tiktok_api.get_report(acct.access_token, acct.advertiser_id,
@@ -87,6 +90,15 @@ def sync_account(db: Session, acct: models.AdAccount, campaign_ids: list[str], d
             metrics[str((r.get("dimensions") or {}).get("adgroup_id") or "")] = r.get("metrics") or {}
     except tiktok_api.TikTokError as e:
         log.info("adgroup report unavailable for %s: %s", acct.advertiser_id, e)
+    return groups, metrics
+
+
+def write_account(db: Session, acct: models.AdAccount, day: str, fetched) -> int:
+    """DATABASE ONLY — upsert today's rows from what fetch_account returned. Fast: one
+    read of today's rows for the account, then in-memory updates. Returns rows touched."""
+    if not fetched:
+        return 0
+    groups, metrics = fetched
     existing = {row.adgroup_id: row for row in
                 db.query(models.AdgroupSnapshot)
                   .filter(models.AdgroupSnapshot.advertiser_id == acct.advertiser_id,
@@ -114,6 +126,12 @@ def sync_account(db: Session, acct: models.AdAccount, campaign_ids: list[str], d
         n += 1
     _prune(db)
     return n
+
+
+def sync_account(db: Session, acct: models.AdAccount, campaign_ids: list[str], day: str,
+                 report_metrics: list[str]) -> int:
+    """fetch + write in one go — only for callers that hold no write transaction yet."""
+    return write_account(db, acct, day, fetch_account(acct, campaign_ids, day, report_metrics))
 
 
 def _prune(db: Session) -> None:

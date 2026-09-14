@@ -205,7 +205,20 @@ check("postback stores a numeric ad group id, never a literal token", 'q.get("ag
 ss = open(os.path.join(ROOT, "app", "routes", "settings_page.py")).read()
 check("postback URL carries &agid={trackingField6}", '"&agid={trackingField" + str(int(s.get("clickflare_agid_field") or 0)) + "}"' in ss)
 ls = open(os.path.join(ROOT, "app", "live_spend.py")).read()
-check("the sweep syncs ad groups for LIVE campaigns only and can never break the campaign sync", '_ags.sync_account(db, acct, live_ids, today, REPORT_METRICS)' in ls and 'c.get("operation_status") == "ENABLE"' in ls and "except Exception:" in ls)
+check("the sweep syncs ad groups for LIVE campaigns only and can never break the campaign sync", "_ags.write_account(db, acct, today, ag_fetched)" in ls and 'c.get("operation_status") == "ENABLE"' in ls and "except Exception:" in ls)
+check("TikTok calls for ad groups happen BEFORE the account's write transaction opens (no lock held across the network)",
+      ls.index("ag_fetched = _ags.fetch_account(acct, live_ids, today, REPORT_METRICS)") < ls.index("db.query(models.CampaignRecord).filter_by(advertiser_id=acct.advertiser_id).delete()") < ls.index("_ags.write_account(db, acct, today, ag_fetched)"))
+# fetch/write split: fetch touches no db, write touches no network
+class NoDB:
+    def query(self, *a): raise AssertionError("fetch_account must not touch the database")
+tk.list_adgroups = fake_list; tk.get_report = lambda *a, **k: []
+calls["pages"] = []
+f = ag.fetch_account(acct, ["c1"], "2026-09-14", ["spend"])
+check("fetch_account returns (groups, metrics) without a db", f is not None and len(f[0]) == 2 and f[1] == {})
+tk.list_adgroups = boom; tk.get_report = boom
+wdb = DB(); n3 = ag.write_account(wdb, acct, "2026-09-14", f)
+check("write_account never calls TikTok", n3 == 2 and len(wdb.added) == 2)
+check("write_account with nothing fetched writes nothing", ag.write_account(DB(), acct, "2026-09-14", None) == 0)
 
 print()
 print("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}")
