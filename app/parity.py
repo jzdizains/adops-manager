@@ -24,8 +24,8 @@ def _known() -> dict[str, set[str]]:
     from .routes import launch
     goals = {k for k, _ in launch.OPT_GOAL_OPTIONS if k} | set(launch.GOAL_LABELS) - {""}
     goals |= {g for rule in launch.OBJECTIVE_RULES.values() for g in rule["goals"]}
-    goals |= {g for g, _ in launch.ENGAGED_CANDIDATES}          # Traffic · Engaged session (probed)
-    events = {k for k, _ in launch.PIXEL_EVENTS} | {"", "LANDING_PAGE_VIEW"} | {e for _, e in launch.ENGAGED_CANDIDATES}
+    goals |= {c[0] for c in launch.ENGAGED_CANDIDATES}          # Traffic · Engaged session (probed)
+    events = {k for k, _ in launch.PIXEL_EVENTS} | {"", "LANDING_PAGE_VIEW"} | {c[1] for c in launch.ENGAGED_CANDIDATES}
     return {
         "objective_type": set(launch.OBJECTIVES),
         "optimization_goal": goals,

@@ -770,24 +770,27 @@ def is_engaged(fields: dict) -> bool:
 
 
 def remembered_engaged(db: Session) -> dict | None:
-    """The (goal, event) pair TikTok accepted for Engaged session last time, or None."""
+    """The (goal, event, pixel) shape TikTok accepted for Engaged session last time, or None."""
     import json as _json
     try:
         remembered = _json.loads(queries.get_setting(db, launch_mod.ENGAGED_SETTING_KEY) or "null")
     except (ValueError, TypeError):
         return None
     if isinstance(remembered, dict) and remembered.get("goal"):
-        return {"goal": str(remembered["goal"]), "event": str(remembered.get("event") or "")}
+        return {"goal": str(remembered["goal"]), "event": str(remembered.get("event") or ""),
+                "pixel": bool(remembered.get("pixel", True))}
     return None
 
 
-def engaged_pairs(fields: dict) -> list[tuple[str, str]]:
-    """Candidate (optimization_goal, optimization_event) pairs, remembered one first.
-    A CBO campaign already created with one goal locks the ad groups to that goal."""
+def engaged_pairs(fields: dict) -> list[tuple[str, str, bool]]:
+    """Candidate (optimization_goal, optimization_event, send-pixel) shapes, remembered one
+    first. A CBO campaign already created with one goal locks the ad groups to that goal."""
     pairs = list(launch_mod.ENGAGED_CANDIDATES)
     goal = fields.get("_engaged_goal") or ""
-    if goal:
-        first = (goal, fields.get("_engaged_event") or "")
+    if goal and "_engaged_event" in fields:
+        # a whole remembered shape (goal + event + pixel) — a bare locked goal never
+        # invents one, since goal-with-pixel-without-event is the shape TikTok refuses
+        first = (goal, fields.get("_engaged_event") or "", bool(fields.get("_engaged_pixel", True)))
         pairs = [first] + [p for p in pairs if p != first]
     if fields.get("_engaged_goal_locked") and goal:
         pairs = [p for p in pairs if p[0] == goal]
@@ -800,41 +803,45 @@ def campaign_goal_candidates(fields: dict, camp_payload: dict) -> list[dict]:
     if not (camp_payload.get("budget_optimize_on") and is_engaged(fields)):
         return [camp_payload]
     goals: list[str] = []
-    for g, _ in engaged_pairs(fields):
+    for g, _e, _p in engaged_pairs(fields):
         if g not in goals:
             goals.append(g)
     return [{**camp_payload, "optimization_goal": g} for g in goals]
 
 
 def traffic_variants(db: Session, fields: dict, base_payload: dict) -> list[dict]:
-    """Engaged session: the ad-group payloads to try, in order. The pair TikTok accepted
-    last time (setting) goes first; then the documented-adjacent candidates."""
+    """Engaged session: the ad-group payloads to try, in order. The shape TikTok accepted
+    last time (setting) goes first; then the candidates. A shape that needs the pixel is
+    skipped when the account has none; a pixel-less shape drops pixel_id."""
     if not is_engaged(fields):
         return [base_payload]
     if not fields.get("_engaged_goal"):
         rem = remembered_engaged(db)
         if rem:
-            fields = {**fields, "_engaged_goal": rem["goal"], "_engaged_event": rem["event"]}
+            fields = {**fields, "_engaged_goal": rem["goal"], "_engaged_event": rem["event"], "_engaged_pixel": rem["pixel"]}
     out = []
-    for goal, event in engaged_pairs(fields):
-        v = {k: val for k, val in base_payload.items() if k != "optimization_event"}
+    for goal, event, with_pixel in engaged_pairs(fields):
+        v = {k: val for k, val in base_payload.items() if k not in ("optimization_event", "pixel_id")}
         v["optimization_goal"] = goal
         v["billing_event"] = "OCPM"
         if event:
             v["optimization_event"] = event
-        if goal == "CONVERT" and not v.get("pixel_id"):
-            continue                       # a conversion goal needs the pixel; skip when the account has none
+        if with_pixel:
+            if not base_payload.get("pixel_id"):
+                continue                   # this shape needs the pixel; the account has none
+            v["pixel_id"] = base_payload["pixel_id"]
         out.append(v)
     return out or [base_payload]
 
 
 def _walkable(e: "tiktok_api.TikTokError", engaged: bool = False) -> bool:
     """A TikTok complaint about the objective/goal/event — worth trying the next variant.
-    Engaged-session probing also walks on generic enum complaints (invalid / param)."""
+    Engaged-session probing also walks on complaints about the fields it varies
+    (pixel_id, "not supported") and generic enum complaints (invalid / param)."""
     msg = (e.message or "").lower()
     words = ("objective", "promotion", "optimization", "optimisation", "event")
     if engaged:
-        words += ("goal", "invalid", "param", "enum")
+        words += ("goal", "invalid", "param", "enum", "pixel", "not supported")
     return any(w in msg for w in words)
 
 
@@ -857,13 +864,16 @@ def remember_traffic_goal(db: Session, fields: dict, accepted: dict) -> None:
     if not (fields.get("objective_type") == "TRAFFIC" and fields.get("traffic_goal") == "ENGAGED"):
         return
     import json as _json
-    pair = {"goal": accepted.get("optimization_goal", ""), "event": accepted.get("optimization_event", "")}
+    pair = {"goal": accepted.get("optimization_goal", ""), "event": accepted.get("optimization_event", ""),
+            "pixel": bool(accepted.get("pixel_id"))}
     queries.set_setting(db, launch_mod.ENGAGED_SETTING_KEY, _json.dumps(pair))
     try:
         from .. import diag
         diag.record("app", "launch", "engaged-session-accepted",
                     f"TikTok accepted Engaged session as optimization_goal={pair['goal'] or '?'}"
-                    + (f", optimization_event={pair['event']}" if pair['event'] else "") + " — remembered for next launches", pair)
+                    + (f", optimization_event={pair['event']}" if pair['event'] else "")
+                    + (" with the pixel" if pair["pixel"] else " WITHOUT a pixel (no data connection)")
+                    + " — remembered for next launches", pair)
     except Exception:      # noqa: BLE001
         pass
 
@@ -1640,8 +1650,8 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
         else:
             if is_engaged(fields):
                 rem = remembered_engaged(db)
-                fields = {**fields, "_engaged_goal": (rem or {}).get("goal", ""),
-                          "_engaged_event": (rem or {}).get("event", "")}
+                if rem:
+                    fields = {**fields, "_engaged_goal": rem["goal"], "_engaged_event": rem["event"], "_engaged_pixel": rem["pixel"]}
             camp_payload = build_campaign_payload(fields, acct)
             camp = None
             camp_candidates = campaign_goal_candidates(fields, camp_payload)
@@ -1729,7 +1739,8 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                 if is_engaged(fields) and i == 0:
                     remember_traffic_goal(db, fields, ag_payload)      # the payload TikTok took
                     log.optimization_event = (str(ag_payload.get("optimization_goal", ""))
-                                              + (f" · {ag_payload['optimization_event']}" if ag_payload.get("optimization_event") else ""))[:100]
+                                              + (f" · {ag_payload['optimization_event']}" if ag_payload.get("optimization_event") else "")
+                                              + ("" if ag_payload.get("pixel_id") else " · no pixel"))[:100]
                 elif fields.get("traffic_goal") == "LPV" and i == 0:
                     log.optimization_event = "TRAFFIC_LANDING_PAGE_VIEW"
 

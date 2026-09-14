@@ -121,13 +121,19 @@ TRAFFIC_GOALS = {k for k, _, _ in TRAFFIC_GOAL_OPTIONS}
 # order until TikTok accepts one; the accepted pair is remembered (setting
 # ENGAGED_SETTING_KEY) and tried first from then on. Every refusal is logged with
 # TikTok's own message, which names the allowed values.
+# (optimization_goal, optimization_event, send the pixel?) — ENGAGEMENT_SESSION is what
+# TikTok returns for an Ads-Manager Engaged-session ad group (read live from ad group
+# 1876342860908641, 15 Sep 2026). pixel_id WITHOUT an event was refused outright
+# ("'pixel_id' is not supported in /v1.3/adgroup/create/"), so the pixel only rides
+# with the event spelled out; the pixel-less shape is Ads Manager's "no data
+# connection" (available in select regions).
 ENGAGED_CANDIDATES = [
-    ("ENGAGEMENT_SESSION", ""),                    # what TikTok returns for an Ads-Manager Engaged-session ad group
-                                                   # (read live from ad group 1876342860908641, 15 Sep 2026)
-    ("ENGAGEMENT_SESSION", "ENGAGED_SESSION"),     # same, with the documented pixel event spelled out
-    ("ENGAGED_SESSION", ""),                       # earlier guesses, kept as fallbacks
-    ("TRAFFIC_ENGAGED_SESSION", ""),
-    ("CONVERT", "ENGAGED_SESSION"),                # conversion goal on the documented ENGAGED_SESSION pixel event
+    ("ENGAGEMENT_SESSION", "ENGAGED_SESSION", True),     # pixel + the documented pixel event
+    ("ENGAGEMENT_SESSION", "ENGAGEMENT_SESSION", True),  # pixel + event named like the goal
+    ("ENGAGEMENT_SESSION", "", False),                   # no data connection
+    ("ENGAGED_SESSION", "ENGAGED_SESSION", True),        # earlier guesses, kept as fallbacks
+    ("ENGAGED_SESSION", "", False),
+    ("CONVERT", "ENGAGED_SESSION", True),                # conversion goal on the documented pixel event
 ]
 ENGAGED_SETTING_KEY = "traffic_engaged_accepted"     # JSON {"goal": …, "event": …} once TikTok accepted one
 

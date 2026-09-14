@@ -653,6 +653,25 @@ def campaign_adgroups(advertiser_id: str, campaign_id: str, db: Session = Depend
                          "unsplit": {"revenue": float(unsplit.get("revenue") or 0), "conversions": int(unsplit.get("conversions") or 0)}})
 
 
+@router.get("/campaigns/{advertiser_id}/{campaign_id}/adgroups/{adgroup_id}/settings.json")
+def adgroup_settings(advertiser_id: str, campaign_id: str, adgroup_id: str, db: Session = Depends(get_db)):
+    """What TikTok has stored on one ad group (the drawer's Settings popover). One
+    read-only /adgroup/get/ call; nothing written."""
+    from fastapi.responses import JSONResponse
+    from .. import adgroup_copy, adgroup_view
+    acct = db.query(models.AdAccount).filter_by(advertiser_id=advertiser_id).first()
+    if acct is None or not acct.access_token:
+        return JSONResponse({"ok": False, "error": "that ad account is not connected"}, status_code=400)
+    try:
+        g = adgroup_copy._source_adgroup(acct, campaign_id, adgroup_id)
+    except tiktok_api.TikTokError as e:
+        return JSONResponse({"ok": False, "error": f"{e.message} (code {e.code})"})
+    if not g:
+        return JSONResponse({"ok": False, "error": "TikTok didn't return that ad group"})
+    return JSONResponse({"ok": True, "adgroup_id": str(adgroup_id), "name": g.get("adgroup_name") or "",
+                         "rows": adgroup_view.rows(g)})
+
+
 @router.post("/campaigns/{advertiser_id}/{campaign_id}/agmode")
 def campaign_agmode(advertiser_id: str, campaign_id: str, on: str = Form("0"), db: Session = Depends(get_db)):
     """Drawer toggle: this campaign's numbers from ACTIVE ad groups only (on=1) or all (on=0)."""

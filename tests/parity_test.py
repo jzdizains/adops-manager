@@ -30,7 +30,7 @@ _mod("app.routes.launch",
      OBJECTIVES=["TRAFFIC", "WEB_CONVERSIONS", "LEAD_GENERATION", "REACH", "VIDEO_VIEWS"],
      PIXEL_EVENTS=[("ON_WEB_DETAIL", "v"), ("FORM", "f"), ("ON_WEB_REGISTER", "r"), ("BUTTON", "b"), ("ON_WEB_ORDER", "o"), ("SHOPPING", "s")],
      PACING_OPTIONS=[("PACING_MODE_SMOOTH", "s"), ("PACING_MODE_FAST", "f")],
-     ENGAGED_CANDIDATES=[("ENGAGED_SESSION", ""), ("CONVERT", "ENGAGED_SESSION")])
+     ENGAGED_CANDIDATES=[("ENGAGEMENT_SESSION", "ENGAGED_SESSION", True), ("ENGAGEMENT_SESSION", "", False), ("CONVERT", "ENGAGED_SESSION", True)])
 recorded = []
 _mod("app.diag", record=lambda kind, where, code, message, context=None, request_id="": recorded.append((kind, where, code, context)))
 import importlib

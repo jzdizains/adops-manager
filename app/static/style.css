@@ -1226,3 +1226,9 @@ tr:hover .ctag-add, .ctag-add:focus { opacity: 1; }
 .tagpop .tp-sw { display: flex; gap: 6px; margin: 8px 0; }
 .tagpop .tp-sw span { width: 18px; height: 18px; border-radius: 999px; cursor: pointer; border: 2px solid transparent; }
 .tagpop .tp-sw span.on { border-color: var(--text); }
+
+/* drawer · ad group "Settings" popover (v111) */
+.agset{min-width:300px;max-width:420px;max-height:60vh;overflow:auto;}
+.agset-grid{display:grid;grid-template-columns:max-content 1fr;gap:3px 12px;font-size:11.5px;align-items:baseline;}
+.agset-grid .mono{overflow-wrap:anywhere;}
+.agset .tp-sep{border-top:1px solid var(--border-soft);margin:8px 0;}

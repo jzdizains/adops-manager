@@ -448,6 +448,7 @@
           (g.budget ? " · $" + g.budget.toFixed(2) + (g.budget_mode === "BUDGET_MODE_TOTAL" ? " total" : "/day") : "") +
           (g.bid_price ? " · bid $" + g.bid_price.toFixed(2) : "") +
           (g.secondary_status ? " · " + esc(g.secondary_status) : "") + "</div>" + agStats(g) + appealBlock(g) + "</span>" +
+          '<button type="button" class="btn sm dw-ag-set" style="flex:none;" title="Every setting TikTok has stored on this ad group — as Ads Manager shows it">Settings</button>' +
           '<input type="number" class="dw-ag-n" min="1" max="' + d.max_copies + '" value="1" title="How many copies" style="width:52px;flex:none;padding:3px 6px;font-size:12px;">' +
           '<button type="button" class="btn sm dw-ag-dup" style="flex:none;"' + (d.running ? " disabled" : "") + '>Duplicate</button></div>';
       }).join("") +
@@ -458,6 +459,25 @@
       var b = $("#dwAgs"); if (b) b.textContent = "Couldn't read the ad groups.";
     });
   }
+  // "Settings": what TikTok has stored on the ad group, in a popover (read-only, one call)
+  function agSettingsPop(btn) {
+    var row = btn.closest(".dw-ag"); if (!row || !drawer) return;
+    btn.disabled = true;
+    UI.get("/campaigns/" + drawer._adv + "/" + drawer._cid + "/adgroups/" + row.dataset.ag + "/settings.json").then(function (d) {
+      btn.disabled = false;
+      if (!d || !d.ok) { adopsToast && adopsToast("err", (d && d.error) || "Couldn't read the ad group."); return; }
+      var known = d.rows.filter(function (r) { return !r.other; }), other = d.rows.filter(function (r) { return r.other; });
+      function grid(rs) { return '<div class="agset-grid">' + rs.map(function (r) { return '<span class="muted">' + esc(r.label) + '</span><span class="mono" title="' + esc(r.key) + '">' + esc(r.value) + "</span>"; }).join("") + "</div>"; }
+      var html = '<div class="agset"><div style="font-size:12px;margin-bottom:6px;"><b>' + esc(d.name) + '</b> <span class="muted mono" style="font-size:11px;">' + esc(d.adgroup_id) + "</span></div>" +
+        '<div class="muted" style="font-size:11px;margin-bottom:6px;">What TikTok has stored — the API names are in the tooltips.</div>' + grid(known) +
+        (other.length ? '<div class="tp-sep"></div><div class="muted" style="font-size:11px;margin-bottom:4px;">Other fields TikTok returned</div>' + grid(other) : "") + "</div>";
+      UI.popover(btn, html, {});
+    }, function () { btn.disabled = false; adopsToast && adopsToast("err", "Couldn't read the ad group."); });
+  }
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest && e.target.closest(".dw-ag-set");
+    if (b) { e.preventDefault(); e.stopImmediatePropagation(); agSettingsPop(b); }
+  });
   document.addEventListener("change", function (e) {
     if (!e.target || e.target.id !== "dwAgMode" || !drawer) return;
     var cb = e.target, on = cb.checked; cb.disabled = true;

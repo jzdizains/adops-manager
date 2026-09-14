@@ -62,7 +62,8 @@
       <pre class="mono" style="background:var(--panel-hover);padding:10px;border-radius:8px;overflow:auto;white-space:pre-wrap;">{{ l.error_technical }}</pre>
     </details>
   {% else %}
-    <p class="muted" style="margin:0;">Preset “{{ l.template_name }}” — campaign created{% if l.campaign_id %} (id {{ l.campaign_id }}){% endif %}.</p>
+    <p class="muted" style="margin:0;">Preset “{{ l.template_name }}” — campaign created{% if l.campaign_id %} (id {{ l.campaign_id }}){% endif %}.
+      {% if l.optimization_event and ('SESSION' in l.optimization_event or 'LANDING_PAGE' in l.optimization_event) %}<span class="pill {{ 'warn' if 'no pixel' in l.optimization_event else 'dim' }}" title="The optimisation TikTok accepted for this ad group (API value)">optimises for <span class="mono">{{ l.optimization_event }}</span></span>{% endif %}</p>
     {% if l.source %}
     <div style="margin-top:8px;font-size:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
       <span class="pill dim" title="P&L join key — Glitchy must echo this back as {source}">source <span class="mono">{{ l.source }}</span></span>
