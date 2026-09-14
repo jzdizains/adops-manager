@@ -130,12 +130,12 @@ ENGAGED_CANDIDATES = [
     ("ENGAGEMENT_SESSION", "", True),
     ("ENGAGEMENT_SESSION", "", False),
 ]
-# That ad group's campaign carries campaign_automation_type=UPGRADED_SMART_PLUS: Ads
-# Manager built it through the Upgraded Smart+ flow, and a plain Traffic campaign
-# refused every Engaged-session shape ("Optimization events can't be set for ad groups
-# in campaigns using the selected advertising objective"). So the campaign is created
-# with that flag first; a plain campaign is the fallback if TikTok refuses the field.
-ENGAGED_CAMPAIGN_AUTOMATION = "UPGRADED_SMART_PLUS"
+# That ad group's campaign carries campaign_automation_type=UPGRADED_SMART_PLUS and a
+# plain Traffic campaign refused every Engaged-session shape ("Optimization events can't
+# be set for ad groups in campaigns using the selected advertising objective"); sending
+# the flag on /campaign/create/ is silently ignored (campaign 1876347219692161 came back
+# MANUAL). So Engaged session always launches through the Smart+ chain (campaigns.py
+# _launch_smart_plus), the way Ads Manager built it.
 ENGAGED_SETTING_KEY = "traffic_engaged_accepted"     # JSON {"goal": …, "event": …} once TikTok accepted one
 
 OPT_GOAL_OPTIONS = [

@@ -129,7 +129,7 @@ vs = helpers.traffic_variants(None, f_eng, base)
 check("the remembered shape goes first", shape(vs[0]) == ("CONVERT", "ENGAGED_SESSION", True))
 check("…and is not repeated", [shape(v) for v in vs].count(("CONVERT", "ENGAGED_SESSION", True)) == 1)
 SETTINGS[launch.ENGAGED_SETTING_KEY] = json.dumps({"goal": "ENGAGEMENT_SESSION", "event": ""})
-check("an older remembered value without the pixel/automation flags still loads", helpers.remembered_engaged(None) == {"goal": "ENGAGEMENT_SESSION", "event": "", "pixel": True, "automation": True})
+check("an older remembered value without the pixel flag still loads", helpers.remembered_engaged(None) == {"goal": "ENGAGEMENT_SESSION", "event": "", "pixel": True})
 SETTINGS[launch.ENGAGED_SETTING_KEY] = "not json"
 check("a corrupt setting is ignored, not a crash", helpers.remembered_engaged(None) is None)
 SETTINGS.clear()
@@ -148,14 +148,10 @@ check("CBO + Engaged: campaign carries the first candidate goal", cp.get("optimi
 cp2 = helpers.build_campaign_payload({**f_cbo, "_engaged_goal": "CONVERT"}, acct)
 check("…or the remembered one", cp2["optimization_goal"] == "CONVERT")
 cands = helpers.campaign_goal_candidates(f_cbo, cp)
-check("CBO campaign candidates: Upgraded-Smart+ flagged first, plain second, each carrying the goal",
-      [(c.get("campaign_automation_type", ""), c["optimization_goal"]) for c in cands] == [("UPGRADED_SMART_PLUS", "ENGAGEMENT_SESSION"), ("", "ENGAGEMENT_SESSION")], str(cands))
-abo = helpers.campaign_goal_candidates(f_eng, helpers.build_campaign_payload(f_eng, acct))
-check("ABO Engaged campaign: flagged first (the shape Ads Manager stores — campaign 1876342893366658), plain fallback",
-      [c.get("campaign_automation_type", "") for c in abo] == ["UPGRADED_SMART_PLUS", ""] and all("optimization_goal" not in c for c in abo), str(abo))
-check("…and the plain fallback is byte-for-byte the old payload", abo[1] == helpers.build_campaign_payload(f_eng, acct))
-check("a remembered 'plain worked' puts plain first", [c.get("campaign_automation_type", "") for c in helpers.campaign_goal_candidates({**f_eng, "_engaged_automation": False}, helpers.build_campaign_payload(f_eng, acct))] == ["", "UPGRADED_SMART_PLUS"])
-check("Click / LPV campaigns are never probed", helpers.campaign_goal_candidates(f_click, {"a": 1}) == [{"a": 1}] and helpers.campaign_goal_candidates(f_lpv, {"a": 1}) == [{"a": 1}])
+check("CBO campaign candidates carry each candidate goal, in order", [c["optimization_goal"] for c in cands] == list(dict.fromkeys(c[0] for c in launch.ENGAGED_CANDIDATES)), str(cands))
+check("no campaign_automation_type is ever sent (TikTok ignores it on create — campaign 1876347219692161 came back MANUAL)",
+      "campaign_automation_type" not in src[src.index("def build_campaign_payload"):src.index("def build_ad_payload")])
+check("ABO campaign is never probed", helpers.campaign_goal_candidates(f_eng, helpers.build_campaign_payload(f_eng, acct)) == [helpers.build_campaign_payload(f_eng, acct)])
 check("ABO campaign create carries no goal", "optimization_goal" not in helpers.build_campaign_payload(f_eng, acct))
 cp_lpv = helpers.build_campaign_payload(launch.synthesize(Template(blob={"traffic_goal": "LPV"}, mode="BUDGET_MODE_DAY", budget=50)), acct)
 check("CBO + Landing page view carries TRAFFIC_LANDING_PAGE_PAGE_VIEW".replace("PAGE_PAGE", "PAGE"), cp_lpv["optimization_goal"] == "TRAFFIC_LANDING_PAGE_VIEW")
@@ -172,8 +168,8 @@ check("…but not for a non-traffic launch (its variants don't vary the pixel)",
 
 print("\n-- remember + diagnostics --")
 recorded.clear(); SETTINGS.clear()
-helpers.remember_traffic_goal(None, {**f_eng, "_engaged_automation": True}, {"optimization_goal": "ENGAGED_SESSION", "optimization_event": "", "pixel_id": "1"})
-check("the accepted shape is stored, pixel + automation flags included", json.loads(SETTINGS[launch.ENGAGED_SETTING_KEY]) == {"goal": "ENGAGED_SESSION", "event": "", "pixel": True, "automation": True})
+helpers.remember_traffic_goal(None, f_eng, {"optimization_goal": "ENGAGED_SESSION", "optimization_event": "", "pixel_id": "1"})
+check("the accepted shape is stored, pixel flag included", json.loads(SETTINGS[launch.ENGAGED_SETTING_KEY]) == {"goal": "ENGAGED_SESSION", "event": "", "pixel": True})
 check("…and reported to Diagnostics", any(c == "engaged-session-accepted" for c, _ in recorded))
 helpers.note_engaged_refusal(f_eng, {"optimization_goal": "X"}, TikTokError(40002, "nope"), "ad group")
 check("a refusal is reported with the candidate tried", any(c == "engaged-session-refused" and ctx.get("goal") == "X" for c, ctx in recorded))
@@ -187,9 +183,13 @@ check("remembered pair loaded into fields before the campaign payload",
       "_engaged_goal" in src[src.index("camp_payload = build_campaign_payload") - 400: src.index("camp_payload = build_campaign_payload")])
 check("campaign create walks the candidate goals", "campaign_goal_candidates(fields, camp_payload)" in run and "_walkable(e, engaged=True)" in run)
 check("a CBO campaign locks the goal for its ad groups", '"_engaged_goal_locked": True' in run)
-check("the runner records whether the campaign took the Upgraded-Smart+ flag", '"_engaged_automation": bool(camp_payload.get("campaign_automation_type"))' in run)
-check("a Smart+ preset with Engaged session skips the legacy /smart_plus/ chain", 'if fields.get("smart_plus") and not is_engaged(fields):' in src)
-check("an automation complaint walks while probing", helpers._walkable(TikTokError(40002, "campaign_automation_type is not supported"), engaged=True))
+check("Engaged session implies Smart+ before any validation (spark required, carousel refused, Smart+ chain used)",
+      'if is_engaged(fields) and not fields.get("smart_plus"):' in src and '"smart_plus": True, "_smart_plus_implied": True' in src
+      and src.index('"_smart_plus_implied": True') < src.index('use_library = fields.get("creative_source") == "library"'))
+check("…and the launch result names it", '"ENGAGEMENT_SESSION · Smart+"' in src)
+spc_ag = src[src.index("def build_spc_adgroup_payload"):src.index("def build_spc_ad_payload")]
+check("Smart+ ad group for Engaged session: ENGAGEMENT_SESSION on oCPM with the pixel and no event (the stored shape)",
+      'goal = "ENGAGEMENT_SESSION"' in spc_ag and '"billing_event": "CPC" if goal == "CLICK" else "OCPM"' in spc_ag and 'elif engaged and pixel_id:' in spc_ag)
 tk = open(os.path.join(ROOT, "app", "tiktok_api.py"), encoding="utf-8").read()
 check("Smart+ request_id is an int64 string, not a uuid (blue bat_260706150312: 'strconv.ParseInt … invalid syntax')",
       "random.getrandbits(62) | 1" in tk and "uuid.uuid4().hex" not in tk[tk.index("def _request_id"):tk.index("def smart_plus_campaign_create")])
@@ -199,7 +199,7 @@ rid = _ns["_request_id"]()
 check("…parses as a positive int64", rid.isdigit() and 0 < int(rid) < 2**63 and rid != _ns["_request_id"]())
 spc = src[src.index("def build_spc_adgroup_payload"):src.index("def build_spc_ad_payload")]
 check("legacy Smart+ ad group honours Landing page view and puts the cap on the right bid field",
-      '"TRAFFIC_LANDING_PAGE_VIEW" if lpv else "CLICK"' in spc and 'if payload["billing_event"] == "OCPM":' in spc)
+      'goal = "TRAFFIC_LANDING_PAGE_VIEW"' in spc and 'if payload["billing_event"] == "OCPM":' in spc)
 check("ad-group variants come from traffic_variants", "variants: list[dict] = traffic_variants(db, fields, base_payload)" in run)
 check("the accepted ad-group payload is remembered on the first ad group",
       re.search(r"if is_engaged\(fields\) and i == 0:\s*\n\s*remember_traffic_goal\(db, fields, ag_payload\)", run) is not None)
@@ -227,7 +227,7 @@ check("parity watch knows the candidates (no false 'not offered' on our own ad g
 lst = open(os.path.join(ROOT, "app", "templates", "templates_list.html"), encoding="utf-8").read()
 check("presets list shows the goal", "'Landing page view' if blob.get('traffic_goal') == 'LPV' else 'Engaged session'" in lst)
 cfg = open(os.path.join(ROOT, "app", "config.py"), encoding="utf-8").read()
-check("static version bumped", 'STATIC_VERSION = "113"' in cfg)
+check("static version bumped", 'STATIC_VERSION = "114"' in cfg)
 
 print()
 print("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}")

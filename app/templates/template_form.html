@@ -56,7 +56,7 @@
       <div class="pb-sub" id="trafficPixel" hidden style="margin-top:8px;">
         <label class="field"><span class="field-label">Pixel <span class="muted">(Engaged session)</span></span>
           <select name="traffic_pixel"><option value="">— the account's only pixel —</option>{% for px in pixels %}<option value="{{ px.pixel_code or px.pixel_id }}" {{ 'selected' if blob.get('traffic_pixel') and blob.get('traffic_pixel') in (px.pixel_code, px.pixel_id) }}>{{ px.pixel_name or px.pixel_id }}{{ ' · BC-shared' if px.owner_bc_id }}</option>{% endfor %}</select>
-          <span class="hint">Ads Manager asks for the pixel on Engaged session — it measures the ≥10 s stay. Resolved per account at launch; an account with several pixels needs one picked here. TikTok's API docs don't list the Engaged-session value; the launcher sends the one read from a live Ads-Manager ad group (ENGAGEMENT_SESSION) and, should TikTok refuse it one day, falls back to its other candidates and records what was accepted in the launch result and Diagnostics.</span></label>
+          <span class="hint">Ads Manager asks for the pixel on Engaged session — it measures the ≥10 s stay. Resolved per account at launch; an account with several pixels needs one picked here. <b>Engaged session runs as a Smart+ campaign</b> — that is how Ads Manager builds it (TikTok stores the goal as ENGAGEMENT_SESSION on an Upgraded Smart+ campaign; a manual Traffic campaign refuses it), so the Smart+ rules apply: a spark creative, one ad group per campaign, no carousel.</span></label>
       </div></div>
     <div class="form-row" style="margin-top:6px;">
       <div class="field"><span class="field-label">Smart+</span>
