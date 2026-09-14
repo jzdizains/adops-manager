@@ -120,8 +120,8 @@ check("nothing remembered → every candidate, in order", [shape(v) for v in vs]
 check("every variant bills OCPM", all(v["billing_event"] == "OCPM" for v in vs))
 check("a pixel-less shape sends no pixel_id at all (TikTok: \"'pixel_id' is not supported\")",
       all(("pixel_id" in v) == with_px for v, (_g, _e, with_px) in zip(vs, launch.ENGAGED_CANDIDATES)))
-check("the pixel never rides without an optimisation event — the shape blue bat_260706145758 refused",
-      all(v.get("optimization_event") for v in vs if "pixel_id" in v))
+check("no shape carries an optimisation event (neither spelling is in TikTok's enum) and the pixel shape goes first",
+      all(not v.get("optimization_event") for v in vs) and "pixel_id" in vs[0])
 vs_nopx = helpers.traffic_variants(None, f_eng, ag(f_eng, pixel=""))
 check("without a pixel only the pixel-less shapes remain", [shape(v) for v in vs_nopx] == [c for c in launch.ENGAGED_CANDIDATES if not c[2]], str([shape(v) for v in vs_nopx]))
 SETTINGS[launch.ENGAGED_SETTING_KEY] = json.dumps({"goal": "CONVERT", "event": "ENGAGED_SESSION", "pixel": True})
@@ -129,7 +129,7 @@ vs = helpers.traffic_variants(None, f_eng, base)
 check("the remembered shape goes first", shape(vs[0]) == ("CONVERT", "ENGAGED_SESSION", True))
 check("…and is not repeated", [shape(v) for v in vs].count(("CONVERT", "ENGAGED_SESSION", True)) == 1)
 SETTINGS[launch.ENGAGED_SETTING_KEY] = json.dumps({"goal": "ENGAGEMENT_SESSION", "event": ""})
-check("an older remembered value without the pixel flag still loads", helpers.remembered_engaged(None) == {"goal": "ENGAGEMENT_SESSION", "event": "", "pixel": True})
+check("an older remembered value without the pixel/automation flags still loads", helpers.remembered_engaged(None) == {"goal": "ENGAGEMENT_SESSION", "event": "", "pixel": True, "automation": True})
 SETTINGS[launch.ENGAGED_SETTING_KEY] = "not json"
 check("a corrupt setting is ignored, not a crash", helpers.remembered_engaged(None) is None)
 SETTINGS.clear()
@@ -137,7 +137,7 @@ check("non-engaged fields → the payload untouched", helpers.traffic_variants(N
 locked = {**f_eng, "_engaged_goal": "ENGAGEMENT_SESSION", "_engaged_goal_locked": True}
 vs = helpers.traffic_variants(None, locked, base)
 check("a CBO campaign created with one goal locks the ad groups to it",
-      vs and all(v["optimization_goal"] == "ENGAGEMENT_SESSION" for v in vs) and len(vs) == 3, str(vs))
+      vs and all(v["optimization_goal"] == "ENGAGEMENT_SESSION" for v in vs) and len(vs) == 2, str(vs))
 check("the value TikTok returned for a live Ads-Manager Engaged-session ad group goes first (ad group 1876342860908641)",
       launch.ENGAGED_CANDIDATES[0][0] == "ENGAGEMENT_SESSION")
 
@@ -148,9 +148,14 @@ check("CBO + Engaged: campaign carries the first candidate goal", cp.get("optimi
 cp2 = helpers.build_campaign_payload({**f_cbo, "_engaged_goal": "CONVERT"}, acct)
 check("…or the remembered one", cp2["optimization_goal"] == "CONVERT")
 cands = helpers.campaign_goal_candidates(f_cbo, cp)
-goals = [c["optimization_goal"] for c in cands]
-check("campaign candidates = the distinct candidate goals, in order", goals == list(dict.fromkeys(c[0] for c in launch.ENGAGED_CANDIDATES)), str(goals))
-check("ABO campaign is never probed", helpers.campaign_goal_candidates(f_eng, helpers.build_campaign_payload(f_eng, acct)) == [helpers.build_campaign_payload(f_eng, acct)])
+check("CBO campaign candidates: Upgraded-Smart+ flagged first, plain second, each carrying the goal",
+      [(c.get("campaign_automation_type", ""), c["optimization_goal"]) for c in cands] == [("UPGRADED_SMART_PLUS", "ENGAGEMENT_SESSION"), ("", "ENGAGEMENT_SESSION")], str(cands))
+abo = helpers.campaign_goal_candidates(f_eng, helpers.build_campaign_payload(f_eng, acct))
+check("ABO Engaged campaign: flagged first (the shape Ads Manager stores — campaign 1876342893366658), plain fallback",
+      [c.get("campaign_automation_type", "") for c in abo] == ["UPGRADED_SMART_PLUS", ""] and all("optimization_goal" not in c for c in abo), str(abo))
+check("…and the plain fallback is byte-for-byte the old payload", abo[1] == helpers.build_campaign_payload(f_eng, acct))
+check("a remembered 'plain worked' puts plain first", [c.get("campaign_automation_type", "") for c in helpers.campaign_goal_candidates({**f_eng, "_engaged_automation": False}, helpers.build_campaign_payload(f_eng, acct))] == ["", "UPGRADED_SMART_PLUS"])
+check("Click / LPV campaigns are never probed", helpers.campaign_goal_candidates(f_click, {"a": 1}) == [{"a": 1}] and helpers.campaign_goal_candidates(f_lpv, {"a": 1}) == [{"a": 1}])
 check("ABO campaign create carries no goal", "optimization_goal" not in helpers.build_campaign_payload(f_eng, acct))
 cp_lpv = helpers.build_campaign_payload(launch.synthesize(Template(blob={"traffic_goal": "LPV"}, mode="BUDGET_MODE_DAY", budget=50)), acct)
 check("CBO + Landing page view carries TRAFFIC_LANDING_PAGE_PAGE_VIEW".replace("PAGE_PAGE", "PAGE"), cp_lpv["optimization_goal"] == "TRAFFIC_LANDING_PAGE_VIEW")
@@ -167,8 +172,8 @@ check("…but not for a non-traffic launch (its variants don't vary the pixel)",
 
 print("\n-- remember + diagnostics --")
 recorded.clear(); SETTINGS.clear()
-helpers.remember_traffic_goal(None, f_eng, {"optimization_goal": "ENGAGED_SESSION", "optimization_event": "", "pixel_id": "1"})
-check("the accepted shape is stored, pixel flag included", json.loads(SETTINGS[launch.ENGAGED_SETTING_KEY]) == {"goal": "ENGAGED_SESSION", "event": "", "pixel": True})
+helpers.remember_traffic_goal(None, {**f_eng, "_engaged_automation": True}, {"optimization_goal": "ENGAGED_SESSION", "optimization_event": "", "pixel_id": "1"})
+check("the accepted shape is stored, pixel + automation flags included", json.loads(SETTINGS[launch.ENGAGED_SETTING_KEY]) == {"goal": "ENGAGED_SESSION", "event": "", "pixel": True, "automation": True})
 check("…and reported to Diagnostics", any(c == "engaged-session-accepted" for c, _ in recorded))
 helpers.note_engaged_refusal(f_eng, {"optimization_goal": "X"}, TikTokError(40002, "nope"), "ad group")
 check("a refusal is reported with the candidate tried", any(c == "engaged-session-refused" and ctx.get("goal") == "X" for c, ctx in recorded))
@@ -182,10 +187,26 @@ check("remembered pair loaded into fields before the campaign payload",
       "_engaged_goal" in src[src.index("camp_payload = build_campaign_payload") - 400: src.index("camp_payload = build_campaign_payload")])
 check("campaign create walks the candidate goals", "campaign_goal_candidates(fields, camp_payload)" in run and "_walkable(e, engaged=True)" in run)
 check("a CBO campaign locks the goal for its ad groups", '"_engaged_goal_locked": True' in run)
+check("the runner records whether the campaign took the Upgraded-Smart+ flag", '"_engaged_automation": bool(camp_payload.get("campaign_automation_type"))' in run)
+check("a Smart+ preset with Engaged session skips the legacy /smart_plus/ chain", 'if fields.get("smart_plus") and not is_engaged(fields):' in src)
+check("an automation complaint walks while probing", helpers._walkable(TikTokError(40002, "campaign_automation_type is not supported"), engaged=True))
+tk = open(os.path.join(ROOT, "app", "tiktok_api.py"), encoding="utf-8").read()
+check("Smart+ request_id is an int64 string, not a uuid (blue bat_260706150312: 'strconv.ParseInt … invalid syntax')",
+      "random.getrandbits(62) | 1" in tk and "uuid.uuid4().hex" not in tk[tk.index("def _request_id"):tk.index("def smart_plus_campaign_create")])
+import random as _r
+_ns = {}; exec("import random\n" + tk[tk.index("def _request_id"):tk.index("def smart_plus_campaign_create")], _ns)
+rid = _ns["_request_id"]()
+check("…parses as a positive int64", rid.isdigit() and 0 < int(rid) < 2**63 and rid != _ns["_request_id"]())
+spc = src[src.index("def build_spc_adgroup_payload"):src.index("def build_spc_ad_payload")]
+check("legacy Smart+ ad group honours Landing page view and puts the cap on the right bid field",
+      '"TRAFFIC_LANDING_PAGE_VIEW" if lpv else "CLICK"' in spc and 'if payload["billing_event"] == "OCPM":' in spc)
 check("ad-group variants come from traffic_variants", "variants: list[dict] = traffic_variants(db, fields, base_payload)" in run)
 check("the accepted ad-group payload is remembered on the first ad group",
       re.search(r"if is_engaged\(fields\) and i == 0:\s*\n\s*remember_traffic_goal\(db, fields, ag_payload\)", run) is not None)
 check("the launch result records the accepted goal", "log.optimization_event = (str(ag_payload.get(\"optimization_goal\"" in run)
+check("Auto CTA asks the recommender for the nearest known traffic goal (its enum lacks Engaged session)",
+      'goal = "TRAFFIC_LANDING_PAGE_VIEW"' in src[src.index("def resolve_cta_portfolio"):src.index("def url_safe_name")]
+      and "optimization_goal=goal)" in src[src.index("def resolve_cta_portfolio"):src.index("def url_safe_name")])
 check("Engaged session resolves the pixel like a conversion launch", "or is_engaged(fields))" in src and "not is_engaged(fields) and not fields.get(\"optimization_event\")" in src)
 
 # ==== 5 · form + JS + parity + list ====================================================
@@ -206,7 +227,7 @@ check("parity watch knows the candidates (no false 'not offered' on our own ad g
 lst = open(os.path.join(ROOT, "app", "templates", "templates_list.html"), encoding="utf-8").read()
 check("presets list shows the goal", "'Landing page view' if blob.get('traffic_goal') == 'LPV' else 'Engaged session'" in lst)
 cfg = open(os.path.join(ROOT, "app", "config.py"), encoding="utf-8").read()
-check("static version bumped", 'STATIC_VERSION = "111"' in cfg)
+check("static version bumped", 'STATIC_VERSION = "113"' in cfg)
 
 print()
 print("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}")

@@ -461,14 +461,15 @@
   }
   // "Settings": what TikTok has stored on the ad group, in a popover (read-only, one call)
   function agSettingsPop(btn) {
-    var row = btn.closest(".dw-ag"); if (!row || !drawer) return;
+    var row = btn.closest(".dw-ag"); if (!drawer || (!row && !btn.dataset.campaign)) return;
     btn.disabled = true;
-    UI.get("/campaigns/" + drawer._adv + "/" + drawer._cid + "/adgroups/" + row.dataset.ag + "/settings.json").then(function (d) {
+    var url = "/campaigns/" + drawer._adv + "/" + drawer._cid + (row ? "/adgroups/" + row.dataset.ag : "") + "/settings.json";
+    UI.get(url).then(function (d) {
       btn.disabled = false;
       if (!d || !d.ok) { adopsToast && adopsToast("err", (d && d.error) || "Couldn't read the ad group."); return; }
       var known = d.rows.filter(function (r) { return !r.other; }), other = d.rows.filter(function (r) { return r.other; });
       function grid(rs) { return '<div class="agset-grid">' + rs.map(function (r) { return '<span class="muted">' + esc(r.label) + '</span><span class="mono" title="' + esc(r.key) + '">' + esc(r.value) + "</span>"; }).join("") + "</div>"; }
-      var html = '<div class="agset"><div style="font-size:12px;margin-bottom:6px;"><b>' + esc(d.name) + '</b> <span class="muted mono" style="font-size:11px;">' + esc(d.adgroup_id) + "</span></div>" +
+      var html = '<div class="agset"><div style="font-size:12px;margin-bottom:6px;"><b>' + esc(d.name) + '</b> <span class="muted mono" style="font-size:11px;">' + esc(d.adgroup_id || d.campaign_id) + "</span></div>" +
         '<div class="muted" style="font-size:11px;margin-bottom:6px;">What TikTok has stored — the API names are in the tooltips.</div>' + grid(known) +
         (other.length ? '<div class="tp-sep"></div><div class="muted" style="font-size:11px;margin-bottom:4px;">Other fields TikTok returned</div>' + grid(other) : "") + "</div>";
       UI.popover(btn, html, {});
@@ -561,7 +562,7 @@
         '<div><div class="drawer-sec">Cost cap</div><div style="display:flex;gap:6px;"><input type="text" inputmode="decimal" id="dwCap" placeholder="9.50"><button type="button" class="btn sm" id="dwCapSave">Save</button></div><div class="muted" id="dwCapCur" style="font-size:10.5px;margin-top:3px;">reading…</div></div></div>' +
         (d.creative ? '<div style="display:flex;gap:10px;align-items:center;"><span class="thumb previewBtn" style="width:34px;height:46px;border-radius:6px;background:var(--accent-soft);display:grid;place-items:center;color:var(--accent-ink);cursor:pointer;flex:none;" data-src="' + esc(d.creative.file) + '" data-name="' + esc(d.creative.name) + '">▶</span><div style="min-width:0;font-size:12px;"><b>' + esc(d.creative.name) + '</b><div class="muted" style="font-size:11px;">library ' + esc(d.creative.kind) + ' · <a href="/creatives?view=performance">performance</a></div></div></div>' : (d.spark ? '<div style="font-size:12px;"><b>✦ ' + esc(d.spark) + '</b> <span class="muted">spark code</span></div>' : "")) +
         '<div><div class="drawer-sec" style="display:flex;justify-content:space-between;align-items:center;">Lander funnel <span class="seg" id="dwFnRange" style="font-size:10.5px;"><button type="button" data-r="today" class="on">today</button><button type="button" data-r="yesterday">yesterday</button><button type="button" data-r="7d">7 days</button></span></div><div id="dwFunnel" class="muted" style="font-size:12px;">Loading…</div></div>' +
-        '<div><div class="drawer-sec">Ad groups</div><div id="dwAgs" class="muted" style="font-size:12px;">Loading…</div></div>' +
+        '<div><div class="drawer-sec" style="display:flex;align-items:center;gap:8px;">Ad groups<button type="button" class="btn sm dw-ag-set" data-campaign="1" style="margin-left:auto;font-weight:400;" title="Every setting TikTok has stored on the campaign itself — objective, automation, budget mode">Campaign settings</button></div><div id="dwAgs" class="muted" style="font-size:12px;">Loading…</div></div>' +
         '<div><div class="drawer-sec">Note</div><textarea id="dwNote" rows="2" style="min-height:52px;font-family:var(--font-sans);font-size:12.5px;" placeholder="Why you scaled it, what to watch…">' + esc(d.note) + '</textarea><div class="muted" id="dwNoteSt" style="font-size:10.5px;margin-top:2px;">saves on its own</div></div>' +
         '<div><div class="drawer-sec">Timeline</div>' + (d.timeline.length ? d.timeline.map(function (t) { return '<div style="display:flex;gap:8px;font-size:12px;padding:3px 0;border-bottom:1px solid var(--border-soft);"><span class="muted" style="flex:none;width:64px;">' + esc(t.ago) + '</span><span style="min-width:0;"><b>' + esc(t.action) + "</b> " + esc(t.detail) + (t.who ? ' <span class="muted">· ' + esc(t.who) + "</span>" : "") + "</span></div>"; }).join("") : '<div class="muted">Nothing yet.</div>') + "</div>" +
         '<div style="display:flex;gap:8px;flex-wrap:wrap;"><button type="button" class="btn sm" id="dwToggle">' + (c.status === "ENABLE" ? "Pause" : "Resume") + '</button><a class="btn sm" href="' + esc(c.ads_manager_url) + '" target="_blank" rel="noopener">Ads Manager ↗</a><a class="btn sm" href="/status?account=' + esc(adv) + '">This account</a><button type="button" class="btn sm ghost" id="dwRename">Rename…</button></div>';

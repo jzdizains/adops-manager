@@ -672,6 +672,26 @@ def adgroup_settings(advertiser_id: str, campaign_id: str, adgroup_id: str, db: 
                          "rows": adgroup_view.rows(g)})
 
 
+@router.get("/campaigns/{advertiser_id}/{campaign_id}/settings.json")
+def campaign_settings(advertiser_id: str, campaign_id: str, db: Session = Depends(get_db)):
+    """What TikTok has stored on the campaign itself (objective, automation, budget mode…).
+    One read-only /campaign/get/ call filtered to this id."""
+    from fastapi.responses import JSONResponse
+    from .. import adgroup_view
+    acct = db.query(models.AdAccount).filter_by(advertiser_id=advertiser_id).first()
+    if acct is None or not acct.access_token:
+        return JSONResponse({"ok": False, "error": "that ad account is not connected"}, status_code=400)
+    try:
+        data = tiktok_api.list_campaigns(acct.access_token, advertiser_id, filtering={"campaign_ids": [str(campaign_id)]}) or {}
+    except tiktok_api.TikTokError as e:
+        return JSONResponse({"ok": False, "error": f"{e.message} (code {e.code})"})
+    c = next((x for x in (data.get("list") or []) if str(x.get("campaign_id")) == str(campaign_id)), None)
+    if not c:
+        return JSONResponse({"ok": False, "error": "TikTok didn't return that campaign"})
+    return JSONResponse({"ok": True, "campaign_id": str(campaign_id), "name": c.get("campaign_name") or "",
+                         "rows": adgroup_view.rows(c, campaign=True)})
+
+
 @router.post("/campaigns/{advertiser_id}/{campaign_id}/agmode")
 def campaign_agmode(advertiser_id: str, campaign_id: str, on: str = Form("0"), db: Session = Depends(get_db)):
     """Drawer toggle: this campaign's numbers from ACTIVE ad groups only (on=1) or all (on=0)."""

@@ -42,6 +42,17 @@ check("identity fields (ids, names, times, statuses) are not repeated", not any(
 check("a field TikTok added that we don't know is still shown, flagged as other", by["some_new_tiktok_field"]["other"] is True and by["some_new_tiktok_field"]["value"] == "NEW_VALUE" and rows[-1]["key"] == "some_new_tiktok_field")
 check("no other flag on known rows", all(not r.get("other") for r in rows if r["key"] != "some_new_tiktok_field"))
 check("nothing crashes on an empty object", av.rows({}) == [])
+c = {"campaign_id": "1876342893366658", "campaign_name": "SalesTraffic", "objective_type": "TRAFFIC", "budget_mode": "BUDGET_MODE_INFINITE",
+     "budget_optimize_on": False, "campaign_automation_type": "UPGRADED_SMART_PLUS", "is_smart_performance_campaign": False,
+     "operation_status": "ENABLE", "create_time": "2026-09-14", "special_industries": [], "campaign_type": "REGULAR_CAMPAIGN", "rta_id": "x1"}
+cr = av.rows(c, campaign=True); cby = {r["key"]: r for r in cr}
+check("campaign view: objective first, automation labelled", cr[0]["key"] == "objective_type" and cby["campaign_automation_type"]["label"] == "Automation" and cby["campaign_automation_type"]["value"] == "UPGRADED_SMART_PLUS")
+check("campaign view: campaign_type / legacy Smart+ flag shown (not skipped as ad-group noise)", cby["campaign_type"]["value"] == "REGULAR_CAMPAIGN" and cby["is_smart_performance_campaign"]["value"] == "off")
+check("campaign view: unknown field still surfaces", cby["rta_id"]["other"] is True)
+st2 = open(os.path.join(ROOT, "app", "routes", "status.py"), encoding="utf-8").read()
+check("campaign settings endpoint reads one filtered /campaign/get/", '"/campaigns/{advertiser_id}/{campaign_id}/settings.json"' in st2 and 'filtering={"campaign_ids": [str(campaign_id)]}' in st2 and "adgroup_view.rows(c, campaign=True)" in st2)
+js2 = open(os.path.join(ROOT, "app", "static", "campaigns.js"), encoding="utf-8").read()
+check("drawer has a Campaign settings button on the same popover", 'data-campaign="1"' in js2 and '(row ? "/adgroups/" + row.dataset.ag : "") + "/settings.json"' in js2)
 
 st = open(os.path.join(ROOT, "app", "routes", "status.py"), encoding="utf-8").read()
 check("endpoint exists and is read-only (one /adgroup/get/ via _source_adgroup, no write)",
@@ -49,7 +60,7 @@ check("endpoint exists and is read-only (one /adgroup/get/ via _source_adgroup, 
       and "db.commit" not in st[st.index('/adgroups/{adgroup_id}/settings.json'):st.index('@router.post("/campaigns/{advertiser_id}/{campaign_id}/agmode")')])
 js = open(os.path.join(ROOT, "app", "static", "campaigns.js"), encoding="utf-8").read()
 check("drawer row has a Settings button", 'class="btn sm dw-ag-set"' in js)
-check("the button opens a popover from the endpoint", '"/adgroups/" + row.dataset.ag + "/settings.json"' in js and "UI.popover(btn, html, {})" in js)
+check("the button opens a popover from the endpoint", '"/adgroups/" + row.dataset.ag : "") + "/settings.json"' in js and "UI.popover(btn, html, {})" in js)
 check("its click never bubbles into the row-click handler", 'closest(".dw-ag-set");\n    if (b) { e.preventDefault(); e.stopImmediatePropagation();' in js)
 check("values are escaped (TikTok strings land in HTML)", "esc(r.value)" in js and "esc(r.label)" in js)
 css = open(os.path.join(ROOT, "app", "static", "style.css"), encoding="utf-8").read()

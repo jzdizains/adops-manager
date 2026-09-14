@@ -796,8 +796,11 @@ def suggest_video_cover(access_token: str, advertiser_id: str, video_id: str,
 # ---------------------------------------------------------------------------
 
 def _request_id() -> str:
-    import uuid
-    return uuid.uuid4().hex
+    """Idempotency key for /smart_plus/*/create/. TikTok now parses it as an int64
+    (15 Sep 2026: a uuid hex failed with 'strconv.ParseInt … invalid syntax'), so it is
+    a positive 62-bit number as a string — unique per call, never a uuid."""
+    import random
+    return str(random.getrandbits(62) | 1)
 
 
 def smart_plus_campaign_create(access_token: str, advertiser_id: str, payload: dict) -> dict:

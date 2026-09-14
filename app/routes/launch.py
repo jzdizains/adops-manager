@@ -117,24 +117,25 @@ TRAFFIC_GOAL_OPTIONS = [
     ("ENGAGED", "Engaged session", "people most likely to stay ≥10 s or act (oCPM) — recommended by TikTok"),
 ]
 TRAFFIC_GOALS = {k for k, _, _ in TRAFFIC_GOAL_OPTIONS}
-# Engaged session: (optimization_goal, optimization_event) payload candidates, tried in
-# order until TikTok accepts one; the accepted pair is remembered (setting
-# ENGAGED_SETTING_KEY) and tried first from then on. Every refusal is logged with
-# TikTok's own message, which names the allowed values.
-# (optimization_goal, optimization_event, send the pixel?) — ENGAGEMENT_SESSION is what
-# TikTok returns for an Ads-Manager Engaged-session ad group (read live from ad group
-# 1876342860908641, 15 Sep 2026). pixel_id WITHOUT an event was refused outright
-# ("'pixel_id' is not supported in /v1.3/adgroup/create/"), so the pixel only rides
-# with the event spelled out; the pixel-less shape is Ads Manager's "no data
-# connection" (available in select regions).
+# Engaged session: payload shapes tried in order until TikTok accepts one; the accepted
+# shape is remembered (setting ENGAGED_SETTING_KEY) and tried first from then on. Every
+# refusal is logged with TikTok's own message, which names the allowed values.
+# (optimization_goal, optimization_event, send the pixel?) — read from the live
+# Ads-Manager Engaged-session ad group 1876342860908641 (15 Sep 2026): goal
+# ENGAGEMENT_SESSION, pixel attached, NO optimisation event. The event spellings
+# ENGAGED_SESSION / ENGAGEMENT_SESSION are not in TikTok's optimization_event enum
+# (TikTok listed it in full when refusing them), so no shape carries an event; the
+# pixel-less shape is Ads Manager's "no data connection" (select regions).
 ENGAGED_CANDIDATES = [
-    ("ENGAGEMENT_SESSION", "ENGAGED_SESSION", True),     # pixel + the documented pixel event
-    ("ENGAGEMENT_SESSION", "ENGAGEMENT_SESSION", True),  # pixel + event named like the goal
-    ("ENGAGEMENT_SESSION", "", False),                   # no data connection
-    ("ENGAGED_SESSION", "ENGAGED_SESSION", True),        # earlier guesses, kept as fallbacks
-    ("ENGAGED_SESSION", "", False),
-    ("CONVERT", "ENGAGED_SESSION", True),                # conversion goal on the documented pixel event
+    ("ENGAGEMENT_SESSION", "", True),
+    ("ENGAGEMENT_SESSION", "", False),
 ]
+# That ad group's campaign carries campaign_automation_type=UPGRADED_SMART_PLUS: Ads
+# Manager built it through the Upgraded Smart+ flow, and a plain Traffic campaign
+# refused every Engaged-session shape ("Optimization events can't be set for ad groups
+# in campaigns using the selected advertising objective"). So the campaign is created
+# with that flag first; a plain campaign is the fallback if TikTok refuses the field.
+ENGAGED_CAMPAIGN_AUTOMATION = "UPGRADED_SMART_PLUS"
 ENGAGED_SETTING_KEY = "traffic_engaged_accepted"     # JSON {"goal": …, "event": …} once TikTok accepted one
 
 OPT_GOAL_OPTIONS = [

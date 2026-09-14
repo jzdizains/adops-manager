@@ -70,6 +70,29 @@ KNOWN: list[tuple[str, str]] = [
     ("identity_type", "Identity type"),
     ("identity_id", "Identity"),
 ]
+# campaign-level fields (/campaign/get/), same idea
+CAMPAIGN_KNOWN: list[tuple[str, str]] = [
+    ("objective_type", "Objective"),
+    ("objective", "Objective (legacy)"),
+    ("virtual_objective_type", "Virtual objective"),
+    ("sales_destination", "Sales destination"),
+    ("campaign_type", "Campaign type"),
+    ("campaign_automation_type", "Automation"),
+    ("is_smart_performance_campaign", "Smart+ (legacy)"),
+    ("is_search_campaign", "Search campaign"),
+    ("app_promotion_type", "App promotion type"),
+    ("rf_campaign_type", "R&F type"),
+    ("budget_optimize_on", "Campaign budget (CBO)"),
+    ("budget_mode", "Budget mode"),
+    ("budget", "Budget"),
+    ("bid_type", "Bid strategy"),
+    ("optimization_goal", "Optimisation goal"),
+    ("deep_bid_type", "Value bidding"),
+    ("roas_bid", "Min ROAS"),
+    ("special_industries", "Special ad categories"),
+    ("campaign_product_source", "Product source"),
+    ("postback_window_mode", "Postback window"),
+]
 SKIP = {"adgroup_id", "adgroup_name", "advertiser_id", "campaign_id", "campaign_name", "create_time",
         "modify_time", "operation_status", "secondary_status", "is_new_structure", "budget_share_mode",
         "campaign_type", "is_smart_performance_campaign", "campaign_system_origin"}
@@ -90,11 +113,11 @@ def _fmt(key: str, v) -> str:
     return str(v)[:120]
 
 
-def rows(g: dict) -> list[dict]:
-    """[{key, label, value}] for every non-empty setting on the ad group."""
+def rows(g: dict, campaign: bool = False) -> list[dict]:
+    """[{key, label, value}] for every non-empty setting on the ad group (or campaign)."""
     out: list[dict] = []
     seen: set[str] = set()
-    for key, label in KNOWN:
+    for key, label in (CAMPAIGN_KNOWN if campaign else KNOWN):
         v = g.get(key)
         seen.add(key)
         if v in _EMPTY:

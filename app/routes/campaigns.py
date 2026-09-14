@@ -54,12 +54,18 @@ def resolve_cta_portfolio(db: Session, acct: models.AdAccount, fields: dict) -> 
     cached = queries.get_setting(db, key, "")
     if cached:
         return cached
+    goal = fields.get("optimization_goal") or ""
+    if objective == "TRAFFIC" and fields.get("traffic_goal") == "ENGAGED":
+        # the CTA recommender's goal enum doesn't know Engaged session yet (it lists
+        # CLICK … TRAFFIC_LANDING_PAGE_VIEW; seen 15 Sep 2026) — ask for the nearest
+        # traffic goal rather than lose Auto CTA on every Engaged-session launch
+        goal = "TRAFFIC_LANDING_PAGE_VIEW"
     try:
         assets = tiktok_api.recommend_ctas(
             acct.access_token, acct.advertiser_id, objective, promotion,
             landing_page_url=fields.get("landing_page_url") or "",
             ad_texts=[fields["ad_text"]] if fields.get("ad_text") else None,
-            optimization_goal=fields.get("optimization_goal") or "")
+            optimization_goal=goal)
         pid = tiktok_api.create_cta_portfolio(acct.access_token, acct.advertiser_id, assets)
     except tiktok_api.TikTokError as e:
         # Never let the CTA setup sink a launch: fall back to a fixed button and
@@ -778,7 +784,7 @@ def remembered_engaged(db: Session) -> dict | None:
         return None
     if isinstance(remembered, dict) and remembered.get("goal"):
         return {"goal": str(remembered["goal"]), "event": str(remembered.get("event") or ""),
-                "pixel": bool(remembered.get("pixel", True))}
+                "pixel": bool(remembered.get("pixel", True)), "automation": bool(remembered.get("automation", True))}
     return None
 
 
@@ -798,15 +804,31 @@ def engaged_pairs(fields: dict) -> list[tuple[str, str, bool]]:
 
 
 def campaign_goal_candidates(fields: dict, camp_payload: dict) -> list[dict]:
-    """CBO + Engaged session: the campaign carries the goal, so a wrong enum fails at
-    campaign create. The payloads to try, one per distinct candidate goal, in order."""
-    if not (camp_payload.get("budget_optimize_on") and is_engaged(fields)):
+    """Engaged session: the campaign payloads to try, in order. Upgraded-Smart+ flagged
+    first (the shape Ads Manager stores), plain second — unless the remembered shape says
+    plain worked. Under CBO the campaign also carries the goal, one per candidate goal."""
+    if not is_engaged(fields):
         return [camp_payload]
     goals: list[str] = []
-    for g, _e, _p in engaged_pairs(fields):
-        if g not in goals:
-            goals.append(g)
-    return [{**camp_payload, "optimization_goal": g} for g in goals]
+    if camp_payload.get("budget_optimize_on"):
+        for g, _e, _p in engaged_pairs(fields):
+            if g not in goals:
+                goals.append(g)
+    else:
+        goals = [""]
+    flags = [True, False]
+    if fields.get("_engaged_automation") is False:
+        flags = [False, True]
+    out = []
+    for flag in flags:
+        for g in goals:
+            p = dict(camp_payload)
+            if g:
+                p["optimization_goal"] = g
+            if flag:
+                p["campaign_automation_type"] = launch_mod.ENGAGED_CAMPAIGN_AUTOMATION
+            out.append(p)
+    return out
 
 
 def traffic_variants(db: Session, fields: dict, base_payload: dict) -> list[dict]:
@@ -841,7 +863,7 @@ def _walkable(e: "tiktok_api.TikTokError", engaged: bool = False) -> bool:
     msg = (e.message or "").lower()
     words = ("objective", "promotion", "optimization", "optimisation", "event")
     if engaged:
-        words += ("goal", "invalid", "param", "enum", "pixel", "not supported")
+        words += ("goal", "invalid", "param", "enum", "pixel", "not supported", "automation", "smart")
     return any(w in msg for w in words)
 
 
@@ -865,7 +887,7 @@ def remember_traffic_goal(db: Session, fields: dict, accepted: dict) -> None:
         return
     import json as _json
     pair = {"goal": accepted.get("optimization_goal", ""), "event": accepted.get("optimization_event", ""),
-            "pixel": bool(accepted.get("pixel_id"))}
+            "pixel": bool(accepted.get("pixel_id")), "automation": bool(fields.get("_engaged_automation", True))}
     queries.set_setting(db, launch_mod.ENGAGED_SETTING_KEY, _json.dumps(pair))
     try:
         from .. import diag
@@ -873,6 +895,7 @@ def remember_traffic_goal(db: Session, fields: dict, accepted: dict) -> None:
                     f"TikTok accepted Engaged session as optimization_goal={pair['goal'] or '?'}"
                     + (f", optimization_event={pair['event']}" if pair['event'] else "")
                     + (" with the pixel" if pair["pixel"] else " WITHOUT a pixel (no data connection)")
+                    + (" on an Upgraded Smart+ campaign" if pair["automation"] else " on a plain campaign")
                     + " — remembered for next launches", pair)
     except Exception:      # noqa: BLE001
         pass
@@ -932,12 +955,13 @@ def build_spc_adgroup_payload(fields: dict, campaign_id: str, spark_ref: dict | 
                               pixel_id: str, bid_price: float | None) -> dict:
     dest = fields["destination_type"]
     convert = dest == "pixel" or fields.get("objective_type") == "WEB_CONVERSIONS"
+    lpv = fields.get("objective_type") == "TRAFFIC" and fields.get("traffic_goal") == "LPV"
     payload: dict = {
         "campaign_id": campaign_id,
         "adgroup_name": f"{fields['template_name']} · smart+"[:512],
         "promotion_type": "WEBSITE",
-        "optimization_goal": "CONVERT" if convert else "CLICK",
-        "billing_event": "OCPM" if convert else "CPC",
+        "optimization_goal": "CONVERT" if convert else ("TRAFFIC_LANDING_PAGE_VIEW" if lpv else "CLICK"),
+        "billing_event": "OCPM" if (convert or lpv) else "CPC",
         "schedule_type": fields["schedule_type"],
     }
     if convert and pixel_id:
@@ -955,10 +979,13 @@ def build_spc_adgroup_payload(fields: dict, campaign_id: str, spark_ref: dict | 
     if (fields.get("campaign_budget_mode") or "ABO") == "ABO":
         payload["budget_mode"] = fields.get("adgroup_budget_mode") or "BUDGET_MODE_DAY"
         payload["budget"] = float(fields["adgroup_budget"])
-    # bidding
+    # bidding — the cap goes on the field TikTok reads for the billing event
     if bid_price is not None:
         payload["bid_type"] = "BID_TYPE_CUSTOM"
-        payload["conversion_bid_price"] = float(bid_price)
+        if payload["billing_event"] == "OCPM":
+            payload["conversion_bid_price"] = float(bid_price)
+        else:
+            payload["bid_price"] = float(bid_price)
     else:
         payload["bid_type"] = "BID_TYPE_NO_BID"
     # identity (spark creator) — lives on the AD GROUP for smart+
@@ -1643,7 +1670,9 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                     "the Pixels page and re-pick the pixel in the preset.")
 
         created_name = ""
-        if fields.get("smart_plus"):
+        if fields.get("smart_plus") and not is_engaged(fields):
+            # (Engaged session takes the regular endpoints with the Upgraded-Smart+ flag —
+            # the shape Ads Manager stores — not the legacy /smart_plus/ chain)
             log.campaign_id, created_name = _launch_smart_plus(acct, fields, spark_ref, spark, pixel_id)
             if source_mode == "campaign":
                 log.source = created_name
@@ -1651,7 +1680,8 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
             if is_engaged(fields):
                 rem = remembered_engaged(db)
                 if rem:
-                    fields = {**fields, "_engaged_goal": rem["goal"], "_engaged_event": rem["event"], "_engaged_pixel": rem["pixel"]}
+                    fields = {**fields, "_engaged_goal": rem["goal"], "_engaged_event": rem["event"], "_engaged_pixel": rem["pixel"],
+                              "_engaged_automation": rem["automation"]}
             camp_payload = build_campaign_payload(fields, acct)
             camp = None
             camp_candidates = campaign_goal_candidates(fields, camp_payload)
@@ -1667,9 +1697,11 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                     raise
             if camp is None:   # defensive — loop always breaks or raises
                 raise tiktok_api.TikTokError("APP", "campaign not created")
-            if camp_payload.get("budget_optimize_on") and is_engaged(fields):
-                # the campaign now carries this goal — every ad group must use the same one
-                fields = {**fields, "_engaged_goal": camp_payload["optimization_goal"], "_engaged_goal_locked": True}
+            if is_engaged(fields):
+                fields = {**fields, "_engaged_automation": bool(camp_payload.get("campaign_automation_type"))}
+                if camp_payload.get("budget_optimize_on"):
+                    # the campaign now carries this goal — every ad group must use the same one
+                    fields = {**fields, "_engaged_goal": camp_payload["optimization_goal"], "_engaged_goal_locked": True}
             campaign_id = str(camp.get("campaign_id"))
             log.campaign_id = campaign_id
             new_campaign_id = campaign_id     # remember for orphan cleanup on failure
@@ -1740,7 +1772,8 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                     remember_traffic_goal(db, fields, ag_payload)      # the payload TikTok took
                     log.optimization_event = (str(ag_payload.get("optimization_goal", ""))
                                               + (f" · {ag_payload['optimization_event']}" if ag_payload.get("optimization_event") else "")
-                                              + ("" if ag_payload.get("pixel_id") else " · no pixel"))[:100]
+                                              + ("" if ag_payload.get("pixel_id") else " · no pixel")
+                                              + (" · Smart+" if fields.get("_engaged_automation") else ""))[:100]
                 elif fields.get("traffic_goal") == "LPV" and i == 0:
                     log.optimization_event = "TRAFFIC_LANDING_PAGE_VIEW"
 
