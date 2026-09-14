@@ -122,9 +122,11 @@ TRAFFIC_GOALS = {k for k, _, _ in TRAFFIC_GOAL_OPTIONS}
 # ENGAGED_SETTING_KEY) and tried first from then on. Every refusal is logged with
 # TikTok's own message, which names the allowed values.
 ENGAGED_CANDIDATES = [
-    ("ENGAGED_SESSION", ""),                       # a goal of its own, event implied (like LANDING_PAGE_VIEW)
-    ("ENGAGED_SESSION", "ENGAGED_SESSION"),        # same, with the documented pixel event spelled out
-    ("TRAFFIC_ENGAGED_SESSION", ""),               # named like TRAFFIC_LANDING_PAGE_VIEW
+    ("ENGAGEMENT_SESSION", ""),                    # what TikTok returns for an Ads-Manager Engaged-session ad group
+                                                   # (read live from ad group 1876342860908641, 15 Sep 2026)
+    ("ENGAGEMENT_SESSION", "ENGAGED_SESSION"),     # same, with the documented pixel event spelled out
+    ("ENGAGED_SESSION", ""),                       # earlier guesses, kept as fallbacks
+    ("TRAFFIC_ENGAGED_SESSION", ""),
     ("CONVERT", "ENGAGED_SESSION"),                # conversion goal on the documented ENGAGED_SESSION pixel event
 ]
 ENGAGED_SETTING_KEY = "traffic_engaged_accepted"     # JSON {"goal": …, "event": …} once TikTok accepted one

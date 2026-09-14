@@ -128,10 +128,12 @@ SETTINGS[launch.ENGAGED_SETTING_KEY] = "not json"
 check("a corrupt setting is ignored, not a crash", helpers.remembered_engaged(None) is None)
 SETTINGS.clear()
 check("non-engaged fields → the payload untouched", helpers.traffic_variants(None, f_click, {"a": 1}) == [{"a": 1}])
-locked = {**f_eng, "_engaged_goal": "ENGAGED_SESSION", "_engaged_goal_locked": True}
+locked = {**f_eng, "_engaged_goal": "ENGAGEMENT_SESSION", "_engaged_goal_locked": True}
 vs = helpers.traffic_variants(None, locked, base)
 check("a CBO campaign created with one goal locks the ad groups to it",
-      vs and all(v["optimization_goal"] == "ENGAGED_SESSION" for v in vs) and len(vs) == 2, str(vs))
+      vs and all(v["optimization_goal"] == "ENGAGEMENT_SESSION" for v in vs) and len(vs) == 2, str(vs))
+check("the value TikTok returned for a live Ads-Manager Engaged-session ad group goes first (ad group 1876342860908641)",
+      launch.ENGAGED_CANDIDATES[0] == ("ENGAGEMENT_SESSION", ""))
 
 print("\n-- campaign payload / candidates --")
 f_cbo = launch.synthesize(Template(blob={"traffic_goal": "ENGAGED"}, mode="BUDGET_MODE_DAY", budget=50))

@@ -88,7 +88,7 @@ def observe(db: Session, acct, campaigns: list[dict], adgroups: list[dict] | Non
             ref = f"{f}:{v}"[:200]
             if db.query(models.Alert.id).filter_by(kind="parity", ref_id=ref).first():
                 continue                       # reported before (acknowledged or not) — once is enough
-            msg = (f"TikTok is using a {LABEL.get(f, f)} this launcher doesn't offer yet: {v} "
+            msg = (f"TikTok is using a {LABEL.get(f, f)} value this launcher doesn't offer yet: {v} "
                    f"(seen on “{camp[:60]}”, {getattr(acct, 'advertiser_name', '') or getattr(acct, 'advertiser_id', '')}). "
                    f"Ads Manager has it; the preset form does not.")
             db.add(models.Alert(kind="parity", ref_id=ref, level="info", message=msg[:1000]))
