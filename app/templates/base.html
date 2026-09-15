@@ -100,11 +100,15 @@
   <header class="top">
     {% if section_tabs %}<nav class="tabs" data-section-tabs>{% for href, label, on in section_tabs %}<a href="{{ href }}" class="{{ 'on' if on else '' }}">{{ label }}</a>{% endfor %}</nav>{% endif %}
     <div class="right">
-      {% if view_switch %}<form method="post" action="/view" class="viewsw {{ 'viewsw-user' if view_switch.mode == 'user' }}" title="Whose dashboard you are looking at — only the super admin has this">
-        <span class="vs-lab">Viewing</span>
-        <select name="value" onchange="this.form.submit()" aria-label="Viewing">{% for o in view_switch.options %}<option value="{{ o.value }}" {{ 'selected' if o.on }}>{{ o.label }}</option>{% endfor %}</select>
-        <a href="/team" class="vs-team" title="Team — P&L per user">Team</a>
-      </form>{% endif %}
+      {% if view_switch %}<div class="viewsw-wrap">
+        <button type="button" class="viewsw {{ 'viewsw-user' if view_switch.mode == 'user' }}" id="viewSwBtn" aria-haspopup="true" title="Whose dashboard you are looking at — only the super admin has this">
+          <span class="vs-dot"></span><span class="vs-lab">Viewing</span><b class="vs-cur">{{ view_switch.label }}</b><span class="vs-chev">▾</span></button>
+        <form method="post" action="/view" class="umenu viewsw-menu" id="viewSwMenu" hidden>
+          <div class="vs-head">Whose dashboard</div>
+          {% for o in view_switch.options %}<button type="submit" name="value" value="{{ o.value }}" class="{{ 'on' if o.on }}"><span class="vs-check">{{ '✓' if o.on else '' }}</span><span class="vs-name">{{ o.label }}</span>{% if o.value == 'all' %}<span class="vs-sub">the whole company</span>{% endif %}</button>{% endfor %}
+          <div class="vs-foot"><a href="/team">Team · P&amp;L per user →</a></div>
+        </form>
+      </div>{% endif %}
       <a href="/jobs" class="jr-top" id="jobsRunning" hidden title="Background jobs running — click for the list"><span class="jr-dot"></span><span class="jr-t">running</span></a>
       <button type="button" class="gsearch" id="cmdkOpen" title="Search or jump to a page (⌘K)">{{ ic('search') }}<span>Search or jump to…</span><kbd>⌘K</kbd></button>
       <a href="/assistant" class="iconbtn {{ 'on' if request.url.path.startswith('/assistant') }}" title="Assistant — ask about your numbers, get changes proposed">{{ ic('sparkle') }}</a>
@@ -186,14 +190,20 @@
     if (mob) mob.addEventListener("click", function () { root.classList.toggle("side-open"); });
     if (backdrop) backdrop.addEventListener("click", closeDrawer);
 
-    // ---- user menu (avatar) ----------------------------------------------------
+    // ---- user menu (avatar) + the super admin's "Viewing" menu -------------------
     var ub = document.getElementById("userBtn"), um = document.getElementById("userMenu");
-    function closeMenu() { if (um) um.hidden = true; }
+    var vb = document.getElementById("viewSwBtn"), vm = document.getElementById("viewSwMenu");
+    function closeMenu() { if (um) um.hidden = true; if (vm) vm.hidden = true; }
     if (ub && um) {
-      ub.addEventListener("click", function (e) { e.stopPropagation(); um.hidden = !um.hidden; });
+      ub.addEventListener("click", function (e) { e.stopPropagation(); var open = um.hidden; closeMenu(); um.hidden = !open; });
       um.addEventListener("click", function (e) { e.stopPropagation(); });
-      document.addEventListener("click", closeMenu);
     }
+    if (vb && vm) {
+      vb.addEventListener("click", function (e) { e.stopPropagation(); var open = vm.hidden; closeMenu(); vm.hidden = !open; });
+      vm.addEventListener("click", function (e) { e.stopPropagation(); });
+    }
+    document.addEventListener("click", closeMenu);
+    document.addEventListener("keydown", function (e) { if (e.key === "Escape") closeMenu(); });
 
     // ---- theme: system / light / dark ------------------------------------------
     var themeBtn = document.getElementById("themeBtn");

@@ -1,42 +1,119 @@
 {% extends "base.html" %}
 {% block content %}
+{% macro money0(v) -%}{{ '−' if v < 0 }}${{ "{:,.0f}".format(v|abs) if v|abs >= 100 else "%.2f"|format(v|abs) }}{%- endmacro %}
+{% macro profit(v) -%}<span class="profit-cell {{ 'pos' if v > 0 else ('neg' if v < 0 else '') }}">{{ '+' if v > 0 }}{{ money0(v) }}</span>{%- endmacro %}
+{% macro roas(r, sp) -%}{% if sp and r %}<span class="roas-pill {{ 'g' if r >= 1.3 else ('w' if r >= 0.9 else 'r') }}">{{ "%.2f"|format(r) }}×</span>{% else %}<span class="roas-pill n">—</span>{% endif %}{%- endmacro %}
+{% macro dmoney(d, has) -%}{% if has %}<span class="delta {{ 'up' if d > 0 else ('down' if d < 0 else 'flat') }}" title="Change against the previous {{ n_days }} day{{ 's' if n_days != 1 }}">{{ '+' if d > 0 }}{{ money0(d) }}</span>{% endif %}{%- endmacro %}
+{% macro dpct(d) -%}{% if d is not none %}<span class="delta {{ 'up' if d > 0 else ('down' if d < 0 else 'flat') }}">{{ '+' if d > 0 }}{{ "%.0f"|format(d) }}%</span>{% endif %}{%- endmacro %}
 <div class="page-head" style="margin-bottom:10px;">
   <div><h1>Team</h1>
-    <div class="muted" style="font-size:12.5px;">P&amp;L per user — each row is exactly what that user's own Home shows. Open a view to see the dashboard as they see it.</div></div>
-  <div class="actions">
-    <div class="seg">{% for k, lab in labels.items() %}<a href="/team?range={{ k }}" class="{{ 'on' if k == range_key }}">{{ lab }}</a>{% endfor %}</div>
-    <a class="btn" href="/settings#users">Users</a>
-  </div>
+    <div class="muted" style="font-size:12.5px;">{{ range_label }} · P&amp;L per user — each row is exactly what that user's own Home shows. Open a view to see the dashboard as they see it.</div></div>
+  <div class="actions"><div data-daterange></div><a class="btn" href="/settings#users">Users</a></div>
 </div>
 
-<div class="kpis kpis-4" style="margin-bottom:12px;">
-  <div class="kpi"><div class="lab">Profit · everyone</div><div class="val"><span class="{{ 'good' if total.profit >= 0 else 'bad' }}">{{ '+' if total.profit > 0 }}{{ '−' if total.profit < 0 }}${{ "%.2f"|format(total.profit|abs) }}</span></div><div class="sub">revenue − spend</div></div>
-  <div class="kpi"><div class="lab">Spend</div><div class="val">${{ "%.2f"|format(total.spend) }}</div><div class="sub">TikTok</div></div>
-  <div class="kpi"><div class="lab">Revenue</div><div class="val">${{ "%.2f"|format(total.revenue) }}</div><div class="sub">postbacks</div></div>
+<div class="kpis kpis-5" style="margin-bottom:12px;">
+  <div class="kpi"><div class="lab">Profit · everyone</div><div class="val" style="font-size:26px;"><span class="{{ 'good' if total.profit >= 0 else 'bad' }}">{{ '+' if total.profit > 0 }}{{ money0(total.profit) }}</span>{{ dmoney(d_total_profit, has_prior) }}</div><div class="sub">{% if has_prior %}prior {{ '+' if prior_total.profit > 0 }}{{ money0(prior_total.profit) }}{% else %}revenue − spend{% endif %}</div></div>
+  <div class="kpi"><div class="lab">Spend</div><div class="val">{{ money0(total.spend) }}</div><div class="sub">TikTok{% if has_prior %} · prior {{ money0(prior_total.spend) }}{% endif %}</div></div>
+  <div class="kpi"><div class="lab">Revenue</div><div class="val">{{ money0(total.revenue) }}</div><div class="sub">{{ total.conversions }} conversion{{ 's' if total.conversions != 1 }}</div></div>
+  <div class="kpi"><div class="lab">ROAS</div><div class="val">{% if total.spend %}<span class="{{ 'good' if total.roas >= 1 else 'bad' }}">{{ "%.2f"|format(total.roas) }}×</span>{% else %}—{% endif %}</div><div class="sub">{% if prior_total.spend %}prior {{ "%.2f"|format(prior_total.roas) }}×{% else %}no prior spend{% endif %}</div></div>
   <div class="kpi"><div class="lab">Users</div><div class="val">{{ rows|length }}</div><div class="sub">{% if unowned %}<span style="color:var(--warn);">{{ unowned }} account{{ 's' if unowned != 1 }} with no owner</span>{% else %}every account has an owner{% endif %}</div></div>
 </div>
 
 <div class="card" style="padding:0;overflow:hidden;">
-<div class="table-wrap"><table class="table">
-  <thead><tr><th>User</th><th class="num">Accounts</th><th class="num">Live campaigns</th><th class="num">Spend</th><th class="num">Revenue</th><th class="num">Profit</th><th class="num">ROAS</th><th class="num">Conv.</th><th></th></tr></thead>
+<div class="table-scroll"><table class="data dense team-table">
+  <thead><tr><th style="width:26px;"></th><th>User</th><th class="num" title="Ad accounts owned · live campaigns">Accounts · live</th><th class="num" title="Successful launches in the range">Launches</th><th class="num">Spend</th><th class="num" title="Share of company spend">Share</th><th class="num">Revenue</th><th class="num">Profit</th><th class="num">ROAS</th><th class="num" title="Cost per conversion">CPA</th><th class="num" title="Revenue per TikTok click (today only — clicks are live counts)">EPC</th><th class="num">Conv</th><th></th></tr></thead>
   <tbody>
   {% for r in rows %}
-  <tr>
+  <tr class="team-row" data-uid="{{ r.user.id }}">
+    <td><button type="button" class="tx" aria-label="Show breakdown" title="Top sources, accounts and creatives">›</button></td>
     <td><b>{{ r.user.email }}</b>{% if r.is_me %} <span class="pill dim">you</span>{% endif %}{% if not r.user.active %} <span class="pill mute">inactive</span>{% endif %}{% if r.user.is_admin and not r.is_me %} <span class="pill dim">admin</span>{% endif %}</td>
-    <td class="num">{{ r.accounts }}</td>
-    <td class="num">{{ r.live }}</td>
-    <td class="num">${{ "%.2f"|format(r.spend) }}</td>
-    <td class="num">${{ "%.2f"|format(r.revenue) }}</td>
-    <td class="num"><span class="{{ 'good' if r.profit > 0 else ('bad' if r.profit < 0 else '') }}">{{ '+' if r.profit > 0 }}{{ '−' if r.profit < 0 }}${{ "%.2f"|format(r.profit|abs) }}</span></td>
-    <td class="num">{{ "%.2f"|format(r.roas) }}×</td>
+    <td class="num">{{ r.accounts }} · <span class="{{ 'good' if r.live else 'muted' }}">{{ r.live }}</span></td>
+    <td class="num">{{ r.launches or '—' }}</td>
+    <td class="num"><div class="sbar"><span class="sbar-fill" style="width:{{ (r.spend / max_spend * 100)|round(1) if max_spend else 0 }}%;"></span><span class="sbar-txt">{{ money0(r.spend) }}</span></div>{{ dpct(r.d_spend) }}</td>
+    <td class="num muted">{{ "%.0f"|format(r.share) }}%</td>
+    <td class="num">{{ money0(r.revenue) }}</td>
+    <td class="num">{{ profit(r.profit) }} {{ dmoney(r.d_profit, r.has_prior) }}</td>
+    <td class="num">{{ roas(r.roas, r.spend) }}</td>
+    <td class="num">{% if r.cpa %}${{ "%.2f"|format(r.cpa) }}{% else %}—{% endif %}</td>
+    <td class="num">{% if r.epc %}${{ "%.2f"|format(r.epc) }}{% else %}—{% endif %}</td>
     <td class="num">{{ r.conversions }}</td>
     <td class="num"><form method="post" action="/view" style="display:inline;"><input type="hidden" name="value" value="u:{{ r.user.id }}"><button class="btn sm" type="submit" title="See the dashboard exactly as this user sees it">{{ 'My view' if r.is_me else 'Open view' }} →</button></form></td>
   </tr>
+  <tr class="team-detail" data-uid="{{ r.user.id }}" hidden><td colspan="13"><div class="team-detail-body muted">Loading…</div></td></tr>
   {% else %}
-  <tr><td colspan="9" class="muted">No users yet.</td></tr>
+  <tr><td colspan="13" class="muted">No users yet.</td></tr>
   {% endfor %}
   </tbody>
+  {% if rows|length > 1 %}
+  <tfoot><tr><td></td><td><b>Everyone</b></td><td></td><td class="num">{{ rows|sum(attribute='launches') or '—' }}</td><td class="num">{{ money0(total.spend) }}</td><td class="num muted">100%</td><td class="num">{{ money0(total.revenue) }}</td><td class="num">{{ profit(total.profit) }}</td><td class="num">{{ roas(total.roas, total.spend) }}</td><td class="num">{% if total.cpa %}${{ "%.2f"|format(total.cpa) }}{% else %}—{% endif %}</td><td></td><td class="num">{{ total.conversions }}</td><td></td></tr></tfoot>
+  {% endif %}
 </table></div>
 </div>
-<div class="muted" style="font-size:12px;margin-top:8px;">A source shared by two users (the same spark code on both their accounts) is split by each side's spend, so the rows add up to the company total. Revenue that matches no campaign is counted in "everyone" only.</div>
+<div class="muted" style="font-size:12px;margin-top:8px;">Deltas compare with the previous {{ n_days }} day{{ 's' if n_days != 1 }}. A source shared by two users (the same spark code on both their accounts) is split by each side's spend, so the rows add up to the company total. Revenue that matches no campaign is counted in "everyone" only.</div>
+{% endblock %}
+{% block scripts %}<script src="/static/daterange.js?v={{ STATIC_V }}"></script>
+<style>
+.sbar{position:relative;display:inline-block;min-width:96px;height:18px;vertical-align:middle;margin-right:4px;}
+.sbar-fill{position:absolute;left:0;top:0;bottom:0;background:var(--accent-soft);border-radius:4px;}
+.sbar-txt{position:relative;display:block;text-align:right;padding:0 4px;line-height:18px;}
+.team-table .tx{font:inherit;font-size:15px;line-height:1;width:22px;height:22px;border-radius:6px;border:1px solid var(--border);background:var(--panel);color:var(--text-dim);cursor:pointer;transition:transform .15s;}
+.team-table .tx:hover{background:var(--panel-hover);}
+.team-row.open .tx{transform:rotate(90deg);color:var(--accent);}
+.team-detail td{background:var(--surface-2);padding:10px 14px 12px 40px;}
+.team-detail-body{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;font-size:12px;}
+@media (max-width:1000px){.team-detail-body{grid-template-columns:1fr;}}
+.tdl h4{margin:0 0 6px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-dim);}
+.tdl-row{display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--border-soft);}
+.tdl-row:last-child{border-bottom:none;}
+.tdl-row .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.tdl-row .nm small{display:block;color:var(--text-dim);}
+.tdl-row .nm a{color:inherit;text-decoration:none;}
+.tdl-row .nm a:hover{text-decoration:underline;}
+.tdl-row .mono{font-variant-numeric:tabular-nums;white-space:nowrap;color:var(--text-dim);}
+</style>
+<script>
+(function(){
+  "use strict";
+  var qs = {{ qs|tojson }};
+  var cache = {};
+  function money(v){ var a=Math.abs(v); return (v<0?"−":"")+"$"+(a>=100?Math.round(a).toLocaleString():a.toFixed(2)); }
+  function esc(s){ return String(s==null?"":s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];}); }
+  function list(title, rows, more){
+    var h='<div class="tdl"><h4>'+esc(title)+(more?' <span class="muted" style="text-transform:none;letter-spacing:0;">(top '+rows.length+' of '+more+')</span>':'')+'</h4>';
+    if(!rows.length){ return h+'<div class="muted">nothing in this range</div></div>'; }
+    rows.forEach(function(r){
+      var p=r.profit, cls=p>0?"pos":(p<0?"neg":"");
+      var name=r.href?'<a href="'+esc(r.href)+'">'+esc(r.name)+'</a>':esc(r.name);
+      h+='<div class="tdl-row"><div class="nm">'+name+(r.shared?' <span class="pill warn" title="Also on another user\'s accounts — revenue split by spend">shared</span>':'')+(r.sub?'<small>'+esc(r.sub)+'</small>':'')+'</div>'
+        +'<span class="mono">'+money(r.spend)+' → '+money(r.revenue)+'</span>'
+        +'<span class="profit-cell '+cls+'">'+(p>0?"+":"")+money(p)+'</span></div>';
+    });
+    return h+'</div>';
+  }
+  function render(body, d){
+    body.classList.remove("muted");
+    body.innerHTML = list("Top sources", d.sources, d.n_sources>d.sources.length?d.n_sources:0)
+      + list("Accounts", d.accounts, d.n_accounts>d.accounts.length?d.n_accounts:0)
+      + list("Creatives", d.creatives, 0);
+  }
+  function toggle(row){
+    var uid=row.getAttribute("data-uid");
+    var det=row.nextElementSibling;
+    if(!det||!det.classList.contains("team-detail")) return;
+    var open=row.classList.toggle("open");
+    det.hidden=!open;
+    if(!open) return;
+    var body=det.querySelector(".team-detail-body");
+    if(cache[uid]){ render(body, cache[uid]); return; }
+    body.textContent="Loading…"; body.classList.add("muted");
+    fetch("/team/"+uid+"/detail.json?"+qs, {credentials:"same-origin"}).then(function(r){return r.json();}).then(function(d){
+      if(!d.ok){ body.textContent=d.error||"Could not load"; return; }
+      cache[uid]=d; render(body, d);
+    }).catch(function(){ body.textContent="Could not load — try again."; });
+  }
+  document.querySelectorAll(".team-row").forEach(function(row){
+    row.querySelector(".tx").addEventListener("click", function(e){ e.stopPropagation(); toggle(row); });
+  });
+})();
+</script>
 {% endblock %}

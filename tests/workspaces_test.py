@@ -200,7 +200,7 @@ pages = {
     "app/routes/alerts.py": ["key = (sc.mode, sc.user_id)", "_BELL_CACHE[key]"],
     "app/routes/monitor.py": ["inbox_mod.build(db, sc)", "if sc.allows(a.advertiser_id)]"],
     "app/routes/performance.py": ["pnl_data.overall_totals(db, start_utc, end_utc, sc.ids)", "scope_mod.event_in_view(e, sc, srcs)"],
-    "app/routes/team.py": ['@router.post("/view")', '@router.get("/team")', "pnl_data.overall_totals(db, start_utc, end_utc, ids)", "resp.set_cookie(scope_mod.COOKIE"],
+    "app/routes/team.py": ['@router.post("/view")', '@router.get("/team")', '@router.get("/team/{user_id}/detail.json")', "pnl_data.overall_totals(db, start_utc, end_utc, ids)", "timeutil.range_bounds(range_key, start, end)", "resp.set_cookie(scope_mod.COOKIE"],
     "app/routes/super_launcher.py": ["sc.owned(db.query(models.Template), models.Template)", 'fields["_launched_by"] = sc.owner_for_new', "owner_user_id=sc.user_id)", "if sc.allows(a)]"],
     "app/routes/campaigns.py": ["_scope.claim(db, acct, fields.get(\"_launched_by\"))", "_owned(db.query(models.Creative), models.Creative, fields)", "_owned(db.query(models.AdText), models.AdText, fields)", 'fields["_launched_by"] = sc.owner_for_new'],
     "app/queue_worker.py": ["launched_by=launched_by", 'fields["_launched_by"] = item.launched_by or template.owner_user_id', "owner_user_id=(item.launched_by or template.owner_user_id)"],
@@ -221,7 +221,7 @@ pages = {
     "app/pnl_data.py": ["def source_weights", "def overall_totals(db: Session, start_utc: datetime, end_utc: datetime, advertiser_ids=None)", '**({"shared": True} if w < 1.0 else {})'],
     "app/hourly.py": ["weights: dict[str, float] | None = None"],
     "app/templates/base.html": ['action="/view"', "view_switch.options"],
-    "app/templates/team.html": ['value="u:{{ r.user.id }}"'],
+    "app/templates/team.html": ['value="u:{{ r.user.id }}"', '<div data-daterange></div>', '/team/"+uid+"/detail.json?', 'daterange.js'],
     "app/templates/accounts.html": ['data-ac="owner"', 'class="pill dim ac-owner"'],
     "app/static/accounts.js": ['UI.post("/accounts/owner"'],
     "app/templates/pnl.html": [">shared</span>"],
@@ -241,7 +241,7 @@ check("launch engine: every 'next unused' creative / text pick is owner-scoped",
       and "db.query(models.AdText)\n                             .filter_by(status=\"available\")" not in seg)
 sl = read("app/routes/super_launcher.py")
 check("super launcher never launches to an account outside the view", 'advertiser_ids = [a for a in form.getlist("advertiser_ids") if sc.allows(a)]' in sl)
-check("STATIC_VERSION bumped", "STATIC_VERSION = \"117\"" in read("app/config.py"))
+check("STATIC_VERSION bumped", "STATIC_VERSION = \"118\"" in read("app/config.py"))
 
 print()
 print("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}")
