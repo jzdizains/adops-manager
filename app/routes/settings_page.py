@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse, RedirectResponse, Response
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
-from .. import config, models, queries, text_overlay, users
+from .. import config, ctx, models, queries, settings_store, text_overlay, users
 from ..database import get_db
 from ..settings_store import get_settings, save_settings
 from ..templating import render
@@ -17,9 +17,22 @@ from ..templating import render
 router = APIRouter()
 
 
+def _workspace(request: Request, db: Session) -> dict:
+    """Whose settings this request shows and saves: the user's own — or, for the super
+    admin, the user they switched to. `own_view` = the super admin on their own view
+    (Everyone / Mine): the only place the server-wide cards, Users and Access log show."""
+    me = getattr(request.state, "user", None)
+    uid = ctx.OWNER.get() or (me.id if me is not None else None)
+    other = bool(me is not None and users.is_owner(me) and uid != me.id)
+    u = db.get(models.User, uid) if other and uid is not None else me
+    return {"user_id": uid, "email": (u.email if u is not None else ""), "other": other,
+            "own_view": bool(me is not None and users.is_owner(me) and not other)}
+
+
 @router.get("/settings")
 def settings_page(request: Request, db: Session = Depends(get_db)):
-    s = get_settings(db)
+    ws = _workspace(request, db)
+    s = get_settings(db, ws["user_id"])
     base_url = str(request.base_url).rstrip("/")
     if base_url.startswith("http://") and "localhost" not in base_url and "127.0.0.1" not in base_url:
         base_url = "https://" + base_url[len("http://"):]
@@ -69,14 +82,17 @@ def settings_page(request: Request, db: Session = Depends(get_db)):
         "rss_mb": background.rss_mb(),
         "web_events": STANDARD_WEB_EVENTS, "fire_max": FIRE_MAX,
         "classic_font": text_overlay.custom_font_status(),
-        "sec": _security_ctx(request, db),
+        "sec": _security_ctx(request, db, own_view=ws["own_view"]), "ws": ws,
     })
 
 
 @router.post("/settings/font")
 async def upload_font(request: Request):
     """Store an optional custom typeface for the text-on-image tool: one
-    .ttf/.otf per weight; missing weights fall back to the nearest uploaded one."""
+    .ttf/.otf per weight; missing weights fall back to the nearest uploaded one.
+    One font set for the server — owner only."""
+    if not users.is_owner(getattr(request.state, "user", None)):
+        return RedirectResponse("/settings?err=" + quote("Only the owner can change the caption font.") + "#font", status_code=303)
     form = await request.form()
     saved, bad = [], []
     d = text_overlay.custom_font_dir()
@@ -128,17 +144,21 @@ def classic_font_file(weight: str):
 @router.post("/settings/save")
 async def save(request: Request, db: Session = Depends(get_db)):
     form = await request.form()
-    current = get_settings(db)
+    ws = _workspace(request, db)
+    current = get_settings(db, ws["user_id"])
     values = dict(current)
     for key in current:
         if key == "postback_key":
             continue  # never editable from the form
+        if key in settings_store.GLOBAL_KEYS and not ws["own_view"]:
+            continue  # server-wide knobs: only the owner, on their own view, sees or saves them
         if isinstance(current[key], bool):
             values[key] = form.get(key) is not None          # checkbox present = on
         elif key in form:
             values[key] = form.get(key)
-    save_settings(db, values)
-    return RedirectResponse("/settings?ok=Saved.+Changes+apply+within+one+sweep.", status_code=303)
+    save_settings(db, values, user_id=ws["user_id"], global_too=ws["own_view"])
+    who = f"+for+{quote(ws['email'])}" if ws["other"] else ""
+    return RedirectResponse(f"/settings?ok=Saved{who}.+Changes+apply+within+one+sweep.", status_code=303)
 
 
 STANDARD_WEB_EVENTS = ("Purchase", "CompleteRegistration", "ViewContent", "AddToCart", "InitiateCheckout",
@@ -179,7 +199,7 @@ async def test_event(request: Request, db: Session = Depends(get_db)):
         value = float(value_raw)
     except ValueError:
         value = 1.0
-    s = dict(get_settings(db))
+    s = dict(get_settings(db, _workspace(request, db)["user_id"]))
     s["events_api_enabled"] = True          # a test always tries to send
     page_url = str(form.get("page_url") or "").strip() or pb.page_url_for(db, source, s)
     token, pixel_code = pb._events_pixel_code(db, source, s)
@@ -219,10 +239,14 @@ async def test_event(request: Request, db: Session = Depends(get_db)):
     return RedirectResponse("/settings?err=" + quote(msg) + "#test", status_code=303)
 
 
-def _security_ctx(request: Request, db: Session) -> dict:
+def _security_ctx(request: Request, db: Session, own_view: bool | None = None) -> dict:
+    """`own_view`: the Users card and the Access log are the owner's, on their OWN view
+    only — switched to a user, the owner sees the page exactly as that user does."""
     from .. import auth_security as sec
     from .auth import current_user
     me = current_user(request, db)
+    if own_view is None:
+        own_view = users.is_owner(me)
     pending = request.session.get("totp_setup") or ""
     return {
         "me": me, "enabled": sec.totp_enabled(me), "enabled_at": (me.totp_enabled_at if me else "") or "",
@@ -230,17 +254,17 @@ def _security_ctx(request: Request, db: Session) -> dict:
         "pending_secret": pending, "pending_uri": sec.otpauth_uri(pending, me.email if me else "operator") if pending else "",
         "pending_qr": sec.qr_svg(sec.otpauth_uri(pending, me.email if me else "operator")) if pending else "",
         "new_codes": request.session.pop("totp_new_codes", None),
-        "recent": sec.recent_logins(db, kinds=("login", "2fa")) if not users.is_owner(me) else [],
-        "access": sec.access_log(db, 80) if users.is_owner(me) else [],
+        "recent": sec.recent_logins(db, kinds=("login", "2fa"), email=(me.email if me else "")) if not own_view else [],
+        "access": sec.access_log(db, 80) if own_view else [],
         "this_ip": sec.client_ip(request), "this_where": _where(db, sec.client_ip(request)),
         "geo_on": bool(config.IPINFO_TOKEN),
-        "user_where": {u.id: _where(db, u.last_ip) for u in (db.query(models.User).all() if users.is_owner(me) else [])},
+        "user_where": {u.id: _where(db, u.last_ip) for u in (db.query(models.User).all() if own_view else [])},
         "ua": __import__("app.ua", fromlist=["parse"]),
         "allowed_ips": config.ALLOWED_IPS, "insecure": sec.insecure_defaults(),
         "session_hours": config.SESSION_MAX_AGE_S // 3600,
-        "is_owner": users.is_owner(me), "owner_email": config.OWNER_EMAIL,
+        "is_owner": users.is_owner(me), "own_view": own_view, "owner_email": config.OWNER_EMAIL,
         "allow_trust": sec.trusted_devices_allowed(db),
-        "users": db.query(models.User).order_by(models.User.email).all() if users.is_owner(me) else [],
+        "users": db.query(models.User).order_by(models.User.email).all() if own_view else [],
         "min_password": users.MIN_PASSWORD,
     }
 

@@ -53,10 +53,12 @@ def verdict(landing_url: str, param: str, campaign_name: str) -> tuple[str, str]
 def audit(db: Session, only_active: bool = True) -> list[dict]:
     """One row per tool-launched campaign with its ads' verdicts (live from TikTok).
     Never raises — an account that can't be read gets an 'error' row."""
-    s = get_settings(db)
-    param = s.get("url_param") or "source"
+    from . import settings_store
+    scache: dict = {}
     recs = {(r.advertiser_id, r.campaign_id): r for r in db.query(models.CampaignRecord).all()}
     accts = {a.advertiser_id: a for a in db.query(models.AdAccount).all()}
+    def param_for(adv: str) -> str:       # each account's owner names the ?source= param
+        return settings_store._cached(db, getattr(accts.get(adv), "owner_user_id", None), scache).get("url_param") or "source"
     # tool-launched campaigns (one LaunchLog per campaign is enough)
     logs: dict[tuple[str, str], models.LaunchLog] = {}
     for lg in (db.query(models.LaunchLog).filter(models.LaunchLog.ok == True)  # noqa: E712
@@ -99,7 +101,7 @@ def audit(db: Session, only_active: bool = True) -> list[dict]:
             rank = {"ok": 0, "ok-static": 0, "unsafe-name": 2, "missing": 3, "no-url": 1, "error": 4}
             for ad in ads_by_cid.get(cid, []):
                 url = ad.get("landing_page_url") or ""
-                code, why = verdict(url, param, name)
+                code, why = verdict(url, param_for(aid), name)
                 ads.append({"ad_id": str(ad.get("ad_id", "")), "adgroup_id": str(ad.get("adgroup_id", "")),
                             "ad_name": ad.get("ad_name", ""), "url": url, "code": code, "why": why,
                             "status": ad.get("secondary_status", "")})
@@ -127,7 +129,8 @@ def audit(db: Session, only_active: bool = True) -> list[dict]:
 def fix_campaign(db: Session, advertiser_id: str, campaign_id: str) -> tuple[list[str], list[str]]:
     """Make one campaign attributable. Returns (changes, errors)."""
     from .routes.campaigns import apply_source_to_url, url_safe_name
-    s = get_settings(db)
+    from . import settings_store
+    s = settings_store.for_account(db, advertiser_id)
     param = s.get("url_param") or "source"
     mode = s.get("source_mode", "campaign")
     acct = db.query(models.AdAccount).filter_by(advertiser_id=advertiser_id).first()

@@ -55,6 +55,9 @@ def build(db: Session, scope=None) -> list[dict]:
         # an alert about one ad account (ref_id is the advertiser id) follows its owner
         if ids is not None and a.ref_id and a.ref_id.isdigit() and len(a.ref_id) >= 15 and a.kind not in ("bc_low_balance",) and a.ref_id not in ids:
             continue
+        # a per-user inventory alert (ref_id "fresh:u7", "creatives:u7") shows only in that user's view
+        if ids is not None and a.ref_id and ":u" in a.ref_id and a.ref_id.rsplit(":u", 1)[1] != str(uid):
+            continue
         href, external = _alert_href(a)
         items.append({
             "id": f"alert:{a.id}", "kind": a.kind, "level": a.level or "warn",

@@ -4,6 +4,7 @@
   <div><h1>Settings</h1><div class="muted" id="setSub" style="font-size:12.5px;">changes apply within one sweep — no redeploy</div></div>
   <div class="actions"><button class="btn primary" type="submit" form="settingsForm" id="setSaveTop">Save settings</button></div>
 </div>
+{% if ws.other %}<div class="flash" style="margin-bottom:10px;font-size:12.5px;">Editing <b>{{ ws.email }}</b>'s settings — their rules, top-ups, tracking, postback key, Events API and appeals. Switch <b>Viewing</b> in the top bar back to Everyone or Mine for your own.</div>{% endif %}
 <div class="settings-wrap">
 <nav class="settings-nav" id="setNav" aria-label="Settings sections">
   <div class="sn-grp">Automation</div>
@@ -15,12 +16,12 @@
   <a href="#events" data-tab="events">Events API</a>
   <div class="sn-grp">Account</div>
   <a href="#security" data-tab="security">Security &amp; 2FA</a>
-  {% if sec.is_owner %}<a href="#users" data-tab="users">Users</a>{% endif %}
+  {% if sec.own_view %}<a href="#users" data-tab="users">Users</a>
   <a href="#access" data-tab="access">Access log</a>
-  <div class="sn-grp">Creatives</div>
-  <a href="#font" data-tab="font">Caption font</a>
-  <div class="sn-grp">Assistant</div>
+  <div class="sn-grp">Server · owner only</div>
+  <a href="#server" data-tab="server">Sweeps &amp; queue</a>
   <a href="#assistant" data-tab="assistant">Assistant</a>
+  <a href="#font" data-tab="font">Caption font</a>{% endif %}
   <div class="sn-grp">Also</div>
   <a href="/accounts">Ad accounts →</a><a href="/pixels">Pixels →</a><a href="/partners">Partners →</a><a href="/locations">Locations →</a><a href="/cookies">TikTok cookies →</a><a href="/bc-assets">Assets →</a><a href="/diagnostics">Diagnostics →</a><a href="/oauth/connect">Connect TikTok →</a>
 </nav>
@@ -74,7 +75,7 @@
 </section>
 <section class="stab" data-tab="launch">
 <div class="card" id="lifecycle">
-  <div class="card-header"><span class="card-title">Account lifecycle & launch queue</span></div>
+  <div class="card-header"><span class="card-title">Account lifecycle</span><span class="card-meta">your accounts only — every user has their own thresholds</span></div>
   <div class="form-row-3">
     <label class="field"><span class="field-label">Cooldown after N launch failures</span>
       <input type="number" min="1" name="account_error_threshold" value="{{ s.account_error_threshold }}"></label>
@@ -83,15 +84,6 @@
     <label class="field"><span class="field-label">Alert when fresh accounts below</span>
       <input type="number" min="0" name="min_fresh_accounts" value="{{ s.min_fresh_accounts }}">
       <span class="hint">0 disables the inventory alert.</span></label>
-  </div>
-  <div class="form-row">
-    <label class="field"><span class="field-label">Queue launches per sweep</span>
-      <input type="number" min="1" name="queue_per_sweep" value="{{ s.queue_per_sweep }}"></label>
-    <label class="field"><span class="field-label">Max attempts for transient errors</span>
-      <input type="number" min="1" name="launch_retry_max" value="{{ s.launch_retry_max }}"></label>
-    <label class="field"><span class="field-label">Pause between accounts (sec)</span>
-      <input type="number" min="0" step="0.5" name="launch_pace_sec" value="{{ s.launch_pace_sec }}">
-      <span class="hint">Spreads out direct-launch batches to avoid TikTok’s rate limit (code 40100). Raise it if you still hit limits at scale.</span></label>
   </div>
 </div>
 
@@ -113,24 +105,11 @@
   </div>
 </div>
 
-<div class="card" id="sweeps">
-  <div class="card-header"><span class="card-title">Sweeps</span>
-    <span class="card-meta">how often the background worker checks</span></div>
-  <div class="form-row">
-    <label class="field"><span class="field-label">Fast sweep interval (seconds)</span>
-      <input type="number" min="30" name="sweep_interval_sec" value="{{ s.sweep_interval_sec }}">
-      <span class="hint">Active-campaign metrics + rules. Minimum 30s; 60s recommended.</span></label>
-    <label class="field"><span class="field-label">Slow cycle every N sweeps</span>
-      <input type="number" min="1" name="slow_every_n_sweeps" value="{{ s.slow_every_n_sweeps }}">
-      <span class="hint">Balances, top-ups and full account sync run on this slower cycle.</span></label>
-  </div>
-</div>
-
 </section>
 <section class="stab" data-tab="tracking">
 <div class="card" id="sources">
   <div class="card-header"><span class="card-title">Tracking — TikTok → lander → Glitchy → back</span>
-    <span class="card-meta">the RedTrack / ClickFlare model, built in: every ad click gets a short click id, only that id has to round-trip</span></div>
+    <span class="card-meta">the RedTrack / ClickFlare model, built in: every ad click gets a short click id, only that id has to round-trip · this setup and the postback key below are {{ ws.email }}'s own — each user has theirs</span></div>
   {% if s.tracking_mode == 'clickflare' %}
   <div class="tr-flow">
     <span class="tr-hop"><b>1 · Ad</b><span>lands on your ClickFlare campaign / lander with <span class="mono">?{{ s.url_param }}=&lt;campaign&gt;</span> + campaign / ad group / ad ids; TikTok adds <span class="mono">ttclid</span></span></span><span class="tr-arrow">→</span>
@@ -301,7 +280,34 @@
 </div>
 
 </section>
-<section class="stab" data-tab="launch" data-tab-extra="1">
+{% if sec.own_view %}
+<section class="stab" data-tab="server">
+<div class="card" id="queue">
+  <div class="card-header"><span class="card-title">Launch queue</span><span class="card-meta">one setting for the whole server — every user's launches share these</span></div>
+  <div class="form-row">
+    <label class="field"><span class="field-label">Queue launches per sweep</span>
+      <input type="number" min="1" name="queue_per_sweep" value="{{ s.queue_per_sweep }}"></label>
+    <label class="field"><span class="field-label">Max attempts for transient errors</span>
+      <input type="number" min="1" name="launch_retry_max" value="{{ s.launch_retry_max }}"></label>
+    <label class="field"><span class="field-label">Pause between accounts (sec)</span>
+      <input type="number" min="0" step="0.5" name="launch_pace_sec" value="{{ s.launch_pace_sec }}">
+      <span class="hint">Spreads out direct-launch batches to avoid TikTok’s rate limit (code 40100). Raise it if you still hit limits at scale.</span></label>
+  </div>
+</div>
+
+<div class="card" id="sweeps">
+  <div class="card-header"><span class="card-title">Sweeps</span>
+    <span class="card-meta">how often the background worker checks</span></div>
+  <div class="form-row">
+    <label class="field"><span class="field-label">Fast sweep interval (seconds)</span>
+      <input type="number" min="30" name="sweep_interval_sec" value="{{ s.sweep_interval_sec }}">
+      <span class="hint">Active-campaign metrics + rules. Minimum 30s; 60s recommended.</span></label>
+    <label class="field"><span class="field-label">Slow cycle every N sweeps</span>
+      <input type="number" min="1" name="slow_every_n_sweeps" value="{{ s.slow_every_n_sweeps }}">
+      <span class="hint">Balances, top-ups and full account sync run on this slower cycle.</span></label>
+  </div>
+</div>
+
 <div class="card" id="audience">
   <div class="card-header"><span class="card-title">Audience page refresh</span>
     <span class="card-meta">how often the <a href="/audience">Audience</a> store is refreshed from TikTok for accounts with active campaigns</span></div>
@@ -328,6 +334,7 @@
   <div class="hint">What it can read: P&L by any breakdown, campaigns, accounts, creatives, inbox, hour-by-hour delivery. What it can do: propose pause / resume / budget / cost-cap changes that you approve on the <a href="/assistant">Assistant</a> page — applied through the same endpoints as the Campaigns console, logged the same way.</div>
 </div>
 </section>
+{% endif %}
 <div class="save-bar" id="setSaveBar">
   <button class="btn primary" type="submit">Save settings</button>
   <span class="hint" style="margin:0;">Every tab's values are saved together.</span>
@@ -377,7 +384,7 @@
       <div style="margin-top:6px;"><span class="pill warn">Not set up</span> <span class="muted" style="font-size:12px;">2FA is required — you'll be asked to set it up at your next page load</span></div>
       <a class="btn primary sm" href="{{ login_path }}/2fa/setup" style="margin-top:10px;">Set up 2FA now</a>
       {% endif %}
-      {% if sec.is_owner %}
+      {% if sec.own_view %}
       <form method="post" action="/settings/security/trust" style="margin-top:14px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12.5px;">
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" name="allow" value="1" style="width:auto;" {{ 'checked' if sec.allow_trust }}> Let a browser skip the code for 30 days after a successful login</label>
         <button class="btn sm" type="submit">Save</button>
@@ -388,7 +395,7 @@
     </div>
     <div>
       <div class="field-label">Recent login attempts <span class="muted">(you are {{ sec.this_ip }}{% if sec.this_where %} · {{ sec.this_where }}{% endif %})</span></div>
-      {% if sec.is_owner %}<div class="muted" style="font-size:12px;margin-top:6px;">See the <a href="#access">Access log</a> below for every login, failure and probe with location and device.</div>
+      {% if sec.own_view %}<div class="muted" style="font-size:12px;margin-top:6px;">See the <a href="#access">Access log</a> below for every login, failure and probe with location and device.</div>
       {% elif sec.recent %}
       <table class="data" style="margin-top:6px;font-size:11.5px;"><thead><tr><th>When (UTC)</th><th>Who / IP</th><th>Result</th></tr></thead><tbody>
         {% for a in sec.recent %}<tr><td class="mono">{{ a.at.strftime('%b %d %H:%M') }}</td><td><div>{{ a.email or "—" }}</div><div class="mono muted">{{ a.ip }}</div></td><td>{% if a.ok %}<span class="pill ok">ok</span>{% else %}<span class="pill err">failed</span>{% endif %} <span class="muted">{{ a.note }}</span></td></tr>{% endfor %}
@@ -398,7 +405,7 @@
   </div>
 </div>
 
-{% if sec.is_owner %}
+{% if sec.own_view %}
 </section>
 <section class="stab" data-tab="users">
 <div class="card" id="users">
@@ -482,6 +489,7 @@
 {% endif %}
 
 </section>
+{% if sec.own_view %}
 <section class="stab" data-tab="font">
 <div class="card" id="font">
   <div class="card-header"><span class="card-title">Caption font for “Add text”</span>
@@ -502,6 +510,7 @@
 </div>
 
 </section>
+{% endif %}
 <section class="stab" data-tab="events" data-tab-extra="1">
 <div class="card" id="test">
   <div class="card-header"><span class="card-title">Fire events at the pixel</span>
@@ -539,8 +548,8 @@
 <script>
 (function () {
   // one section at a time; the hash picks it (deep links like /settings#security keep working)
-  var FORM_TABS = { rules: 1, launch: 1, tracking: 1, events: 1, appeals: 1 };
-  var ALIAS = { profit: "rules", lifecycle: "launch", topups: "launch", sweeps: "launch", sources: "tracking", test: "events", audience: "launch" };
+  var FORM_TABS = { rules: 1, launch: 1, tracking: 1, events: 1, appeals: 1, server: 1, assistant: 1 };
+  var ALIAS = { profit: "rules", lifecycle: "launch", topups: "launch", sweeps: "server", queue: "server", sources: "tracking", test: "events", audience: "server" };
   var nav = document.getElementById("setNav"), links = nav.querySelectorAll("a[data-tab]"), bar = document.getElementById("setSaveBar"), top = document.getElementById("setSaveTop");
   function show(tab) {
     if (ALIAS[tab]) tab = ALIAS[tab];

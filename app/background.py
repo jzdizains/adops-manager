@@ -84,6 +84,7 @@ def _loop():
 
     from . import balances, issues, jobs, live_spend, partners, queue_worker, rules, tensorpix_worker
     from .database import SessionLocal
+    from . import settings_store
     from .settings_store import get_settings
 
     time.sleep(20)  # let the app boot
@@ -105,9 +106,10 @@ def _loop():
                 balances.sync_bc_balances(db)
                 balances.sync_account_balances(db)
                 balances.evaluate_bc_alerts(db)
-                rules.evaluate_topups(db, settings)
-                rules.check_fresh_inventory(db, settings)
-                rules.check_pool_inventory(db, settings)
+                for u, us, ids in settings_store.per_user(db):     # each user's thresholds over their own accounts
+                    rules.evaluate_topups(db, us, ids)
+                    rules.check_fresh_inventory(db, us, u.id)
+                    rules.check_pool_inventory(db, us, u.id)
                 issues.scan(db)
                 partners.poll(db)               # TikTok-account assignments waiting on accepted invites
                 jobs.prune(db)
@@ -120,8 +122,9 @@ def _loop():
                 hot = _accounts_with_active_campaigns(db)
                 if hot:
                     live_spend.sync_campaigns(db, hot)
-            rules.evaluate_pause_rules(db, settings)
-            rules.evaluate_profit_rules(db, settings)
+            for u, us, ids in settings_store.per_user(db):         # each user's rules over their own accounts
+                rules.evaluate_pause_rules(db, us, ids)
+                rules.evaluate_profit_rules(db, us, ids)
             queue_worker.process(db, settings)
             tensorpix_worker.process_pending(db, limit=6)   # advance variant jobs
             try:

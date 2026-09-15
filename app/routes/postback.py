@@ -21,6 +21,8 @@ postback — the status is recorded on the event row instead.
 
 Auth is the `key` query param — the endpoint is outside the login wall so
 Glitchy's servers can reach it. Wrong/missing key -> 403, nothing stored.
+Each user has their own key (v119): it picks whose postback mode and Events
+API settings handle the event; attribution itself stays by source/campaign.
 
 P&L joins revenue-per-source (postbacks) against spend-per-source
 (SpendSnapshot rows of campaigns launched with that source).
@@ -238,9 +240,13 @@ def _num(v, cast=float, default=0):
 @router.post("/postback")
 async def postback(request: Request, db: Session = Depends(get_db)):
     q = dict(request.query_params)
-    s = get_settings(db)
-    if q.get("key", "") != s["postback_key"]:
+    # the key says whose postback this is: every user has their own (Settings → Tracking),
+    # and that user's postback mode / Events API setup applies to it
+    from .. import settings_store
+    uid = settings_store.user_for_postback_key(db, q.get("key", ""))
+    if uid is None:
         return JSONResponse({"ok": False, "error": "bad key"}, status_code=403)
+    s = get_settings(db, None if uid == -1 else uid)
     source, packed = unpack_source(q.get("source") or "")
     # the packed part is our click id (tracker model) — or, from an older lander script, the raw ttclid
     click_id = next((v for v in (q.get("clid") or "", q.get("clickid") or "", packed) if tracking.is_click_id(v)), "")

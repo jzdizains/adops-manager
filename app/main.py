@@ -236,6 +236,8 @@ try:
         _users.ensure_owner(_d)      # OWNER_EMAIL set later / renamed / locked out → still an owner you can log in as
         from . import scope as _scope
         _scope.backfill(_d)          # v116: everything made before per-user workspaces belongs to the super admin
+        from . import settings_store as _ss
+        _ss.get_settings(_d)         # v119: the pre-workspaces settings row (and its postback key) becomes the super admin's
     finally:
         _d.close()
 except Exception:  # noqa: BLE001 — never keep the app from starting

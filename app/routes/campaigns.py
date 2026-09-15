@@ -1455,7 +1455,7 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                 reconcile_media_type(db, spark, spark_ref)
 
         # ---- source wiring (P&L join key — must reach Glitchy on every launch) ---
-        settings = get_settings(db)
+        settings = get_settings(db, fields.get("_launched_by"))      # the launcher's tracking setup
         source_mode = settings.get("source_mode", "campaign")
         if source_mode == "campaign":
             # ?source=__CAMPAIGN_NAME__ — TikTok fills in the campaign name at click
@@ -1554,7 +1554,7 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
             creative_identity = (identity_choices[0] if identity_choices
                                  else resolve_account_identity(db, acct))
         if use_library:
-            settings = get_settings(db)
+            settings = get_settings(db, fields.get("_launched_by"))
             reuse = bool(fields.get("allow_creative_reuse"))
             if fields.get("creative_id"):
                 # launcher picked a SPECIFIC creative (single pick, or a Super
@@ -2017,7 +2017,7 @@ def run_batch(db: Session, accounts: list[models.AdAccount], fields: dict,
             _time.sleep(pace)          # spread create-calls — rate-limit safety at scale
         log = launch_to_account(db, acct, fields, batch_ref)
         if log.error_code not in ("ASSET", "CONFIG"):   # preset problems, not account health
-            rules_mod.record_launch_outcome(db, acct, log.ok)
+            rules_mod.record_launch_outcome(db, acct, log.ok, get_settings(db, fields.get("_launched_by")))
         if on_progress:
             on_progress(i + 1, len(accounts))
     db.commit()
@@ -2062,7 +2062,7 @@ def run_batch_assigned(db: Session, pairs: list, base_fields: dict,
             fields["creative_id"] = -1     # forces the "no creative" refusal
         log = launch_to_account(db, acct, fields, batch_ref)
         if log.error_code not in ("ASSET", "CONFIG"):
-            rules_mod.record_launch_outcome(db, acct, log.ok)
+            rules_mod.record_launch_outcome(db, acct, log.ok, get_settings(db, fields.get("_launched_by")))
         if on_progress:
             on_progress(i + 1, len(pairs))
     db.commit()
@@ -2093,7 +2093,8 @@ def source_check_page(request: Request, db: Session = Depends(get_db)):
     show_all = request.query_params.get("all") == "1"
     rows = source_check.audit(db, only_active=not show_all)
     counts = {k: sum(1 for r in rows if r["worst"] == k) for k in ("ok", "ok-static", "unsafe-name", "missing", "no-url", "error")}
-    s = get_settings(db)
+    from .. import settings_store
+    s = settings_store.for_view(db)
     return render(request, "source_check.html", {
         "title": "Source check", "rows": rows, "counts": counts, "show_all": show_all,
         "param": s.get("url_param") or "source", "mode": s.get("source_mode", "campaign"),
@@ -2355,7 +2356,8 @@ def apply_edit(db: Session, advertiser_id: str, campaign_id: str, campaign_name:
     rec = (db.query(models.CampaignRecord)
            .filter_by(advertiser_id=advertiser_id, campaign_id=campaign_id).first())
     new_name = campaign_name.strip()
-    src_mode = get_settings(db).get("source_mode", "campaign")
+    from .. import settings_store
+    src_mode = settings_store.for_account(db, advertiser_id).get("source_mode", "campaign")
     if new_name and src_mode == "campaign":
         new_name = url_safe_name(new_name)    # the name IS the ?source= value
     old_name = (rec.campaign_name if rec else "") or ""

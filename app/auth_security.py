@@ -280,10 +280,14 @@ def trusted_devices_allowed(db: Session) -> bool:
     return queries.get_setting(db, TRUST_SETTING, "0") == "1"
 
 
-def recent_logins(db: Session, limit: int = 12, kinds: tuple[str, ...] | None = None) -> list[models.LoginAttempt]:
+def recent_logins(db: Session, limit: int = 12, kinds: tuple[str, ...] | None = None, email: str | None = None) -> list[models.LoginAttempt]:
+    """`email`: only that account's attempts — a member sees their own logins, never
+    the team's (the owner's Access log has everyone)."""
     q = db.query(models.LoginAttempt)
     if kinds:
         q = q.filter(models.LoginAttempt.kind.in_(kinds))
+    if email is not None:
+        q = q.filter(models.LoginAttempt.email == email)
     return q.order_by(models.LoginAttempt.at.desc()).limit(limit).all()
 
 

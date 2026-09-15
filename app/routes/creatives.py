@@ -206,7 +206,7 @@ def creatives_page(request: Request, db: Session = Depends(get_db)):
         "carousels": carousels, "slide_map": slide_map, "dims": dims,
         "image_pool": [r for r in images if r.status == "available"],
         "browse_account": browse,
-        "source_mode": get_settings(db).get("source_mode", "campaign"),
+        "source_mode": __import__("app.settings_store", fromlist=["for_view"]).for_view(db).get("source_mode", "campaign"),
         "rows": videos, "images": images, "img_tags": img_tags, "img_counts": img_counts, "editable_text": editable_text,
         "accounts": accounts, "available": available,
         "nb_configured": nanobanana.configured() or hf_configured, "nb_only": nanobanana.configured(),

@@ -76,9 +76,13 @@ def _breached(settings: dict, rec: models.CampaignRecord) -> tuple[str, float] |
     return None
 
 
-def evaluate_pause_rules(db: Session, settings: dict | None = None) -> list[models.RuleAction]:
+def evaluate_pause_rules(db: Session, settings: dict | None = None, ids: set | None = None) -> list[models.RuleAction]:
+    """`ids` = the advertiser ids these settings apply to (one user's accounts);
+    None = every account (single-user installs, tests)."""
     settings = settings or get_settings(db)
     if not settings["rules_enabled"]:
+        return []
+    if ids is not None and not ids:
         return []
     min_spend = float(settings["rule_min_spend"] or 0)
     actions: list[models.RuleAction] = []
@@ -90,13 +94,15 @@ def evaluate_pause_rules(db: Session, settings: dict | None = None) -> list[mode
     if settings.get("protect_profitable"):
         start, end = timeutil.range_bounds("today")
         camp_source = pnl_data.campaign_source_map(db)
-        pnl = pnl_data.source_pnl(db, start, end)
+        pnl = pnl_data.source_pnl(db, start, end, ids)
         profitable_sources = {src for src, row in pnl.items() if row["profit"] > 0}
 
     accounts = {a.advertiser_id: a for a in db.query(models.AdAccount).all()}
     active = (db.query(models.CampaignRecord)
               .filter(models.CampaignRecord.operation_status == "ENABLE").all())
     for rec in active:
+        if ids is not None and rec.advertiser_id not in ids:
+            continue
         if (rec.spend_today or 0) < min_spend:
             continue
         breach = _breached(settings, rec)
@@ -112,11 +118,14 @@ def evaluate_pause_rules(db: Session, settings: dict | None = None) -> list[mode
     return actions
 
 
-def evaluate_profit_rules(db: Session, settings: dict | None = None) -> list[models.RuleAction]:
+def evaluate_profit_rules(db: Session, settings: dict | None = None, ids: set | None = None) -> list[models.RuleAction]:
     """Pause every campaign on a source whose P&L today is worse than
-    -profit_loss_limit after profit_min_spend of spend (revenue truth)."""
+    -profit_loss_limit after profit_min_spend of spend (revenue truth). With `ids`
+    (one user's accounts) the P&L is that user's share of each source."""
     settings = settings or get_settings(db)
     if not settings.get("profit_rules_enabled"):
+        return []
+    if ids is not None and not ids:
         return []
     loss_limit = float(settings["profit_loss_limit"] or 0)
     min_spend = float(settings["profit_min_spend"] or 0)
@@ -124,7 +133,7 @@ def evaluate_profit_rules(db: Session, settings: dict | None = None) -> list[mod
         return []
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     start, end = timeutil.range_bounds("today")
-    pnl = pnl_data.source_pnl(db, start, end)
+    pnl = pnl_data.source_pnl(db, start, end, ids)
     losing = {src for src, row in pnl.items()
               if row["spend"] >= min_spend and row["profit"] <= -loss_limit}
     if not losing:
@@ -137,6 +146,8 @@ def evaluate_profit_rules(db: Session, settings: dict | None = None) -> list[mod
               .filter(models.CampaignRecord.operation_status == "ENABLE",
                       models.CampaignRecord.campaign_id.in_(list(losing_campaigns) or [""])).all())
     for rec in active:
+        if ids is not None and rec.advertiser_id not in ids:
+            continue
         if _recently_paused(db, rec.campaign_id, now):
             continue
         src = camp_source.get(rec.campaign_id, "")
@@ -177,35 +188,41 @@ def in_cooldown(acct: models.AdAccount) -> bool:
     return acct.cooldown_until > datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def check_fresh_inventory(db: Session, settings: dict | None = None):
-    """Alert (24h-repeat max) when never-launched account inventory runs low."""
+def check_fresh_inventory(db: Session, settings: dict | None = None, user_id: int | None = None):
+    """Alert (24h-repeat max) when never-launched account inventory runs low —
+    per user (their own accounts, their own threshold) when `user_id` is given."""
     settings = settings or get_settings(db)
     minimum = int(settings.get("min_fresh_accounts") or 0)
     if minimum <= 0:
         return
     from .routes.super_launcher import eligible_accounts  # local import: no cycle at module load
-    fresh = len(eligible_accounts(db, "new_only", 10_000))
+    fresh = len(eligible_accounts(db, "new_only", 10_000, owner_user_id=user_id))
     if fresh >= minimum:
         return
     now = datetime.now(timezone.utc).replace(tzinfo=None)
-    last = (db.query(models.Alert).filter_by(kind="inventory_low", ref_id="fresh")
+    ref = "fresh" if user_id is None else f"fresh:u{user_id}"
+    last = (db.query(models.Alert).filter_by(kind="inventory_low", ref_id=ref)
             .order_by(models.Alert.created_at.desc()).first())
     if last and last.created_at and (now - last.created_at) < timedelta(hours=24):
         return
     db.add(models.Alert(
-        kind="inventory_low", ref_id="fresh", level="warn",
+        kind="inventory_low", ref_id=ref, level="warn",
         message=f"Only {fresh} fresh (never-launched) ad account(s) left "
                 f"(threshold {minimum}). Time to source more accounts."))
     db.commit()
 
 
-def check_pool_inventory(db: Session, settings: dict | None = None):
+def check_pool_inventory(db: Session, settings: dict | None = None, user_id: int | None = None):
     """Alert (24h-repeat max) when the creative / identity / ad-text pools run
     low — but only for pools some preset actually uses, so automation never
-    silently drains one and starts failing with CONFIG errors."""
+    silently drains one and starts failing with CONFIG errors. Per user (their
+    presets, their pools) when `user_id` is given."""
     import json as _json
     uses_library = uses_text_pool = False
-    for t in db.query(models.Template).all():
+    tq = db.query(models.Template)
+    if user_id is not None:
+        tq = tq.filter(models.Template.owner_user_id == user_id)
+    for t in tq.all():
         try:
             blob = _json.loads(t.adgroup_settings or "{}")
         except (ValueError, TypeError):
@@ -225,17 +242,20 @@ def check_pool_inventory(db: Session, settings: dict | None = None):
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     for label, model, page in checks:
         q = db.query(model).filter_by(status="available")
+        if user_id is not None:
+            q = q.filter(model.owner_user_id == user_id)
         if model is models.Creative:
             q = q.filter_by(kind="video")       # images aren't launch inventory
         n = q.count()
         if n >= low_water:
             continue
-        last = (db.query(models.Alert).filter_by(kind="pool_low", ref_id=label)
+        ref = label if user_id is None else f"{label}:u{user_id}"
+        last = (db.query(models.Alert).filter_by(kind="pool_low", ref_id=ref)
                 .order_by(models.Alert.created_at.desc()).first())
         if last and last.created_at and (now - last.created_at) < timedelta(hours=24):
             continue
         db.add(models.Alert(
-            kind="pool_low", ref_id=label, level="warn",
+            kind="pool_low", ref_id=ref, level="warn",
             message=f"Only {n} unused {label} left in the pool — launches will start "
                     f"refusing once it's empty. Refill on {page}."))
     db.commit()
@@ -245,9 +265,12 @@ def check_pool_inventory(db: Session, settings: dict | None = None):
 # Auto top-ups
 # ---------------------------------------------------------------------------
 
-def evaluate_topups(db: Session, settings: dict | None = None) -> list[models.TopUp]:
+def evaluate_topups(db: Session, settings: dict | None = None, ids: set | None = None) -> list[models.TopUp]:
+    """`ids` = the accounts these thresholds apply to (one user's); None = all."""
     settings = settings or get_settings(db)
     if not settings["topup_enabled"]:
+        return []
+    if ids is not None and not ids:
         return []
     below = float(settings["topup_below"] or 0)
     amount = float(settings["topup_amount"] or 0)
@@ -260,6 +283,8 @@ def evaluate_topups(db: Session, settings: dict | None = None) -> list[models.To
 
     for acct in (db.query(models.AdAccount)
                  .filter(models.AdAccount.enabled == True).all()):  # noqa: E712
+        if ids is not None and acct.advertiser_id not in ids:
+            continue
         if not acct.owner_bc_id or acct.balance is None or acct.balance >= below:
             continue
         bc = bcs.get(acct.owner_bc_id)

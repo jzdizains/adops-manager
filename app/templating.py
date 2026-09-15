@@ -114,6 +114,9 @@ def forget_view_cache() -> None:
     _VIEW_CACHE.clear()
 
 
+OWNER_ONLY_JUMP = frozenset({"/settings#users", "/settings#access", "/team"})
+
+
 def render(request: Request, name: str, ctx: dict | None = None):
     ctx = dict(ctx or {})
     ctx["request"] = request
@@ -123,4 +126,11 @@ def render(request: Request, name: str, ctx: dict | None = None):
         ctx.setdefault("view_switch", view_switch(request))
     except Exception:      # noqa: BLE001 — the switch must never break a page
         ctx.setdefault("view_switch", None)
+    # ⌘K: the owner-only settings tabs (Users, Access log) exist only on the owner's own
+    # view — everyone else, and the owner while switched to a user, must not be offered them
+    me = getattr(request.state, "user", None)
+    vs = ctx.get("view_switch") or {}
+    own_view = users.is_owner(me) and (vs.get("mode") == "all" or vs.get("user_id") == getattr(me, "id", None))
+    if not own_view:
+        ctx.setdefault("nav_jump", [list(j) for j in nav.JUMP if j[0] not in OWNER_ONLY_JUMP])
     return templates.TemplateResponse(request, name, ctx)

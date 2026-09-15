@@ -88,7 +88,8 @@ def _open_rows_for(db: Session, campaign: str, bc: str, camp: str) -> list:
 
 @router.get("/appeals")
 def appeals_page(request: Request, bc: str = "", camp: str = "", db: Session = Depends(get_db)):
-    s = get_settings(db)
+    from .. import settings_store
+    s = settings_store.for_view(db)          # the viewed workspace's appeal settings
     bc, camp = bc.strip(), camp.strip()
     bc_of, bc_names = _bc_of_accounts(db)
     from .. import scope as scope_mod
@@ -254,7 +255,8 @@ def file_campaign(campaign: str = Form(""), reason: str = Form(""), bc: str = Fo
 
 def file_rows(db: Session, ids: list[int], reason: str = "") -> dict:
     """The filing itself (runs in a job)."""
-    s = get_settings(db)
+    from .. import settings_store
+    scache: dict = {}
     ok = err = skipped = 0
     for row in db.query(models.Appeal).filter(models.Appeal.id.in_(ids)).all():
         if row.status not in ("pending", "skipped", "error"):
@@ -264,6 +266,7 @@ def file_rows(db: Session, ids: list[int], reason: str = "") -> dict:
         if not token:
             err += 1
             continue
+        s = settings_store.for_account(db, row.advertiser_id, scache)     # the account owner's appeal text
         if appeals_mod.file_appeal(db, row, token, s, filed_by="manual", reason=(reason or None)):
             ok += 1
         else:

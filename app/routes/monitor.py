@@ -29,7 +29,8 @@ def monitor(request: Request, db: Session = Depends(get_db)):
     view = request.query_params.get("view", "issues")
     if view not in VIEWS:
         view = "issues"                       # old ?view=accounts → the Accounts page covers that now
-    s = get_settings(db)
+    from .. import settings_store
+    s = settings_store.for_view(db)
     from .. import scope as scope_mod
     sc = scope_mod.for_request(request, db)
     bcs = (db.query(models.BusinessCenter).filter(models.BusinessCenter.status != "ACCESS_LOST")

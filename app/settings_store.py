@@ -1,6 +1,16 @@
 """Runtime-tunable settings, stored in the Setting KV table so the operator
 can change them on the /settings page without redeploying. The background
-worker re-reads them every sweep, so changes apply within a minute."""
+worker re-reads them every sweep, so changes apply within a minute.
+
+Two layers (v119, per-user workspaces):
+  * USER_KEYS  — each user's own: rules, top-ups, account lifecycle, tracking,
+                 postback key/mode, Events API, appeals. Stored under
+                 "app_settings:u<user id>". A user's launches, postbacks and rules
+                 read THEIR row; the super admin viewing a user sees that user's.
+  * GLOBAL_KEYS — one set for the server (sweep timing, launch queue pacing,
+                 audience refresh, assistant model), owner-only, in "app_settings".
+The pre-workspaces values (one global row) are migrated into the super admin's
+row on first read, so the postback key Glitchy already has keeps working."""
 from __future__ import annotations
 
 import re
@@ -13,6 +23,7 @@ from sqlalchemy.orm import Session
 from . import models
 
 KEY = "app_settings"
+USER_PREFIX = KEY + ":u"        # + user id
 
 # Sent with every automatic appeal (the Ads Manager form makes a description
 # mandatory; the API field is appeal_reason). Kept factual and generic — an
@@ -99,36 +110,148 @@ AUDIENCE_HOURS_MIN = 5          # floor: one report call per active account per 
 AUDIENCE_BREAKDOWN_MIN = 15     # floor: ~8 calls per active account per run
 
 
-def get_settings(db: Session) -> dict:
-    row = db.query(models.Setting).filter_by(key=KEY).first()
-    data = {}
-    if row and row.value:
-        try:
-            data = json.loads(row.value)
-        except json.JSONDecodeError:
-            data = {}
-    merged = {**DEFAULTS, **{k: v for k, v in data.items() if k in DEFAULTS}}
-    if not merged["postback_key"]:
-        # first ever read: mint the postback key. Several simultaneous first readers each try —
-        # only ONE insert lands (ON CONFLICT DO NOTHING) and everyone re-reads that key.
-        merged["postback_key"] = secrets.token_hex(16)
-        if row is None:
+GLOBAL_KEYS = frozenset({
+    "sweep_interval_sec", "slow_every_n_sweeps", "queue_per_sweep", "launch_retry_max", "launch_pace_sec",
+    "audience_hours_every_min", "audience_breakdown_every_min", "assistant_model",
+})
+USER_KEYS = frozenset(k for k in DEFAULTS if k not in GLOBAL_KEYS)
+
+
+def user_key(user_id: int) -> str:
+    return f"{USER_PREFIX}{int(user_id)}"
+
+
+def _load(db: Session, key: str):
+    """The stored dict for one row, or None when the row doesn't exist."""
+    row = db.query(models.Setting).filter_by(key=key).first()
+    if row is None:
+        return None
+    try:
+        data = json.loads(row.value) if row.value else {}
+    except json.JSONDecodeError:
+        data = {}
+    return data if isinstance(data, dict) else {}
+
+
+def owner_id(db: Session):
+    """The super admin's user id (OWNER_EMAIL), or None before that account exists."""
+    from . import scope
+    u = scope.super_admin(db)
+    return u.id if u is not None else None
+
+
+def _mint_user_row(db: Session, user_id: int, base: dict) -> dict:
+    """First read for a user: their row starts from `base` (the pre-workspaces values
+    for the owner, the defaults for everyone else) with a fresh postback key unless
+    `base` already carries one. Several simultaneous first readers each try — exactly
+    one INSERT lands and everyone re-reads that one."""
+    from . import queries
+    data = {k: base.get(k, DEFAULTS[k]) for k in USER_KEYS}
+    if not data.get("postback_key"):
+        data["postback_key"] = secrets.token_hex(16)
+    queries.insert_setting_if_absent(db, user_key(user_id), json.dumps(data))
+    db.commit()
+    return _load(db, user_key(user_id)) or data
+
+
+def get_settings(db: Session, user_id: int | None = None) -> dict:
+    """Settings as one flat dict: the server's GLOBAL_KEYS plus one user's USER_KEYS.
+    `user_id` None = the super admin's (the company defaults, and what background
+    code without a user in hand should use for unowned accounts)."""
+    gdata = _load(db, KEY) or {}
+    merged = {**DEFAULTS, **{k: v for k, v in gdata.items() if k in GLOBAL_KEYS}}
+    if user_id is None:
+        user_id = owner_id(db)
+    if user_id is None:
+        # no owner account yet (first boot, tests): the legacy single row is the truth
+        merged.update({k: v for k, v in gdata.items() if k in USER_KEYS})
+        if not merged["postback_key"]:
+            merged["postback_key"] = secrets.token_hex(16)
             from . import queries
-            queries.insert_setting_if_absent(db, KEY, json.dumps(merged))
+            queries.upsert_setting(db, KEY, json.dumps({**gdata, "postback_key": merged["postback_key"]}))
             db.commit()
-        else:
-            save_settings(db, merged)
-        db.expire_all()
-        row = db.query(models.Setting).filter_by(key=KEY).first()
-        try:
-            data = json.loads(row.value) if row and row.value else {}
-        except json.JSONDecodeError:
-            data = {}
-        merged = {**DEFAULTS, **{k: v for k, v in data.items() if k in DEFAULTS}}
+        return merged
+    udata = _load(db, user_key(user_id))
+    if udata is None:
+        # the owner inherits the pre-workspaces row (same postback key, same tracking
+        # setup); anyone else starts from the defaults with their own key
+        base = {k: v for k, v in gdata.items() if k in USER_KEYS} if user_id == owner_id(db) else {}
+        udata = _mint_user_row(db, user_id, base)
+    merged.update({k: v for k, v in udata.items() if k in USER_KEYS})
+    if not merged["postback_key"]:
+        merged["postback_key"] = secrets.token_hex(16)
+        save_settings(db, merged, user_id=user_id, global_too=False)
     return merged
 
 
-def save_settings(db: Session, values: dict):
+def for_view(db: Session) -> dict:
+    """The settings of the workspace the current request is looking at (the user
+    themselves; for the super admin, the user they switched to — or their own)."""
+    from . import ctx
+    return get_settings(db, ctx.OWNER.get())
+
+
+def for_account(db: Session, advertiser_id: str, cache: dict | None = None) -> dict:
+    """The settings of the user who owns an ad account (unowned → the owner's).
+    `cache` (owner id → settings) keeps a loop over many accounts to one read per user."""
+    uid = db.query(models.AdAccount.owner_user_id).filter_by(advertiser_id=str(advertiser_id or "")).scalar()
+    return _cached(db, uid, cache)
+
+
+def _cached(db: Session, uid, cache: dict | None) -> dict:
+    if cache is None:
+        return get_settings(db, uid)
+    key = uid if uid is not None else "owner"
+    if key not in cache:
+        cache[key] = get_settings(db, uid)
+    return cache[key]
+
+
+def per_user(db: Session) -> list[tuple]:
+    """[(user, settings, owned advertiser ids)] for every active user — the background
+    loop runs each user's rules over their own accounts with their own thresholds.
+    Accounts nobody owns count as the super admin's."""
+    from . import scope
+    oid = owner_id(db)
+    owned: dict = {}
+    for aid, uid in db.query(models.AdAccount.advertiser_id, models.AdAccount.owner_user_id):
+        owned.setdefault(uid if uid is not None else oid, set()).add(aid)
+    out = []
+    for u in db.query(models.User).filter(models.User.active == True).order_by(models.User.id):  # noqa: E712
+        out.append((u, get_settings(db, u.id), owned.get(u.id, set())))
+    return out
+
+
+def user_for_postback_key(db: Session, key: str):
+    """Which user's postback key this is (their row, or the legacy global row → the
+    owner). None when it matches nobody. Constant-time compares."""
+    key = str(key or "")
+    if not key:
+        return None
+    for row in db.query(models.Setting).filter(models.Setting.key.like(USER_PREFIX + "%")).all():
+        try:
+            k = str((json.loads(row.value or "{}") or {}).get("postback_key") or "")
+        except (json.JSONDecodeError, AttributeError):
+            continue
+        if k and secrets.compare_digest(k, key):
+            try:
+                return int(row.key[len(USER_PREFIX):])
+            except ValueError:
+                continue
+    gdata = _load(db, KEY) or {}
+    gk = str(gdata.get("postback_key") or "")
+    if gk and secrets.compare_digest(gk, key):
+        oid = owner_id(db)
+        if oid is not None:
+            get_settings(db, oid)           # migrates the legacy row into the owner's on first use
+        return oid if oid is not None else -1   # -1 = legacy single-row install (no owner account yet)
+    return None
+
+
+def save_settings(db: Session, values: dict, user_id: int | None = None, global_too: bool = True):
+    """Write one user's USER_KEYS (`user_id` None = the super admin's row) and, when
+    `global_too`, the server's GLOBAL_KEYS. A buyer's save never touches the global
+    row; an empty postback key never overwrites the stored one."""
     clean = {}
     for k, default in DEFAULTS.items():
         v = values.get(k, default)
@@ -174,5 +297,20 @@ def save_settings(db: Session, values: dict):
     clean["audience_hours_every_min"] = max(int(clean.get("audience_hours_every_min") or 0), AUDIENCE_HOURS_MIN)
     clean["audience_breakdown_every_min"] = max(int(clean.get("audience_breakdown_every_min") or 0), AUDIENCE_BREAKDOWN_MIN)
     from . import queries
-    queries.upsert_setting(db, KEY, json.dumps(clean))      # atomic: two first-time readers can't both INSERT
+    if user_id is None:
+        user_id = owner_id(db)
+    if user_id is None:
+        # no owner account yet: the legacy single row holds everything
+        queries.upsert_setting(db, KEY, json.dumps(clean))      # atomic: two first-time readers can't both INSERT
+        db.commit()
+        return
+    if global_too:
+        gdata = _load(db, KEY) or {}
+        gdata.update({k: clean[k] for k in GLOBAL_KEYS})
+        queries.upsert_setting(db, KEY, json.dumps(gdata))
+    udata = _load(db, user_key(user_id)) or {}
+    if not clean.get("postback_key"):
+        clean["postback_key"] = udata.get("postback_key") or secrets.token_hex(16)
+    udata.update({k: clean[k] for k in USER_KEYS})
+    queries.upsert_setting(db, user_key(user_id), json.dumps(udata))
     db.commit()

@@ -93,13 +93,17 @@ def matching_keyword(text: str, keywords: list[str]) -> str:
     return ""
 
 
-def filed_today(db: Session) -> int:
-    """Auto-appeals filed since local midnight (the daily cap counter)."""
+def filed_today(db: Session, ids: set | None = None) -> int:
+    """Auto-appeals filed since local midnight (the daily cap counter) — for one
+    user's accounts when `ids` is given (each user has their own cap)."""
     midnight = timeutil.local_midnight_utc().replace(tzinfo=None)
-    return (db.query(models.Appeal)
-            .filter(models.Appeal.filed_by == "auto",
-                    models.Appeal.submitted_at != None,           # noqa: E711
-                    models.Appeal.submitted_at >= midnight).count())
+    q = (db.query(models.Appeal)
+         .filter(models.Appeal.filed_by == "auto",
+                 models.Appeal.submitted_at != None,           # noqa: E711
+                 models.Appeal.submitted_at >= midnight))
+    if ids is not None:
+        q = q.filter(models.Appeal.advertiser_id.in_(list(ids) or [""]))
+    return q.count()
 
 
 # ---------------------------------------------------------------------------
@@ -210,7 +214,15 @@ def sync(db: Session, rejected_ads: list[dict], scanned_advertisers: set[str] | 
     """rejected_ads: dicts from /ad/get/ plus 'advertiser_id', 'advertiser_name'
     and 'access_token'. Returns {(advertiser_id, ad_id): Appeal row} so the
     issue scan can show the real reason and appeal state next to each ad."""
-    settings = settings or get_settings(db)
+    # settings are per user: each advertiser is judged by its owner's appeal switch,
+    # reason text, skip words and daily cap (an explicit `settings` overrides — tests)
+    from . import settings_store
+    fixed_settings = settings
+    scache: dict = {}
+    owner_of = dict(db.query(models.AdAccount.advertiser_id, models.AdAccount.owner_user_id))
+    accts_of: dict = {}
+    for aid, uid in owner_of.items():
+        accts_of.setdefault(uid, set()).add(aid)
     now = _now()
     by_ad: dict[tuple[str, str], models.Appeal] = {}
 
@@ -236,9 +248,14 @@ def sync(db: Session, rejected_ads: list[dict], scanned_advertisers: set[str] | 
     by_adv: dict[str, list[tuple[str, dict]]] = {}
     for (adv, agid), g in groups.items():
         by_adv.setdefault(adv, []).append((agid, g))
-    today = filed_today(db)
+    today_by_user: dict = {}
     for adv, items in by_adv.items():
         token = items[0][1]["token"]
+        uid = owner_of.get(adv)
+        settings = fixed_settings or settings_store._cached(db, uid, scache)
+        if uid not in today_by_user:
+            today_by_user[uid] = filed_today(db, accts_of.get(uid, set())) if fixed_settings is None else filed_today(db)
+        today = today_by_user[uid]
         adgroup_ids = [agid for agid, _ in items]
         ad_ids = [str(a.get("ad_id")) for _, g in items for a in g["ads"]
                   if str(a.get("secondary_status")) in tiktok_api.AD_REJECTED_STATUSES]
@@ -310,6 +327,7 @@ def sync(db: Session, rejected_ads: list[dict], scanned_advertisers: set[str] | 
                 if action == "file" and token:
                     if file_appeal(db, row, token, settings, filed_by="auto"):
                         today += 1
+                        today_by_user[uid] = today
                 elif action == "skip":
                     row.status = "skipped"
                     row.error = why
