@@ -30,10 +30,16 @@ def monitor(request: Request, db: Session = Depends(get_db)):
     if view not in VIEWS:
         view = "issues"                       # old ?view=accounts → the Accounts page covers that now
     s = get_settings(db)
+    from .. import scope as scope_mod
+    sc = scope_mod.for_request(request, db)
     bcs = (db.query(models.BusinessCenter).filter(models.BusinessCenter.status != "ACCESS_LOST")
            .order_by(models.BusinessCenter.name).all())
-    accounts = (db.query(models.AdAccount).filter(models.AdAccount.status != "ACCESS_LOST")
-                .order_by(models.AdAccount.advertiser_name).all())
+    accounts = [a for a in (db.query(models.AdAccount).filter(models.AdAccount.status != "ACCESS_LOST")
+                            .order_by(models.AdAccount.advertiser_name).all()) if sc.allows(a.advertiser_id)]
+    if not sc.everything:
+        # a user's Health: the Business Centers their accounts sit in
+        mine_bcs = {a.owner_bc_id for a in accounts}
+        bcs = [b for b in bcs if b.bc_id in mine_bcs]
     ctx = sl.account_picker_context(db, accounts)
     bc_names = {b.bc_id: (b.name or b.bc_id) for b in bcs}
     blocked = [a for a in accounts if ctx["info"][a.advertiser_id]["state"] == "blocked"]
@@ -44,7 +50,7 @@ def monitor(request: Request, db: Session = Depends(get_db)):
     cooling = sum(1 for a in accounts if rules_mod.in_cooldown(a))
 
     # ---- issues = the unified feed ---------------------------------------------------------------
-    items = inbox_mod.build(db)
+    items = inbox_mod.build(db, sc)
     counts = inbox_mod.counts(items)
     kinds: dict[str, int] = {}
     for it in items:
@@ -76,8 +82,13 @@ def monitor(request: Request, db: Session = Depends(get_db)):
     low_bcs = [r for r in balance_rows if r["low"]]
 
     # ---- automation ------------------------------------------------------------------------------
-    actions = db.query(models.RuleAction).order_by(models.RuleAction.created_at.desc()).limit(150).all()
-    topups = db.query(models.TopUp).order_by(models.TopUp.created_at.desc()).limit(60).all()
+    aq = db.query(models.RuleAction).order_by(models.RuleAction.created_at.desc())
+    tq = db.query(models.TopUp).order_by(models.TopUp.created_at.desc())
+    if not sc.everything:
+        aq = aq.filter(models.RuleAction.advertiser_id.in_(list(sc.ids or ["-"])))
+        tq = tq.filter(models.TopUp.advertiser_id.in_(list(sc.ids or ["-"])))
+    actions = aq.limit(150).all()
+    topups = tq.limit(60).all()
     paused_ids = {r.campaign_id for r in db.query(models.CampaignRecord.campaign_id).filter(models.CampaignRecord.operation_status == "DISABLE")}
     day_start = timeutil.local_midnight_utc(0).replace(tzinfo=None)
     today_pauses = sum(1 for a in actions if a.action == "pause" and a.ok and a.created_at and a.created_at >= day_start)
@@ -115,7 +126,7 @@ def monitor(request: Request, db: Session = Depends(get_db)):
     token_ok = bool(queries.any_access_token(db))
     from .. import appeals as appeals_mod
     ap = appeals_mod.summary(db)
-    running = db.query(func.count(models.Job.id)).filter(models.Job.status.in_(("queued", "running"))).scalar() or 0
+    running = db.query(func.count(models.Job.id)).filter(models.Job.status.in_(("queued", "claimed", "running"))).scalar() or 0
     last_bal = max([r["synced"] for r in balance_rows if r["synced"]], default=None)
     return render(request, "monitor.html", {
         "title": "Health", "view": view,
@@ -179,7 +190,8 @@ def _fix_actions(it: dict) -> list[dict]:
 
 
 @router.get("/monitor/data")
-def monitor_data(db: Session = Depends(get_db)):
+def monitor_data(request: Request, db: Session = Depends(get_db)):
     """Small JSON the Health page polls: counts only (a full refresh reloads the page)."""
-    items = inbox_mod.build(db)
+    from .. import scope as scope_mod
+    items = inbox_mod.build(db, scope_mod.for_request(request, db))
     return JSONResponse({"counts": inbox_mod.counts(items), "synced_ago": queries.campaigns_synced_ago(db)})

@@ -19,6 +19,9 @@ from ..database import get_db
 from ..settings_store import get_settings
 from ..templating import render
 
+from . import guard
+from .. import scope as scope_mod
+
 router = APIRouter()
 
 
@@ -88,7 +91,11 @@ def appeals_page(request: Request, bc: str = "", camp: str = "", db: Session = D
     s = get_settings(db)
     bc, camp = bc.strip(), camp.strip()
     bc_of, bc_names = _bc_of_accounts(db)
-    rows = db.query(models.Appeal).order_by(models.Appeal.created_at.desc()).limit(500).all()
+    from .. import scope as scope_mod
+    sc = scope_mod.for_request(request, db)
+    rows = [r for r in db.query(models.Appeal).order_by(models.Appeal.created_at.desc()).limit(500).all() if sc.allows(r.advertiser_id)]
+    if not sc.everything:
+        bc_names = {k: v for k, v in bc_names.items() if any(bc_of.get(a) == k for a in (sc.ids or []))}
     all_open = [r for r in rows if r.status in OPEN_STATUSES]
     # BC picker: EVERY Business Center the login sees (0 open included), each
     # with its open-rejection count before the filter; "No Business Center"
@@ -183,9 +190,9 @@ def refresh_now(bc: str = Form(""), camp: str = Form(""), db: Session = Depends(
 
 @router.post("/appeals/{row_id}/file")
 def file_one(row_id: int, reason: str = Form(""), bc: str = Form(""), camp: str = Form(""),
-             db: Session = Depends(get_db)):
+             db: Session = Depends(get_db), sc: scope_mod.Scope = Depends(guard.view)):
     row = db.get(models.Appeal, row_id)
-    if not row:
+    if not row or not sc.allows(row.advertiser_id):
         return _back(err="That rejection is no longer tracked.", bc=bc, camp=camp)
     if row.status == "appealing":
         return _back(err="An appeal is already on file for that ad group.", bc=bc, camp=camp)
@@ -211,6 +218,10 @@ async def file_selected(request: Request, db: Session = Depends(get_db)):
             ids.append(int(v))
         except (TypeError, ValueError):
             continue
+    from .. import scope as scope_mod
+    sc = scope_mod.for_request(request, db)
+    if ids and not sc.everything:
+        ids = [r.id for r in db.query(models.Appeal).filter(models.Appeal.id.in_(ids)) if sc.allows(r.advertiser_id)]
     if not ids:
         return _back(err="Tick at least one ad group first.", bc=bc, camp=camp)
     from .. import jobs
@@ -221,14 +232,14 @@ async def file_selected(request: Request, db: Session = Depends(get_db)):
 
 @router.post("/appeals/file-campaign")
 def file_campaign(campaign: str = Form(""), reason: str = Form(""), bc: str = Form(""), camp: str = Form(""),
-                  db: Session = Depends(get_db)):
+                  db: Session = Depends(get_db), sc: scope_mod.Scope = Depends(guard.view)):
     """Appeal every open rejection in one campaign group — every account's copy
     of that campaign name, narrowed by the Business Center / search filter the
     operator is looking at, so the button files exactly the rows it sits above."""
     campaign, bc, camp = campaign.strip(), bc.strip(), camp.strip()
     if not campaign:
         return _back(err="No campaign given.", bc=bc, camp=camp)
-    rows = _open_rows_for(db, campaign, bc, camp)
+    rows = [r for r in _open_rows_for(db, campaign, bc, camp) if sc.allows(r.advertiser_id)]
     if not rows:
         return _back(err=f"Nothing open to appeal in “{campaign}” — it was already appealed, dismissed or cleared.",
                      bc=bc, camp=camp)
@@ -262,12 +273,12 @@ def file_rows(db: Session, ids: list[int], reason: str = "") -> dict:
 
 
 @router.post("/appeals/file-all")
-def file_all(db: Session = Depends(get_db)):
+def file_all(db: Session = Depends(get_db), sc: scope_mod.Scope = Depends(guard.view)):
     """Appeal every open rejection (pending, skipped and errored ones alike —
-    the operator confirmed on the page)."""
+    the operator confirmed on the page) — inside the view."""
     from .. import jobs
-    ids = [r.id for r in db.query(models.Appeal.id)
-           .filter(models.Appeal.status.in_(OPEN_STATUSES)).all()]
+    ids = [r.id for r in db.query(models.Appeal.id, models.Appeal.advertiser_id)
+           .filter(models.Appeal.status.in_(OPEN_STATUSES)).all() if sc.allows(r.advertiser_id)]
     if not ids:
         return _back(ok="Nothing to appeal.")
     jobs.enqueue(db, "appeals_file", f"Appeal all {len(ids)} open ad group(s)", {"ids": ids, "reason": ""}, href="/appeals")
@@ -275,10 +286,10 @@ def file_all(db: Session = Depends(get_db)):
 
 
 @router.post("/appeals/{row_id}/dismiss")
-def dismiss(row_id: int, bc: str = Form(""), camp: str = Form(""), db: Session = Depends(get_db)):
+def dismiss(row_id: int, bc: str = Form(""), camp: str = Form(""), db: Session = Depends(get_db), sc: scope_mod.Scope = Depends(guard.view)):
     """Operator handled it another way (edited the ad, deleted it, or doesn't care)."""
     row = db.get(models.Appeal, row_id)
-    if not row:
+    if not row or not sc.allows(row.advertiser_id):
         return _back(err="That rejection is no longer tracked.", bc=bc, camp=camp)
     if row.status not in OPEN_STATUSES:
         return _back(err="Only rejections without an appeal on file can be dismissed.", bc=bc, camp=camp)

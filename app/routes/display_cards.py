@@ -13,6 +13,9 @@ from .. import display_cards as DC
 from .. import models
 from ..database import get_db
 
+from . import guard
+from .. import scope as scope_mod
+
 router = APIRouter()
 
 
@@ -34,8 +37,9 @@ async def upload(request: Request, db: Session = Depends(get_db)):
         return JSONResponse({"error": msg}, status_code=422) if wants_json else \
             RedirectResponse(f"{nxt}?err={quote(msg)}", status_code=303)
     data = await f.read(DC.MAX_UPLOAD + 1)
+    sc = scope_mod.for_request(request, db)
     try:
-        card, resized = DC.add(db, data, f.filename, str(form.get("name") or ""))
+        card, resized = DC.add(db, data, f.filename, str(form.get("name") or ""), owner_user_id=sc.owner_for_new)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=422) if wants_json else \
             RedirectResponse(f"{nxt}?err={quote(str(e))}", status_code=303)
@@ -55,9 +59,10 @@ def image(card_id: int, db: Session = Depends(get_db)):
 
 @router.post("/display-cards/{card_id}/delete")
 def delete(card_id: int, request: Request, db: Session = Depends(get_db)):
+    sc = scope_mod.for_request(request, db)
     card = db.get(models.DisplayCard, card_id)
     nxt = _safe_next(request.query_params.get("next", "/presets"))
-    if not card:
+    if not card or not sc.owns(card):
         return RedirectResponse(f"{nxt}?err={quote('That display card is already gone.')}", status_code=303)
     import json
     used = []

@@ -52,8 +52,10 @@ def sync_account(db: Session, acct: models.AdAccount) -> int:
 
 @router.get("/instant-pages")
 def page(request: Request, db: Session = Depends(get_db)):
-    pages = db.query(models.InstantPage).order_by(models.InstantPage.name, models.InstantPage.owner_advertiser_id).all()
-    accounts = queries.enabled_accounts(db)
+    from .. import scope as scope_mod
+    sc = scope_mod.for_request(request, db)
+    pages = [p for p in db.query(models.InstantPage).order_by(models.InstantPage.name, models.InstantPage.owner_advertiser_id).all() if sc.allows(p.owner_advertiser_id)]
+    accounts = [a for a in queries.enabled_accounts(db) if sc.allows(a.advertiser_id)]
     names = {a.advertiser_id: a.advertiser_name for a in accounts}
     # the same name across accounts = one preset-usable page; count copies per name
     copies: dict[str, int] = {}

@@ -38,11 +38,23 @@ def _alert_href(a: models.Alert) -> tuple[str, bool]:
     return "", False
 
 
-def build(db: Session) -> list[dict]:
+def build(db: Session, scope=None) -> list[dict]:
+    """Everything that needs attention. `scope` (app.scope.Scope) narrows it to one
+    user's view: notices tied to an ad account follow the account's owner; company-wide
+    ones (wallets, parity, the TikTok connection) show for everyone; things nobody can
+    tie to an account (postbacks with no source) show on "Everyone" only."""
     items: list[dict] = []
+    ids = scope.ids if scope is not None else None          # None = everything
+    uid = scope.user_id if scope is not None else None
+
+    def mine(advertiser_id) -> bool:
+        return ids is None or (bool(advertiser_id) and str(advertiser_id) in ids)
 
     # ---- 1. Alert rows (dismissable) -----------------------------------------
     for a in balances.unacknowledged(db, limit=200):
+        # an alert about one ad account (ref_id is the advertiser id) follows its owner
+        if ids is not None and a.ref_id and a.ref_id.isdigit() and len(a.ref_id) >= 15 and a.kind not in ("bc_low_balance",) and a.ref_id not in ids:
+            continue
         href, external = _alert_href(a)
         items.append({
             "id": f"alert:{a.id}", "kind": a.kind, "level": a.level or "warn",
@@ -55,6 +67,8 @@ def build(db: Session) -> list[dict]:
 
     # ---- 2. TikTok-side issues (cleared by the next scan, link to Health) ----
     for i in db.query(models.Issue).order_by(models.Issue.detected_at.desc()).all():
+        if i.advertiser_id and not mine(i.advertiser_id):
+            continue
         if i.category == "bc" and i.ref:
             href, external = balances.bc_portal_url(i.ref), True
         elif i.category == "ad":
@@ -78,6 +92,8 @@ def build(db: Session) -> list[dict]:
                 .filter(models.LaunchLog.ok == False,          # noqa: E712
                         models.LaunchLog.created_at >= since)
                 .order_by(models.LaunchLog.created_at.desc()).limit(300)):
+        if not mine(log.advertiser_id):
+            continue
         ref = log.batch_ref or f"log{log.id}"
         if ref in seen_batches:
             continue
@@ -96,8 +112,10 @@ def build(db: Session) -> list[dict]:
         })
 
     # ---- 4. queued launches that failed --------------------------------------
-    failed_q = (db.query(func.count(models.LaunchQueueItem.id))
-                .filter(models.LaunchQueueItem.status == "failed").scalar() or 0)
+    fq = db.query(func.count(models.LaunchQueueItem.id)).filter(models.LaunchQueueItem.status == "failed")
+    if uid is not None:
+        fq = fq.filter((models.LaunchQueueItem.launched_by == uid) | (models.LaunchQueueItem.advertiser_id.in_(list(ids or [""]))))
+    failed_q = fq.scalar() or 0
     if failed_q:
         items.append({"id": "queue", "kind": "queue_failed", "level": "err",
                       "title": "Launch queue", "message": f"{failed_q} queued launch(es) failed",
@@ -105,7 +123,7 @@ def build(db: Session) -> list[dict]:
 
     # ---- 5. accounts cooling down --------------------------------------------
     from . import rules as rules_mod
-    cooling = sum(1 for a in db.query(models.AdAccount).all() if rules_mod.in_cooldown(a))
+    cooling = sum(1 for a in db.query(models.AdAccount).all() if mine(a.advertiser_id) and rules_mod.in_cooldown(a))
     if cooling:
         items.append({"id": "cooldown", "kind": "cooldown", "level": "warn",
                       "title": "Cooling down",
@@ -117,7 +135,7 @@ def build(db: Session) -> list[dict]:
     lost = (db.query(func.count(models.PostbackEvent.id), func.coalesce(func.sum(models.PostbackEvent.revenue), 0.0))
             .filter(models.PostbackEvent.source == UNATTRIBUTED,
                     models.PostbackEvent.created_at >= since).one())
-    if lost[0]:
+    if lost[0] and ids is None:          # nobody's — only the whole-company view can act on it
         items.append({"id": "unattributed", "kind": "unattributed", "level": "err",
                       "title": "Source not reaching Glitchy",
                       "message": (f"{lost[0]} postback(s) (${float(lost[1] or 0):.2f}) arrived in the last 24h with an EMPTY "
@@ -127,7 +145,8 @@ def build(db: Session) -> list[dict]:
 
     # ---- 6b. running campaigns launched WITHOUT a source (pre-source-wiring) --
     live_ids = {(r.advertiser_id, r.campaign_id) for r in
-                db.query(models.CampaignRecord).filter(models.CampaignRecord.operation_status == "ENABLE")}
+                db.query(models.CampaignRecord).filter(models.CampaignRecord.operation_status == "ENABLE")
+                if mine(r.advertiser_id)}
     nosrc = set()
     for lg in (db.query(models.LaunchLog).filter(models.LaunchLog.ok == True,          # noqa: E712
                                                  models.LaunchLog.campaign_id != "",
@@ -142,8 +161,10 @@ def build(db: Session) -> list[dict]:
                       "href": "/campaigns/source-check", "external": False, "at": None, "ack": False, "where": ""})
 
     # ---- 6c. ad-rejection appeals ---------------------------------------------
-    ap_open = (db.query(func.count(models.Appeal.id))
-               .filter(models.Appeal.status.in_(("pending", "skipped", "error"))).scalar() or 0)
+    apq = db.query(func.count(models.Appeal.id)).filter(models.Appeal.status.in_(("pending", "skipped", "error")))
+    if ids is not None:
+        apq = apq.filter(models.Appeal.advertiser_id.in_(list(ids or [""])))
+    ap_open = apq.scalar() or 0
     if ap_open:
         items.append({"id": "appeals-open", "kind": "appeals_open", "level": "warn",
                       "title": "Rejected ads not appealed",
@@ -154,6 +175,8 @@ def build(db: Session) -> list[dict]:
                 .filter(models.Appeal.status.in_(("failed", "successful", "done")),
                         models.Appeal.resolved_at >= since)
                 .order_by(models.Appeal.resolved_at.desc()).limit(50)):
+        if not mine(row.advertiser_id):
+            continue
         lost = row.status == "failed"
         items.append({"id": f"appeal:{row.id}", "kind": "appeal_result", "level": "err" if lost else "info",
                       "title": "Appeal rejected" if lost else ("Appeal accepted" if row.status == "successful" else "Ad re-reviewed"),

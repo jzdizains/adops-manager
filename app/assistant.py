@@ -76,10 +76,16 @@ def _money(v) -> float:
     return round(float(v or 0), 2)
 
 
+def _scope(db: Session):
+    from . import scope as scope_mod
+    return scope_mod.from_ctx(db)
+
+
 def t_overview(db: Session, a: dict) -> dict:
     r, s, e = _range(a.get("range"))
-    cur = pnl_data.overall_totals(db, s, e)
-    prior = pnl_data.overall_totals(db, s - (e - s), s)
+    sc = _scope(db)
+    cur = pnl_data.overall_totals(db, s, e, sc.ids)
+    prior = pnl_data.overall_totals(db, s - (e - s), s, sc.ids)
     def pack(t):
         return {"spend": _money(t["spend"]), "revenue": _money(t["revenue"]), "profit": _money(t["profit"]), "roas": round(t["roas"], 2),
                 "conversions": t["conversions"], "clicks": t["clicks"], "epc": round(t["revenue"] / t["clicks"], 2) if t["clicks"] else 0.0}
@@ -90,7 +96,7 @@ def t_pnl(db: Session, a: dict) -> dict:
     from .routes.pnl_page import _slices
     r, s, e = _range(a.get("range"))
     by = a.get("by") if a.get("by") in ("source", "bc", "account", "creative", "spark") else "source"
-    rows = _slices(db, s, e)[by][: int(a.get("limit") or 30)]
+    rows = _slices(db, s, e, _scope(db))[by][: int(a.get("limit") or 30)]
     return {"range": r, "by": by, "rows": [{"name": x["name"], "detail": x["sub"], "spend": _money(x["spend"]), "revenue": _money(x["revenue"]), "profit": _money(x["profit"]),
                                             "roas": round(x["roas"], 2), "conversions": int(x["conversions"] or 0)} for x in rows]}
 
@@ -105,7 +111,8 @@ def t_campaigns(db: Session, a: dict) -> dict:
     bcs = {b.bc_id: b.name for b in db.query(models.BusinessCenter).all()}
     src_map = pnl_data.campaign_source_map(db)
     pb = pnl_data.revenue_by_source(db, timeutil.local_midnight_utc(0), timeutil.local_midnight_utc(1))
-    recs = db.query(models.CampaignRecord).all()
+    sc = _scope(db)
+    recs = [c for c in db.query(models.CampaignRecord).all() if sc.allows(c.advertiser_id)]
     spend_by_src: dict[str, float] = {}
     for c in recs:
         src = src_map.get(c.campaign_id, "")
@@ -146,7 +153,8 @@ def t_campaigns(db: Session, a: dict) -> dict:
 def t_accounts(db: Session, a: dict) -> dict:
     from .routes import super_launcher as sl
     from .routes.dashboard import _account_facts
-    accounts = db.query(models.AdAccount).filter(models.AdAccount.status != "ACCESS_LOST").order_by(models.AdAccount.advertiser_name).all()
+    sc = _scope(db)
+    accounts = [x for x in db.query(models.AdAccount).filter(models.AdAccount.status != "ACCESS_LOST").order_by(models.AdAccount.advertiser_name).all() if sc.allows(x.advertiser_id)]
     ctx = sl.account_picker_context(db, accounts)
     facts = _account_facts(db, accounts, ctx)
     bcs = {b.bc_id: b for b in db.query(models.BusinessCenter).all()}
@@ -171,8 +179,9 @@ def t_accounts(db: Session, a: dict) -> dict:
 
 def t_creatives(db: Session, a: dict) -> dict:
     r, s, e = _range(a.get("range"))
-    fams = creative_perf.families(creative_perf.rows(db, s, e, today=(r == "today")))
-    fresh = db.query(func.count(models.Creative.id)).filter(models.Creative.status == "available", models.Creative.archived == False).scalar() or 0  # noqa: E712
+    sc = _scope(db)
+    fams = creative_perf.families(creative_perf.rows(db, s, e, today=(r == "today"), owner_user_id=sc.user_id))
+    fresh = sc.owned(db.query(func.count(models.Creative.id)), models.Creative).filter(models.Creative.status == "available", models.Creative.archived == False).scalar() or 0  # noqa: E712
     rows = []
     for f in fams[: int(a.get("limit") or 30)]:
         accs = {x["c"].used_advertiser_id for x in f["rows"] if x["c"].used_advertiser_id}
@@ -181,11 +190,12 @@ def t_creatives(db: Session, a: dict) -> dict:
 
 
 def t_inbox(db: Session, a: dict) -> dict:
-    items = inbox_mod.build(db)
+    sc = _scope(db)
+    items = inbox_mod.build(db, sc)
     lvl = a.get("level") or "all"
     if lvl != "all":
         items = [i for i in items if i["level"] == lvl]
-    return {"counts": inbox_mod.counts(inbox_mod.build(db)), "items": [{"level": i["level"], "kind": i["kind"], "title": i["title"], "message": i["message"][:220], "where": i["where"]} for i in items[:40]]}
+    return {"counts": inbox_mod.counts(inbox_mod.build(db, sc)), "items": [{"level": i["level"], "kind": i["kind"], "title": i["title"], "message": i["message"][:220], "where": i["where"]} for i in items[:40]]}
 
 
 def t_hourly(db: Session, a: dict) -> dict:
@@ -194,9 +204,14 @@ def t_hourly(db: Session, a: dict) -> dict:
         datetime.strptime(day, "%Y-%m-%d")
     except ValueError:
         day = timeutil.local_date_str()
-    cids = [r[0] for r in db.query(models.CampaignRecord.campaign_id).all()]
+    sc = _scope(db)
+    cids = [r[0] for r in db.query(models.CampaignRecord.campaign_id, models.CampaignRecord.advertiser_id).all() if sc.allows(r[1])]
     hs = hourly.series(db, cids, day)
-    rev = hourly.revenue_series(db, None, day)
+    w = None
+    if not sc.everything:
+        s0, e0 = timeutil.range_bounds("custom", day, day)
+        w = pnl_data.source_weights(db, s0, e0, sc.ids)
+    rev = hourly.revenue_series(db, None, day, w)
     now_h = timeutil.now_local().hour if day == timeutil.local_date_str() else 23
     rows = [{"hour": h, "spend": round(hs["spend"][h], 2), "clicks": int(hs["clicks"][h]), "conversions": int(hs["conversions"][h]), "revenue": round(rev[h], 2), "profit": round(rev[h] - hs["spend"][h], 2)} for h in range(0, now_h + 1)]
     return {"day": day, "hour_now": now_h, "rows": rows}
@@ -204,7 +219,8 @@ def t_hourly(db: Session, a: dict) -> dict:
 
 def t_propose(db: Session, a: dict) -> dict:
     """Validate against the campaign cache; the page renders the card."""
-    recs = {(c.advertiser_id, c.campaign_id): c for c in db.query(models.CampaignRecord).all()}
+    sc = _scope(db)
+    recs = {(c.advertiser_id, c.campaign_id): c for c in db.query(models.CampaignRecord).all() if sc.allows(c.advertiser_id)}
     names = {x.advertiser_id: (x.advertiser_name or x.advertiser_id) for x in db.query(models.AdAccount).all()}
     ok, bad = [], []
     for act in a.get("actions") or []:

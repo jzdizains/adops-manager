@@ -39,7 +39,7 @@
       {% set mx = rows|map(attribute='profit')|map('abs')|max %}
       {% for r in rows %}
       <tr class="pnl-row" data-search="{{ (r.name ~ ' ' ~ r.sub)|lower }}">
-        <td><div style="font-weight:600;{{ 'font-family:var(--font-mono);font-size:12px;' if key == 'source' }}"><a href="{{ r.href }}" style="color:inherit;">{{ r.name }}</a></div><div class="muted" style="font-size:11px;">{{ r.sub }}</div></td>
+        <td><div style="font-weight:600;{{ 'font-family:var(--font-mono);font-size:12px;' if key == 'source' }}"><a href="{{ r.href }}" style="color:inherit;">{{ r.name }}</a></div><div class="muted" style="font-size:11px;">{{ r.sub }}{% if r.shared %} · <span class="pill warn" title="This source also runs on another user's accounts — these numbers are this view's share, split by spend">shared</span>{% endif %}</div></td>
         {% if key == 'source' %}<td class="muted" style="white-space:nowrap;font-size:12px;">{{ r.goal or '—' }}</td>{% endif %}
         <td class="num">{{ money0(r.spend) if r.spend else '—' }}</td>
         <td class="num" style="color:var(--ok);font-weight:600;">{{ money0(r.revenue) if r.revenue else '—' }}</td>

@@ -13,14 +13,70 @@ from sqlalchemy.orm import Session
 from . import models, timeutil
 
 
-def campaign_source_map(db: Session) -> dict[str, str]:
-    """campaign_id -> source, from successful launches that carried a source."""
+def campaign_source_map(db: Session, advertiser_ids=None) -> dict[str, str]:
+    """campaign_id -> source, from successful launches that carried a source.
+    `advertiser_ids` (a set) restricts it to those accounts — a user's view."""
     out = {}
-    for log in (db.query(models.LaunchLog)
-                .filter(models.LaunchLog.ok == True,          # noqa: E712
-                        models.LaunchLog.source != "")):
-        if log.campaign_id:
-            out[log.campaign_id] = log.source
+    q = (db.query(models.LaunchLog.campaign_id, models.LaunchLog.source, models.LaunchLog.advertiser_id)
+         .filter(models.LaunchLog.ok == True,          # noqa: E712
+                 models.LaunchLog.source != ""))
+    if advertiser_ids is not None:
+        if not advertiser_ids:
+            return {}
+        q = q.filter(models.LaunchLog.advertiser_id.in_(list(advertiser_ids)))
+    for cid, src, _adv in q:
+        if cid:
+            out[cid] = src
+    return out
+
+
+def source_weights(db: Session, start_utc: datetime, end_utc: datetime, advertiser_ids) -> dict[str, float]:
+    """source -> the share of that source's revenue that belongs to these accounts, for
+    a per-user view. A source whose campaigns all run on the user's accounts weighs 1;
+    one shared with another user is split by each side's spend in the range (even split
+    when nothing spent yet); a source with none of the user's campaigns is absent.
+    Campaigns matched by name (built in Ads Manager) count like launched ones."""
+    if advertiser_ids is None:
+        return {}
+    ids = set(advertiser_ids)
+    camp_src = campaign_source_map(db)
+    camp_adv = {cid: adv for cid, adv in db.query(models.CampaignRecord.campaign_id, models.CampaignRecord.advertiser_id)}
+    for cid, adv in db.query(models.LaunchLog.campaign_id, models.LaunchLog.advertiser_id).filter(models.LaunchLog.ok == True):   # noqa: E712
+        camp_adv.setdefault(cid, adv)
+    # sources with no launch of their own: campaigns whose TikTok name is the source
+    src_seen = {r[0] for r in db.query(models.PostbackEvent.source).distinct().all()}
+    for src, cids in campaigns_named(db, [s for s in src_seen if s]).items():
+        for cid in cids:
+            camp_src.setdefault(cid, src)
+    if not camp_src:
+        return {}
+    start_day = timeutil.local_date_str(start_utc)
+    end_day = timeutil.local_date_str(end_utc - timedelta(seconds=1))
+    spend: dict[str, float] = {}
+    for cid, sp in (db.query(models.SpendSnapshot.campaign_id, func.sum(models.SpendSnapshot.spend))
+                    .filter(models.SpendSnapshot.campaign_id.in_(list(camp_src)),
+                            models.SpendSnapshot.day >= start_day, models.SpendSnapshot.day <= end_day)
+                    .group_by(models.SpendSnapshot.campaign_id)):
+        spend[cid] = float(sp or 0)
+    mine_spend: dict[str, float] = {}
+    all_spend: dict[str, float] = {}
+    mine_n: dict[str, int] = {}
+    all_n: dict[str, int] = {}
+    for cid, src in camp_src.items():
+        sp = spend.get(cid, 0.0)
+        all_spend[src] = all_spend.get(src, 0.0) + sp
+        all_n[src] = all_n.get(src, 0) + 1
+        if camp_adv.get(cid) in ids:
+            mine_spend[src] = mine_spend.get(src, 0.0) + sp
+            mine_n[src] = mine_n.get(src, 0) + 1
+    out: dict[str, float] = {}
+    for src, n in mine_n.items():
+        if n == all_n[src]:
+            out[src] = 1.0
+        elif all_spend[src] > 0:
+            out[src] = mine_spend[src] / all_spend[src]
+        else:
+            out[src] = n / all_n[src]
     return out
 
 
@@ -39,8 +95,8 @@ def campaigns_named(db: Session, sources) -> dict[str, list[str]]:
     return out
 
 
-def spend_by_source(db: Session, start_utc: datetime, end_utc: datetime) -> dict[str, float]:
-    camp_source = campaign_source_map(db)
+def spend_by_source(db: Session, start_utc: datetime, end_utc: datetime, advertiser_ids=None) -> dict[str, float]:
+    camp_source = campaign_source_map(db, advertiser_ids)
     if not camp_source:
         return {}
     start_day = timeutil.local_date_str(start_utc)
@@ -56,8 +112,11 @@ def spend_by_source(db: Session, start_utc: datetime, end_utc: datetime) -> dict
     return out
 
 
-def revenue_by_source(db: Session, start_utc: datetime, end_utc: datetime) -> dict[str, dict]:
+def revenue_by_source(db: Session, start_utc: datetime, end_utc: datetime, advertiser_ids=None) -> dict[str, dict]:
+    """source -> {revenue, conversions, clicks}. With `advertiser_ids`, only the sources
+    that run on those accounts, each weighted by the user's share (source_weights)."""
     s_naive, e_naive = start_utc.replace(tzinfo=None), end_utc.replace(tzinfo=None)
+    weights = source_weights(db, start_utc, end_utc, advertiser_ids) if advertiser_ids is not None else None
     out = {}
     rows = (db.query(models.PostbackEvent.source,
                      func.sum(models.PostbackEvent.revenue).label("revenue"),
@@ -67,16 +126,22 @@ def revenue_by_source(db: Session, start_utc: datetime, end_utc: datetime) -> di
                     models.PostbackEvent.created_at < e_naive)
             .group_by(models.PostbackEvent.source).all())
     for r in rows:
-        out[r.source] = {"revenue": float(r.revenue or 0),
-                         "conversions": int(r.conversions or 0),
-                         "clicks": int(r.clicks or 0)}
+        w = 1.0
+        if weights is not None:
+            w = weights.get(r.source, 0.0)
+            if w <= 0:
+                continue
+        out[r.source] = {"revenue": float(r.revenue or 0) * w,
+                         "conversions": int(round(int(r.conversions or 0) * w)),
+                         "clicks": int(round(int(r.clicks or 0) * w)),
+                         **({"shared": True} if w < 1.0 else {})}
     return out
 
 
-def source_pnl(db: Session, start_utc: datetime, end_utc: datetime) -> dict[str, dict]:
+def source_pnl(db: Session, start_utc: datetime, end_utc: datetime, advertiser_ids=None) -> dict[str, dict]:
     """source -> {revenue, spend, profit, clicks, conversions}."""
-    spend = spend_by_source(db, start_utc, end_utc)
-    revenue = revenue_by_source(db, start_utc, end_utc)
+    spend = spend_by_source(db, start_utc, end_utc, advertiser_ids)
+    revenue = revenue_by_source(db, start_utc, end_utc, advertiser_ids)
     out: dict[str, dict] = {}
     for src in set(spend) | set(revenue):
         rev = revenue.get(src, {})
@@ -91,7 +156,8 @@ def source_pnl(db: Session, start_utc: datetime, end_utc: datetime) -> dict[str,
 
 def daily_series(db: Session, start_utc: datetime, end_utc: datetime,
                  campaign_ids: list[str] | None = None,
-                 sources: set[str] | None = None) -> tuple[list[str], list[float], list[float]]:
+                 sources: set[str] | None = None,
+                 weights: dict[str, float] | None = None) -> tuple[list[str], list[float], list[float]]:
     """Per-local-day (spend, revenue) over [start,end), restricted to a campaign
     set (spend) and a source set (revenue). DB-only — for KPI sparklines.
     Returns (days, spend_per_day, revenue_per_day) aligned by index."""
@@ -122,28 +188,40 @@ def daily_series(db: Session, start_utc: datetime, end_utc: datetime,
     for p in pq.all():
         if sources is not None and p.source not in sources:
             continue
+        w = weights.get(p.source, 0.0) if weights is not None else 1.0
+        if w <= 0:
+            continue
         d = timeutil.local_date_str(p.created_at)
         if d in idx:
-            rev[idx[d]] += float(p.revenue or 0)
+            rev[idx[d]] += float(p.revenue or 0) * w
     return days, spend, rev
 
 
-def overall_totals(db: Session, start_utc: datetime, end_utc: datetime) -> dict:
+def overall_totals(db: Session, start_utc: datetime, end_utc: datetime, advertiser_ids=None) -> dict:
     """Range KPIs for the Overview: spend is ALL spend (snapshots, sourced or
-    not); revenue/clicks/conversions from all postbacks."""
+    not); revenue/clicks/conversions from all postbacks. With `advertiser_ids` (a
+    user's view): that view's spend, and its weighted share of the sources it runs."""
     start_day = timeutil.local_date_str(start_utc)
     end_day = timeutil.local_date_str(end_utc - timedelta(seconds=1))   # [start, end) — end is the next midnight
-    spend = float(db.query(func.coalesce(func.sum(models.SpendSnapshot.spend), 0.0))
-                  .filter(models.SpendSnapshot.day >= start_day,
-                          models.SpendSnapshot.day <= end_day).scalar() or 0)
+    sq = (db.query(func.coalesce(func.sum(models.SpendSnapshot.spend), 0.0))
+          .filter(models.SpendSnapshot.day >= start_day, models.SpendSnapshot.day <= end_day))
+    if advertiser_ids is not None:
+        sq = sq.filter(models.SpendSnapshot.advertiser_id.in_(list(advertiser_ids) or [""]))
+    spend = float(sq.scalar() or 0)
     s_naive, e_naive = start_utc.replace(tzinfo=None), end_utc.replace(tzinfo=None)
-    rev, conv, clicks = (db.query(
-        func.coalesce(func.sum(models.PostbackEvent.revenue), 0.0),
-        func.coalesce(func.sum(models.PostbackEvent.conversions), 0),
-        func.coalesce(func.sum(models.PostbackEvent.clicks), 0))
-        .filter(models.PostbackEvent.created_at >= s_naive,
-                models.PostbackEvent.created_at < e_naive).one())
-    revenue, conversions, clicks = float(rev or 0), int(conv or 0), int(clicks or 0)
+    if advertiser_ids is None:
+        rev, conv, clicks = (db.query(
+            func.coalesce(func.sum(models.PostbackEvent.revenue), 0.0),
+            func.coalesce(func.sum(models.PostbackEvent.conversions), 0),
+            func.coalesce(func.sum(models.PostbackEvent.clicks), 0))
+            .filter(models.PostbackEvent.created_at >= s_naive,
+                    models.PostbackEvent.created_at < e_naive).one())
+        revenue, conversions, clicks = float(rev or 0), int(conv or 0), int(clicks or 0)
+    else:
+        by_src = revenue_by_source(db, start_utc, end_utc, advertiser_ids)
+        revenue = sum(r["revenue"] for r in by_src.values())
+        conversions = sum(r["conversions"] for r in by_src.values())
+        clicks = sum(r["clicks"] for r in by_src.values())
     return {
         "spend": spend, "revenue": revenue, "profit": revenue - spend,
         "roas": (revenue / spend) if spend else 0.0,

@@ -106,12 +106,17 @@ def series_by_campaign(db: Session, campaign_ids: list[str], day: str, field: st
     return out
 
 
-def revenue_series(db: Session, sources, day: str) -> list[float]:
+def revenue_series(db: Session, sources, day: str, weights: dict[str, float] | None = None) -> list[float]:
     """[24 values] postback revenue per local hour for these sources
-    (None = every postback)."""
+    (None = every postback). `weights` (source -> share) scales each source — a
+    user's view of a source shared with another user."""
     out = [0.0] * 24
     if sources is not None and not sources:
         return out
+    if weights is not None:
+        sources = [s for s in (sources if sources is not None else weights) if weights.get(s, 0) > 0]
+        if not sources:
+            return out
     start = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=timeutil.TZ)
     end = start + timedelta(days=1)
     s_utc = start.astimezone(timezone.utc).replace(tzinfo=None)
@@ -124,7 +129,7 @@ def revenue_series(db: Session, sources, day: str) -> list[float]:
         if at is None:
             continue
         loc = at.replace(tzinfo=timezone.utc).astimezone(timeutil.TZ)
-        out[loc.hour] += float(rev or 0)
+        out[loc.hour] += float(rev or 0) * (weights.get(src, 0.0) if weights is not None else 1.0)
     return out
 
 

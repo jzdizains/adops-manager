@@ -10,6 +10,9 @@ from .. import models
 from ..database import get_db
 from ..templating import render
 
+from . import guard
+from .. import scope as scope_mod
+
 router = APIRouter()
 
 MAX_TEXT_LEN = 100   # TikTok ad text limit
@@ -17,7 +20,8 @@ MAX_TEXT_LEN = 100   # TikTok ad text limit
 
 @router.get("/ad-texts")
 def ad_texts_page(request: Request, db: Session = Depends(get_db)):
-    rows = (db.query(models.AdText)
+    sc = scope_mod.for_request(request, db)
+    rows = (sc.owned(db.query(models.AdText), models.AdText)
             .order_by(models.AdText.status, models.AdText.id.desc()).all())
     accounts = {a.advertiser_id: (a.advertiser_name or a.advertiser_id)
                 for a in db.query(models.AdAccount).all()}
@@ -35,7 +39,8 @@ def ad_texts_page(request: Request, db: Session = Depends(get_db)):
 async def add_texts(request: Request, db: Session = Depends(get_db)):
     form = await request.form()
     lines = [ln.strip() for ln in str(form.get("texts") or "").splitlines() if ln.strip()]
-    existing = {t.text for t in db.query(models.AdText).all()}
+    sc = scope_mod.for_request(request, db)
+    existing = {t.text for t in sc.owned(db.query(models.AdText), models.AdText).all()}
     saved, skipped = 0, 0
     for ln in lines:
         if len(ln) > MAX_TEXT_LEN:
@@ -43,7 +48,7 @@ async def add_texts(request: Request, db: Session = Depends(get_db)):
         if ln in existing:
             skipped += 1
             continue
-        db.add(models.AdText(text=ln))
+        db.add(models.AdText(text=ln, owner_user_id=sc.owner_for_new))
         existing.add(ln)
         saved += 1
     db.commit()
@@ -57,7 +62,7 @@ async def add_texts(request: Request, db: Session = Depends(get_db)):
 async def update_text(text_id: int, request: Request, db: Session = Depends(get_db)):
     form = await request.form()
     row = db.get(models.AdText, text_id)
-    if not row:
+    if not row or not scope_mod.for_request(request, db).owns(row):
         return RedirectResponse("/ad-texts?err=not+found", status_code=303)
     if row.status == "used":
         return RedirectResponse("/ad-texts?err=already+used+—+locked", status_code=303)
@@ -69,9 +74,9 @@ async def update_text(text_id: int, request: Request, db: Session = Depends(get_
 
 
 @router.post("/ad-texts/{text_id}/delete")
-def delete_text(text_id: int, db: Session = Depends(get_db)):
+def delete_text(text_id: int, db: Session = Depends(get_db), sc: scope_mod.Scope = Depends(guard.view)):
     row = db.get(models.AdText, text_id)
-    if not row:
+    if not row or not sc.owns(row):
         return RedirectResponse("/ad-texts?err=not+found", status_code=303)
     if row.status == "used":
         return RedirectResponse("/ad-texts?err=already+used+—+kept+for+history",

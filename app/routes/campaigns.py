@@ -76,10 +76,17 @@ def resolve_cta_portfolio(db: Session, acct: models.AdAccount, fields: dict) -> 
         if not exists:
             db.add(models.Alert(kind="cta_fallback", ref_id=acct.advertiser_id, level="warn", message=msg))
             db.commit()
-        live_log.push("error", f"Auto CTA fell back to Learn more on {acct.advertiser_name or acct.advertiser_id}")
+        live_log.push("error", f"Auto CTA fell back to Learn more on {acct.advertiser_name or acct.advertiser_id}", advertiser_id=str(acct.advertiser_id))
         return ""
     queries.set_setting(db, key, pid)
     return pid
+
+def _owned(q, model, fields: dict):
+    """Library / pool picks stay inside the launching user's workspace (v116):
+    fields["_launched_by"] is the owner; None (old queue items) = anyone's."""
+    owner = fields.get("_launched_by")
+    return q.filter(model.owner_user_id == int(owner)) if owner else q
+
 
 def url_safe_name(name: str) -> str:
     """Only [A-Za-z0-9_-]: TikTok doesn't guarantee URL-encoding of substituted
@@ -101,6 +108,9 @@ def ensure_source(db: Session, obj, prefix: str) -> str:
         obj.source = cleaned
         db.flush()
     return cleaned
+
+from . import guard
+from .. import scope as scope_mod
 
 router = APIRouter()
 
@@ -930,9 +940,20 @@ def build_spc_campaign_payload(fields: dict, acct: models.AdAccount) -> dict:
         payload["budget_optimize_on"] = True
         payload["budget_mode"] = mode
         payload["budget"] = float(fields["campaign_budget"])
-    else:
-        payload["budget_mode"] = "BUDGET_MODE_INFINITE"   # required even for ABO
+    # ABO: no campaign-level budget field at all — /smart_plus/campaign/create/ refuses
+    # BUDGET_MODE_INFINITE ("Budget mode is invalid", 15 Sep 2026); the ad group carries
+    # the budget, as on Ads Manager's own Smart+ campaigns (campaign 1876342893366658)
     return payload
+
+
+def spc_campaign_variants(fields: dict, camp_payload: dict) -> list[tuple[dict, bool]]:
+    """(campaign payload, budget-on-campaign?) shapes to try for a Smart+ campaign, in
+    order. ABO: no budget field first; if TikTok insists on a campaign budget, a daily
+    campaign budget equal to the ad-group budget, and the ad group then carries none."""
+    if camp_payload.get("budget_optimize_on"):
+        return [(camp_payload, True)]
+    daily = {**camp_payload, "budget_mode": "BUDGET_MODE_DAY", "budget": float(fields.get("adgroup_budget") or 20.0)}
+    return [(camp_payload, False), (daily, True)]
 
 
 def build_spc_adgroup_payload(fields: dict, campaign_id: str, spark_ref: dict | None,
@@ -970,8 +991,9 @@ def build_spc_adgroup_payload(fields: dict, campaign_id: str, spark_ref: dict | 
     else:
         payload["schedule_type"] = "SCHEDULE_FROM_NOW"
         payload["schedule_start_time"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-    # budget: ABO carries it on the ad group; CBO was set at campaign level
-    if (fields.get("campaign_budget_mode") or "ABO") == "ABO":
+    # budget: ABO carries it on the ad group; CBO (or a campaign budget TikTok insisted
+    # on — fields["_spc_budget_on_campaign"]) was set at campaign level
+    if (fields.get("campaign_budget_mode") or "ABO") == "ABO" and not fields.get("_spc_budget_on_campaign"):
         payload["budget_mode"] = fields.get("adgroup_budget_mode") or "BUDGET_MODE_DAY"
         payload["budget"] = float(fields["adgroup_budget"])
     # bidding — the cap goes on the field TikTok reads for the billing event
@@ -1281,8 +1303,10 @@ def build_smart_creative_ad_payload(fields: dict, adgroup_id: str, identity: dic
 
 
 def _launch_smart_plus(acct: models.AdAccount, fields: dict, spark_ref: dict | None,
-                       spark: models.SparkCode | None, pixel_id: str) -> str:
-    """Smart+ creation chain. Returns the new campaign_id (raises TikTokError)."""
+                       spark: models.SparkCode | None, pixel_id: str, log=None) -> str:
+    """Smart+ creation chain. Returns (campaign_id, campaign_name); raises TikTokError.
+    `log.campaign_id` is set as soon as the campaign exists so a failure further down
+    can still clean the empty shell up."""
     dest = fields["destination_type"]
     if dest not in ("pixel", "website"):
         raise ConfigError("Smart+ presets support Website / Pixel destinations only "
@@ -1291,9 +1315,24 @@ def _launch_smart_plus(acct: models.AdAccount, fields: dict, spark_ref: dict | N
         raise ConfigError("Smart+ launches need a spark creative — pick a spark code "
                           "in the preset or at launch time.")
     camp_payload = build_spc_campaign_payload(fields, acct)
-    camp = tiktok_api.smart_plus_campaign_create(
-        acct.access_token, acct.advertiser_id, camp_payload)
+    camp = None
+    variants = spc_campaign_variants(fields, camp_payload)
+    for v_i, (cp, budget_on_campaign) in enumerate(variants):
+        try:
+            camp = tiktok_api.smart_plus_campaign_create(acct.access_token, acct.advertiser_id, cp)
+            camp_payload = cp
+            if budget_on_campaign:
+                fields = {**fields, "_spc_budget_on_campaign": True}
+            break
+        except tiktok_api.TikTokError as e:
+            if v_i < len(variants) - 1 and "budget" in (e.message or "").lower():
+                continue                  # TikTok wants the budget on the campaign — next shape
+            raise
+    if camp is None:   # defensive — loop always breaks or raises
+        raise tiktok_api.TikTokError("APP", "Smart+ campaign not created")
     campaign_id = str(camp.get("campaign_id"))
+    if log is not None:
+        log.campaign_id = campaign_id
     ladder = [float(x) for x in fields.get("cost_cap_ladder") or []]
     bid = ladder[0] if ladder else None      # smart+ = single ad group; first cap wins
     ag = tiktok_api.smart_plus_adgroup_create(
@@ -1479,7 +1518,7 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                 if carousel.status != "available" and not (reuse and carousel.status == "used"):
                     raise ConfigError(f"Carousel “{carousel.name}” has already launched.")
             else:
-                carousel = (db.query(models.Creative).filter_by(status="available", kind="carousel", archived=False)
+                carousel = (_owned(db.query(models.Creative), models.Creative, fields).filter_by(status="available", kind="carousel", archived=False)
                             .order_by(models.Creative.id).first())
                 if not carousel:
                     raise ConfigError("No available carousels — build one on the Creatives page (Carousels tab).")
@@ -1501,7 +1540,7 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                 carousel.used_at = datetime.now(timezone.utc)
                 db.flush()
             if fields.get("ad_text_mode") == "pool":
-                pool_text = (db.query(models.AdText).filter_by(status="available")
+                pool_text = (_owned(db.query(models.AdText), models.AdText, fields).filter_by(status="available")
                              .order_by(models.AdText.id).first())
                 if not pool_text:
                     raise ConfigError("The ad-text pool is empty — add texts or switch to a fixed text.")
@@ -1537,7 +1576,7 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                                       "(each creative launches once) — pick another, or "
                                       "leave the launcher on automatic.")
             else:
-                creative = (db.query(models.Creative).filter_by(status="available", kind="video", archived=False)
+                creative = (_owned(db.query(models.Creative), models.Creative, fields).filter_by(status="available", kind="video", archived=False)
                             .order_by(models.Creative.id).first())
             if not creative:
                 raise ConfigError("No available creatives left in the library — upload "
@@ -1551,7 +1590,7 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                 creative.used_at = now_naive
             # unique-ad-text pool: reserve the next text too
             if fields.get("ad_text_mode") == "pool":
-                pool_text = (db.query(models.AdText)
+                pool_text = (_owned(db.query(models.AdText), models.AdText, fields)
                              .filter_by(status="available")
                              .order_by(models.AdText.id).first())
                 if not pool_text:
@@ -1592,7 +1631,7 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                 n_txt = max(int(fields.get("smart_creative_texts") or 5), 1)
                 sc_creatives = [creative]
                 while len(sc_creatives) < n_vids:
-                    nxt = (db.query(models.Creative).filter_by(status="available", kind="video", archived=False)
+                    nxt = (_owned(db.query(models.Creative), models.Creative, fields).filter_by(status="available", kind="video", archived=False)
                            .order_by(models.Creative.id).first())
                     if not nxt:
                         break                       # use however many we have
@@ -1607,7 +1646,7 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                     sc_texts = [pool_text]
                     texts.append(pool_text.text)
                 while len(texts) < n_txt:
-                    trow = (db.query(models.AdText).filter_by(status="available")
+                    trow = (_owned(db.query(models.AdText), models.AdText, fields).filter_by(status="available")
                             .order_by(models.AdText.id).first())
                     if not trow:
                         break
@@ -1674,7 +1713,9 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
 
         created_name = ""
         if fields.get("smart_plus"):          # (set above for Engaged session too)
-            log.campaign_id, created_name = _launch_smart_plus(acct, fields, spark_ref, spark, pixel_id)
+            log.campaign_id, created_name = _launch_smart_plus(acct, fields, spark_ref, spark, pixel_id, log)
+            new_campaign_id = log.campaign_id
+            ad_created = True                 # the chain only returns once the ad exists
             if is_engaged(fields):
                 log.optimization_event = "ENGAGEMENT_SESSION · Smart+" + ("" if pixel_id else " · no pixel")
             if source_mode == "campaign":
@@ -1874,7 +1915,12 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                 budget_mode=mode if mode != "ABO" else "",
                 is_smart_plus=bool(fields.get("smart_plus")),
             ))
-        live_log.push("launch", f"Launched '{fields['template_name']}' on {acct.advertiser_name or acct.advertiser_id}")
+        live_log.push("launch", f"Launched '{fields['template_name']}' on {acct.advertiser_name or acct.advertiser_id}", advertiser_id=str(acct.advertiser_id))
+        try:
+            from .. import scope as _scope
+            _scope.claim(db, acct, fields.get("_launched_by"))      # an unowned account joins the launcher's workspace
+        except Exception:      # noqa: BLE001
+            pass
     except SparkResolveError as e:
         log.ok = False
         log.error_code = "SPARK"
@@ -1897,7 +1943,7 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
         log.error_message = f"{info['friendly']} {info['action']}".strip()
         log.error_technical = (f"code={e.code} message={e.message} request_id={e.request_id}"
                                + (f" at={e.path}" if getattr(e, "path", "") else ""))
-        live_log.push("error", f"Launch failed on {acct.advertiser_id}: {info['friendly']}")
+        live_log.push("error", f"Launch failed on {acct.advertiser_id}: {info['friendly']}", advertiser_id=str(acct.advertiser_id))
     except Exception as e:  # never let one account kill the batch
         log.ok = False
         log.error_code = "APP"
@@ -1923,9 +1969,13 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
     # orphan cleanup: if THIS launch made a campaign but no ad ever got created
     # (e.g. the ad group was rejected), delete the empty campaign so failed
     # launches never leave junk shells behind on the account.
-    if not log.ok and new_campaign_id and not ad_created and not fields.get("smart_plus"):
+    if not log.ok and not ad_created and (new_campaign_id or (fields.get("smart_plus") and log.campaign_id)):
+        shell = new_campaign_id or log.campaign_id
         try:
-            tiktok_api.delete_campaigns(acct.access_token, acct.advertiser_id, [new_campaign_id])
+            if fields.get("smart_plus"):
+                tiktok_api.smart_plus_campaign_status_update(acct.access_token, acct.advertiser_id, [shell], "DELETE")
+            else:
+                tiktok_api.delete_campaigns(acct.access_token, acct.advertiser_id, [shell])
             log.campaign_id = ""      # it no longer exists — don't show it as tool-launched
         except tiktok_api.TikTokError:
             pass                      # best-effort; a leftover shell is harmless
@@ -2093,13 +2143,14 @@ def fix_sources(db: Session, all_broken: bool, advertiser_id: str = "", campaign
 
 @router.get("/campaigns/launch")
 def launch_form(request: Request, db: Session = Depends(get_db)):
-    templates = db.query(models.Template).order_by(models.Template.name).all()
-    accounts = (db.query(models.AdAccount).filter(models.AdAccount.enabled == True)  # noqa: E712
-                .order_by(models.AdAccount.advertiser_name).all())
-    sparks = db.query(models.SparkCode).filter_by(status="active").order_by(models.SparkCode.name).all()
-    creatives = (db.query(models.Creative).filter_by(status="available", kind="video", archived=False)
+    sc = scope_mod.for_request(request, db)
+    templates = sc.owned(db.query(models.Template), models.Template).order_by(models.Template.name).all()
+    accounts = [a for a in (db.query(models.AdAccount).filter(models.AdAccount.enabled == True)  # noqa: E712
+                            .order_by(models.AdAccount.advertiser_name).all()) if sc.allows(a.advertiser_id)]
+    sparks = sc.owned(db.query(models.SparkCode), models.SparkCode).filter_by(status="active").order_by(models.SparkCode.name).all()
+    creatives = (sc.owned(db.query(models.Creative), models.Creative).filter_by(status="available", kind="video", archived=False)
                  .order_by(models.Creative.name).all())
-    carousels = (db.query(models.Creative).filter_by(status="available", kind="carousel", archived=False)
+    carousels = (sc.owned(db.query(models.Creative), models.Creative).filter_by(status="available", kind="carousel", archived=False)
                  .order_by(models.Creative.name).all())
     from .super_launcher import account_picker_context, preset_facts
     return render(request, "campaign_launch.html", {
@@ -2125,12 +2176,15 @@ async def launch_submit(request: Request, db: Session = Depends(get_db)):
         if v and v not in seen:
             seen.add(v)
             advertiser_ids.append(v)
+    sc = scope_mod.for_request(request, db)
     template = db.get(models.Template, int(template_id)) if template_id.isdigit() else None
+    if template is not None and not sc.owns(template):
+        template = None
     accts = []
     if advertiser_ids:
         by_id = {a.advertiser_id: a for a in
                  db.query(models.AdAccount)
-                 .filter(models.AdAccount.advertiser_id.in_(advertiser_ids)).all()}
+                 .filter(models.AdAccount.advertiser_id.in_(advertiser_ids)).all() if sc.allows(a.advertiser_id)}
         accts = [by_id[i] for i in advertiser_ids if i in by_id]
     if not template or not accts:
         return RedirectResponse("/campaigns/launch?err=missing", status_code=303)
@@ -2163,6 +2217,7 @@ async def launch_submit(request: Request, db: Session = Depends(get_db)):
         if v > 0:
             overrides[key] = min(v, cap)
     fields = launch_mod.synthesize(template, overrides)
+    fields["_launched_by"] = sc.owner_for_new
     batch_ref = queue_launch(db, f"Launch {template.name} → {len(accts)} account(s)",
                              [a.advertiser_id for a in accts], fields)
     return RedirectResponse(f"/campaigns/result/{batch_ref}", status_code=303)
@@ -2170,13 +2225,14 @@ async def launch_submit(request: Request, db: Session = Depends(get_db)):
 
 @router.get("/campaigns/result/{batch_ref}")
 def launch_result(request: Request, batch_ref: str, db: Session = Depends(get_db)):
-    logs = (db.query(models.LaunchLog).filter_by(batch_ref=batch_ref)
-            .order_by(models.LaunchLog.id).all())
+    sc = scope_mod.for_request(request, db)
+    logs = [l for l in (db.query(models.LaunchLog).filter_by(batch_ref=batch_ref)
+                        .order_by(models.LaunchLog.id).all()) if sc.allows(l.advertiser_id)]
     ok = sum(1 for l in logs if l.ok)
     import json as _json
     has_recipe = bool(queries.get_setting(db, f"batch_fields:{batch_ref}", ""))
     job = (db.query(models.Job).filter(models.Job.href == f"/campaigns/result/{batch_ref}",
-                                       models.Job.status.in_(("queued", "running")))
+                                       models.Job.status.in_(("queued", "claimed", "running")))
            .order_by(models.Job.id.desc()).first())
     total = 0
     if job:
@@ -2219,18 +2275,20 @@ def retry_failed(request: Request, batch_ref: str, db: Session = Depends(get_db)
     failed_ids = list(dict.fromkeys(failed_ids))                          # dedupe, keep order
     if not failed_ids:
         return RedirectResponse(f"/campaigns/result/{batch_ref}?note=nofail", status_code=303)
+    sc = scope_mod.for_request(request, db)
     by_id = {a.advertiser_id: a for a in db.query(models.AdAccount)
-             .filter(models.AdAccount.advertiser_id.in_(failed_ids)).all()}
+             .filter(models.AdAccount.advertiser_id.in_(failed_ids)).all() if sc.allows(a.advertiser_id)}
     accounts = [by_id[i] for i in failed_ids if i in by_id]
     if not accounts:
         return RedirectResponse(f"/campaigns/result/{batch_ref}?note=nofail", status_code=303)
+    fields["_launched_by"] = fields.get("_launched_by") or sc.owner_for_new
     new_ref = queue_launch(db, f"Retry {len(accounts)} failed account(s) of {batch_ref}",
                            [a.advertiser_id for a in accounts], fields)
     return RedirectResponse(f"/campaigns/result/{new_ref}", status_code=303)
 
 
 @router.get("/campaigns/{advertiser_id}/{campaign_id}/edit")
-def campaign_edit_redirect(advertiser_id: str, campaign_id: str):
+def campaign_edit_redirect(advertiser_id: str, campaign_id: str, _view: scope_mod.Scope = Depends(guard.account_in_view)):
     """The old edit page is gone — the Campaigns console drawer does it in place (old job links + bookmarks land there)."""
     return RedirectResponse(f"/status?state=all&open={campaign_id}", status_code=303)
 
@@ -2241,7 +2299,7 @@ def apply_campaign_edit(request: Request, advertiser_id: str, campaign_id: str,
                         campaign_budget: str = Form(""),
                         adgroup_budget_all: str = Form(""),
                         cost_cap_all: str = Form(""),
-                        db: Session = Depends(get_db)):
+                        db: Session = Depends(get_db), _view: scope_mod.Scope = Depends(guard.account_in_view)):
     """Queue whichever fields were filled: campaign name, CBO campaign budget,
     all ad-group budgets, and/or all cost caps. fetch() callers get JSON."""
     from .. import activity, jobs
@@ -2391,7 +2449,7 @@ def _bid_summary(adgroups: list[dict]) -> dict:
 
 
 @router.get("/campaigns/{advertiser_id}/{campaign_id}/bids")
-def campaign_bids(advertiser_id: str, campaign_id: str, db: Session = Depends(get_db)):
+def campaign_bids(advertiser_id: str, campaign_id: str, db: Session = Depends(get_db), _view: scope_mod.Scope = Depends(guard.account_in_view)):
     """JSON for the inline bid popover: every ad group's current cost cap."""
     acct = db.query(models.AdAccount).filter_by(advertiser_id=advertiser_id).first()
     if not acct or not acct.access_token:
@@ -2409,7 +2467,7 @@ def campaign_bids(advertiser_id: str, campaign_id: str, db: Session = Depends(ge
 
 @router.post("/campaigns/{advertiser_id}/{campaign_id}/bids")
 def campaign_bids_apply(request: Request, advertiser_id: str, campaign_id: str, cap: str = Form(...),
-                        db: Session = Depends(get_db)):
+                        db: Session = Depends(get_db), _view: scope_mod.Scope = Depends(guard.account_in_view)):
     """Queue ONE cost cap for every ad group of the campaign. Returns JSON
     {queued: true, job_id} at once; the result arrives as a notification."""
     from .. import jobs
@@ -2462,7 +2520,7 @@ def apply_bid(db: Session, advertiser_id: str, campaign_id: str, new_cap: float)
 def campaign_status_update(request: Request, advertiser_id: str, campaign_id: str,
                            operation_status: str = Form(...),
                            next: str = Form("/status"),
-                           db: Session = Depends(get_db)):
+                           db: Session = Depends(get_db), _view: scope_mod.Scope = Depends(guard.account_in_view)):
     """Pause / resume one campaign on TikTok. Form posts redirect back; fetch()
     callers (the Campaigns console, bulk bar, undo) get JSON."""
     from .. import activity

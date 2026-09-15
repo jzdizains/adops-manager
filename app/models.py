@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from sqlalchemy import (
     Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint,
 )
+from . import ctx
 from sqlalchemy.orm import relationship
 
 from .database import Base
@@ -40,6 +41,10 @@ class BusinessCenter(Base):
     alert_threshold = Column(Float, default=50.0)
     last_synced_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=utcnow)
+    # v116 — several TikTok logins: the token of the login that lists this BC, and
+    # whose workspace it shows in (a BC seen by two logins keeps its first owner)
+    access_token = Column(Text, default="")
+    owner_user_id = Column(Integer, nullable=True, index=True)
 
 
 class Alert(Base):
@@ -74,6 +79,7 @@ class AdAccount(Base):
     region_codes = Column(Text, default="")          # cached /tool/region result (JSON)
     balance = Column(Float, default=0.0)
     enabled = Column(Boolean, default=True)          # operator can hide accounts
+    owner_user_id = Column(Integer, nullable=True, index=True, default=ctx.owner_default)   # whose workspace this account is in (v116)
     error_count = Column(Integer, default=0)         # consecutive launch failures
     cooldown_until = Column(DateTime, nullable=True) # lifecycle: excluded from auto-pick until then
     last_synced_at = Column(DateTime, nullable=True)
@@ -88,6 +94,7 @@ class Template(Base):
     __tablename__ = "templates"
 
     id = Column(Integer, primary_key=True)
+    owner_user_id = Column(Integer, nullable=True, index=True, default=ctx.owner_default)   # per-user workspace (v116): the request's owner unless given
     name = Column(String, nullable=False)
     # -- top-level campaign fields as COLUMNS (⚠ §9.1: CBO lives HERE) --------
     objective_type = Column(String, default="TRAFFIC")     # TRAFFIC | WEB_CONVERSIONS | LEAD_GENERATION | ...
@@ -111,6 +118,7 @@ class Creative(Base):
     __tablename__ = "creatives"
 
     id = Column(Integer, primary_key=True)
+    owner_user_id = Column(Integer, nullable=True, index=True, default=ctx.owner_default)   # per-user workspace (v116): the request's owner unless given
     name = Column(String, default="")                      # display label (defaults to file name)
     file_name = Column(String, default="")                 # original upload name
     file_path = Column(String, default="")                 # under DATA_DIR/creatives/
@@ -261,6 +269,7 @@ class DisplayCard(Base):
     __tablename__ = "display_cards"
 
     id = Column(Integer, primary_key=True)
+    owner_user_id = Column(Integer, nullable=True, index=True, default=ctx.owner_default)   # per-user workspace (v116): the request's owner unless given
     name = Column(String, default="")
     file_name = Column(String, default="")
     file_path = Column(Text, default="")
@@ -288,6 +297,7 @@ class AdText(Base):
     __tablename__ = "ad_texts"
 
     id = Column(Integer, primary_key=True)
+    owner_user_id = Column(Integer, nullable=True, index=True, default=ctx.owner_default)   # per-user workspace (v116): the request's owner unless given
     text = Column(Text, default="")
     status = Column(String, default="available")           # available | used
     used_advertiser_id = Column(String, default="")
@@ -300,6 +310,7 @@ class SparkCodeGroup(Base):
     __tablename__ = "spark_code_groups"
 
     id = Column(Integer, primary_key=True)
+    owner_user_id = Column(Integer, nullable=True, index=True, default=ctx.owner_default)   # per-user workspace (v116): the request's owner unless given
     name = Column(String, nullable=False)                  # usually the creator handle
     created_at = Column(DateTime, default=utcnow)
 
@@ -310,6 +321,7 @@ class SparkCode(Base):
     __tablename__ = "spark_codes"
 
     id = Column(Integer, primary_key=True)
+    owner_user_id = Column(Integer, nullable=True, index=True, default=ctx.owner_default)   # per-user workspace (v116): the request's owner unless given
     name = Column(String, default="")
     code = Column(Text, nullable=False)                    # pasted auth code OR item_info.auth_code
     source = Column(String, default="", index=True)        # operator-entered source (P&L join key)
@@ -608,6 +620,7 @@ class LaunchQueueItem(Base):
     spark_code_id = Column(Integer, nullable=True)     # optional spark override
     use_library = Column(Boolean, default=False)       # override: pull library creatives
     advertiser_id = Column(String, default="")         # "" = auto-pick per preset policy
+    launched_by = Column(Integer, nullable=True)       # user who queued it (scopes auto-pick, claims a pooled account)
     batch_ref = Column(String, index=True, default="")
     status = Column(String, default="pending", index=True)  # pending|running|done|failed
     attempts = Column(Integer, default=0)
@@ -931,6 +944,7 @@ class Tag(Base):
     __tablename__ = "tags"
 
     id = Column(Integer, primary_key=True)
+    owner_user_id = Column(Integer, nullable=True, index=True, default=ctx.owner_default)   # per-user workspace (v116): the request's owner unless given
     name = Column(String, unique=True, nullable=False)
     color = Column(String, default="grey")
     created_at = Column(DateTime, default=utcnow)

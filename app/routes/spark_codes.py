@@ -19,6 +19,9 @@ from .. import models, queries, tiktok_api
 from ..database import get_db
 from ..templating import render
 
+from . import guard
+from .. import scope as scope_mod
+
 router = APIRouter()
 
 
@@ -32,9 +35,10 @@ def spark_list(request: Request, db: Session = Depends(get_db)):
     mine_only = request.query_params.get("mine", "") == "1"
     state = request.query_params.get("state", "all")
     creator = request.query_params.get("creator", "").strip()
+    sc = scope_mod.for_request(request, db)
     groups = {g.id: g for g in db.query(models.SparkCodeGroup).all()}
     my_creators = {s.creator_handle for s in db.query(models.SparkSetting).filter_by(is_mine=True).all()}
-    codes = db.query(models.SparkCode).order_by(models.SparkCode.created_at.desc()).all()
+    codes = sc.owned(db.query(models.SparkCode), models.SparkCode).order_by(models.SparkCode.created_at.desc()).all()
     # launches + P&L per spark (all time, DB only)
     logs = db.query(models.LaunchLog).filter(models.LaunchLog.spark_code_id.isnot(None), models.LaunchLog.ok == True).all()   # noqa: E712
     by_spark: dict[int, list] = {}
@@ -98,7 +102,8 @@ def pick_json(request: Request, db: Session = Depends(get_db)):
     state = qp.get("state") or "fresh"
     q = (qp.get("q") or "").strip().lower()
     only_id = qp.get("id")
-    query = db.query(models.SparkCode).order_by(models.SparkCode.created_at.desc())
+    sc = scope_mod.for_request(request, db)
+    query = sc.owned(db.query(models.SparkCode), models.SparkCode).order_by(models.SparkCode.created_at.desc())
     if only_id and only_id.isdigit():
         query = query.filter(models.SparkCode.id == int(only_id))
     elif state == "fresh":
@@ -115,23 +120,19 @@ def pick_json(request: Request, db: Session = Depends(get_db)):
                       "state": "fresh" if s.status == "active" else (s.status or "used"), "thumb": s.thumbnail_url or "",
                       "post_url": s.tiktok_post_url or "", "source": s.source or "", "uses": int(s.use_count or 0),
                       "last_used": _ago(s.last_used_at) if s.last_used_at else "", "added": _ago(s.created_at) if s.created_at else ""})
-    counts = {"fresh": db.query(models.SparkCode).filter_by(status="active").count(),
-              "used": db.query(models.SparkCode).filter(models.SparkCode.status != "active").count()}
+    counts = {"fresh": sc.owned(db.query(models.SparkCode), models.SparkCode).filter_by(status="active").count(),
+              "used": sc.owned(db.query(models.SparkCode), models.SparkCode).filter(models.SparkCode.status != "active").count()}
     return JSONResponse({"items": items, "counts": counts})
 
 
 @router.post("/spark-codes/add")
 def add_code(name: str = Form(""), code: str = Form(...), media_type: str = Form("VIDEO"),
              tiktok_post_url: str = Form(""), group_name: str = Form(""),
-             source: str = Form(""), db: Session = Depends(get_db)):
+             source: str = Form(""), db: Session = Depends(get_db), sc: scope_mod.Scope = Depends(guard.view)):
     group = None
     if group_name.strip():
-        group = db.query(models.SparkCodeGroup).filter_by(name=group_name.strip()).first()
-        if not group:
-            group = models.SparkCodeGroup(name=group_name.strip())
-            db.add(group)
-            db.flush()
-    db.add(models.SparkCode(name=name.strip(), code=code.strip(), media_type=media_type,
+        group = _group_in_view(db, sc, group_name.strip())
+    db.add(models.SparkCode(name=name.strip(), code=code.strip(), media_type=media_type, owner_user_id=sc.owner_for_new,
                             tiktok_post_url=tiktok_post_url.strip(), source=source.strip(),
                             group_id=group.id if group else None))
     db.commit()
@@ -220,8 +221,21 @@ def parse_bulk(text: str, default_media: str = "VIDEO") -> tuple[list[dict], lis
     return rows, bad
 
 
+def _group_in_view(db: Session, sc, name: str) -> models.SparkCodeGroup:
+    """The view's creator group with this name (case-insensitive), made if missing —
+    groups are per workspace too (v116)."""
+    q = sc.owned(db.query(models.SparkCodeGroup), models.SparkCodeGroup)
+    g = q.filter(func.lower(models.SparkCodeGroup.name) == name.lower()).first()
+    if not g:
+        g = models.SparkCodeGroup(name=name, owner_user_id=sc.owner_for_new)
+        db.add(g)
+        db.flush()
+    return g
+
+
 @router.post("/spark-codes/bulk")
 async def add_bulk(request: Request, db: Session = Depends(get_db)):
+    sc = scope_mod.for_request(request, db)
     form = await request.form()
     text = str(form.get("lines") or "")
     upload = form.get("file")
@@ -245,11 +259,7 @@ async def add_bulk(request: Request, db: Session = Depends(get_db)):
             return None
         g = groups.get(name.lower())
         if not g:
-            g = db.query(models.SparkCodeGroup).filter(func.lower(models.SparkCodeGroup.name) == name.lower()).first()
-            if not g:
-                g = models.SparkCodeGroup(name=name)
-                db.add(g)
-                db.flush()
+            g = _group_in_view(db, sc, name)
             groups[name.lower()] = g
         return g
 
@@ -262,7 +272,7 @@ async def add_bulk(request: Request, db: Session = Depends(get_db)):
         g = group_for(r["group_name"] or default_group)
         db.add(models.SparkCode(name=r["name"] or r["code"][:12], code=r["code"], media_type=r["media_type"],
                                 tiktok_post_url=r["tiktok_post_url"], source=r["source"] or default_source,
-                                group_id=g.id if g else None))
+                                group_id=g.id if g else None, owner_user_id=sc.owner_for_new))
         added += 1
     db.commit()
     msg = f"added {added} spark code(s)"
@@ -274,10 +284,10 @@ async def add_bulk(request: Request, db: Session = Depends(get_db)):
 
 
 @router.post("/spark-codes/{code_id}/source")
-def set_source(code_id: int, source: str = Form(""), db: Session = Depends(get_db)):
+def set_source(code_id: int, source: str = Form(""), db: Session = Depends(get_db), sc: scope_mod.Scope = Depends(guard.view)):
     """Set/change the source on a spark code (P&L join key)."""
     c = db.get(models.SparkCode, code_id)
-    if c:
+    if c and sc.owns(c):
         c.source = source.strip()
         db.commit()
     return RedirectResponse("/spark-codes?ok=source+saved", status_code=303)
@@ -285,11 +295,11 @@ def set_source(code_id: int, source: str = Form(""), db: Session = Depends(get_d
 
 @router.post("/spark-codes/{code_id}/update")
 def update_code(code_id: int, name: str = Form(""), source: str = Form(""),
-                code: str = Form(""), db: Session = Depends(get_db)):
+                code: str = Form(""), db: Session = Depends(get_db), sc: scope_mod.Scope = Depends(guard.view)):
     """Edit a spark code row: name + source anytime; the pasted code itself only
     while the spark has never launched (editing it after would break history)."""
     c = db.get(models.SparkCode, code_id)
-    if not c:
+    if not c or not sc.owns(c):
         return RedirectResponse("/spark-codes?err=not+found", status_code=303)
     c.name = name.strip()[:120]
     if (c.source or "").strip() != source.strip() and (c.use_count or 0) > 0 and (c.source or "").strip():
@@ -309,18 +319,18 @@ def update_code(code_id: int, name: str = Form(""), source: str = Form(""),
 
 
 @router.post("/spark-codes/{code_id}/delete")
-def delete_code(code_id: int, db: Session = Depends(get_db)):
+def delete_code(code_id: int, db: Session = Depends(get_db), sc: scope_mod.Scope = Depends(guard.view)):
     c = db.get(models.SparkCode, code_id)
-    if c:
+    if c and sc.owns(c):
         db.delete(c)
         db.commit()
     return RedirectResponse("/spark-codes?ok=deleted", status_code=303)
 
 
 @router.post("/spark-codes/{code_id}/status")
-def set_status(code_id: int, status: str = Form(...), db: Session = Depends(get_db)):
+def set_status(code_id: int, status: str = Form(...), db: Session = Depends(get_db), sc: scope_mod.Scope = Depends(guard.view)):
     c = db.get(models.SparkCode, code_id)
-    if c and status in ("active", "used", "expired"):
+    if c and sc.owns(c) and status in ("active", "used", "expired"):
         c.status = status
         db.commit()
     return RedirectResponse("/spark-codes", status_code=303)
@@ -336,8 +346,9 @@ def auto_grab(request: Request, db: Session = Depends(get_db)):
     token = queries.any_access_token(db)
     if not token:
         return RedirectResponse("/spark-codes?err=Connect+TikTok+first", status_code=303)
-    accounts = queries.enabled_accounts(db)
-    grabbed, seen_items = 0, {c.tiktok_item_id for c in db.query(models.SparkCode).all() if c.tiktok_item_id}
+    sc = scope_mod.for_request(request, db)
+    accounts = [a for a in queries.enabled_accounts(db) if sc.allows(a.advertiser_id)]
+    grabbed, seen_items = 0, {c.tiktok_item_id for c in sc.owned(db.query(models.SparkCode), models.SparkCode).all() if c.tiktok_item_id}
     errors = []
     for acct in accounts:
         try:
@@ -364,12 +375,9 @@ def auto_grab(request: Request, db: Session = Depends(get_db)):
                 if not item_id or item_id in seen_items:
                     continue
                 seen_items.add(item_id)
-                group = db.query(models.SparkCodeGroup).filter_by(name=handle).first()
-                if not group:
-                    group = models.SparkCodeGroup(name=handle)
-                    db.add(group)
-                    db.flush()
+                group = _group_in_view(db, sc, handle)
                 db.add(models.SparkCode(
+                    owner_user_id=sc.owner_for_new,
                     name=(info.get("text", "") or "")[:80] or f"{handle} · {item_id[-6:]}",
                     code=info.get("auth_code", ""),
                     media_type=("CAROUSEL" if str(info.get("item_type", "")).upper() == "CAROUSEL"

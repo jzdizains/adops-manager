@@ -64,6 +64,44 @@ def any_access_token(db: Session) -> str:
     return acct.access_token if acct else ""
 
 
+def token_for_bc(db: Session, bc_id: str) -> str:
+    """The TikTok login that can see this Business Center (v116 — several logins):
+    the token stamped on the BC when its login listed it, else any account under it,
+    else any token at all (single-login installs, exactly as before)."""
+    bc = db.query(models.BusinessCenter).filter_by(bc_id=str(bc_id or "")).first() if bc_id else None
+    if bc is not None and bc.access_token:
+        return bc.access_token
+    if bc_id:
+        acct = (db.query(models.AdAccount)
+                .filter(models.AdAccount.owner_bc_id == str(bc_id), models.AdAccount.access_token != "").first())
+        if acct:
+            return acct.access_token
+    return any_access_token(db)
+
+
+def token_for_user(db: Session, user_id) -> str:
+    """A token from the user's own workspace (any of their accounts / BCs); falls back
+    to any token when they have none yet (or user_id is None — the whole company)."""
+    if user_id is not None:
+        acct = (db.query(models.AdAccount)
+                .filter(models.AdAccount.owner_user_id == int(user_id), models.AdAccount.access_token != "").first())
+        if acct:
+            return acct.access_token
+        bc = (db.query(models.BusinessCenter)
+              .filter(models.BusinessCenter.owner_user_id == int(user_id), models.BusinessCenter.access_token != "").first())
+        if bc:
+            return bc.access_token
+    return any_access_token(db)
+
+
+def distinct_tokens(db: Session) -> list[tuple[str, "models.AdAccount"]]:
+    """One (token, sample account) per connected TikTok login."""
+    seen: dict[str, models.AdAccount] = {}
+    for a in db.query(models.AdAccount).filter(models.AdAccount.access_token != ""):
+        seen.setdefault(a.access_token, a)
+    return list(seen.items())
+
+
 def revenue_between(db: Session, start_utc: datetime, end_utc: datetime) -> dict:
     """Real revenue from persisted ConversionSample rows (never live calls)."""
     q = (db.query(func.coalesce(func.sum(models.ConversionSample.revenue), 0.0),

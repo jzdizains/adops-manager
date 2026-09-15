@@ -27,9 +27,15 @@ router = APIRouter()
 RANGE_LABELS = {"today": "Today", "yesterday": "Yesterday", "7d": "Last 7 days", "30d": "Last 30 days", "mtd": "This month", "custom": "Custom range"}
 
 
-def _slices(db: Session, start_utc, end_utc) -> dict:
-    """Everything the page and the CSV export need for one range."""
+def _slices(db: Session, start_utc, end_utc, sc=None) -> dict:
+    """Everything the page and the CSV export need for one range. `sc` (a Scope)
+    narrows it to one user's view: their campaigns' spend, their share of each
+    source's revenue, their creatives; a source they share with another user is
+    flagged `shared`."""
     from .postback import UNATTRIBUTED, _goals_by_source
+    ids = sc.ids if sc is not None else None
+    def mine(cid) -> bool:
+        return ids is None or (camps.get(cid) is not None and camps[cid].advertiser_id in ids) or (cid in launch_adv and launch_adv[cid] in ids)
     start_day, end_day = timeutil.local_date_str(start_utc), timeutil.local_date_str(end_utc - timeutil.timedelta(seconds=1))
     s_naive, e_naive = start_utc.replace(tzinfo=None), end_utc.replace(tzinfo=None)
     # spend per campaign in range
@@ -44,8 +50,9 @@ def _slices(db: Session, start_utc, end_utc) -> dict:
                             .filter(models.PostbackEvent.created_at >= s_naive, models.PostbackEvent.created_at < e_naive)
                             .group_by(models.PostbackEvent.source)):
         rev_by_src[src] = {"revenue": float(rv or 0), "conversions": int(cv or 0), "clicks": int(ck or 0)}
-    src_map = pnl_data.campaign_source_map(db)            # campaign → source
+    src_map = pnl_data.campaign_source_map(db)            # campaign → source (everyone's — shares need the whole picture)
     camps = {c.campaign_id: c for c in db.query(models.CampaignRecord).all()}
+    launch_adv = {cid: adv for cid, adv in db.query(models.LaunchLog.campaign_id, models.LaunchLog.advertiser_id).filter(models.LaunchLog.ok == True)}  # noqa: E712
     accounts = {a.advertiser_id: a for a in db.query(models.AdAccount).all()}
     bcs = {b.bc_id: b for b in db.query(models.BusinessCenter).all()}
     cids_by_src: dict[str, list[str]] = {}
@@ -61,16 +68,26 @@ def _slices(db: Session, start_utc, end_utc) -> dict:
     for src in set(rev_by_src) | set(cids_by_src):
         if src == UNATTRIBUTED:
             continue
-        cids = cids_by_src.get(src, [])
+        all_cids = cids_by_src.get(src, [])
+        cids = [c for c in all_cids if mine(c)]
+        if ids is not None and not cids:
+            continue                                   # none of this source runs on the view's accounts
         sp = sum(spend_by_cid.get(c, 0.0) for c in cids)
-        r = rev_by_src.get(src, {"revenue": 0.0, "conversions": 0, "clicks": 0})
+        r = dict(rev_by_src.get(src, {"revenue": 0.0, "conversions": 0, "clicks": 0}))
+        shared = ids is not None and len(cids) < len(all_cids)
+        if shared:
+            # the view's share of a source it shares with another user: by spend, else by count
+            tot = sum(spend_by_cid.get(c, 0.0) for c in all_cids)
+            w = (sp / tot) if tot > 0 else len(cids) / len(all_cids)
+            r = {"revenue": r["revenue"] * w, "conversions": int(round(r["conversions"] * w)), "clicks": int(round(r["clicks"] * w))}
         if not sp and not r["revenue"]:
             continue
         accs = {camps[c].advertiser_id for c in cids if c in camps}
         src_rows.append({"key": src, "name": src, "sub": (sparks[src].name if src in sparks and sparks[src].name else "") or (f"{len(cids)} campaign{'s' if len(cids) != 1 else ''}" if cids else "no campaign matches"),
                          "spend": sp, "revenue": r["revenue"], "profit": r["revenue"] - sp, "conversions": r["conversions"], "clicks": r["clicks"],
-                         "n": len(cids), "accounts": len(accs), "spark": sparks[src].name if src in sparks else "", "href": f"/status?source={src}&origin=all"})
-    unattributed = rev_by_src.get(UNATTRIBUTED, {"revenue": 0.0, "conversions": 0, "clicks": 0})
+                         "n": len(cids), "accounts": len(accs), "spark": sparks[src].name if src in sparks else "", "href": f"/status?source={src}&origin=all",
+                         "shared": shared})
+    unattributed = rev_by_src.get(UNATTRIBUTED, {"revenue": 0.0, "conversions": 0, "clicks": 0}) if ids is None else {"revenue": 0.0, "conversions": 0, "clicks": 0}
 
     # ---- revenue allocated to campaigns (spend share) → account / BC ----------------------------
     rev_by_cid: dict[str, float] = {}
@@ -86,6 +103,8 @@ def _slices(db: Session, start_utc, end_utc) -> dict:
             conv_by_cid[c] = conv_by_cid.get(c, 0.0) + r["conversions"] * share
     acc_rows_d: dict[str, dict] = {}
     for cid in set(spend_by_cid) | set(rev_by_cid):
+        if not mine(cid):
+            continue
         c = camps.get(cid)
         aid = c.advertiser_id if c else ""
         a = accounts.get(aid)
@@ -109,7 +128,7 @@ def _slices(db: Session, start_utc, end_utc) -> dict:
 
     # ---- by creative (families) ---------------------------------------------------------------
     cr_rows = []
-    for f in creative_perf.families(creative_perf.rows(db, start_utc, end_utc)):
+    for f in creative_perf.families(creative_perf.rows(db, start_utc, end_utc, owner_user_id=(sc.user_id if sc is not None else None))):
         if not f["spend"] and not f["revenue"]:
             continue
         best = f["best"]["c"] if f["best"] else None
@@ -134,7 +153,8 @@ def _slices(db: Session, start_utc, end_utc) -> dict:
     for r in src_rows:
         r["goal"] = goals.get(r["key"], "")
     return {"source": src_rows, "bc": bc_rows, "account": acc_rows, "creative": cr_rows, "spark": sp_rows,
-            "unattributed": unattributed, "unsourced_spend": sum(sp for cid, sp in spend_by_cid.items() if cid not in src_map)}
+            "unattributed": unattributed, "unsourced_spend": sum(sp for cid, sp in spend_by_cid.items() if cid not in src_map and mine(cid)),
+            "sources": {r["key"] for r in src_rows}}
 
 
 @router.get("/pnl")
@@ -143,19 +163,29 @@ def pnl(request: Request, db: Session = Depends(get_db)):
     start, end = request.query_params.get("start"), request.query_params.get("end")
     start_utc, end_utc = timeutil.range_bounds(range_key, start, end)
     length = end_utc - start_utc
-    totals = pnl_data.overall_totals(db, start_utc, end_utc)
-    prior = pnl_data.overall_totals(db, start_utc - length, start_utc)
-    slices = _slices(db, start_utc, end_utc)
+    from .. import scope as scope_mod
+    sc = scope_mod.for_request(request, db)
+    ids = sc.ids
+    totals = pnl_data.overall_totals(db, start_utc, end_utc, ids)
+    prior = pnl_data.overall_totals(db, start_utc - length, start_utc, ids)
+    slices = _slices(db, start_utc, end_utc, sc)
     n_days = max(1, int(round(length.total_seconds() / 86400)))
+    weights = pnl_data.source_weights(db, start_utc, end_utc, ids) if ids is not None else None
     # chart: per day for multi-day ranges, per hour for a single day
     if n_days > 1:
-        days, sp, rv = pnl_data.daily_series(db, start_utc, end_utc)
+        cids = None
+        if ids is not None:
+            cids = [r[0] for r in db.query(models.CampaignRecord.campaign_id).filter(models.CampaignRecord.advertiser_id.in_(list(ids or [""])))] or ["-"]
+        days, sp, rv = pnl_data.daily_series(db, start_utc, end_utc, cids, None, weights)
         chart = {"mode": "day", "labels": days, "spend": sp, "revenue": rv}
     else:
         day = timeutil.local_date_str(start_utc)
-        cids = [r[0] for r in db.query(models.CampaignRecord.campaign_id).all()]
+        cq = db.query(models.CampaignRecord.campaign_id)
+        if ids is not None:
+            cq = cq.filter(models.CampaignRecord.advertiser_id.in_(list(ids or [""])))
+        cids = [r[0] for r in cq.all()]
         hs = hourly.series(db, cids, day)
-        chart = {"mode": "hour", "labels": [f"{h}h" for h in range(24)], "spend": hs["spend"], "revenue": hourly.revenue_series(db, None, day),
+        chart = {"mode": "hour", "labels": [f"{h}h" for h in range(24)], "spend": hs["spend"], "revenue": hourly.revenue_series(db, None, day, weights),
                  "hour_now": timeutil.now_local().hour if range_key == "today" else 24}
     profits = [r - s for s, r in zip(chart["spend"], chart["revenue"])]
     best_i = max(range(len(profits)), key=lambda i: profits[i]) if profits and any(profits) else -1
@@ -168,9 +198,16 @@ def pnl(request: Request, db: Session = Depends(get_db)):
         best = {"label": lab, "profit": profits[best_i]}
     def delta(cur, prev):
         return ((cur - prev) / abs(prev) * 100) if prev else None
-    active_accounts = db.query(func.count(func.distinct(models.SpendSnapshot.advertiser_id))).filter(
-        models.SpendSnapshot.day >= timeutil.local_date_str(start_utc), models.SpendSnapshot.day <= timeutil.local_date_str(end_utc - timeutil.timedelta(seconds=1)), models.SpendSnapshot.spend > 0).scalar() or 0
-    recent = db.query(models.PostbackEvent).order_by(models.PostbackEvent.created_at.desc()).limit(40).all()
+    aq = db.query(func.count(func.distinct(models.SpendSnapshot.advertiser_id))).filter(
+        models.SpendSnapshot.day >= timeutil.local_date_str(start_utc), models.SpendSnapshot.day <= timeutil.local_date_str(end_utc - timeutil.timedelta(seconds=1)), models.SpendSnapshot.spend > 0)
+    if ids is not None:
+        aq = aq.filter(models.SpendSnapshot.advertiser_id.in_(list(ids or [""])))
+    active_accounts = aq.scalar() or 0
+    view_sources = scope_mod.view_sources(db, sc)            # None = every source
+    rq = db.query(models.PostbackEvent).order_by(models.PostbackEvent.created_at.desc())
+    if view_sources is not None:
+        rq = rq.filter(models.PostbackEvent.source.in_(list(view_sources or ["-"])))
+    recent = rq.limit(40).all()
     from .postback import UNATTRIBUTED
     import difflib
     known: dict[str, models.LaunchLog] = {}
@@ -195,8 +232,11 @@ def pnl(request: Request, db: Session = Depends(get_db)):
     tab = request.query_params.get("by", "source")
     if tab not in ("source", "bc", "account", "creative", "spark", "postbacks", "clicks", "funnel"):
         tab = "source"
-    funnel_rows = _funnel_rows(db, start_utc, end_utc)
-    clicks = db.query(models.Click).order_by(models.Click.id.desc()).limit(60).all()
+    funnel_rows = _funnel_rows(db, start_utc, end_utc, view_sources)
+    kq = db.query(models.Click).order_by(models.Click.id.desc())
+    if view_sources is not None:
+        kq = kq.filter(models.Click.source.in_(list(view_sources or ["-"])))
+    clicks = kq.limit(60).all()
     acct_names = {a.advertiser_id: (a.advertiser_name or a.advertiser_id) for a in db.query(models.AdAccount)}
     return render(request, "pnl.html", {
         "title": "P&L", "range_key": range_key, "range_label": RANGE_LABELS.get(range_key, "Custom range"), "start": start or "", "end": end or "",
@@ -204,7 +244,7 @@ def pnl(request: Request, db: Session = Depends(get_db)):
         "epc": (totals["revenue"] / totals["clicks"]) if totals["clicks"] else 0.0, "active_accounts": active_accounts, "best": best, "n_days": n_days,
         "chart_json": json.dumps(chart), "slices": slices, "tab": tab, "recent": recent, "match": match, "clicks": clicks, "acct_names": acct_names,
         "funnel": funnel_rows,
-        "winners": sum(1 for r in slices["source"] if r["profit"] > 0), "n_sources": len(slices["source"]),
+        "winners": sum(1 for r in slices["source"] if r["profit"] > 0), "n_sources": len(slices["source"]), "view": sc,
         "qs": f"range={range_key}" + (f"&start={start}&end={end}" if start and end else ""),
     })
 
@@ -214,7 +254,8 @@ def pnl_export(request: Request, db: Session = Depends(get_db)):
     range_key = request.query_params.get("range", "today")
     start_utc, end_utc = timeutil.range_bounds(range_key, request.query_params.get("start"), request.query_params.get("end"))
     by = request.query_params.get("by", "source")
-    slices = _slices(db, start_utc, end_utc)
+    from .. import scope as scope_mod
+    slices = _slices(db, start_utc, end_utc, scope_mod.for_request(request, db))
     rows = slices.get(by if by in ("source", "bc", "account", "creative", "spark") else "source", [])
     buf = io.StringIO()
     w = csv.writer(buf)
@@ -225,15 +266,19 @@ def pnl_export(request: Request, db: Session = Depends(get_db)):
     return Response(buf.getvalue(), media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="{fname}"'})
 
 
-def _funnel_rows(db: Session, start_utc, end_utc) -> list[dict]:
-    """Lander funnel rows for the range, conversions joined from the postbacks."""
+def _funnel_rows(db: Session, start_utc, end_utc, sources=None) -> list[dict]:
+    """Lander funnel rows for the range, conversions joined from the postbacks.
+    `sources` (a set) keeps only those sources — a user's view; None = all."""
     s_naive, e_naive = start_utc.replace(tzinfo=None), end_utc.replace(tzinfo=None)
     conv: dict[str, dict] = {}
     for src, rv, cv in (db.query(models.PostbackEvent.source, func.sum(models.PostbackEvent.revenue), func.sum(models.PostbackEvent.conversions))
                         .filter(models.PostbackEvent.created_at >= s_naive, models.PostbackEvent.created_at < e_naive)
                         .group_by(models.PostbackEvent.source)):
         conv[src] = {"revenue": float(rv or 0), "conversions": int(cv or 0)}
-    return funnel.rows(db, s_naive, e_naive, conv)
+    rows = funnel.rows(db, s_naive, e_naive, conv)
+    if sources is not None:
+        rows = [r for r in rows if r.get("source") in sources]
+    return rows
 
 
 @router.get("/pnl/funnel.json")
@@ -241,5 +286,7 @@ def pnl_funnel_json(request: Request, db: Session = Depends(get_db)):
     """The funnel tab refreshes itself from here (every minute while open) — no page reload."""
     range_key = request.query_params.get("range", "today")
     start_utc, end_utc = timeutil.range_bounds(range_key, request.query_params.get("start"), request.query_params.get("end"))
-    return {"rows": _funnel_rows(db, start_utc, end_utc), "at": timeutil.now_local().strftime("%H:%M:%S")}
+    from .. import scope as scope_mod
+    sc = scope_mod.for_request(request, db)
+    return {"rows": _funnel_rows(db, start_utc, end_utc, scope_mod.view_sources(db, sc)), "at": timeutil.now_local().strftime("%H:%M:%S")}
 

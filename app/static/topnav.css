@@ -179,3 +179,12 @@ html[data-side="collapsed"] .sn-group { height: 10px; }
 *::-webkit-scrollbar { width: 8px; height: 8px; }
 *::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 4px; }
 *::-webkit-scrollbar-track { background: transparent; }
+
+/* super admin: whose dashboard am I looking at (v116) */
+.viewsw{display:inline-flex;align-items:center;gap:6px;padding:2px 4px 2px 10px;border:1px solid var(--border);border-radius:999px;background:var(--panel);font-size:12px;margin-right:6px}
+.viewsw-user{border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 25%,transparent)}
+.viewsw .vs-lab{color:var(--muted)}
+.viewsw select{background:transparent;color:var(--text);border:0;font-size:12px;font-weight:600;padding:3px 2px;max-width:180px;cursor:pointer}
+.viewsw .vs-team{font-size:11.5px;color:var(--muted);text-decoration:none;padding:3px 8px;border-left:1px solid var(--border)}
+.viewsw .vs-team:hover{color:var(--text)}
+@media(max-width:800px){.viewsw .vs-lab,.viewsw .vs-team{display:none}}

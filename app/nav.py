@@ -57,6 +57,7 @@ JUMP = [
     ("/appeals", "Appeals", "Monitor", "appeal rejected ads"),
     ("/audience", "Audience", "Monitor", "hours weekday heatmap countries"),
     ("/inbox", "Inbox", "Monitor", "alerts notifications attention"),
+    ("/team", "Team", "Monitor", "users per user p&l super admin switch view"),
     ("/assistant", "Assistant", "Monitor", "ask ai claude report chat analyse"),
     ("/super-launcher", "Super Launcher", "Launch", "launch many accounts preset"),
     ("/campaigns/launch", "Create campaign", "Launch", "single campaign launch one account"),

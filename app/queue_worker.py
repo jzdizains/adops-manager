@@ -16,7 +16,7 @@ TRANSIENT_CODES = {"40100", "50000", "HTTP", "APP"}
 
 def enqueue(db: Session, template_id: int, spark_code_id: int | None,
             advertiser_ids: list[str] | None = None, auto_count: int = 0,
-            use_library: bool = False) -> str:
+            use_library: bool = False, launched_by: int | None = None) -> str:
     """Create queue items — explicit accounts, or `auto_count` auto-pick slots
     (account chosen at process time so freshly-freed accounts qualify)."""
     batch_ref = error_messages.new_ref()
@@ -24,13 +24,13 @@ def enqueue(db: Session, template_id: int, spark_code_id: int | None,
         for adv in advertiser_ids:
             db.add(models.LaunchQueueItem(template_id=template_id,
                                           spark_code_id=spark_code_id,
-                                          use_library=use_library,
+                                          use_library=use_library, launched_by=launched_by,
                                           advertiser_id=adv, batch_ref=batch_ref))
     else:
         for _ in range(max(auto_count, 0)):
             db.add(models.LaunchQueueItem(template_id=template_id,
                                           spark_code_id=spark_code_id,
-                                          use_library=use_library,
+                                          use_library=use_library, launched_by=launched_by,
                                           advertiser_id="", batch_ref=batch_ref))
     db.commit()
     return batch_ref
@@ -46,10 +46,24 @@ def process(db: Session, settings: dict | None = None) -> int:
     limit = max(int(settings.get("queue_per_sweep") or 3), 1)
     retry_max = max(int(settings.get("launch_retry_max") or 3), 1)
 
-    items = (db.query(models.LaunchQueueItem)
-             .filter(models.LaunchQueueItem.status == "pending")
-             .order_by(models.LaunchQueueItem.created_at)
-             .limit(limit).all())
+    pending = (db.query(models.LaunchQueueItem)
+               .filter(models.LaunchQueueItem.status == "pending")
+               .order_by(models.LaunchQueueItem.created_at)
+               .limit(limit * 20).all())
+    # fair across users (v116): one item per user per round, oldest first, so a buyer
+    # who queued fifty launches never starves the one who queued two
+    by_user: dict = {}
+    for it in pending:
+        by_user.setdefault(it.launched_by, []).append(it)
+    items = []
+    while len(items) < limit and any(by_user.values()):
+        for uid in list(by_user):
+            if by_user[uid]:
+                items.append(by_user[uid].pop(0))
+                if len(items) >= limit:
+                    break
+            else:
+                by_user.pop(uid)
     if not items:
         return 0
 
@@ -72,6 +86,7 @@ def process(db: Session, settings: dict | None = None) -> int:
         elif item.use_library:
             overrides["creative_source"] = "library"
         fields = launch_mod.synthesize(template, overrides)
+        fields["_launched_by"] = item.launched_by or template.owner_user_id
 
         # resolve target account
         acct = None
@@ -80,7 +95,8 @@ def process(db: Session, settings: dict | None = None) -> int:
                     .filter_by(advertiser_id=item.advertiser_id).first())
         else:
             for cand in eligible_accounts(db, fields.get("account_policy", "new_only"),
-                                          limit=len(used_this_pass) + 1):
+                                          limit=len(used_this_pass) + 1,
+                                          owner_user_id=(item.launched_by or template.owner_user_id)):
                 if cand.advertiser_id not in used_this_pass:
                     acct = cand
                     break

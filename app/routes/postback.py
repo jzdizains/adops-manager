@@ -313,7 +313,7 @@ async def postback(request: Request, db: Session = Depends(get_db)):
         event.forward_status = status
         db.commit()
     if event.revenue:
-        live_log.push("conversion", f"Postback: {source} +${event.revenue:.2f}")
+        live_log.push("conversion", f"Postback: {source} +${event.revenue:.2f}", source=str(source or ""))
     out = {"ok": True}
     if status:
         out["events_api"] = status

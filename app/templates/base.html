@@ -100,6 +100,11 @@
   <header class="top">
     {% if section_tabs %}<nav class="tabs" data-section-tabs>{% for href, label, on in section_tabs %}<a href="{{ href }}" class="{{ 'on' if on else '' }}">{{ label }}</a>{% endfor %}</nav>{% endif %}
     <div class="right">
+      {% if view_switch %}<form method="post" action="/view" class="viewsw {{ 'viewsw-user' if view_switch.mode == 'user' }}" title="Whose dashboard you are looking at — only the super admin has this">
+        <span class="vs-lab">Viewing</span>
+        <select name="value" onchange="this.form.submit()" aria-label="Viewing">{% for o in view_switch.options %}<option value="{{ o.value }}" {{ 'selected' if o.on }}>{{ o.label }}</option>{% endfor %}</select>
+        <a href="/team" class="vs-team" title="Team — P&L per user">Team</a>
+      </form>{% endif %}
       <a href="/jobs" class="jr-top" id="jobsRunning" hidden title="Background jobs running — click for the list"><span class="jr-dot"></span><span class="jr-t">running</span></a>
       <button type="button" class="gsearch" id="cmdkOpen" title="Search or jump to a page (⌘K)">{{ ic('search') }}<span>Search or jump to…</span><kbd>⌘K</kbd></button>
       <a href="/assistant" class="iconbtn {{ 'on' if request.url.path.startswith('/assistant') }}" title="Assistant — ask about your numbers, get changes proposed">{{ ic('sparkle') }}</a>

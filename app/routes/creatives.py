@@ -24,6 +24,9 @@ from ..database import get_db
 from ..settings_store import get_settings
 from ..templating import render
 
+from . import guard
+from .. import scope as scope_mod
+
 router = APIRouter()
 
 CREATIVES_DIR = config.DATA_DIR / "creatives"
@@ -36,9 +39,19 @@ def _safe_name(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]", "_", name or "video.mp4")[:120]
 
 
+def _owned_creatives(db: Session):
+    """Creatives of the workspace this request is acting in (ctx.OWNER, set by the auth
+    middleware); everyone's when no owner is set (background work)."""
+    from .. import ctx as _ctx
+    view = _ctx.VIEW.get()
+    q = db.query(models.Creative)
+    return q.filter(models.Creative.owner_user_id == view) if view is not None else q
+
+
 @router.get("/creatives")
 def creatives_page(request: Request, db: Session = Depends(get_db)):
-    rows = (db.query(models.Creative)
+    sc = scope_mod.for_request(request, db)
+    rows = (sc.owned(db.query(models.Creative), models.Creative)
             .order_by(models.Creative.status, models.Creative.id.desc()).all())
     accounts = {a.advertiser_id: (a.advertiser_name or a.advertiser_id)
                 for a in db.query(models.AdAccount).all()}
@@ -224,7 +237,7 @@ MAX_IMAGE_BYTES = 25 * 1024 * 1024
 
 
 @router.get("/creatives/{creative_id}/file")
-def creative_file(creative_id: int, db: Session = Depends(get_db)):
+def creative_file(creative_id: int, db: Session = Depends(get_db), _own: scope_mod.Scope = Depends(guard.creative_in_view)):
     """Stream a creative's video for in-page preview. FileResponse handles HTTP
     Range requests, so the player can seek/scrub. Only files inside the creatives
     directory are ever served."""
@@ -255,7 +268,7 @@ THUMB_PX = 320
 
 
 @router.get("/creatives/{creative_id}/thumb")
-def creative_thumb(creative_id: int, db: Session = Depends(get_db)):
+def creative_thumb(creative_id: int, db: Session = Depends(get_db), _own: scope_mod.Scope = Depends(guard.creative_in_view)):
     """Small JPEG thumbnail for image creatives (generated once, cached on disk).
     Every grid/strip uses this instead of the original — a 2K PNG decoded at
     native size per tile is what made the browser tab balloon in memory."""
@@ -313,7 +326,7 @@ async def _save_image_upload(db: Session, f: UploadFile, source_prefix: str) -> 
     if not data or len(data) > MAX_IMAGE_BYTES:
         return f"{fname}: {'over 25MB' if data else 'empty file'}", None
     md5 = hashlib.md5(data).hexdigest()
-    dup = db.query(models.Creative).filter_by(md5=md5).first()
+    dup = _owned_creatives(db).filter_by(md5=md5).first()     # a duplicate within THIS workspace only
     if dup is not None:
         return f"{fname}: already on the shelf as “{dup.name}”", dup
     row = models.Creative(name=fname, file_name=fname, md5=md5, source_md5=md5,
@@ -618,7 +631,7 @@ def resume_hf(db: Session) -> int:
 
 
 @router.post("/creatives/{creative_id}/ai-edit")
-async def ai_edit(creative_id: int, request: Request, db: Session = Depends(get_db)):
+async def ai_edit(creative_id: int, request: Request, db: Session = Depends(get_db), _own: scope_mod.Scope = Depends(guard.creative_in_view)):
     import threading
 
     from .. import higgsfield as HF, nanobanana
@@ -689,7 +702,7 @@ def _start_hf(db: Session, form, *, parent, base_name: str):
 
 
 @router.post("/creatives/{creative_id}/ai-retry")
-def ai_retry(creative_id: int, db: Session = Depends(get_db)):
+def ai_retry(creative_id: int, db: Session = Depends(get_db), _own: scope_mod.Scope = Depends(guard.creative_in_view)):
     """Run a failed / interrupted AI edit again with the same prompt, model, size and source."""
     import threading
     from datetime import datetime, timezone
@@ -884,7 +897,7 @@ async def upload_creatives(request: Request, db: Session = Depends(get_db)):
 
         if not do_freshen:
             # plain store — dedupe by exact bytes (the original behaviour)
-            if db.query(models.Creative).filter_by(md5=md5).first():
+            if _owned_creatives(db).filter_by(md5=md5).first():
                 tmp_path.unlink(missing_ok=True)
                 skipped.append(f"{fname}: duplicate (same file already in the library)")
                 continue
@@ -961,7 +974,7 @@ async def upload_creatives(request: Request, db: Session = Depends(get_db)):
 
 @router.post("/creatives/{creative_id}/update")
 async def update_creative(creative_id: int, request: Request,
-                          db: Session = Depends(get_db)):
+                          db: Session = Depends(get_db), _own: scope_mod.Scope = Depends(guard.creative_in_view)):
     form = await request.form()
     row = db.get(models.Creative, creative_id)
     if not row:
@@ -985,7 +998,7 @@ def _image_delete_block(db: Session, row: models.Creative) -> str:
     protected (delete the carousel first, or delete it with its slides)."""
     if row.kind == "image":
         import json as _json
-        for cz in db.query(models.Creative).filter_by(kind="carousel").all():
+        for cz in _owned_creatives(db).filter_by(kind="carousel").all():
             try:
                 if row.id in [int(x) for x in _json.loads(cz.carousel_images or "[]")]:
                     return f"slide in carousel “{cz.name}”"
@@ -1010,10 +1023,11 @@ async def bulk_delete_images(request: Request, db: Session = Depends(get_db)):
     """Delete the ticked images; anything in use is skipped and named."""
     form = await request.form()
     ids = [int(x) for x in form.getlist("ids") if str(x).isdigit()]
+    sc = scope_mod.for_request(request, db)
     done, skipped = 0, []
     for cid in ids:
         row = db.get(models.Creative, cid)
-        if not row or row.kind != "image":
+        if not row or row.kind != "image" or not sc.owns(row):
             continue
         why = _image_delete_block(db, row)
         if why:
@@ -1029,7 +1043,7 @@ async def bulk_delete_images(request: Request, db: Session = Depends(get_db)):
 
 
 @router.post("/creatives/{creative_id}/delete")
-async def delete_creative(request: Request, creative_id: int, db: Session = Depends(get_db)):
+async def delete_creative(request: Request, creative_id: int, db: Session = Depends(get_db), _own: scope_mod.Scope = Depends(guard.creative_in_view)):
     """Delete a creative for good. Carousels: with_images=1 also removes its
     slides (those not used by another carousel). Launched creatives may be
     deleted — TikTok keeps its own copy; their rows vanish from Results, so
@@ -1050,7 +1064,7 @@ async def delete_creative(request: Request, creative_id: int, db: Session = Depe
     if row.kind == "carousel" and str(form.get("with_images") or "") in ("1", "true", "on"):
         mine = _slides_of(row)
         others: set[int] = set()
-        for cz in db.query(models.Creative).filter(models.Creative.kind == "carousel", models.Creative.id != row.id):
+        for cz in _owned_creatives(db).filter(models.Creative.kind == "carousel", models.Creative.id != row.id):
             others.update(_slides_of(cz))
         for iid in mine:
             if iid in others:
@@ -1071,7 +1085,7 @@ async def delete_creative(request: Request, creative_id: int, db: Session = Depe
 # TEXT ON IMAGES — TikTok Sans, baked server-side at native resolution
 # ============================================================================
 @router.post("/creatives/{creative_id}/text/preview")
-async def text_preview(creative_id: int, request: Request, db: Session = Depends(get_db)):
+async def text_preview(creative_id: int, request: Request, db: Session = Depends(get_db), _own: scope_mod.Scope = Depends(guard.creative_in_view)):
     """The SAME renderer as the save, downscaled for the editor stage — so
     the preview is the file, not a CSS approximation of it."""
     from .. import text_overlay
@@ -1097,7 +1111,7 @@ async def text_preview(creative_id: int, request: Request, db: Session = Depends
 
 
 @router.post("/creatives/{creative_id}/text")
-async def add_text(creative_id: int, request: Request, db: Session = Depends(get_db)):
+async def add_text(creative_id: int, request: Request, db: Session = Depends(get_db), _own: scope_mod.Scope = Depends(guard.creative_in_view)):
     from .. import text_overlay
     row = db.get(models.Creative, creative_id)
     if not row or row.kind != "image" or not row.file_path:
@@ -1195,7 +1209,7 @@ AD_TEXT_MAX = 100     # TikTok: ad text 1–100 characters (one caption for the 
 
 
 @router.post("/creatives/{creative_id}/caption")
-async def creative_caption(request: Request, creative_id: int, db: Session = Depends(get_db)):
+async def creative_caption(request: Request, creative_id: int, db: Session = Depends(get_db), _own: scope_mod.Scope = Depends(guard.creative_in_view)):
     """Set / change a carousel's own caption (ad text). Form field `text`; {ok, text} out.
     Allowed after launch too — it only affects launches from now on."""
     from fastapi.responses import JSONResponse
@@ -1305,7 +1319,7 @@ def music_search(request: Request, db: Session = Depends(get_db)):
 
 # ---- shared creative picker (Launch, Presets, Creatives) --------------------
 @router.get("/creatives/{creative_id}/poster")
-def creative_poster(creative_id: int, db: Session = Depends(get_db)):
+def creative_poster(creative_id: int, db: Session = Depends(get_db), _own: scope_mod.Scope = Depends(guard.creative_in_view)):
     """First-frame JPEG for a video creative (ffmpeg, made once, cached on disk).
     Images redirect to /thumb; carousels use their first slide."""
     import subprocess
@@ -1381,8 +1395,9 @@ def creatives_pick(request: Request, db: Session = Depends(get_db)):
         kind = "video"
     state = request.query_params.get("state", "all")
     q = request.query_params.get("q", "").strip().lower()
-    rows = (db.query(models.Creative).filter(models.Creative.kind == kind, models.Creative.status != "processing",
-                                             (models.Creative.error == "") | (models.Creative.error.is_(None)))
+    sc = scope_mod.for_request(request, db)
+    rows = (sc.owned(db.query(models.Creative), models.Creative).filter(models.Creative.kind == kind, models.Creative.status != "processing",
+                                                                        (models.Creative.error == "") | (models.Creative.error.is_(None)))
             .order_by(models.Creative.id.desc()).all())
     # all-time results per creative (DB only)
     start = timeutil.local_midnight_utc(-365); end = timeutil.local_midnight_utc(1)
@@ -1444,7 +1459,8 @@ async def creatives_bulk(request: Request, db: Session = Depends(get_db)):
     action = form.get("action", "")
     ids = [int(x) for x in str(form.get("ids", "")).replace(" ", "").split(",") if x.isdigit()]
     label = str(form.get("label", "")).strip().lower()[:40]
-    rows = db.query(models.Creative).filter(models.Creative.id.in_(ids)).all() if ids else []
+    sc = scope_mod.for_request(request, db)
+    rows = sc.owned(db.query(models.Creative), models.Creative).filter(models.Creative.id.in_(ids)).all() if ids else []
     n = 0
     for r in rows:
         if action == "archive":
@@ -1477,10 +1493,10 @@ async def creatives_bulk(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/creatives/labels.json")
-def creatives_labels(db: Session = Depends(get_db)):
+def creatives_labels(db: Session = Depends(get_db), sc: scope_mod.Scope = Depends(guard.view)):
     from fastapi.responses import JSONResponse
     counts: dict[str, int] = {}
-    for (labels,) in db.query(models.Creative.labels).filter(models.Creative.labels != "", models.Creative.labels.isnot(None)):
+    for (labels,) in sc.owned(db.query(models.Creative.labels), models.Creative).filter(models.Creative.labels != "", models.Creative.labels.isnot(None)):
         for l in (labels or "").split(","):
             if l:
                 counts[l] = counts.get(l, 0) + 1
@@ -1488,7 +1504,7 @@ def creatives_labels(db: Session = Depends(get_db)):
 
 
 @router.get("/creatives/{creative_id}/detail")
-def creative_detail(creative_id: int, db: Session = Depends(get_db)):
+def creative_detail(creative_id: int, db: Session = Depends(get_db), _own: scope_mod.Scope = Depends(guard.creative_in_view)):
     """Everything the creative side panel shows: results (today / all time,
     per account), where it ran, variants, note, labels, upload time."""
     from fastapi.responses import JSONResponse
@@ -1525,7 +1541,7 @@ def creative_detail(creative_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/creatives/{creative_id}/rename")
-async def creative_rename(request: Request, creative_id: int, db: Session = Depends(get_db)):
+async def creative_rename(request: Request, creative_id: int, db: Session = Depends(get_db), _own: scope_mod.Scope = Depends(guard.creative_in_view)):
     from fastapi.responses import JSONResponse
     form = await request.form()
     r = db.get(models.Creative, creative_id)

@@ -73,19 +73,18 @@ def resync_structure(db: Session) -> dict:
     """Re-pull the BC list + account↔BC mapping with the stored token — the
     same sync 'Connect' runs. Heals: BCs synced before multi-BC support,
     accounts whose access was lost/regained, and BC ownership changes."""
-    acct = (db.query(models.AdAccount)
-            .filter(models.AdAccount.access_token != "").first())
-    if not acct:
-        return {"count": 0, "bc_count": 0}
     from .routes.oauth import sync_accounts  # local import — no cycle at load time
-    return sync_accounts(db, acct.access_token, acct.refresh_token or "",
-                         acct.token_expires_at, acct.refresh_expires_at)
+    total = {"count": 0, "bc_count": 0}
+    for token, acct in queries.distinct_tokens(db):      # every connected TikTok login (v116)
+        r = sync_accounts(db, token, acct.refresh_token or "", acct.token_expires_at, acct.refresh_expires_at,
+                          user_id=acct.owner_user_id)
+        total["count"] += int(r.get("count") or 0); total["bc_count"] += int(r.get("bc_count") or 0)
+    return total
 
 
 def sync_bc_balances(db: Session) -> int:
     """Refresh every BC wallet balance. Returns how many BCs were updated."""
-    token = queries.any_access_token(db)
-    if not token:
+    if not queries.any_access_token(db):
         return 0
     updated = 0
     now = datetime.now(timezone.utc)
@@ -93,6 +92,7 @@ def sync_bc_balances(db: Session) -> int:
     for bc in db.query(models.BusinessCenter).all():
         if bc.bc_id in skip:
             continue
+        token = queries.token_for_bc(db, bc.bc_id)          # the login that can see this BC
         try:
             bal, cur = tiktok_api.parse_bc_balance(
                 tiktok_api.get_bc_balance(token, bc.bc_id))
@@ -128,8 +128,7 @@ def sync_account_balances(db: Session) -> int:
     """Refresh ad-account balances per BC via /advertiser/balance/get/."""
     import json as _json
     import time as _time
-    token = queries.any_access_token(db)
-    if not token:
+    if not queries.any_access_token(db):
         return 0
     accounts = {a.advertiser_id: a for a in db.query(models.AdAccount).all()}
     updated = 0
@@ -138,6 +137,7 @@ def sync_account_balances(db: Session) -> int:
     for bc in db.query(models.BusinessCenter).all():
         if bc.bc_id in skip:
             continue
+        token = queries.token_for_bc(db, bc.bc_id)          # the login that can see this BC
         page = 1
         while True:
             try:

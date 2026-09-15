@@ -62,14 +62,16 @@ def block_reason(a, bc, punished: dict[str, str]) -> str:
 
 @router.get("/super-launcher")
 def page(request: Request, db: Session = Depends(get_db)):
-    accounts = (db.query(models.AdAccount).filter(models.AdAccount.enabled == True)  # noqa: E712
-                .order_by(models.AdAccount.advertiser_name).all())
-    presets = db.query(models.Template).order_by(models.Template.name).all()
-    sparks = (db.query(models.SparkCode).filter_by(status="active")
+    from .. import scope as scope_mod
+    sc = scope_mod.for_request(request, db)                 # the view's accounts, presets, sparks, creatives
+    accounts = [a for a in (db.query(models.AdAccount).filter(models.AdAccount.enabled == True)  # noqa: E712
+                            .order_by(models.AdAccount.advertiser_name).all()) if sc.allows(a.advertiser_id)]
+    presets = sc.owned(db.query(models.Template), models.Template).order_by(models.Template.name).all()
+    sparks = (sc.owned(db.query(models.SparkCode), models.SparkCode).filter_by(status="active")
               .order_by(models.SparkCode.name).all())
-    creatives_available = (db.query(models.Creative)
+    creatives_available = (sc.owned(db.query(models.Creative), models.Creative)
                            .filter_by(status="available", kind="video").count())
-    carousels_available = (db.query(models.Creative)
+    carousels_available = (sc.owned(db.query(models.Creative), models.Creative)
                            .filter_by(status="available", kind="carousel").count())
     # preset id -> destination label, for the auto-lock UI
     dest_labels = {}
@@ -157,16 +159,19 @@ def preset_facts(presets) -> dict:
     return out
 
 
-def eligible_accounts(db: Session, policy: str, limit: int) -> list[models.AdAccount]:
+def eligible_accounts(db: Session, policy: str, limit: int, owner_user_id: int | None = None) -> list[models.AdAccount]:
     """Auto-pick: which accounts qualify under the preset's account policy.
 
     new_only — never had ANY campaign (no CampaignRecord, no successful launch)
     reuse    — no ACTIVE campaign right now
     Both skip disabled accounts and accounts whose status isn't OK.
+    `owner_user_id` (v116) keeps it to one user's workspace — a buyer's auto-pick never
+    reaches another buyer's fresh accounts.
     """
-    accounts = (db.query(models.AdAccount)
-                .filter(models.AdAccount.enabled == True)  # noqa: E712
-                .order_by(models.AdAccount.advertiser_name).all())
+    aq = db.query(models.AdAccount).filter(models.AdAccount.enabled == True)  # noqa: E712
+    if owner_user_id is not None:
+        aq = aq.filter(models.AdAccount.owner_user_id == owner_user_id)
+    accounts = aq.order_by(models.AdAccount.advertiser_name).all()
     with_campaigns = {r[0] for r in db.query(models.CampaignRecord.advertiser_id).distinct()}
     with_active = {r[0] for r in (db.query(models.CampaignRecord.advertiser_id)
                                   .filter(models.CampaignRecord.operation_status == "ENABLE")
@@ -203,8 +208,10 @@ async def launch(request: Request, db: Session = Depends(get_db)):
     mode = form.get("mode", "manual")
     if not template_id:
         return RedirectResponse("/super-launcher?err=pick", status_code=303)
+    from .. import scope as scope_mod
+    sc = scope_mod.for_request(request, db)
     template = db.get(models.Template, int(template_id))
-    if not template:
+    if not template or not sc.owns(template):
         return RedirectResponse("/super-launcher?err=preset", status_code=303)
 
     def _int(name, default=0):
@@ -230,6 +237,11 @@ async def launch(request: Request, db: Session = Depends(get_db)):
     if apg > 0:
         overrides["ads_per_group"] = apg              # ads per ad group
     fields = launch_mod.synthesize(template, overrides)
+    fields["_launched_by"] = sc.owner_for_new           # whose workspace the launch (and any claimed account) belongs to
+    if spark_code_id:
+        sp_row = db.get(models.SparkCode, int(spark_code_id))
+        if sp_row is None or not sc.owns(sp_row):
+            return RedirectResponse("/super-launcher?err=Pick+a+spark+code.", status_code=303)
 
     use_queue = form.get("use_queue") is not None
     spark_id = int(spark_code_id) if spark_code_id else None
@@ -255,19 +267,19 @@ async def launch(request: Request, db: Session = Depends(get_db)):
         if queue_ok:
             from .. import queue_worker
             queue_worker.enqueue(db, template.id, spark_id, auto_count=count,
-                                 use_library=use_library)
+                                 use_library=use_library, launched_by=sc.owner_for_new)
             return RedirectResponse("/queue?ok=queued", status_code=303)
-        accounts = eligible_accounts(db, fields.get("account_policy", "new_only"), count)
+        accounts = eligible_accounts(db, fields.get("account_policy", "new_only"), count, owner_user_id=sc.user_id)
         if not accounts:
             return RedirectResponse("/super-launcher?err=noeligible", status_code=303)
     else:
-        advertiser_ids = form.getlist("advertiser_ids")
+        advertiser_ids = [a for a in form.getlist("advertiser_ids") if sc.allows(a)]   # only the view's accounts
         if not advertiser_ids:
             return RedirectResponse("/super-launcher?err=pick", status_code=303)
         if queue_ok:
             from .. import queue_worker
             queue_worker.enqueue(db, template.id, spark_id, advertiser_ids=advertiser_ids,
-                                 use_library=use_library)
+                                 use_library=use_library, launched_by=sc.owner_for_new)
             return RedirectResponse("/queue?ok=queued", status_code=303)
         # preserve the picked order, dedupe
         seen: set = set()
@@ -278,10 +290,10 @@ async def launch(request: Request, db: Session = Depends(get_db)):
 
     if assign_mode:
         if creative_mode == "pick":
-            by_cid = {c.id: c for c in db.query(models.Creative).filter(models.Creative.id.in_(picked_ids))}
+            by_cid = {c.id: c for c in sc.owned(db.query(models.Creative), models.Creative).filter(models.Creative.id.in_(picked_ids))}
             avail = [by_cid[i] for i in picked_ids if i in by_cid]
         else:
-            avail = (db.query(models.Creative)
+            avail = (sc.owned(db.query(models.Creative), models.Creative)
                      .filter_by(status="available", kind=("carousel" if creative_mode == "carousel" else "video"), archived=False)
                      .order_by(models.Creative.id).all())
         import math

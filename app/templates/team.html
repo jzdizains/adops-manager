@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head" style="margin-bottom:10px;">
+  <div><h1>Team</h1>
+    <div class="muted" style="font-size:12.5px;">P&amp;L per user — each row is exactly what that user's own Home shows. Open a view to see the dashboard as they see it.</div></div>
+  <div class="actions">
+    <div class="seg">{% for k, lab in labels.items() %}<a href="/team?range={{ k }}" class="{{ 'on' if k == range_key }}">{{ lab }}</a>{% endfor %}</div>
+    <a class="btn" href="/settings#users">Users</a>
+  </div>
+</div>
+
+<div class="kpis kpis-4" style="margin-bottom:12px;">
+  <div class="kpi"><div class="lab">Profit · everyone</div><div class="val"><span class="{{ 'good' if total.profit >= 0 else 'bad' }}">{{ '+' if total.profit > 0 }}{{ '−' if total.profit < 0 }}${{ "%.2f"|format(total.profit|abs) }}</span></div><div class="sub">revenue − spend</div></div>
+  <div class="kpi"><div class="lab">Spend</div><div class="val">${{ "%.2f"|format(total.spend) }}</div><div class="sub">TikTok</div></div>
+  <div class="kpi"><div class="lab">Revenue</div><div class="val">${{ "%.2f"|format(total.revenue) }}</div><div class="sub">postbacks</div></div>
+  <div class="kpi"><div class="lab">Users</div><div class="val">{{ rows|length }}</div><div class="sub">{% if unowned %}<span style="color:var(--warn);">{{ unowned }} account{{ 's' if unowned != 1 }} with no owner</span>{% else %}every account has an owner{% endif %}</div></div>
+</div>
+
+<div class="card" style="padding:0;overflow:hidden;">
+<div class="table-wrap"><table class="table">
+  <thead><tr><th>User</th><th class="num">Accounts</th><th class="num">Live campaigns</th><th class="num">Spend</th><th class="num">Revenue</th><th class="num">Profit</th><th class="num">ROAS</th><th class="num">Conv.</th><th></th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+  <tr>
+    <td><b>{{ r.user.email }}</b>{% if r.is_me %} <span class="pill dim">you</span>{% endif %}{% if not r.user.active %} <span class="pill mute">inactive</span>{% endif %}{% if r.user.is_admin and not r.is_me %} <span class="pill dim">admin</span>{% endif %}</td>
+    <td class="num">{{ r.accounts }}</td>
+    <td class="num">{{ r.live }}</td>
+    <td class="num">${{ "%.2f"|format(r.spend) }}</td>
+    <td class="num">${{ "%.2f"|format(r.revenue) }}</td>
+    <td class="num"><span class="{{ 'good' if r.profit > 0 else ('bad' if r.profit < 0 else '') }}">{{ '+' if r.profit > 0 }}{{ '−' if r.profit < 0 }}${{ "%.2f"|format(r.profit|abs) }}</span></td>
+    <td class="num">{{ "%.2f"|format(r.roas) }}×</td>
+    <td class="num">{{ r.conversions }}</td>
+    <td class="num"><form method="post" action="/view" style="display:inline;"><input type="hidden" name="value" value="u:{{ r.user.id }}"><button class="btn sm" type="submit" title="See the dashboard exactly as this user sees it">{{ 'My view' if r.is_me else 'Open view' }} →</button></form></td>
+  </tr>
+  {% else %}
+  <tr><td colspan="9" class="muted">No users yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+</div>
+<div class="muted" style="font-size:12px;margin-top:8px;">A source shared by two users (the same spark code on both their accounts) is split by each side's spend, so the rows add up to the company total. Revenue that matches no campaign is counted in "everyone" only.</div>
+{% endblock %}

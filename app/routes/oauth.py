@@ -22,6 +22,18 @@ from ..templating import render
 router = APIRouter()
 
 
+def _owner_for(request: Request, db: Session) -> int | None:
+    """Whose workspace a TikTok login connects into. /oauth/callback is a public path
+    (TikTok redirects there), so the auth middleware hasn't stamped the user — read the
+    session directly. None (no session) leaves the rows for the startup backfill."""
+    from . import auth as auth_mod
+    from .. import scope as scope_mod
+    me = getattr(getattr(request, "state", None), "user", None) or auth_mod.current_user(request, db)
+    if me is None:
+        return None
+    return scope_mod.current(request, db, me).owner_for_new
+
+
 @router.get("/oauth/connect")
 def connect(request: Request):
     state = secrets.token_urlsafe(16)
@@ -49,7 +61,8 @@ def callback(request: Request, db: Session = Depends(get_db)):
 
     result = sync_accounts(db, access_token, refresh_token,
                            datetime.now(timezone.utc) + timedelta(seconds=expires_in),
-                           datetime.now(timezone.utc) + timedelta(seconds=refresh_expires))
+                           datetime.now(timezone.utc) + timedelta(seconds=refresh_expires),
+                           user_id=_owner_for(request, db))
     return render(request, "oauth_result.html", {"ok": True, "detail":
                   f"Connected. Synced {result['count']} ad account(s)"
                   + (f" across {result['bc_count']} Business Center(s)" if result.get("bc_count") else "") + "."})
@@ -57,9 +70,15 @@ def callback(request: Request, db: Session = Depends(get_db)):
 
 def sync_accounts(db: Session, access_token: str, refresh_token: str = "",
                   token_expires_at: datetime | None = None,
-                  refresh_expires_at: datetime | None = None) -> dict:
+                  refresh_expires_at: datetime | None = None, user_id: int | None = None) -> dict:
     """Pull the advertiser list (BC assets preferred, OAuth advertisers as
-    fallback) and upsert AdAccount rows. The shared token lands on every row."""
+    fallback) and upsert AdAccount rows. The login's token lands on every row it lists.
+
+    v116 — several TikTok logins, one per user: everything this login lists goes into
+    `user_id`'s workspace (new accounts and BCs; an account another user already owns
+    keeps its owner). Retiring "missing" accounts and BCs is confined to what THIS
+    login had listed before (same token or same owner) — another user's login never
+    touches this user's accounts."""
     import time as _time
 
     advertisers: list[dict] = []   # each: {advertiser_id, advertiser_name, bc_id}
@@ -89,6 +108,9 @@ def sync_accounts(db: Session, access_token: str, refresh_token: str = "",
         bc_row.name = info.get("name", info.get("bc_name", "")) or bc_row.name
         bc_row.status = str(info.get("status", "")) or bc_row.status
         bc_row.last_synced_at = now
+        bc_row.access_token = access_token            # the login that can see this BC
+        if bc_row.owner_user_id is None and user_id is not None:
+            bc_row.owner_user_id = user_id
         try:
             bal, cur = tiktok_api.parse_bc_balance(
                 tiktok_api.get_bc_balance(access_token, bc_id))
@@ -122,10 +144,14 @@ def sync_accounts(db: Session, access_token: str, refresh_token: str = "",
                                f"(code {e.code}: {str(e.message)[:60]})")
         _time.sleep(0.15)            # gentle throttle between BCs (rate limits)
     db.commit()
-    # BCs that vanished from the login's list: mark, don't delete
+    # BCs that vanished from THIS login's list: mark, don't delete — only the BCs this
+    # login (or this user) had listed before; other users' BCs are not this login's to judge
     if fetch_complete and bcs is not None:
         for bc_row in db.query(models.BusinessCenter).all():
-            if bc_row.bc_id not in bc_ids:
+            theirs = (bc_row.access_token and bc_row.access_token == access_token) or \
+                     (user_id is not None and bc_row.owner_user_id == user_id) or \
+                     (not bc_row.access_token and bc_row.owner_user_id is None)
+            if theirs and bc_row.bc_id not in bc_ids:
                 bc_row.status = "ACCESS_LOST"
     if not advertisers:
         try:
@@ -144,6 +170,9 @@ def sync_accounts(db: Session, access_token: str, refresh_token: str = "",
                 row.advertiser_id not in bc_members[row.owner_bc_id]:
             row.owner_bc_id = ""     # unknown until its real BC lists it
 
+    # what this login had before (the retire step below is confined to these)
+    mine_before = {r.advertiser_id for r in db.query(models.AdAccount)
+                   if (r.access_token and r.access_token == access_token) or (user_id is not None and r.owner_user_id == user_id)}
     seen_ids: set[str] = set()
     for adv in advertisers:
         if not adv["advertiser_id"]:
@@ -151,11 +180,13 @@ def sync_accounts(db: Session, access_token: str, refresh_token: str = "",
         seen_ids.add(adv["advertiser_id"])
         row = db.query(models.AdAccount).filter_by(advertiser_id=adv["advertiser_id"]).first()
         if not row:
-            row = models.AdAccount(advertiser_id=adv["advertiser_id"])
+            row = models.AdAccount(advertiser_id=adv["advertiser_id"], owner_user_id=user_id)
             db.add(row)
         elif row.status == "ACCESS_LOST":
             row.enabled = True         # access came back — reactivate
             row.status = ""
+        if row.owner_user_id is None and user_id is not None:
+            row.owner_user_id = user_id
         row.advertiser_name = adv["advertiser_name"] or row.advertiser_name
         row.access_token = access_token
         row.refresh_token = refresh_token or row.refresh_token
@@ -168,7 +199,7 @@ def sync_accounts(db: Session, access_token: str, refresh_token: str = "",
     # complete (a partial/failed fetch must never mass-disable real accounts).
     if fetch_complete and seen_ids:
         for row in db.query(models.AdAccount).all():
-            if row.advertiser_id not in seen_ids and row.status != "ACCESS_LOST":
+            if row.advertiser_id in mine_before and row.advertiser_id not in seen_ids and row.status != "ACCESS_LOST":
                 row.enabled = False
                 row.status = "ACCESS_LOST"
     db.commit()
@@ -250,7 +281,8 @@ def manual_connect(request: Request, auth_code: str = Form(""), access_token: st
         return render(request, "oauth_result.html", {"ok": False,
                       "detail": "Paste either an auth code or an access token."})
     try:
-        result = sync_accounts(db, access_token, refresh_token, expires_at, refresh_expires_at)
+        result = sync_accounts(db, access_token, refresh_token, expires_at, refresh_expires_at,
+                               user_id=_owner_for(request, db))
     except tiktok_api.TikTokError as e:
         return render(request, "oauth_result.html", {"ok": False,
                       "detail": f"Token rejected by TikTok (code {e.code}): {e.message}"})
@@ -264,12 +296,18 @@ def manual_connect(request: Request, auth_code: str = Form(""), access_token: st
 
 
 @router.post("/oauth/sync-accounts")
-def resync(db: Session = Depends(get_db)):
-    token = queries.any_access_token(db)
-    if not token:
+def resync(request: Request, db: Session = Depends(get_db)):
+    """Re-pull BCs + accounts — for every connected TikTok login on "Everyone", for the
+    view's own login inside a user's view."""
+    from .. import scope as scope_mod
+    sc = scope_mod.for_request(request, db)
+    logins = queries.distinct_tokens(db)
+    if not sc.everything:
+        mine = queries.token_for_user(db, sc.user_id)
+        logins = [(t, a) for t, a in logins if t == mine]
+    if not logins:
         return RedirectResponse("/accounts?err=notoken", status_code=303)
-    acct = db.query(models.AdAccount).filter(models.AdAccount.access_token != "").first()
-    sync_accounts(db, token, acct.refresh_token if acct else "",
-                  acct.token_expires_at if acct else None,
-                  acct.refresh_expires_at if acct else None)
+    for token, acct in logins:
+        sync_accounts(db, token, acct.refresh_token or "", acct.token_expires_at, acct.refresh_expires_at,
+                      user_id=acct.owner_user_id)
     return RedirectResponse("/accounts?ok=synced", status_code=303)

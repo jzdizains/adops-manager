@@ -44,13 +44,21 @@ if config.DATABASE_URL.startswith("sqlite"):
 # exist so FUTURE columns can be added without wiping the live DB.
 schema_additions: dict[str, dict[str, str]] = {
     "lander_events": {"via": "VARCHAR DEFAULT ''"},
+    # per-user workspaces (v116): every user-made thing carries its owner (the table keys
+    # below are unique — a repeated key in this literal would silently drop the earlier one)
+    "business_centers": {"access_token": "TEXT DEFAULT ''", "owner_user_id": "INTEGER"},
+    "display_cards": {"owner_user_id": "INTEGER"},
+    "ad_texts": {"owner_user_id": "INTEGER"},
+    "spark_code_groups": {"owner_user_id": "INTEGER"},
+    "tags": {"owner_user_id": "INTEGER"},
     # example: "templates": {"campaign_name_pattern": "TEXT DEFAULT ''"},
-    "templates": {"campaign_name_pattern": "TEXT DEFAULT ''"},
+    "templates": {"campaign_name_pattern": "TEXT DEFAULT ''", "owner_user_id": "INTEGER"},
     "jobs": {"cancel_requested": "BOOLEAN DEFAULT 0", "quiet": "BOOLEAN DEFAULT 0"},
     "ad_accounts": {"balance": "REAL DEFAULT 0", "enabled": "BOOLEAN DEFAULT 1",
-                    "error_count": "INTEGER DEFAULT 0", "cooldown_until": "DATETIME"},
-    "spark_codes": {"use_count": "INTEGER DEFAULT 0", "source": "TEXT DEFAULT ''"},
-    "launch_queue": {"use_library": "BOOLEAN DEFAULT 0"},
+                    "error_count": "INTEGER DEFAULT 0", "cooldown_until": "DATETIME",
+                    "owner_user_id": "INTEGER"},
+    "spark_codes": {"use_count": "INTEGER DEFAULT 0", "source": "TEXT DEFAULT ''", "owner_user_id": "INTEGER"},
+    "launch_queue": {"use_library": "BOOLEAN DEFAULT 0", "launched_by": "INTEGER"},
     # Events API loop: per-event postbacks land on live DBs untouched
     "postback_events": {
         "txn": "TEXT DEFAULT ''",
@@ -79,6 +87,7 @@ schema_additions: dict[str, dict[str, str]] = {
         "is_smart_plus": "BOOLEAN DEFAULT 0",
     },
     "creatives": {
+        "owner_user_id": "INTEGER",
         "ad_text": "TEXT DEFAULT ''",
         "ai_parent_id": "INTEGER",
         "ai_size": "TEXT DEFAULT ''",

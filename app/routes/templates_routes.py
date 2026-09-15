@@ -116,7 +116,10 @@ def parse_form(form) -> dict:
     return {"top": top, "blob": blob}
 
 
-def _form_ctx(db: Session) -> dict:
+def _form_ctx(db: Session, sc=None) -> dict:
+    from .. import scope as scope_mod
+    if sc is None:
+        sc = scope_mod.Scope(mode="all", ids=None)
     import json as _json
 
     from .launch import (DEST_LABELS, GOAL_LABELS, OBJECTIVE_OPTIONS,
@@ -140,20 +143,20 @@ def _form_ctx(db: Session) -> dict:
         "spending_power_options": SPENDING_POWER_OPTIONS,
         "special_industries": SPECIAL_INDUSTRIES,
         "bid_strategy_options": BID_STRATEGY_OPTIONS,
-        "pixels": db.query(models.PixelRecord)
-                    .order_by(models.PixelRecord.pixel_name).all(),
-        "carousels": db.query(models.Creative).filter_by(kind="carousel")
+        "pixels": scope_mod.pixels_in_view(db, sc, db.query(models.PixelRecord)
+                                           .order_by(models.PixelRecord.pixel_name).all()),
+        "carousels": sc.owned(db.query(models.Creative), models.Creative).filter_by(kind="carousel")
                        .order_by(models.Creative.status, models.Creative.name).all(),
-        "videos": db.query(models.Creative).filter(models.Creative.kind == "video",
-                                                   models.Creative.status.in_(("available", "used")))
+        "videos": sc.owned(db.query(models.Creative), models.Creative).filter(models.Creative.kind == "video",
+                                                                              models.Creative.status.in_(("available", "used")))
                     .order_by(models.Creative.status, models.Creative.name).all(),
-        "sparks": db.query(models.SparkCode).filter_by(status="active")
+        "sparks": sc.owned(db.query(models.SparkCode), models.SparkCode).filter_by(status="active")
                     .order_by(models.SparkCode.name).all(),
         # pages/forms deduped BY NAME with per-name account counts — the preset
         # stores the name; launches resolve each account's own copy
-        "instant_pages": _assets_by_name(db.query(models.InstantPage).all()),
-        "lead_forms": _assets_by_name(db.query(models.LeadForm).all()),
-        "display_cards": db.query(models.DisplayCard).order_by(models.DisplayCard.name).all(),
+        "instant_pages": _assets_by_name([r for r in db.query(models.InstantPage).all() if sc.allows(r.owner_advertiser_id)]),
+        "lead_forms": _assets_by_name([r for r in db.query(models.LeadForm).all() if sc.allows(r.owner_advertiser_id)]),
+        "display_cards": sc.owned(db.query(models.DisplayCard), models.DisplayCard).order_by(models.DisplayCard.name).all(),
     }
 
 
@@ -168,7 +171,9 @@ def _assets_by_name(rows) -> list[dict]:
 
 @router.get("/presets")
 def list_presets(request: Request, db: Session = Depends(get_db)):
-    presets = db.query(models.Template).order_by(models.Template.name).all()
+    from .. import scope as scope_mod
+    sc = scope_mod.for_request(request, db)
+    presets = sc.owned(db.query(models.Template), models.Template).order_by(models.Template.name).all()
     rows = []
     for p in presets:
         try:
@@ -188,7 +193,7 @@ def list_presets(request: Request, db: Session = Depends(get_db)):
     perf: dict[str, dict] = {}
     for lg in db.query(models.LaunchLog).filter(models.LaunchLog.ok == True, models.LaunchLog.campaign_id != ""):  # noqa: E712
         c = camps.get(lg.campaign_id)
-        if not c:
+        if not c or not sc.allows(c.advertiser_id):
             continue
         p = perf.setdefault(lg.template_name, {"spend": 0.0, "revenue": 0.0, "live": 0})
         sp = float(c.spend_today or 0)
@@ -224,21 +229,24 @@ def _usage(db: Session) -> dict:
 
 @router.get("/presets/new")
 def new_preset(request: Request, db: Session = Depends(get_db)):
+    from .. import scope as scope_mod
     return render(request, "template_form.html", {
-        "t": None, "blob": {}, "title": "New preset", "usage": None, **_form_ctx(db)})
+        "t": None, "blob": {}, "title": "New preset", "usage": None, **_form_ctx(db, scope_mod.for_request(request, db))})
 
 
 @router.get("/presets/{preset_id}/edit")
 def edit_preset(request: Request, preset_id: int, db: Session = Depends(get_db)):
+    from .. import scope as scope_mod
+    sc = scope_mod.for_request(request, db)
     t = db.get(models.Template, preset_id)
-    if not t:
+    if not t or not sc.owns(t):
         return RedirectResponse("/presets", status_code=303)
     try:
         blob = json.loads(t.adgroup_settings or "{}")
     except json.JSONDecodeError:
         blob = {}
     return render(request, "template_form.html", {
-        "t": t, "blob": blob, "title": f"Edit · {t.name}", "usage": _usage(db).get(t.name), **_form_ctx(db)})
+        "t": t, "blob": blob, "title": f"Edit · {t.name}", "usage": _usage(db).get(t.name), **_form_ctx(db, sc)})
 
 
 @router.post("/presets/save")
@@ -246,9 +254,13 @@ async def save_preset(request: Request, db: Session = Depends(get_db)):
     form = await request.form()
     parsed = parse_form(form)
     preset_id = form.get("preset_id")
+    from .. import scope as scope_mod
+    sc = scope_mod.for_request(request, db)
     t = db.get(models.Template, int(preset_id)) if preset_id else None
+    if t is not None and not sc.owns(t):
+        return RedirectResponse("/presets?err=notyours", status_code=303)
     if not t:
-        t = models.Template()
+        t = models.Template(owner_user_id=sc.owner_for_new)
         db.add(t)
     for k, v in parsed["top"].items():
         setattr(t, k, v)
@@ -258,19 +270,24 @@ async def save_preset(request: Request, db: Session = Depends(get_db)):
 
 
 @router.post("/presets/{preset_id}/delete")
-def delete_preset(preset_id: int, db: Session = Depends(get_db)):
+def delete_preset(request: Request, preset_id: int, db: Session = Depends(get_db)):
+    from .. import scope as scope_mod
+    sc = scope_mod.for_request(request, db)
     t = db.get(models.Template, preset_id)
-    if t:
+    if t and sc.owns(t):
         db.delete(t)
         db.commit()
     return RedirectResponse("/presets?ok=deleted", status_code=303)
 
 
 @router.post("/presets/{preset_id}/duplicate")
-def duplicate_preset(preset_id: int, db: Session = Depends(get_db)):
+def duplicate_preset(request: Request, preset_id: int, db: Session = Depends(get_db)):
+    from .. import scope as scope_mod
+    sc = scope_mod.for_request(request, db)
     t = db.get(models.Template, preset_id)
-    if t:
+    if t and sc.owns(t):
         copy = models.Template(
+            owner_user_id=sc.owner_for_new,
             name=f"{t.name} (copy)",
             objective_type=t.objective_type,
             campaign_budget_mode=t.campaign_budget_mode,

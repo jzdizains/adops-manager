@@ -15,7 +15,17 @@ from .. import models, pnl_data, queries, spark_web_api, timeutil
 from ..database import get_db
 from ..templating import render
 
+from . import guard
+from .. import scope as scope_mod
+
 router = APIRouter()
+
+
+def _count_launched(db: Session, since_utc, ids) -> int:
+    q = db.query(models.LaunchLog).filter(models.LaunchLog.ok == True, models.LaunchLog.created_at >= since_utc.replace(tzinfo=None))  # noqa: E712
+    if ids is not None:
+        q = q.filter(models.LaunchLog.advertiser_id.in_(list(ids or [""])))
+    return q.count()
 
 
 @router.get("/")
@@ -28,11 +38,17 @@ def overview(request: Request, db: Session = Depends(get_db)):
     from .. import inbox as inbox_mod
     from . import super_launcher as sl
 
+    from .. import scope as scope_mod
+    sc = scope_mod.for_request(request, db)                 # whose dashboard this is
+    ids = sc.ids                                            # None = everyone
     start_utc, end_utc = timeutil.range_bounds("today")
     y_start, y_end = timeutil.range_bounds("yesterday")
-    kpis = pnl_data.overall_totals(db, start_utc, end_utc)
-    ykpis = pnl_data.overall_totals(db, y_start, y_end)
-    tt_clicks = int(db.query(func.coalesce(func.sum(models.CampaignRecord.clicks), 0)).scalar() or 0)
+    kpis = pnl_data.overall_totals(db, start_utc, end_utc, ids)
+    ykpis = pnl_data.overall_totals(db, y_start, y_end, ids)
+    cq = db.query(func.coalesce(func.sum(models.CampaignRecord.clicks), 0))
+    if ids is not None:
+        cq = cq.filter(models.CampaignRecord.advertiser_id.in_(list(ids or [""])))
+    tt_clicks = int(cq.scalar() or 0)
     kpis["tt_clicks"] = tt_clicks
     kpis["epc"] = (kpis["revenue"] / tt_clicks) if tt_clicks else 0.0
     y_tt_clicks = 0     # TikTok clicks aren't snapshotted per day; EPC delta uses postback clicks
@@ -41,10 +57,17 @@ def overview(request: Request, db: Session = Depends(get_db)):
     # pace of the day: profit at this hour yesterday (so +38% means vs the same time)
     today_day, y_day = timeutil.local_date_str(start_utc), timeutil.local_date_str(y_start)
     h_now = timeutil.now_local().hour
-    active_ids = [r[0] for r in db.query(models.CampaignRecord.campaign_id).filter(models.CampaignRecord.operation_status == "ENABLE")]
-    all_ids = [r[0] for r in db.query(models.CampaignRecord.campaign_id)]
+    recs_q = db.query(models.CampaignRecord.campaign_id, models.CampaignRecord.advertiser_id)
+    if ids is not None:
+        recs_q = recs_q.filter(models.CampaignRecord.advertiser_id.in_(list(ids or [""])))
+    all_ids = [r[0] for r in recs_q]
     ht, hy = hourly.series(db, all_ids, today_day), hourly.series(db, all_ids, y_day)
-    rt, ry = hourly.revenue_series(db, None, today_day), hourly.revenue_series(db, None, y_day)
+    if ids is None:
+        rt, ry = hourly.revenue_series(db, None, today_day), hourly.revenue_series(db, None, y_day)
+    else:
+        wt = pnl_data.source_weights(db, start_utc, end_utc, ids)
+        wy = pnl_data.source_weights(db, y_start, y_end, ids)
+        rt, ry = hourly.revenue_series(db, None, today_day, wt), hourly.revenue_series(db, None, y_day, wy)
     y_same_hour = {"spend": sum(hy["spend"][:h_now + 1]), "revenue": sum(ry[:h_now + 1])}
     y_same_hour["profit"] = y_same_hour["revenue"] - y_same_hour["spend"]
     hourly_json = json.dumps({"today": {"spend": ht["spend"], "revenue": rt, "conversions": ht["conversions"], "clicks": ht["clicks"]},
@@ -52,7 +75,7 @@ def overview(request: Request, db: Session = Depends(get_db)):
                               "hour_now": h_now, "has_hourly": hourly.days_available(db) > 0})
 
     # ---- today's creative tests: families rolled up, winners / learning / losing
-    perf = creative_perf.rows(db, start_utc, end_utc, today=True)
+    perf = creative_perf.rows(db, start_utc, end_utc, today=True, owner_user_id=sc.user_id)
     fams = creative_perf.families([r for r in perf if r["spend"] > 0 or r["revenue"] > 0])
     def _cls(f):
         if f["spend"] < 5:
@@ -66,19 +89,20 @@ def overview(request: Request, db: Session = Depends(get_db)):
         f["epc"] = (f["revenue"] / f["clicks"]) if f["clicks"] else 0.0
     tests = {"n": len(fams), "winners": sum(1 for f in fams if f["cls"] == "winner"),
              "losing": sum(1 for f in fams if f["cls"] == "losing"), "learning": sum(1 for f in fams if f["cls"] == "learning"),
-             "launched_today": db.query(models.LaunchLog).filter(models.LaunchLog.ok == True, models.LaunchLog.created_at >= start_utc.replace(tzinfo=None)).count()}  # noqa: E712
+             "launched_today": _count_launched(db, start_utc, ids)}
     winners = [f for f in fams if f["cls"] == "winner"][:5]
     losers = sorted([f for f in fams if f["cls"] == "losing"], key=lambda f: f["profit"])[:5]
 
     # ---- attention (unified inbox) + Business Centers -------------------------
-    inbox_items = inbox_mod.build(db)
+    inbox_items = inbox_mod.build(db, sc)
     inbox_counts = inbox_mod.counts(inbox_items)
-    accounts = db.query(models.AdAccount).all()
+    all_accounts = db.query(models.AdAccount).all()
+    accounts = [a for a in all_accounts if sc.allows(a.advertiser_id)]
     ctx = sl.account_picker_context(db, accounts)
     bcs = db.query(models.BusinessCenter).order_by(models.BusinessCenter.name).all()
     spend_by_aid = {r[0]: float(r[1] or 0) for r in db.query(models.CampaignRecord.advertiser_id, func.sum(models.CampaignRecord.spend_today)).group_by(models.CampaignRecord.advertiser_id)}
-    src_map = pnl_data.campaign_source_map(db)
-    pb = pnl_data.revenue_by_source(db, start_utc, end_utc)
+    src_map = pnl_data.campaign_source_map(db, ids)
+    pb = pnl_data.revenue_by_source(db, start_utc, end_utc, ids)
     rev_by_aid: dict[str, float] = {}
     for r in db.query(models.CampaignRecord).all():
         src = src_map.get(r.campaign_id, "")
@@ -86,7 +110,10 @@ def overview(request: Request, db: Session = Depends(get_db)):
             rev_by_aid[r.advertiser_id] = rev_by_aid.get(r.advertiser_id, 0.0) + float(pb[src].get("revenue", 0.0))
     bc_rows = []
     for b in bcs:
+        # a user's Home lists the Business Centers their accounts sit in (wallets are shared)
         aids = [a.advertiser_id for a in accounts if a.owner_bc_id == b.bc_id]
+        if ids is not None and not aids:
+            continue
         st = [ctx["info"][a]["state"] for a in aids if a in ctx["info"]]
         sp = sum(spend_by_aid.get(a, 0.0) for a in aids); rv = sum(rev_by_aid.get(a, 0.0) for a in aids)
         bc_rows.append({"bc": b, "n": len(aids), "fresh": st.count("fresh"), "live": st.count("active"), "blocked": st.count("blocked"),
@@ -100,6 +127,7 @@ def overview(request: Request, db: Session = Depends(get_db)):
         "synced_ago": queries.campaigns_synced_ago(db),
         "attention": inbox_items[:6], "inbox_counts": inbox_counts,
         "bc_rows": bc_rows, "no_bc": len(no_bc), "acct_counts": ctx["counts"], "n_accounts": len(accounts),
+        "view": sc,
     })
 
 
@@ -110,8 +138,10 @@ def accounts_page(request: Request, db: Session = Depends(get_db)):
     last launch. Filtering happens in the browser (accounts.js)."""
     from . import super_launcher as sl
     from .. import activity as activity_mod, balances as bal_mod
+    from .. import scope as scope_mod
+    sc = scope_mod.for_request(request, db)
     show_lost = request.query_params.get("show_lost") == "1"
-    all_accounts = db.query(models.AdAccount).order_by(models.AdAccount.advertiser_name).all()
+    all_accounts = [a for a in db.query(models.AdAccount).order_by(models.AdAccount.advertiser_name).all() if sc.allows(a.advertiser_id)]
     lost = [a for a in all_accounts if a.status == "ACCESS_LOST"]
     accounts = all_accounts if show_lost else [a for a in all_accounts if a.status != "ACCESS_LOST"]
     ctx = sl.account_picker_context(db, accounts)
@@ -124,8 +154,8 @@ def accounts_page(request: Request, db: Session = Depends(get_db)):
     for b in bcs + [None]:
         key = b.bc_id if b else ""
         members = by_bc.get(key, [])
-        if not members and b is None:
-            continue
+        if not members and (b is None or not sc.everything):
+            continue                      # a user's page lists only the Business Centers their accounts sit in
         # profit first inside a BC, then fresh accounts, then the rest by name
         members.sort(key=lambda a: (-facts[a.advertiser_id]["profit"], 0 if facts[a.advertiser_id]["state"] == "fresh" else 1, (a.advertiser_name or "").lower()))
         st = [facts[a.advertiser_id]["state"] for a in members]
@@ -138,8 +168,10 @@ def accounts_page(request: Request, db: Session = Depends(get_db)):
     counts = dict(ctx["counts"]); counts["off"] = sum(1 for a in accounts if not a.enabled)
     counts["low"] = sum(1 for a in accounts if a.balance is not None and a.enabled and (a.balance or 0) < 20)
     notes = activity_mod.notes_for(db, "account", [a.advertiser_id for a in accounts])
+    people = scope_mod.users_index(db) if sc.can_switch else {}
     return render(request, "accounts.html", {
         "accounts": accounts, "title": "Ad accounts", "facts": facts, "counts": counts, "groups": groups, "notes": notes,
+        "view": sc, "people": people, "people_sorted": sorted(people.values(), key=lambda u: u.email),
         "lost_count": len(lost), "show_lost": show_lost, "n_bc": len(bcs),
         "tot": {"spend": sum(f["spend"] for f in facts.values()), "revenue": sum(f["revenue"] for f in facts.values())},
         "ok": request.query_params.get("ok", ""), "err": request.query_params.get("err", ""),
@@ -175,6 +207,39 @@ def _account_facts(db: Session, accounts: list, ctx: dict) -> dict:
     return facts
 
 
+@router.post("/accounts/owner")
+async def accounts_owner(request: Request, db: Session = Depends(get_db)):
+    """Super admin: move ad accounts to a user's workspace. Form: advertiser_ids
+    (repeated or comma-joined), user_id. The campaigns, spend, postbacks and audience
+    data of those accounts move with them — it's a filter, nothing is copied."""
+    from fastapi.responses import JSONResponse
+    from .. import scope as scope_mod, users as users_mod
+    me = getattr(request.state, "user", None)
+    if not users_mod.is_owner(me):
+        return JSONResponse({"ok": False, "error": "only the super admin can move accounts between users"}, status_code=403)
+    form = await request.form()
+    ids: list[str] = []
+    for v in form.getlist("advertiser_ids"):
+        ids.extend(x.strip() for x in str(v).split(",") if x.strip())
+    ids = list(dict.fromkeys(ids))[:2000]
+    try:
+        uid = int(form.get("user_id") or 0)
+    except (TypeError, ValueError):
+        uid = 0
+    target = db.get(models.User, uid) if uid else None
+    if target is None or not ids:
+        return JSONResponse({"ok": False, "error": "pick a user and at least one account"}, status_code=400)
+    n = (db.query(models.AdAccount).filter(models.AdAccount.advertiser_id.in_(ids))
+         .update({models.AdAccount.owner_user_id: target.id}, synchronize_session=False))
+    db.commit()
+    from .. import activity as _activity
+    _activity.record(db, "account", ids[0] if len(ids) == 1 else "bulk", "owner",
+                     f"{n} account(s) → {target.email}", request=request)
+    if request.headers.get("x-requested-with") == "fetch" or "application/json" in request.headers.get("accept", ""):
+        return JSONResponse({"ok": True, "moved": int(n or 0), "owner": {"id": target.id, "email": target.email}})
+    return RedirectResponse(f"/accounts?ok={n}+account(s)+moved+to+{target.email}", status_code=303)
+
+
 @router.get("/accounts/bc/{bc_id}/detail")
 def bc_detail(bc_id: str, db: Session = Depends(get_db)):
     """One Business Center for the Home drawer: its accounts with state, spend, profit — no page change."""
@@ -197,7 +262,7 @@ def bc_detail(bc_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/accounts/{advertiser_id}/detail")
-def account_detail(advertiser_id: str, db: Session = Depends(get_db)):
+def account_detail(advertiser_id: str, db: Session = Depends(get_db), _view: scope_mod.Scope = Depends(guard.account_in_view)):
     """JSON for the account drawer: facts, today's campaigns, BC, note, recent launches."""
     from fastapi.responses import JSONResponse
     from . import super_launcher as sl
@@ -246,7 +311,7 @@ def _ago(dt) -> str:
 
 
 @router.post("/accounts/{advertiser_id}/toggle")
-def toggle_account(request: Request, advertiser_id: str, db: Session = Depends(get_db)):
+def toggle_account(request: Request, advertiser_id: str, db: Session = Depends(get_db), _view: scope_mod.Scope = Depends(guard.account_in_view)):
     from fastapi.responses import JSONResponse
     acct = db.query(models.AdAccount).filter_by(advertiser_id=advertiser_id).first()
     if acct:
@@ -258,7 +323,7 @@ def toggle_account(request: Request, advertiser_id: str, db: Session = Depends(g
 
 
 @router.post("/accounts/{advertiser_id}/transfer")
-async def account_transfer(request: Request, advertiser_id: str, db: Session = Depends(get_db)):
+async def account_transfer(request: Request, advertiser_id: str, db: Session = Depends(get_db), _view: scope_mod.Scope = Depends(guard.account_in_view)):
     """Move money from the account's Business Center wallet into the ad account
     (the same /bc/transfer/ call the auto top-up rule uses). JSON in, JSON out."""
     from fastapi.responses import JSONResponse

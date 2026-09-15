@@ -51,14 +51,14 @@ def _safe_name(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("_")[:60] or "card"
 
 
-def add(db: Session, data: bytes, file_name: str, name: str = "") -> tuple[models.DisplayCard, bool]:
+def add(db: Session, data: bytes, file_name: str, name: str = "", owner_user_id: int | None = None) -> tuple[models.DisplayCard, bool]:
     """Store an uploaded card. Returns (row, was_resized)."""
     if len(data) > MAX_UPLOAD:
         raise ValueError("Image is over 15 MB.")
     png, orig, resized = fit(data)
     md5 = hashlib.md5(png).hexdigest()
     stem = _safe_name(file_name.rsplit(".", 1)[0] if "." in file_name else file_name)
-    card = models.DisplayCard(name=(name or "").strip() or stem.replace("_", " "), md5=md5)
+    card = models.DisplayCard(name=(name or "").strip() or stem.replace("_", " "), md5=md5, owner_user_id=owner_user_id)
     db.add(card)
     db.flush()
     path = cards_dir() / f"{card.id}_{stem}.png"

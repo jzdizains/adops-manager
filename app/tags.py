@@ -31,26 +31,44 @@ def as_dict(t: models.Tag) -> dict:
     return {"id": t.id, "name": t.name, "color": t.color or "grey"}
 
 
-def all_tags(db: Session) -> list[dict]:
-    return [as_dict(t) for t in db.query(models.Tag).order_by(models.Tag.name.asc())]
+def _scoped(db: Session, owner_user_id):
+    q = db.query(models.Tag)
+    return q.filter(models.Tag.owner_user_id == owner_user_id) if owner_user_id is not None else q
 
 
-def create(db: Session, name: str, color: str) -> tuple[models.Tag | None, str]:
-    """(tag, error). A name that already exists returns the existing tag (case-insensitive)."""
+def all_tags(db: Session, owner_user_id: int | None = None) -> list[dict]:
+    """The view's tags (owner_user_id None = everyone's)."""
+    return [as_dict(t) for t in _scoped(db, owner_user_id).order_by(models.Tag.name.asc())]
+
+
+def create(db: Session, name: str, color: str, owner_user_id: int | None = None) -> tuple[models.Tag | None, str]:
+    """(tag, error). A name the owner already has returns their existing tag
+    (case-insensitive). Names are unique across the whole dashboard (the table says so),
+    so another user's tag with that name is reported, never reused."""
     name = clean_name(name)
     if not name:
         return None, "give the tag a name"
     for t in db.query(models.Tag):
         if t.name.lower() == name.lower():
-            return t, ""
-    t = models.Tag(name=name, color=clean_color(color))
+            if owner_user_id is None or t.owner_user_id == owner_user_id:
+                return t, ""
+            return None, f"“{t.name}” is taken by another user — pick a different name"
+    t = models.Tag(name=name, color=clean_color(color), owner_user_id=owner_user_id)
     db.add(t)
     db.flush()
     return t, ""
 
 
-def update(db: Session, tag_id: int, name: str | None = None, color: str | None = None) -> tuple[models.Tag | None, str]:
+def get_in_view(db: Session, tag_id: int, owner_user_id: int | None = None) -> models.Tag | None:
     t = db.get(models.Tag, tag_id)
+    if t is None or (owner_user_id is not None and t.owner_user_id != owner_user_id):
+        return None
+    return t
+
+
+def update(db: Session, tag_id: int, name: str | None = None, color: str | None = None,
+           owner_user_id: int | None = None) -> tuple[models.Tag | None, str]:
+    t = get_in_view(db, tag_id, owner_user_id)
     if t is None:
         return None, "that tag no longer exists"
     if name is not None:
@@ -66,16 +84,18 @@ def update(db: Session, tag_id: int, name: str | None = None, color: str | None 
     return t, ""
 
 
-def delete(db: Session, tag_id: int) -> int:
+def delete(db: Session, tag_id: int, owner_user_id: int | None = None) -> int:
     """Removes the tag everywhere. Returns how many campaigns carried it."""
+    if get_in_view(db, tag_id, owner_user_id) is None:
+        return 0
     n = db.query(models.CampaignTag).filter_by(tag_id=tag_id).delete(synchronize_session=False)
     db.query(models.Tag).filter_by(id=tag_id).delete(synchronize_session=False)
     return int(n or 0)
 
 
-def set_on(db: Session, campaign_ids: list[str], tag_id: int, on: bool) -> tuple[int, str]:
+def set_on(db: Session, campaign_ids: list[str], tag_id: int, on: bool, owner_user_id: int | None = None) -> tuple[int, str]:
     """Put a tag on (or take it off) every given campaign. Returns (changed, error)."""
-    if db.get(models.Tag, tag_id) is None:
+    if get_in_view(db, tag_id, owner_user_id) is None:
         return 0, "that tag no longer exists"
     ids = list(dict.fromkeys(str(c) for c in campaign_ids if c))[:500]      # de-duplicated, order kept
     if not ids:
@@ -95,9 +115,9 @@ def set_on(db: Session, campaign_ids: list[str], tag_id: int, on: bool) -> tuple
     return changed, ""
 
 
-def by_campaign(db: Session, campaign_ids=None) -> dict[str, list[dict]]:
-    """campaign_id -> [tag dicts], one query for the whole page."""
-    tags = {t.id: as_dict(t) for t in db.query(models.Tag)}
+def by_campaign(db: Session, campaign_ids=None, owner_user_id: int | None = None) -> dict[str, list[dict]]:
+    """campaign_id -> [tag dicts], one query for the whole page (the view's tags only)."""
+    tags = {t.id: as_dict(t) for t in _scoped(db, owner_user_id)}
     q = db.query(models.CampaignTag.campaign_id, models.CampaignTag.tag_id)
     if campaign_ids is not None:
         ids = list({str(c) for c in campaign_ids if c})

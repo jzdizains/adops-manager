@@ -82,8 +82,11 @@ def resume_all(db: Session = Depends(get_db)):
 
 @router.get("/queue")
 def queue_page(request: Request, db: Session = Depends(get_db)):
-    items = (db.query(models.LaunchQueueItem)
-             .order_by(models.LaunchQueueItem.created_at.desc()).limit(200).all())
+    from .. import scope as scope_mod
+    sc = scope_mod.for_request(request, db)
+    items = [i for i in (db.query(models.LaunchQueueItem)
+                         .order_by(models.LaunchQueueItem.created_at.desc()).limit(400).all())
+             if sc.everything or i.launched_by == sc.user_id or sc.allows(i.advertiser_id)][:200]
     templates = {t.id: t.name for t in db.query(models.Template).all()}
     sparks = {s.id: (s.name or s.code[:14]) for s in db.query(models.SparkCode).all()}
     names = {a.advertiser_id: a.advertiser_name for a in db.query(models.AdAccount).all()}

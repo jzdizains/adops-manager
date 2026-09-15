@@ -70,13 +70,17 @@ def scan(db: Session, should_stop=None, on_progress=None) -> dict:
     # refresh advertiser info (status + rejection reason) in one batch call
     info_by_id: dict[str, dict] = {}
     if token and accounts:
-        ids = [a.advertiser_id for a in accounts]
-        for i in range(0, len(ids), 100):
-            try:
-                for info in tiktok_api.get_advertiser_info(token, ids[i:i + 100]):
-                    info_by_id[str(info.get("advertiser_id", ""))] = info
-            except tiktok_api.TikTokError:
-                pass
+        # one batch per TikTok login (v116: several logins) — a login only sees its own accounts
+        by_token: dict[str, list[str]] = {}
+        for a in accounts:
+            by_token.setdefault(a.access_token or token, []).append(a.advertiser_id)
+        for tok, ids in by_token.items():
+            for i in range(0, len(ids), 100):
+                try:
+                    for info in tiktok_api.get_advertiser_info(tok, ids[i:i + 100]):
+                        info_by_id[str(info.get("advertiser_id", ""))] = info
+                except tiktok_api.TikTokError:
+                    pass
 
     for acct in accounts:
         info = info_by_id.get(acct.advertiser_id, {})

@@ -12,7 +12,7 @@ from . import background, config
 from .database import init_db
 from .routes import (
     ad_texts, alerts, appeals_page, assistant_page, audience, auth, automation, bc_assets_page, campaigns, jobs_page, partners_page, cookies_admin, creatives, creators, dashboard, diagnostics, display_cards, pub,
-    inbox, instant_pages, issues_page, lead_forms, locations, monitor, notes, oauth, pnl_page,
+    team, inbox, instant_pages, issues_page, lead_forms, locations, monitor, notes, oauth, pnl_page,
     performance, pixels, postback, security, settings_page, spark_codes, escape_test, tracking as tracking_routes,
     status, super_launcher, templates_routes,
 )
@@ -139,6 +139,19 @@ async def require_login(request: Request, call_next):
                 sess.clear()
                 return RedirectResponse(f"{config.LOGIN_PATH}?err=expired", status_code=303)
             request.state.user = user
+            # per-user workspaces (v116): whatever this request creates belongs to the view's
+            # owner — the user, or the workspace the super admin is looking at
+            try:
+                from . import ctx as _ctx, scope as _scope, users as _users
+                owner, view = user.id, user.id
+                if _users.is_owner(user):
+                    picked = _scope.parse_cookie(request.cookies.get(_scope.COOKIE))
+                    owner = picked if picked is not None else user.id
+                    view = picked                       # None = Everyone
+                _ctx.OWNER.set(owner)
+                _ctx.VIEW.set(view)
+            except Exception:  # noqa: BLE001
+                pass
             # 2FA is mandatory: until it's set up, only the setup page (and logout) is reachable
             if config.REQUIRE_2FA and not user.totp_secret and not (path.startswith("/login/2fa/setup") or path == "/logout"):
                 return RedirectResponse(f"{config.LOGIN_PATH}/2fa/setup", status_code=303)
@@ -221,6 +234,8 @@ try:
     try:
         _users.bootstrap(_d)
         _users.ensure_owner(_d)      # OWNER_EMAIL set later / renamed / locked out → still an owner you can log in as
+        from . import scope as _scope
+        _scope.backfill(_d)          # v116: everything made before per-user workspaces belongs to the super admin
     finally:
         _d.close()
 except Exception:  # noqa: BLE001 — never keep the app from starting
@@ -256,5 +271,5 @@ for r in (auth.router, security.router, oauth.router, dashboard.router,
           settings_page.router, postback.router, pixels.router,
           automation.router, issues_page.router, creatives.router,
           ad_texts.router, locations.router, escape_test.router, tracking_routes.router,
-          appeals_page.router, partners_page.router, bc_assets_page.router, diagnostics.router, jobs_page.router, audience.router, display_cards.router, notes.router, pnl_page.router, assistant_page.router, creators.router, pub.router):
+          appeals_page.router, partners_page.router, bc_assets_page.router, diagnostics.router, jobs_page.router, audience.router, display_cards.router, notes.router, pnl_page.router, assistant_page.router, creators.router, pub.router, team.router):
     app.include_router(r)

@@ -1,7 +1,7 @@
 """In-app alerts: feeds the bell dropdown and the Overview banner."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
@@ -22,29 +22,34 @@ def _alert_href(a: models.Alert) -> str:
     return ""
 
 
-_BELL_CACHE: list = [0.0, None]      # [expires_at, payload] — one build shared by every open tab
+_BELL_CACHE: dict = {}               # view key -> (expires_at, payload) — one build shared by every open tab of that view
 _BELL_TTL_S = 20
 
 
 def bell_cache_clear() -> None:
-    _BELL_CACHE[0] = 0.0
+    _BELL_CACHE.clear()
 
 
 @router.get("/alerts/data")
-def alerts_data(db: Session = Depends(get_db)):
+def alerts_data(request: Request, db: Session = Depends(get_db)):
     """Bell poller: the UNIFIED inbox (alerts + issues + failed launches +
     queue + cooldown + connection), not just Alert rows. Every open tab polls
     this each minute, so the (10-query) build is shared for a few seconds and
     dropped as soon as something is acknowledged."""
     import time as _time
-    from .. import inbox as inbox_mod
-    if _BELL_CACHE[1] is not None and _BELL_CACHE[0] > _time.time():
-        return _BELL_CACHE[1]
-    items = inbox_mod.build(db)
+    from .. import inbox as inbox_mod, scope as scope_mod
+    sc = scope_mod.for_request(request, db)
+    key = (sc.mode, sc.user_id)
+    hit = _BELL_CACHE.get(key)
+    if hit and hit[0] > _time.time():
+        return hit[1]
+    items = inbox_mod.build(db, sc)
     counts = inbox_mod.counts(items)
     payload = {"count": counts["total"], "counts": counts,
                "alerts": [inbox_mod.serialize(i) for i in items[:8]]}
-    _BELL_CACHE[0], _BELL_CACHE[1] = _time.time() + _BELL_TTL_S, payload
+    if len(_BELL_CACHE) > 100:
+        _BELL_CACHE.clear()
+    _BELL_CACHE[key] = (_time.time() + _BELL_TTL_S, payload)
     return payload
 
 

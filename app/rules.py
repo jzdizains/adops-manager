@@ -41,7 +41,7 @@ def _pause_campaign(db: Session, accounts: dict, rec: models.CampaignRecord,
             kind="rule_action", ref_id=rec.campaign_id, level="warn",
             message=f"Auto-paused “{rec.campaign_name}” — {rule} "
                     f"(hit {value:.2f} after ${rec.spend_today:.2f} spend)."))
-        live_log.push("info", f"Rule engine paused {rec.campaign_name}: {rule}")
+        live_log.push("info", f"Rule engine paused {rec.campaign_name}: {rule}", advertiser_id=str(getattr(rec, "advertiser_id", "") or ""))
     except tiktok_api.TikTokError as e:
         action.ok = False
         action.detail = f"pause FAILED: code={e.code} {e.message}"
@@ -293,7 +293,7 @@ def evaluate_topups(db: Session, settings: dict | None = None) -> list[models.To
                 message=f"Auto top-up: ${amount:.2f} → "
                         f"{acct.advertiser_name or acct.advertiser_id} "
                         f"(was ${prev_balance:.2f})."))
-            live_log.push("info", f"Auto top-up ${amount:.2f} → {acct.advertiser_id}")
+            live_log.push("info", f"Auto top-up ${amount:.2f} → {acct.advertiser_id}", advertiser_id=str(acct.advertiser_id))
         except tiktok_api.TikTokError as e:
             topup.ok = False
             topup.detail = f"transfer FAILED: code={e.code} {e.message}"

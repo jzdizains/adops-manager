@@ -21,7 +21,8 @@ def inbox_page(request: Request, db: Session = Depends(get_db)):
     level = request.query_params.get("level", "all")        # all | err | warn | info
     if level not in ("err", "warn", "info"):
         level = "all"
-    items = inbox_mod.build(db)
+    from .. import scope as scope_mod
+    items = inbox_mod.build(db, scope_mod.for_request(request, db))
     counts = inbox_mod.counts(items)
     groups: dict[str, dict] = {}
     for it in items:

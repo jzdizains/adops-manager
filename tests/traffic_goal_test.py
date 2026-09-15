@@ -44,7 +44,7 @@ class Template:
         self.adgroup_settings = json.dumps(blob or {})
 class AdAccount:
     def __init__(self): self.advertiser_id, self.advertiser_name, self.access_token = "7000000000000000001", "Acct", "tok"
-_mod("app.models", Template=Template, AdAccount=AdAccount)
+_mod("app.models", Template=Template, AdAccount=AdAccount, SparkCode=type("SparkCode", (), {}), Creative=type("Creative", (), {}), AdText=type("AdText", (), {}))
 _mod("sqlalchemy.orm", Session=object)
 
 import importlib
@@ -64,10 +64,10 @@ tiktok_api = _mod("app.tiktok_api", TikTokError=TikTokError)
 # ---- the payload helpers, extracted from campaigns.py -------------------------------
 src = open(os.path.join(ROOT, "app", "routes", "campaigns.py"), encoding="utf-8").read()
 start = src.index("def build_campaign_payload(")
-end = src.index("def build_ad_payload(")
+end = src.index("def _launch_smart_plus(")
 helpers = types.ModuleType("app.routes.campaigns")
 helpers.__dict__.update({"models": sys.modules["app.models"], "tiktok_api": tiktok_api, "queries": queries,
-                         "launch_mod": launch, "Session": object, "datetime": datetime, "timezone": timezone,
+                         "launch_mod": launch, "Session": object, "datetime": datetime, "timezone": timezone, "re": re, "json": json,
                          "_campaign_name": lambda fields, acct: "camp", "__package__": "app.routes",
                          "__name__": "app.routes.campaigns"})
 exec(compile(src[start:end], "campaigns-helpers", "exec"), helpers.__dict__)
@@ -187,6 +187,17 @@ check("Engaged session implies Smart+ before any validation (spark required, car
       'if is_engaged(fields) and not fields.get("smart_plus"):' in src and '"smart_plus": True, "_smart_plus_implied": True' in src
       and src.index('"_smart_plus_implied": True') < src.index('use_library = fields.get("creative_source") == "library"'))
 check("…and the launch result names it", '"ENGAGEMENT_SESSION · Smart+"' in src)
+spc_c = src[src.index("def build_spc_campaign_payload"):src.index("def build_spc_adgroup_payload")]
+check("Smart+ ABO campaign sends no budget_mode (INFINITE refused: 'Budget mode is invalid', blue bat_260706150309)",
+      'payload["budget_mode"] = "BUDGET_MODE_INFINITE"' not in spc_c)
+f_abo = {"objective_type": "TRAFFIC", "campaign_budget_mode": "ABO", "adgroup_budget": 25.0, "template_name": "T", "campaign_name_pattern": "x"}
+cpv = helpers.spc_campaign_variants(f_abo, {"campaign_name": "c", "objective_type": "TRAFFIC"})
+check("Smart+ ABO: budget-less campaign first, then a daily campaign budget equal to the ad-group budget",
+      [(("budget_mode" in c), on) for c, on in cpv] == [(False, False), (True, True)] and cpv[1][0]["budget"] == 25.0 and cpv[1][0]["budget_mode"] == "BUDGET_MODE_DAY", str(cpv))
+check("Smart+ CBO: one shape, budget on the campaign", helpers.spc_campaign_variants(f_abo, {"budget_optimize_on": True, "budget_mode": "BUDGET_MODE_DAY", "budget": 50.0}) == [({"budget_optimize_on": True, "budget_mode": "BUDGET_MODE_DAY", "budget": 50.0}, True)])
+check("only a budget complaint moves to the campaign-budget shape", 'and "budget" in (e.message or "").lower():' in src[src.index("def _launch_smart_plus"):])
+check("a failed Smart+ launch deletes the empty shell through the Smart+ endpoint",
+      'tiktok_api.smart_plus_campaign_status_update(acct.access_token, acct.advertiser_id, [shell], "DELETE")' in src and "ad_created = True                 # the chain only returns once the ad exists" in src)
 spc_ag = src[src.index("def build_spc_adgroup_payload"):src.index("def build_spc_ad_payload")]
 check("Smart+ ad group for Engaged session: ENGAGEMENT_SESSION on oCPM with the pixel and no event (the stored shape)",
       'goal = "ENGAGEMENT_SESSION"' in spc_ag and '"billing_event": "CPC" if goal == "CLICK" else "OCPM"' in spc_ag and 'elif engaged and pixel_id:' in spc_ag)
@@ -227,7 +238,7 @@ check("parity watch knows the candidates (no false 'not offered' on our own ad g
 lst = open(os.path.join(ROOT, "app", "templates", "templates_list.html"), encoding="utf-8").read()
 check("presets list shows the goal", "'Landing page view' if blob.get('traffic_goal') == 'LPV' else 'Engaged session'" in lst)
 cfg = open(os.path.join(ROOT, "app", "config.py"), encoding="utf-8").read()
-check("static version bumped", 'STATIC_VERSION = "114"' in cfg)
+check("static version bumped", 'STATIC_VERSION = "117"' in cfg)
 
 print()
 print("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}")

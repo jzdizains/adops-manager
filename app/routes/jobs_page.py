@@ -42,7 +42,7 @@ def jobs_data(request: Request, db: Session = Depends(get_db)):
         more = len(unseen) - len(items)
         for j in unseen:
             j.seen = True
-    running = (db.query(models.Job).filter(models.Job.status.in_(("queued", "running")))
+    running = (db.query(models.Job).filter(models.Job.status.in_(("queued", "claimed", "running")))
                .order_by(models.Job.id).all())
     done_count = db.query(func.count(models.Job.id)).filter(models.Job.status.in_(("done", "error", "cancelled"))).scalar() or 0
     if items or more:

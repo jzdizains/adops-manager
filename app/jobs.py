@@ -32,15 +32,33 @@ _started = False
 _lock = threading.Lock()
 _current: dict = {}      # job id → job (for progress updates)
 
-# Two lanes, two worker threads: long sweeps over every account (minutes) must
-# never make a launch or a bid change wait behind them.
+# Three lanes (v116): long sweeps over every account (minutes) must never make a bid
+# change wait behind them, and with several users launching at once, launches get a
+# lane of their own with LAUNCH_WORKERS threads — one user's ten-account batch no
+# longer holds up another user's launch, and a manual campaign sync (minutes over
+# hundreds of accounts) never sits in front of a launch either.
 SLOW_KINDS = {"issues_scan", "appeals_refresh", "pixels_sync", "pixel_link_all", "audience_sync", "music_sync", "identities_sync", "spark_authorize", "bc_assets_scan", "bc_assets_wire", "bc_assets_connect", "adgroup_duplicate"}
-LANES = ("fast", "slow")
+LAUNCH_KINDS = {"launch"}
+SYNC_KINDS = {"status_sync"}      # the manual campaign sync: its own lane, never in front of a launch or behind a scan
+LANES = ("fast", "slow", "launch", "sync")
+LAUNCH_WORKERS = 2               # parallel launch threads (each user's launches use their own TikTok login)
 CANCELLED = "cancelled"
 
 
 def lane(kind: str) -> str:
+    if kind in LAUNCH_KINDS:
+        return "launch"
+    if kind in SYNC_KINDS:
+        return "sync"
     return "slow" if kind in SLOW_KINDS else "fast"
+
+
+def _launched_by(job) -> str:
+    """Who queued a launch job (fields._launched_by in its payload), for fairness."""
+    try:
+        return str((json.loads(job.payload or "{}").get("fields") or {}).get("_launched_by") or "")
+    except (ValueError, TypeError):
+        return ""
 
 
 def handler(kind: str):
@@ -72,7 +90,7 @@ def enqueue(db: Session, kind: str, title: str, payload: dict | None = None, hre
 def pending(db: Session, kind: str) -> models.Job | None:
     """The queued/running job of this kind, if any — so a button pressed twice
     doesn't stack the same sweep up behind itself."""
-    return (db.query(models.Job).filter(models.Job.kind == kind, models.Job.status.in_(("queued", "running")))
+    return (db.query(models.Job).filter(models.Job.kind == kind, models.Job.status.in_(("queued", "claimed", "running")))
             .order_by(models.Job.id).first())
 
 
@@ -167,6 +185,9 @@ def progress(db: Session, job: models.Job, text: str, force: bool = False) -> No
 def run_job(db: Session, job: models.Job) -> None:
     if job.status == CANCELLED:        # cancelled between being picked and started
         return
+    if job.status == "queued" and not _claim(db, job.id):     # direct callers (tests) — same atomic take
+        return
+    db.refresh(job)
     fn = HANDLERS.get(job.kind)
     job.status = "running"
     job.started_at = _now()
@@ -210,20 +231,59 @@ def run_job(db: Session, job: models.Job) -> None:
     db.commit()
 
 
+_running_launch_users: dict[int, str] = {}     # job id → user, for the launch lane's fairness
+
+
+def _claim(db: Session, job_id: int) -> bool:
+    """Atomically take a queued job (several launch workers share one lane): the UPDATE
+    only succeeds for the thread that gets there first."""
+    n = (db.query(models.Job).filter(models.Job.id == job_id, models.Job.status == "queued")
+         .update({models.Job.status: "claimed"}, synchronize_session=False))
+    db.commit()
+    return bool(n)
+
+
+def _next_launch(db: Session):
+    """Oldest queued launch — but a user who already has a launch running yields to a
+    user who doesn't (round-robin across people, oldest-first within a person)."""
+    queued = (db.query(models.Job).filter(models.Job.status == "queued", models.Job.kind.in_(LAUNCH_KINDS))
+              .order_by(models.Job.id).limit(50).all())
+    if not queued:
+        return None
+    busy = set(_running_launch_users.values())
+    for j in queued:
+        if _launched_by(j) not in busy:
+            return j
+    return queued[0]
+
+
 def run_pending(db: Session, limit: int = 20, which: str | None = None) -> int:
     """Run queued jobs oldest-first (used by the workers, and directly by tests).
-    which = "fast" / "slow" restricts to that lane; None runs everything."""
+    which = "fast" / "slow" / "launch" restricts to that lane; None runs everything."""
     n = 0
     for _ in range(limit):
-        q = db.query(models.Job).filter(models.Job.status == "queued")
-        if which == "slow":
-            q = q.filter(models.Job.kind.in_(SLOW_KINDS))
-        elif which == "fast":
-            q = q.filter(~models.Job.kind.in_(SLOW_KINDS))
-        job = q.order_by(models.Job.id).first()
+        if which == "launch":
+            job = _next_launch(db)
+        else:
+            q = db.query(models.Job).filter(models.Job.status == "queued")
+            if which == "slow":
+                q = q.filter(models.Job.kind.in_(SLOW_KINDS))
+            elif which == "sync":
+                q = q.filter(models.Job.kind.in_(SYNC_KINDS))
+            elif which == "fast":
+                q = q.filter(~models.Job.kind.in_(SLOW_KINDS), ~models.Job.kind.in_(LAUNCH_KINDS), ~models.Job.kind.in_(SYNC_KINDS))
+            job = q.order_by(models.Job.id).first()
         if not job:
             break
-        run_job(db, job)
+        if not _claim(db, job.id):
+            continue                       # another worker took it — look again
+        db.refresh(job)
+        if which == "launch":
+            _running_launch_users[job.id] = _launched_by(job)
+        try:
+            run_job(db, job)
+        finally:
+            _running_launch_users.pop(job.id, None)
         n += 1
     return n
 
@@ -256,14 +316,15 @@ def start() -> None:
             return
         _started = True
     for which in LANES:
-        threading.Thread(target=_loop, args=(which,), name=f"adops-jobs-{which}", daemon=True).start()
+        for i in range(LAUNCH_WORKERS if which == "launch" else 1):
+            threading.Thread(target=_loop, args=(which,), name=f"adops-jobs-{which}-{i + 1}", daemon=True).start()
 
 
 def recover(db: Session) -> int:
     """At boot: jobs still 'running' or 'queued' from a previous process. Queued
     ones will run; 'running' ones died mid-way — mark them so nobody waits."""
     n = 0
-    for j in db.query(models.Job).filter(models.Job.status == "running").all():
+    for j in db.query(models.Job).filter(models.Job.status.in_(("running", "claimed"))).all():
         j.status = "error"
         j.detail = "interrupted by a restart — check the result page before retrying"
         j.finished_at = _now()
@@ -273,6 +334,6 @@ def recover(db: Session) -> int:
 
 
 def summary(db: Session) -> dict:
-    running = db.query(models.Job).filter(models.Job.status == "running").count()
+    running = db.query(models.Job).filter(models.Job.status.in_(("running", "claimed"))).count()
     queued = db.query(models.Job).filter(models.Job.status == "queued").count()
     return {"running": running, "queued": queued}

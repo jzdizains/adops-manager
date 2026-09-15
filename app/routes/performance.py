@@ -26,10 +26,19 @@ def performance_page(request: Request):
 @router.get("/performance/data")
 def performance_data(request: Request, db: Session = Depends(get_db)):
     """JSON the poller consumes: today's KPI totals + recent live events."""
+    from .. import scope as scope_mod
+    sc = scope_mod.for_request(request, db)
     start_utc, end_utc = timeutil.range_bounds("today")
-    totals = pnl_data.overall_totals(db, start_utc, end_utc)
+    totals = pnl_data.overall_totals(db, start_utc, end_utc, sc.ids)
     last_id = int(request.query_params.get("last_id", 0) or 0)
-    events = live_log.since(last_id)
+    # the live feed names accounts; a user's view only carries their own (and the
+    # untargeted lines everyone gets)
+    raw = live_log.since(last_id)
+    if sc.everything or not raw:
+        events = raw
+    else:
+        srcs = scope_mod.view_sources(db, sc)
+        events = [e for e in raw if scope_mod.event_in_view(e, sc, srcs)]
     return {
         "spend": round(totals["spend"], 2),
         "revenue": round(totals["revenue"], 2),

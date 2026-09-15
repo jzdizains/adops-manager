@@ -34,9 +34,12 @@ def _slides(c) -> list[int]:
 
 
 def rows(db: Session, start_utc: datetime, end_utc: datetime,
-         today: bool = False) -> list[dict]:
-    creatives = (db.query(models.Creative)
-                 .filter(models.Creative.used_campaign_id != "").all())
+         today: bool = False, owner_user_id: int | None = None) -> list[dict]:
+    """`owner_user_id` narrows it to one user's creatives (their workspace)."""
+    q = db.query(models.Creative).filter(models.Creative.used_campaign_id != "")
+    if owner_user_id is not None:
+        q = q.filter(models.Creative.owner_user_id == owner_user_id)
+    creatives = q.all()
     if not creatives:
         return []
     cids = list({c.used_campaign_id for c in creatives})

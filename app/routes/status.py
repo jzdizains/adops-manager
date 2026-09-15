@@ -19,6 +19,9 @@ from .. import adgroup_stats, appeals as appeals_mod, live_spend, models, pnl_da
 from ..database import get_db
 from ..templating import render
 
+from . import guard
+from .. import scope as scope_mod
+
 router = APIRouter()
 
 # sort key -> how to read the value from a built row dict
@@ -72,6 +75,7 @@ def blocked_reason(rec, acct) -> str:
 
 @router.get("/status")
 def status_page(request: Request, db: Session = Depends(get_db)):
+    sc = scope_mod.for_request(request, db)                 # whose campaigns (v116)
     q = request.query_params.get("q", "").strip().lower()
     state = request.query_params.get("state", "active")       # active (default) | blocked | paused | all
     if state not in ("active", "blocked", "paused", "all"):
@@ -95,10 +99,11 @@ def status_page(request: Request, db: Session = Depends(get_db)):
     records = db.query(models.CampaignRecord).all()
     # campaigns this tool launched (successful launches carry the campaign id)
     tool_campaign_ids = {log.campaign_id for log in
-                         db.query(models.LaunchLog.campaign_id)
+                         db.query(models.LaunchLog.campaign_id, models.LaunchLog.advertiser_id)
                          .filter(models.LaunchLog.ok == True,          # noqa: E712
                                  models.LaunchLog.campaign_id != "",
-                                 ~models.LaunchLog.campaign_id.startswith("deleted:"))}
+                                 ~models.LaunchLog.campaign_id.startswith("deleted:"))
+                         if sc.allows(log.advertiser_id)}
     cached_ids = {r.campaign_id for r in records}
     pending_ids = tool_campaign_ids - cached_ids         # launched, not synced yet
     pending_tool = len(pending_ids)
@@ -140,7 +145,7 @@ def status_page(request: Request, db: Session = Depends(get_db)):
         metrics_by_cid = {}
         s_day = timeutil.local_date_str(start_utc)
         e_day = timeutil.local_date_str(end_utc - _td(seconds=1))
-        for aid in {r.advertiser_id for r in records}:
+        for aid in {r.advertiser_id for r in records if sc.allows(r.advertiser_id)}:
             a = accounts.get(aid)
             if not a or not a.access_token:
                 continue
@@ -192,6 +197,8 @@ def status_page(request: Request, db: Session = Depends(get_db)):
 
     rows = []
     for r in records:
+        if not sc.allows(r.advertiser_id):          # another user's account — shares above still count it
+            continue
         acct = accounts.get(r.advertiser_id)
         name = (acct.advertiser_name if acct else r.advertiser_id) or r.advertiser_id
         if q and q not in r.campaign_name.lower() and q not in name.lower():
@@ -278,6 +285,8 @@ def status_page(request: Request, db: Session = Depends(get_db)):
     # how many rows each Status view would show (the segmented control's counts)
     state_counts = {"active": 0, "blocked": 0, "paused": 0, "all": 0}
     for r in records:
+        if not sc.allows(r.advertiser_id):
+            continue
         acct_ = accounts.get(r.advertiser_id)
         if account and r.advertiser_id != account:
             continue
@@ -296,7 +305,7 @@ def status_page(request: Request, db: Session = Depends(get_db)):
             state_counts["paused"] += 1
 
     # account dropdown: only accounts that actually have campaigns cached
-    adv_ids_with_campaigns = {r.advertiser_id for r in records}
+    adv_ids_with_campaigns = {r.advertiser_id for r in records if sc.allows(r.advertiser_id)}
     account_options = sorted(
         ((aid, (accounts[aid].advertiser_name or aid) if aid in accounts else aid)
          for aid in adv_ids_with_campaigns),
@@ -340,7 +349,7 @@ def status_page(request: Request, db: Session = Depends(get_db)):
             .filter(models.SpendSnapshot.campaign_id.in_(shown_cids),
                     models.SpendSnapshot.day >= ps_day,
                     models.SpendSnapshot.day <= pe_day).scalar() or 0)
-    prev_pb = pnl_data.revenue_by_source(db, prev_start, prev_end)
+    prev_pb = pnl_data.revenue_by_source(db, prev_start, prev_end, sc.ids)
     prev_rev = sum(prev_pb.get(s, {}).get("revenue", 0.0) for s in shown_srcs)
     prev = {"spend": prev_spend, "revenue": prev_rev,
             "profit": prev_rev - prev_spend,
@@ -441,8 +450,9 @@ def status_page(request: Request, db: Session = Depends(get_db)):
 
     return render(request, "status.html", {
         "rejections": appeals_mod.by_campaign(db),
+        "view": sc,
         "ag_flags": ag_flags,
-        "tags_by_cid": tags_mod.by_campaign(db, [row["r"].campaign_id for row in rows]),
+        "tags_by_cid": tags_mod.by_campaign(db, [row["r"].campaign_id for row in rows], owner_user_id=sc.user_id),
         "tag_colors": tags_mod.COLORS,
         "group": group, "grouped": grouped, "notes": notes, "state_counts": state_counts, "trend": trend,
         "pace": pace_by_cid, "pace_tot": pace_tot,
@@ -530,7 +540,7 @@ def sync_now(request: Request, db: Session = Depends(get_db)):
     from .. import jobs
     from fastapi.responses import JSONResponse
     running = (db.query(models.Job).filter(models.Job.kind == "status_sync",
-                                           models.Job.status.in_(("queued", "running"))).count())
+                                           models.Job.status.in_(("queued", "claimed", "running"))).count())
     if running:
         job_id = None
     else:
@@ -541,7 +551,7 @@ def sync_now(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/campaigns/{advertiser_id}/{campaign_id}/detail")
-def campaign_detail(advertiser_id: str, campaign_id: str, db: Session = Depends(get_db)):
+def campaign_detail(advertiser_id: str, campaign_id: str, db: Session = Depends(get_db), _view: scope_mod.Scope = Depends(guard.account_in_view)):
     """Everything the campaign drawer shows, as JSON: today's metrics + P&L,
     hourly trend today vs yesterday, timeline, note, creative, links."""
     from datetime import timedelta as _td
@@ -618,7 +628,7 @@ def campaign_detail(advertiser_id: str, campaign_id: str, db: Session = Depends(
 
 
 @router.get("/campaigns/{advertiser_id}/{campaign_id}/adgroups.json")
-def campaign_adgroups(advertiser_id: str, campaign_id: str, db: Session = Depends(get_db)):
+def campaign_adgroups(advertiser_id: str, campaign_id: str, db: Session = Depends(get_db), _view: scope_mod.Scope = Depends(guard.account_in_view)):
     """The campaign's ad groups, for the drawer. Read-only."""
     from fastapi.responses import JSONResponse
     from .. import adgroup_copy, jobs as jobs_mod
@@ -654,7 +664,7 @@ def campaign_adgroups(advertiser_id: str, campaign_id: str, db: Session = Depend
 
 
 @router.get("/campaigns/{advertiser_id}/{campaign_id}/adgroups/{adgroup_id}/settings.json")
-def adgroup_settings(advertiser_id: str, campaign_id: str, adgroup_id: str, db: Session = Depends(get_db)):
+def adgroup_settings(advertiser_id: str, campaign_id: str, adgroup_id: str, db: Session = Depends(get_db), _view: scope_mod.Scope = Depends(guard.account_in_view)):
     """What TikTok has stored on one ad group (the drawer's Settings popover). One
     read-only /adgroup/get/ call; nothing written."""
     from fastapi.responses import JSONResponse
@@ -673,7 +683,7 @@ def adgroup_settings(advertiser_id: str, campaign_id: str, adgroup_id: str, db: 
 
 
 @router.get("/campaigns/{advertiser_id}/{campaign_id}/settings.json")
-def campaign_settings(advertiser_id: str, campaign_id: str, db: Session = Depends(get_db)):
+def campaign_settings(advertiser_id: str, campaign_id: str, db: Session = Depends(get_db), _view: scope_mod.Scope = Depends(guard.account_in_view)):
     """What TikTok has stored on the campaign itself (objective, automation, budget mode…).
     One read-only /campaign/get/ call filtered to this id."""
     from fastapi.responses import JSONResponse
@@ -693,7 +703,7 @@ def campaign_settings(advertiser_id: str, campaign_id: str, db: Session = Depend
 
 
 @router.post("/campaigns/{advertiser_id}/{campaign_id}/agmode")
-def campaign_agmode(advertiser_id: str, campaign_id: str, on: str = Form("0"), db: Session = Depends(get_db)):
+def campaign_agmode(advertiser_id: str, campaign_id: str, on: str = Form("0"), db: Session = Depends(get_db), _view: scope_mod.Scope = Depends(guard.account_in_view)):
     """Drawer toggle: this campaign's numbers from ACTIVE ad groups only (on=1) or all (on=0)."""
     from fastapi.responses import JSONResponse
     want = str(on) in ("1", "true", "on", "yes")
@@ -703,7 +713,7 @@ def campaign_agmode(advertiser_id: str, campaign_id: str, on: str = Form("0"), d
 
 
 @router.get("/campaigns/{advertiser_id}/{campaign_id}/funnel.json")
-def campaign_funnel(advertiser_id: str, campaign_id: str, request: Request, db: Session = Depends(get_db)):
+def campaign_funnel(advertiser_id: str, campaign_id: str, request: Request, db: Session = Depends(get_db), _view: scope_mod.Scope = Depends(guard.account_in_view)):
     """The Lander funnel row for this campaign's source (the drawer). today | yesterday | 7d | 30d."""
     from fastapi.responses import JSONResponse
     from sqlalchemy import func as _func
@@ -731,7 +741,7 @@ def campaign_funnel(advertiser_id: str, campaign_id: str, request: Request, db: 
 
 @router.post("/campaigns/{advertiser_id}/{campaign_id}/adgroups/{adgroup_id}/appeal")
 def campaign_adgroup_appeal(advertiser_id: str, campaign_id: str, adgroup_id: str,
-                            db: Session = Depends(get_db)):
+                            db: Session = Depends(get_db), _view: scope_mod.Scope = Depends(guard.account_in_view)):
     """One-click appeal from the campaign drawer. Uses the rejection the issue scan
     tracked (or reads it from TikTok right now if the scan hasn't been by), then files
     through the same job the Appeals page uses — one appeal per rejection, never twice."""
@@ -767,7 +777,7 @@ def appeal_state(row_id: int, db: Session = Depends(get_db)):
 
 @router.post("/campaigns/{advertiser_id}/{campaign_id}/adgroups/{adgroup_id}/duplicate")
 def campaign_adgroup_duplicate(advertiser_id: str, campaign_id: str, adgroup_id: str,
-                               copies: int = Form(1), db: Session = Depends(get_db)):
+                               copies: int = Form(1), db: Session = Depends(get_db), _view: scope_mod.Scope = Depends(guard.account_in_view)):
     """Queue N duplicates of one ad group, each with the source's ads, in this campaign."""
     from fastapi.responses import JSONResponse
     from .. import adgroup_copy, jobs as jobs_mod
@@ -795,15 +805,15 @@ def _ago(dt):
 # ---------------------------------------------------------------------------
 
 @router.get("/tags.json")
-def tags_list(db: Session = Depends(get_db)):
+def tags_list(db: Session = Depends(get_db), sc: scope_mod.Scope = Depends(guard.view)):
     from fastapi.responses import JSONResponse
-    return JSONResponse({"ok": True, "tags": tags_mod.all_tags(db), "colors": list(tags_mod.COLORS)})
+    return JSONResponse({"ok": True, "tags": tags_mod.all_tags(db, sc.user_id), "colors": list(tags_mod.COLORS)})
 
 
 @router.post("/tags")
-def tags_create(name: str = Form(""), color: str = Form("grey"), db: Session = Depends(get_db)):
+def tags_create(name: str = Form(""), color: str = Form("grey"), db: Session = Depends(get_db), sc: scope_mod.Scope = Depends(guard.view)):
     from fastapi.responses import JSONResponse
-    t, err = tags_mod.create(db, name, color)
+    t, err = tags_mod.create(db, name, color, owner_user_id=sc.owner_for_new)
     if err:
         return JSONResponse({"ok": False, "error": err})
     db.commit()
@@ -811,9 +821,9 @@ def tags_create(name: str = Form(""), color: str = Form("grey"), db: Session = D
 
 
 @router.post("/tags/{tag_id}")
-def tags_update(tag_id: int, name: str = Form(None), color: str = Form(None), db: Session = Depends(get_db)):
+def tags_update(tag_id: int, name: str = Form(None), color: str = Form(None), db: Session = Depends(get_db), sc: scope_mod.Scope = Depends(guard.view)):
     from fastapi.responses import JSONResponse
-    t, err = tags_mod.update(db, tag_id, name=name, color=color)
+    t, err = tags_mod.update(db, tag_id, name=name, color=color, owner_user_id=sc.user_id)
     if err:
         return JSONResponse({"ok": False, "error": err})
     db.commit()
@@ -821,9 +831,9 @@ def tags_update(tag_id: int, name: str = Form(None), color: str = Form(None), db
 
 
 @router.post("/tags/{tag_id}/delete")
-def tags_delete(tag_id: int, db: Session = Depends(get_db)):
+def tags_delete(tag_id: int, db: Session = Depends(get_db), sc: scope_mod.Scope = Depends(guard.view)):
     from fastapi.responses import JSONResponse
-    n = tags_mod.delete(db, tag_id)
+    n = tags_mod.delete(db, tag_id, owner_user_id=sc.user_id)
     db.commit()
     return JSONResponse({"ok": True, "removed_from": n})
 
@@ -842,11 +852,17 @@ async def campaigns_tag(request: Request, db: Session = Depends(get_db)):
     except (TypeError, ValueError):
         tag_id = 0
     on = str(form.get("on") or "1") in ("1", "true", "on", "yes")
-    changed, err = tags_mod.set_on(db, ids, tag_id, on)
+    sc = scope_mod.for_request(request, db)
+    if not sc.everything:
+        # only campaigns on the view's accounts can be tagged from this view
+        allowed = {r[0] for r in db.query(models.CampaignRecord.campaign_id)
+                   .filter(models.CampaignRecord.campaign_id.in_(ids), models.CampaignRecord.advertiser_id.in_(list(sc.ids or [""])))}
+        ids = [c for c in ids if c in allowed]
+    changed, err = tags_mod.set_on(db, ids, tag_id, on, owner_user_id=sc.user_id)
     if err:
         return JSONResponse({"ok": False, "error": err})
     db.commit()
     # `also`: campaigns whose rows must be repainted too (a group row's other members)
     also = [x.strip() for x in str(form.get("also") or "").split(",") if x.strip()][:2000]
-    return JSONResponse({"ok": True, "changed": changed, "tags": tags_mod.by_campaign(db, list(set(ids) | set(also)))})
+    return JSONResponse({"ok": True, "changed": changed, "tags": tags_mod.by_campaign(db, list(set(ids) | set(also)), owner_user_id=sc.user_id)})
 

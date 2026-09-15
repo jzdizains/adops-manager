@@ -88,7 +88,14 @@ def audience_page(request: Request, db: Session = Depends(get_db)):
     if rng == "custom" and (start, end) == resolve_range("7", with_today, today)[:2]:
         rng = "7"           # unparseable custom dates → the default
     s, e = start.isoformat(), end.isoformat()
+    from .. import scope as scope_mod
+    sc = scope_mod.for_request(request, db)
     ids = _accounts_for(db, bc, account)
+    if not sc.everything:
+        # a user's view: their accounts, intersected with the BC / account filter
+        ids = sc.filter_ids(ids) if ids is not None else sorted(sc.ids or [])
+        if not ids:
+            ids = ["-"]                    # nothing in view → nothing (never "all")
     regions = aud.region_names(db)
     sections = []
     for key, title in SECTIONS:
@@ -101,9 +108,11 @@ def audience_page(request: Request, db: Session = Depends(get_db)):
     heat = aud.heatmap(db, s, heat_end, ids, camp, metric)
     bcs = {b.bc_id: (b.name or b.bc_id) for b in db.query(models.BusinessCenter).all()}
     accounts = db.query(models.AdAccount).filter(models.AdAccount.enabled == True)  # noqa: E712
-    accounts = accounts.order_by(models.AdAccount.advertiser_name).all()
+    accounts = [a for a in accounts.order_by(models.AdAccount.advertiser_name).all() if sc.allows(a.advertiser_id)]
     if bc and bc != "none":
         accounts = [a for a in accounts if a.owner_bc_id == bc]
+    if not sc.everything:
+        bcs = {k: v for k, v in bcs.items() if any(a.owner_bc_id == k for a in accounts)}
     return render(request, "audience.html", {
         "title": "Audience", "rng": rng, "ranges": RANGES, "metric": metric, "metrics": METRICS,
         "start_q": start_q if rng == "custom" else s, "end_q": end_q if rng == "custom" else e,

@@ -81,6 +81,19 @@
     if (k === "clear") { $$(".acchk, .ac-all").forEach(function (c) { c.checked = false; }); sync(); return; }
     if (!s.length) return;
     if (k === "launch") { location.href = "/super-launcher?accounts=" + s.map(function (r) { return r.dataset.id; }).join(","); return; }
+    if (k === "owner") {
+      var selEl = $("#acOwnerSel"); if (!selEl) return;
+      var uid = selEl.value, email = selEl.options[selEl.selectedIndex].textContent;
+      UI.confirm({ title: "Move " + s.length + " account" + (s.length > 1 ? "s" : "") + " to " + email + "?", text: "Their campaigns, spend, postbacks and audience data move with them — it's a filter, nothing is copied. You can move them back any time.", ok: "Move" }).then(function (yes) {
+        if (!yes) return;
+        UI.post("/accounts/owner", { advertiser_ids: s.map(function (r) { return r.dataset.id; }).join(","), user_id: uid }).then(function (r) {
+          if (!r || !r.ok) { adopsToast && adopsToast("err", (r && r.error) || "Couldn't move the accounts."); return; }
+          s.forEach(function (row) { var p = row.querySelector(".ac-owner"); if (p) { p.textContent = email; p.dataset.owner = uid; } });
+          adopsToast && adopsToast("ok", r.moved + " account" + (r.moved === 1 ? "" : "s") + " moved to " + email + ".");
+        });
+      });
+      return;
+    }
     if (k === "on" || k === "off") {
       var on = k === "on", before = s.map(function (r) { return r.dataset.enabled; });
       setEnabled(s, on).then(function () { UI.undo((on ? "Switched on " : "Switched off ") + s.length + " account" + (s.length > 1 ? "s" : ""), function () { return Promise.all(s.map(function (r, i) { return (r.dataset.enabled !== before[i]) ? setEnabled([r], before[i] === "1") : null; })); }); });

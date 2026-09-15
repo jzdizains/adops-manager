@@ -15,7 +15,9 @@ router = APIRouter()
 
 @router.get("/lead-forms")
 def page(request: Request, db: Session = Depends(get_db)):
-    forms = db.query(models.LeadForm).order_by(models.LeadForm.name).all()
+    from .. import scope as scope_mod
+    sc = scope_mod.for_request(request, db)
+    forms = [f for f in db.query(models.LeadForm).order_by(models.LeadForm.name).all() if sc.allows(f.owner_advertiser_id)]
     names = {a.advertiser_id: a.advertiser_name for a in db.query(models.AdAccount).all()}
     return render(request, "lead_forms.html", {
         "forms": forms, "names": names, "title": "Lead Forms",

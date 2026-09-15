@@ -81,9 +81,46 @@ def _strip_key(q):
 templates.env.filters.update({"local": _local, "ago": _ago, "money": _money, "strip_key": _strip_key})
 
 
+_VIEW_CACHE: dict = {}          # cookie value -> (expires, switch options) for the super admin's top bar
+_VIEW_TTL_S = 20
+
+
+def view_switch(request: Request) -> dict | None:
+    """The top-bar "Viewing" control (super admin only): current label + options.
+    One tiny users query, remembered 20 s per cookie value so pollers never hit the DB."""
+    import time as _time
+    me = getattr(getattr(request, "state", None), "user", None)
+    if me is None or not users.is_owner(me):
+        return None
+    from . import scope as _scope
+    from .database import SessionLocal
+    key = (me.id, request.cookies.get(_scope.COOKIE, ""))
+    hit = _VIEW_CACHE.get(key)
+    if hit and hit[0] > _time.time():
+        return hit[1]
+    db = SessionLocal()
+    try:
+        sc = _scope.current(request, db, me)
+        out = {"label": sc.label, "mode": sc.mode, "options": _scope.switch_options(db, sc), "user_id": sc.user_id}
+    finally:
+        db.close()
+    if len(_VIEW_CACHE) > 200:
+        _VIEW_CACHE.clear()
+    _VIEW_CACHE[key] = (_time.time() + _VIEW_TTL_S, out)
+    return out
+
+
+def forget_view_cache() -> None:
+    _VIEW_CACHE.clear()
+
+
 def render(request: Request, name: str, ctx: dict | None = None):
     ctx = dict(ctx or {})
     ctx["request"] = request
     ctx.setdefault("title", config.APP_NAME)
     ctx.setdefault("active", request.url.path)
+    try:
+        ctx.setdefault("view_switch", view_switch(request))
+    except Exception:      # noqa: BLE001 — the switch must never break a page
+        ctx.setdefault("view_switch", None)
     return templates.TemplateResponse(request, name, ctx)

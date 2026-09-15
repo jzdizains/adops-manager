@@ -100,10 +100,15 @@ def pixels_page(request: Request, db: Session = Depends(get_db)):
         _upsert(db, sp.pixel_id, name=sp.pixel_name, owner_bc=sp.bc_id)
     db.commit()
 
-    pixels = (db.query(models.PixelRecord)
-              .order_by(models.PixelRecord.pixel_name, models.PixelRecord.pixel_id).all())
+    from .. import scope as scope_mod
+    sc = scope_mod.for_request(request, db)
+    pixels = scope_mod.pixels_in_view(db, sc, db.query(models.PixelRecord)
+                                      .order_by(models.PixelRecord.pixel_name, models.PixelRecord.pixel_id).all())
     bcs = {b.bc_id: b for b in db.query(models.BusinessCenter).all()}
-    accounts = queries.enabled_accounts(db)
+    view_bcs = scope_mod.view_bc_ids(db, sc)
+    if view_bcs is not None:
+        bcs = {k: v for k, v in bcs.items() if k in view_bcs}
+    accounts = [a for a in queries.enabled_accounts(db) if sc.allows(a.advertiser_id)]
     acct_names = {a.advertiser_id: (a.advertiser_name or a.advertiser_id) for a in accounts}
     bc_counts: dict[str, int] = {}
     for a in accounts:
@@ -141,9 +146,13 @@ def pixels_page(request: Request, db: Session = Depends(get_db)):
     })
 
 
-def _scope(db: Session, scope: str) -> tuple[list[models.AdAccount], str]:
-    """`all` | `bc:<bc id>` | `acct:<advertiser id>` → the enabled accounts to pull from + a label."""
-    accounts = queries.enabled_accounts(db)
+def _scope(db: Session, scope: str, sc=None) -> tuple[list[models.AdAccount], str]:
+    """`all` | `bc:<bc id>` | `acct:<advertiser id>` → the enabled accounts to pull from + a label
+    (inside the view when `sc` is given)."""
+    accounts = [a for a in queries.enabled_accounts(db) if sc is None or sc.allows(a.advertiser_id)]
+    if scope.startswith("user:") and scope[5:].isdigit():
+        uid = int(scope[5:])
+        return [a for a in accounts if a.owner_user_id == uid], "your accounts"
     if scope.startswith("bc:"):
         bc_id = scope[3:]
         bc = db.query(models.BusinessCenter).filter_by(bc_id=bc_id).first()
@@ -156,12 +165,16 @@ def _scope(db: Session, scope: str) -> tuple[list[models.AdAccount], str]:
 
 
 @router.post("/pixels/sync")
-def sync_pixels(scope: str = Form("all"), db: Session = Depends(get_db)):
+def sync_pixels(request: Request, scope: str = Form("all"), db: Session = Depends(get_db)):
     """Queue: pull pixels from every enabled account, one Business Center's accounts, or one account."""
     from urllib.parse import quote
+    from .. import scope as scope_mod
     if not queries.any_access_token(db):
         return RedirectResponse("/pixels?err=Connect+TikTok+first", status_code=303)
-    accounts, label = _scope(db, scope)
+    sc = scope_mod.for_request(request, db)
+    accounts, label = _scope(db, scope, sc)
+    if scope == "all" and not sc.everything:
+        scope = "user:%d" % sc.user_id          # the job pulls the view's accounts only
     if not accounts:
         return RedirectResponse("/pixels?err=" + quote(f"No enabled ad account under {label} to sync from."), status_code=303)
     job, created = jobs.enqueue_once(db, "pixels_sync", f"Sync pixels — {label}", {"scope": scope}, href="/pixels")
