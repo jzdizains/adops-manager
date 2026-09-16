@@ -3,7 +3,10 @@ services:
     name: adops-manager
     runtime: python
     plan: starter
-    buildCommand: pip install -r requirements.txt && playwright install chromium || true
+    # Chromium for the Instant Page builder is NOT taken from this build step: Render's native
+    # runtime drops the build-time ~/.cache. The app installs it once into /data/pw-browsers on
+    # first use (app/instant_page_builder.py) — the disk persists across deploys.
+    buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     autoDeploy: true            # deploys on every push to main
     disk:                        # ⚠ REQUIRED — SQLite + cookie file live here (§9.8)

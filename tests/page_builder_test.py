@@ -103,6 +103,22 @@ else:
         r3 = ipb.build("7659328211721060370", tpl, base_url=base)
         check("memory guard: no browser above the ceiling, marked retry", r3["ok"] is False and r3.get("retry") is True and "memory" in r3["error"].lower())
         rss["v"] = 100.0
+        # no Chromium on the machine: install once, retry once, then report — never crash
+        old_env = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+        empty = SCRATCH / "no-browsers"; empty.mkdir(exist_ok=True)
+        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(empty)
+        calls = []
+        real_install = ipb.install_browser
+        ipb.install_browser = lambda timeout=600: calls.append(1) or ""
+        try:
+            r4 = ipb.build("7659328211721060370", tpl, base_url=base)
+            check("missing Chromium → one install attempt, one retry, honest error", len(calls) == 1 and r4["ok"] is False and "Chromium isn't installed" in r4["error"] and any(s["step"].startswith("installed Chromium") for s in r4["steps"]), json.dumps(r4)[:300])
+        finally:
+            ipb.install_browser = real_install
+            if old_env is None:
+                os.environ.pop("PLAYWRIGHT_BROWSERS_PATH", None)
+            else:
+                os.environ["PLAYWRIGHT_BROWSERS_PATH"] = old_env
     except Exception as e:  # noqa: BLE001
         msg = str(e)
         if "Executable doesn't exist" in msg or "playwright install" in msg:
@@ -127,6 +143,7 @@ check("job in the slow lane with progress", '@jobs.handler("instant_page_build")
 check("preset stores page_template_id; synthesize carries it", '"page_template_id": int(val("page_template_id"))' in read("app/routes/templates_routes.py") and 'fields["page_template_id"] = int(s.get("page_template_id") or 0) or None' in read("app/routes/launch.py"))
 ca = read("app/routes/campaigns.py")
 check("launch builds only on a 'has no instant page' miss, then uses the verified page id", 'except AssetResolveError as miss:' in ca and '"has no instant page" not in str(miss).lower()' in ca and 'r = ipb.build_and_verify(db, acct, tpl)' in ca and 'fields["instant_page_id"] = r["page_id"]' in ca)
+check("Chromium lives on the data disk and is installed on first use", 'BROWSERS_DIR = config.DATA_DIR / "pw-browsers"' in read("app/instant_page_builder.py") and '"-m", "playwright", "install", "chromium"' in read("app/instant_page_builder.py") and "except BrowserMissing" in read("app/instant_page_builder.py"))
 check("verification is the official API, retried briefly", "ip.sync_account(db, acct)" in read("app/instant_page_builder.py") and "time.sleep(3)" in read("app/instant_page_builder.py"))
 th = read("app/templates/instant_pages.html"); tf = read("app/templates/template_form.html")
 check("Instant Pages: templates card, form pop-up, build popover", 'id="templates"' in th and 'id="tplFormBox"' in th and 'tpl-build" type="button"' in th and "/templates/{{ t.id }}/build-bc" in th)

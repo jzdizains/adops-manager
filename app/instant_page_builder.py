@@ -31,6 +31,15 @@ from . import config, spark_web_api
 
 log = logging.getLogger("adops.instant_page_builder")
 
+# Where Chromium lives: the persistent data disk. Render's native runtime doesn't keep the
+# build step's ~/.cache, so a browser installed at build time is gone at runtime (seen live
+# 17 Sep: "Executable doesn't exist at /opt/render/.cache/ms-playwright/…"). Installing
+# into the data disk once — on first use — survives every redeploy. An operator-set
+# PLAYWRIGHT_BROWSERS_PATH is respected.
+BROWSERS_DIR = config.DATA_DIR / "pw-browsers"
+if not os.environ.get("PLAYWRIGHT_BROWSERS_PATH") and (BROWSERS_DIR.exists() or not os.path.isdir(os.path.expanduser("~/.cache/ms-playwright"))):
+    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(BROWSERS_DIR)
+
 try:
     from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout  # type: ignore
     PLAYWRIGHT_AVAILABLE = True
@@ -123,8 +132,58 @@ def build(advertiser_id: str, template, base_url: str = "https://ads.tiktok.com"
             raise BuildError(f"{name}: {str(e).splitlines()[0][:160]}") from e
 
     with _LOCK:
+        for attempt in (1, 2):
+            try:
+                return _drive(adv, template, cookies, base_url, headless, steps, step)
+            except BrowserMissing as e:
+                if attempt == 2:
+                    return {"ok": False, "error": str(e), "steps": steps, "challenge": False}
+                if on_step:
+                    on_step("installing Chromium on the server (first run, ~1 min)")
+                err = install_browser()
+                if err:
+                    return {"ok": False, "error": err, "steps": steps, "challenge": False}
+                steps.append({"step": "installed Chromium into the data disk", "ok": True})
+    return {"ok": False, "error": "browser could not be started", "steps": steps, "challenge": False}
+
+
+class BrowserMissing(Exception):
+    """Playwright is installed but no Chromium build is on this machine."""
+
+
+def install_browser(timeout: int = 600) -> str:
+    """`playwright install chromium` into BROWSERS_DIR (the persistent data disk, so one
+    install outlives redeploys — Render drops the build-time cache at runtime). Returns
+    '' on success, else the reason."""
+    import subprocess
+    import sys
+    BROWSERS_DIR.mkdir(parents=True, exist_ok=True)
+    env = {**os.environ, "PLAYWRIGHT_BROWSERS_PATH": str(BROWSERS_DIR)}
+    try:
+        proc = subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], env=env,
+                              capture_output=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return f"installing Chromium took longer than {timeout}s — try the build again in a few minutes"
+    if proc.returncode != 0:
+        tail = (proc.stderr or proc.stdout or b"").decode("utf-8", "replace")[-400:]
+        return "Chromium couldn't be installed on this server: " + tail
+    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(BROWSERS_DIR)     # the next sync_playwright() looks there
+    return ""
+
+
+def _drive(adv: str, template, cookies: dict, base_url: str, headless: bool, steps: list, step) -> dict:
+    """One full run in one browser. Raises BrowserMissing when Chromium isn't installed."""
+    if sync_playwright is not None:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=headless, args=["--disable-dev-shm-usage", "--disable-gpu", "--no-first-run"])
+            try:
+                browser = p.chromium.launch(headless=headless, args=["--disable-dev-shm-usage", "--disable-gpu", "--no-first-run"])
+            except Exception as e:  # noqa: BLE001
+                msg = str(e)
+                if "Executable doesn't exist" in msg or "playwright install" in msg:
+                    raise BrowserMissing("Chromium isn't installed on this server yet — " + msg.splitlines()[0][:160]) from e
+                if "missing dependencies" in msg.lower() or "Host system" in msg:
+                    return {"ok": False, "error": "this server is missing the system libraries Chromium needs: " + msg.splitlines()[0][:200], "steps": steps, "challenge": False}
+                raise
             ctx = browser.new_context(viewport={"width": 1280, "height": 900}, locale="en-US")
             ctx.add_cookies([{"name": k, "value": v, "domain": ".tiktok.com", "path": "/"} for k, v in cookies.items()])
             page = ctx.new_page()
