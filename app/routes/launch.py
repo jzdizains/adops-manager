@@ -265,6 +265,10 @@ def synthesize(template: models.Template, overrides: dict[str, Any] | None = Non
     # …or a specific library VIDEO (same idea: runs on every account, so reusable;
     # ignored under Smart Creative, which needs several videos)
     fields["video_creative_id"] = int(s.get("video_creative_id") or 0) or None
+    # Display Card add-on picked in the preset (the engine uploads this account's copy
+    # and sends card_id on the ad). Was saved by the preset form but never carried into
+    # the launch fields — so no launch ever placed it (v120 fix).
+    fields["display_card_id"] = int(s.get("display_card_id") or 0) or None
     if traffic_goal:
         # Traffic never optimises for a pixel event; Engaged session takes its pixel from
         # the Traffic block (the conversion pixel fields are hidden for this objective)

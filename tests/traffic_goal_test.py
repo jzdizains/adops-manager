@@ -94,6 +94,10 @@ f_conv = launch.synthesize(Template(objective_type="WEB_CONVERSIONS", blob={"tra
 check("a conversion preset is untouched by the traffic goal", f_conv["traffic_goal"] == "" and f_conv["pixel_id"] == "999"
       and f_conv["optimization_event"] == "SHOPPING" and f_conv["optimization_goal"] == "CONVERT", str(f_conv["optimization_goal"]))
 check("the three options are exactly Ads Manager's", [k for k, _, _ in launch.TRAFFIC_GOAL_OPTIONS] == ["CLICK", "LPV", "ENGAGED"])
+# v120: the preset's Display Card add-on reaches the launch fields (it was saved but never carried → never placed)
+f_card = launch.synthesize(Template(blob={"display_card_id": 7}))
+check("a preset's display card is carried into the launch fields", f_card.get("display_card_id") == 7)
+check("no card → None (engine treats it as off)", f_none.get("display_card_id") is None)
 
 # ==== 2 · ad-group payload =============================================================
 print("\n-- build_adgroup_payload --")
