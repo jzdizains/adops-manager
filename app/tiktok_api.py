@@ -578,25 +578,34 @@ def create_ad(access_token: str, advertiser_id: str, payload: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 def upload_video_file(access_token: str, advertiser_id: str, file_path: str,
-                      file_name: str) -> dict:
+                      file_name: str, flaw_detect: bool = True) -> dict:
     """Upload a local video file into an ad account's asset library.
     Streams from disk — the video is never held in memory whole.
-    Returns the first entry: {video_id, video_cover_url/poster_url, ...}."""
+    Returns the first entry: {video_id, video_cover_url/poster_url, ...}.
+
+    flaw_detect + auto_fix (API reference, /file/video/ad/upload/): when TikTok finds an
+    issue it does NOT return a video_id — it returns `fix_task_id` + `flaw_types` and
+    fixes the video in the background (auto_bind puts the fixed copy in the library
+    later). A launch can't wait for that, so on such an answer this uploads the
+    original once more with flaw detection OFF and returns that (with `flaw_types`
+    carried along so the caller can say what TikTok flagged). Both answers are in
+    Diagnostics."""
     import hashlib
     hasher = hashlib.md5()
     with open(file_path, "rb") as fh:
         for chunk in iter(lambda: fh.read(1024 * 1024), b""):
             hasher.update(chunk)
     signature = hasher.hexdigest()
+    data = {"advertiser_id": advertiser_id, "upload_type": "UPLOAD_BY_FILE",
+            "video_signature": signature, "file_name": file_name}
+    if flaw_detect:
+        data.update({"flaw_detect": "true", "auto_fix_enabled": "true", "auto_bind_enabled": "true"})
     try:
         with open(file_path, "rb") as fh:
             resp = _client().post(
                 f"{BASE}/file/video/ad/upload/",
                 headers={"Access-Token": access_token},
-                data={"advertiser_id": advertiser_id, "upload_type": "UPLOAD_BY_FILE",
-                      "video_signature": signature, "file_name": file_name,
-                      "flaw_detect": "true", "auto_fix_enabled": "true",
-                      "auto_bind_enabled": "true"},
+                data=data,
                 files={"video_file": (file_name, fh, "video/mp4")},
                 timeout=httpx.Timeout(180.0, connect=10.0),
             )
@@ -604,7 +613,23 @@ def upload_video_file(access_token: str, advertiser_id: str, file_path: str,
         raise TikTokError("HTTP", f"Network error uploading video: {e!r}")
     parsed = _parse(resp)
     if isinstance(parsed, list):
-        return parsed[0] if parsed else {}
+        parsed = parsed[0] if parsed else {}
+    if not isinstance(parsed, dict):
+        parsed = {}
+    if not parsed.get("video_id"):
+        flaws = parsed.get("flaw_types") or []
+        flaw_txt = ", ".join(str(f) for f in flaws) if isinstance(flaws, list) else str(flaws)
+        if flaw_detect and (parsed.get("fix_task_id") or flaws):
+            _note(resp, "FLAW", f"TikTok flagged the video ({flaw_txt or 'no flaw type given'}) and started fix task "
+                                f"{parsed.get('fix_task_id') or '?'} instead of returning a video_id — uploading the original "
+                                f"as-is (flaw detection off) so the launch can go on")
+            again = upload_video_file(access_token, advertiser_id, file_path, file_name, flaw_detect=False)
+            again["flaw_types"] = flaws
+            return again
+        # code 0 but nothing usable: put TikTok's actual answer where the operator can read it
+        _note(resp, "APP", f"video upload answered code 0 without a video_id: {json.dumps(parsed, default=str)[:400]}")
+        raise TikTokError("APP", f"video upload returned no video_id — TikTok answered: {json.dumps(parsed, default=str)[:300]}",
+                          data=parsed, path=_endpoint(resp))
     return parsed
 
 

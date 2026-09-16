@@ -1171,6 +1171,15 @@ def _upload_creative_to_account(db: Session, acct: models.AdAccount,
     video_id = str(up.get("video_id", ""))
     if not video_id:
         raise tiktok_api.TikTokError("APP", "video upload returned no video_id")
+    if up.get("flaw_types"):
+        # TikTok flagged the file (black bars, low resolution, …) — the launch went on with
+        # the original; the creative shows the flag so the buyer can fix the file
+        flaws = up["flaw_types"]
+        note = "TikTok flagged: " + (", ".join(str(f) for f in flaws) if isinstance(flaws, list) else str(flaws))
+        live_log.push("warn", f"{note} on creative #{creative.id} ({creative.file_name}) — uploaded as-is", advertiser_id=str(acct.advertiser_id))
+        db.add(models.Alert(kind="creative_flaw", ref_id=str(acct.advertiser_id), level="warn",
+                            message=f"{note} on creative “{creative.file_name}” — the launch went on with the original file; "
+                                    f"TikTok may review it more strictly. Fix the file (or pick another) on /creatives."))
     poster = up.get("video_cover_url") or up.get("poster_url") or ""
     cover_image_id = _resolve_cover(acct, video_id, poster, creative.id)
     db.add(models.CreativeUpload(creative_id=creative.id,

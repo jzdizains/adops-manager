@@ -35,6 +35,8 @@ def _alert_href(a: models.Alert) -> tuple[str, bool]:
         return "/monitor", False
     if a.kind == "parity":
         return "/diagnostics?kind=parity", False
+    if a.kind == "creative_flaw":
+        return "/creatives", False
     return "", False
 
 
@@ -63,7 +65,8 @@ def build(db: Session, scope=None) -> list[dict]:
             "id": f"alert:{a.id}", "kind": a.kind, "level": a.level or "warn",
             "title": {"bc_low_balance": "Wallet low", "account_error": "Account error",
                       "rule_action": "Rule fired", "inventory_low": "Inventory low",
-                      "cta_fallback": "Auto CTA fallback", "parity": "TikTok has an option we don't offer"}.get(a.kind, "Notice"),
+                      "cta_fallback": "Auto CTA fallback", "parity": "TikTok has an option we don't offer",
+                      "creative_flaw": "TikTok flagged a creative"}.get(a.kind, "Notice"),
             "message": a.message, "href": href, "external": external,
             "at": a.created_at, "ack": True, "where": "",
         })
