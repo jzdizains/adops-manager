@@ -49,6 +49,19 @@ def _bid(db: Session, p: dict, job: models.Job) -> dict:
     return {"ok": bool(r.get("ok")), "detail": d, "href": "/status"}
 
 
+@jobs.handler("bid_bump")
+def _bid_bump(db: Session, p: dict, job: models.Job) -> dict:
+    from . import bid_bump
+    r = bid_bump.run(db, [int(x) for x in (p.get("watch_ids") or [])], p.get("user_id"),
+                     should_stop=lambda: jobs.should_stop(db, job))
+    d = f"+${r['step']:.2f} on {r['bumped']} ad group(s)"
+    if r["skipped"]:
+        d += f", {r['skipped']} no longer due"
+    if r["failed"]:
+        d += " — " + " · ".join(r["failed"])[:300]
+    return {"ok": not r["failed"], "detail": d, "href": "/monitor?view=automation"}
+
+
 @jobs.handler("campaign_edit")
 def _edit(db: Session, p: dict, job: models.Job) -> dict:
     from .routes import campaigns as engine

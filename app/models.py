@@ -576,6 +576,34 @@ class AdgroupSnapshot(Base):
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
 
+class AdgroupBidWatch(Base):
+    """One row per ad group the sweep currently sees on a hot account — what the
+    "idle bid bump" rule needs: today's spend as last seen and WHEN it last moved,
+    the bid TikTok holds (and which field it lives in), delivery status, schedule,
+    and the bumps made today. Refreshed by the same sweep that fills
+    AdgroupSnapshot (no extra TikTok calls); rows unseen for 3 days are pruned."""
+    __tablename__ = "adgroup_bid_watch"
+
+    id = Column(Integer, primary_key=True)
+    advertiser_id = Column(String, index=True, nullable=False)
+    campaign_id = Column(String, index=True, default="")
+    adgroup_id = Column(String, unique=True, nullable=False)
+    adgroup_name = Column(String, default="")
+    day = Column(String, default="")                       # local day spend_seen belongs to
+    spend_seen = Column(Float, default=0.0)
+    spend_changed_at = Column(DateTime, default=utcnow)    # last time today's spend grew (or first sighting)
+    last_bump_at = Column(DateTime, nullable=True)
+    bumps_today = Column(Integer, default=0)
+    bumps_day = Column(String, default="")
+    bid_field = Column(String, default="")                 # conversion_bid_price | bid_price | "" (no bid to raise)
+    bid_now = Column(Float, default=0.0)
+    operation_status = Column(String, default="")
+    secondary_status = Column(String, default="")
+    dayparting = Column(String, default="")                # TikTok's 0/1 half-hour string; "" = all hours
+    skip_reason = Column(String, default="")               # why the last evaluation didn't bump (Health shows it)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow, index=True)
+
+
 # ---------------------------------------------------------------------------
 # Automation logs
 # ---------------------------------------------------------------------------

@@ -107,6 +107,9 @@ def monitor(request: Request, db: Session = Depends(get_db)):
          "sub": f"losing more than ${s['profit_loss_limit']:.0f} today after ${s['profit_min_spend']:.0f} spend" + (" · profitable ones protected" if s["protect_profitable"] else "")},
         {"key": "topup", "on": bool(s["topup_enabled"]), "name": "Auto top-up from BC wallet", "tab": "rules",
          "sub": f"${s['topup_amount']:.0f} when an account drops under ${s['topup_below']:.0f} · cap ${s['topup_daily_cap']:.0f}/day"},
+        {"key": "bidbump", "on": bool(s.get("bid_bump_enabled")), "name": "Idle bid bump", "tab": "rules",
+         "sub": f"+${float(s.get('bid_bump_step') or 0):.2f} after {int(s.get('bid_bump_idle_min') or 0)} min without spend · max {int(s.get('bid_bump_max_per_day') or 0)}/day"
+                + (f" · ceiling ${float(s.get('bid_bump_ceiling') or 0):.2f}" if float(s.get('bid_bump_ceiling') or 0) else "")},
         {"key": "appeal", "on": bool(s["appeal_auto_enabled"]), "name": "Auto-appeal rejected ads", "tab": "appeals",
          "sub": f"up to {int(s['appeal_daily_cap'] or 0)} a day" + (" · skips: " + s["appeal_skip_keywords"] if s["appeal_skip_keywords"] else "")},
         {"key": "cooldown", "on": True, "name": "Account cooldown", "tab": "launch",

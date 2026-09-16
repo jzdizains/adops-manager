@@ -58,7 +58,8 @@ def jobs_page(request: Request, db: Session = Depends(get_db)):
     rows = db.query(models.Job).order_by(models.Job.id.desc()).limit(150).all()
     day_start = timeutil.local_midnight_utc(0).replace(tzinfo=None)
     today = [j for j in rows if j.finished_at and j.finished_at >= day_start]
-    return render(request, "jobs.html", {"title": "Jobs", "rows": rows, "summary": jobs.summary(db), "slow_kinds": jobs.SLOW_KINDS,
+    finished = db.query(models.Job).filter(models.Job.status.in_(jobs.FINISHED)).count()
+    return render(request, "jobs.html", {"title": "Jobs", "rows": rows, "summary": jobs.summary(db), "slow_kinds": jobs.SLOW_KINDS, "finished": finished,
                                          "done_today": sum(1 for j in today if j.status == "done"), "failed_today": sum(1 for j in today if j.status == "error")})
 
 
@@ -73,6 +74,15 @@ def cancel_job(request: Request, job_id: int, next: str = Form("/jobs"), db: Ses
     if request.headers.get("x-requested-with") == "fetch":
         return JSONResponse({"ok": ok, "msg": msg})
     return RedirectResponse(_safe_next(next) + ("?ok=" if ok else "?err=") + quote(msg), status_code=303)
+
+
+@router.post("/jobs/clear-finished")
+def clear_finished(request: Request, next: str = Form("/jobs"), db: Session = Depends(get_db)):
+    """One button: remove every finished job from the list (queued / running stay)."""
+    n = jobs.clear_finished(db)
+    if request.headers.get("x-requested-with") == "fetch":
+        return JSONResponse({"ok": True, "n": n})
+    return RedirectResponse(_safe_next(next) + "?ok=" + quote(f"Cleared {n} finished job(s)." if n else "Nothing finished to clear."), status_code=303)
 
 
 @router.post("/jobs/cancel-queued")

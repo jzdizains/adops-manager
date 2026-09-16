@@ -5,6 +5,7 @@
     <div class="muted" style="font-size:12.5px;">Launches, bid changes, appeals, scans and syncs run here in the background — finished ones pop up bottom-right wherever you are.</div></div>
   <div class="actions">
     {% if summary.queued %}<button type="button" class="btn" id="jbClear" data-n="{{ summary.queued }}" title="Drop everything still waiting; running jobs are not touched">✕ Clear queue ({{ summary.queued }})</button>{% endif %}
+    {% if finished %}<button type="button" class="btn" id="jbClearDone" data-n="{{ finished }}" title="Remove every finished job (done, failed, cancelled) from this list; queued and running ones stay">✕ Clear finished ({{ finished }})</button>{% endif %}
   </div>
 </div>
 
@@ -64,6 +65,7 @@
     if (b.dataset.mode === "stop") UI.confirm({ title: "Stop “" + b.dataset.title + "”?", text: "Long scans stop after the account they are on; a launch in progress finishes the campaign it is creating first.", ok: "Stop" }).then(function (y) { if (y) go(); });
     else go();
   });
+  var clrD = $("#jbClearDone"); if (clrD) clrD.addEventListener("click", function () { UI.confirm({ title: "Clear " + clrD.dataset.n + " finished job(s) from the list?", text: "Queued and running jobs stay. Launch results stay on their own pages.", ok: "Clear finished", danger: true }).then(function (y) { if (y) UI.post("/jobs/clear-finished", { next: "/jobs" }).then(function () { location.reload(); }); }); });
   var clr = $("#jbClear"); if (clr) clr.addEventListener("click", function () { UI.confirm({ title: "Remove all " + clr.dataset.n + " queued job(s)?", text: "Running ones keep going.", ok: "Clear queue", danger: true }).then(function (y) { if (y) UI.post("/jobs/cancel-queued", { next: "/jobs" }).then(function () { location.reload(); }); }); });
   // live: when anything finishes or the running set changes, reload the list (cheap — server renders it)
   var lastSig = null;

@@ -288,6 +288,36 @@ def file_all(db: Session = Depends(get_db), sc: scope_mod.Scope = Depends(guard.
     return _back(ok=f"Filing {len(ids)} appeal(s) in the background — you'll get a notification.")
 
 
+def _in_filter(db: Session, rows, bc: str, camp: str):
+    bc_of, _names = _bc_of_accounts(db)
+    return [r for r in rows if _passes(r, bc.strip(), camp.strip(), bc_of)]
+
+
+@router.post("/appeals/clear")
+def clear_open(bc: str = Form(""), camp: str = Form(""), db: Session = Depends(get_db), sc: scope_mod.Scope = Depends(guard.view)):
+    """One button: dismiss every open rejection shown (the current filter, this view) —
+    nothing is filed, TikTok isn't called. A rejection comes back only if TikTok reviews
+    the ad group again and rejects it anew."""
+    rows = [r for r in db.query(models.Appeal).filter(models.Appeal.status.in_(OPEN_STATUSES)).all() if sc.allows(r.advertiser_id)]
+    rows = _in_filter(db, rows, bc, camp)
+    now = appeals_mod._now()
+    for r in rows:
+        r.status, r.error, r.resolved_at = "dismissed", "", now
+    db.commit()
+    return _back(ok=f"Cleared {len(rows)} open rejection(s) — dismissed, nothing filed." if rows else "Nothing open to clear.", bc=bc, camp=camp)
+
+
+@router.post("/appeals/clear-history")
+def clear_history(bc: str = Form(""), camp: str = Form(""), db: Session = Depends(get_db), sc: scope_mod.Scope = Depends(guard.view)):
+    """Remove the finished rows (answered appeals, dismissed and cleared rejections) shown."""
+    rows = [r for r in db.query(models.Appeal).filter(models.Appeal.status.in_(list(appeals_mod.FINAL))).all() if sc.allows(r.advertiser_id)]
+    rows = _in_filter(db, rows, bc, camp)
+    for r in rows:
+        db.delete(r)
+    db.commit()
+    return _back(ok=f"Removed {len(rows)} finished row(s) from the history." if rows else "The history was already empty.", bc=bc, camp=camp)
+
+
 @router.post("/appeals/{row_id}/dismiss")
 def dismiss(row_id: int, bc: str = Form(""), camp: str = Form(""), db: Session = Depends(get_db), sc: scope_mod.Scope = Depends(guard.view)):
     """Operator handled it another way (edited the ad, deleted it, or doesn't care)."""

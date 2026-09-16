@@ -124,6 +124,11 @@ def write_account(db: Session, acct: models.AdAccount, day: str, fetched) -> int
         row.clicks = int(_f(m, "clicks"))
         row.conversions = int(_f(m, "conversion"))
         n += 1
+    try:
+        from . import bid_bump
+        bid_bump.observe(db, acct.advertiser_id, groups, metrics, day)     # idle-bid-bump watch: same data, no extra calls
+    except Exception:  # noqa: BLE001 — the watch must never break the spend sync
+        log.exception("bid watch update failed for %s", acct.advertiser_id)
     _prune(db)
     return n
 

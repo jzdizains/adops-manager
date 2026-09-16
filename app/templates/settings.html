@@ -72,6 +72,32 @@
   </div>
 </div>
 
+<div class="card" id="bidbump">
+  <div class="card-header"><span class="card-title">Idle bid bump</span>
+    <span class="card-meta">a delivering ad group that hasn't spent for a while gets a slightly higher bid — your accounts only</span></div>
+  <label style="display:flex;align-items:center;gap:8px;margin-bottom:14px;font-weight:700;">
+    <input type="checkbox" name="bid_bump_enabled" {{ 'checked' if s.bid_bump_enabled }} style="width:auto;">
+    Enable idle bid bump
+  </label>
+  <div class="form-row-3">
+    <label class="field"><span class="field-label">No spend for (minutes)</span>
+      <input type="number" min="15" step="1" name="bid_bump_idle_min" value="{{ s.bid_bump_idle_min }}">
+      <span class="hint">Counted from the last spend, the last bump, or when the ad group was first seen. Minimum 15.</span></label>
+    <label class="field"><span class="field-label">Raise the bid by ($)</span>
+      <input type="number" min="0.01" step="0.01" name="bid_bump_step" value="{{ s.bid_bump_step }}">
+      <span class="hint">Added to the cost cap (oCPM goals) or the bid (click / CPM billing). Lowest-cost ad groups have no bid and are skipped.</span></label>
+    <label class="field"><span class="field-label">Never bid above ($)</span>
+      <input type="number" min="0" step="0.01" name="bid_bump_ceiling" value="{{ s.bid_bump_ceiling }}">
+      <span class="hint">0 = no ceiling. Either way an ad group is bumped at most <b>{{ s.bid_bump_max_per_day }}</b> times a day.</span></label>
+  </div>
+  <div class="form-row">
+    <label class="field"><span class="field-label">Max bumps per ad group per day</span>
+      <input type="number" min="1" max="48" step="1" name="bid_bump_max_per_day" value="{{ s.bid_bump_max_per_day }}"></label>
+    <div class="field"><span class="field-label">What it never touches</span>
+      <span class="hint" style="margin-top:6px;">Ad groups TikTok reports as anything but <b>delivering</b> (in review, rejected, out of budget or balance, not started, ended), ad groups with a dayparting schedule, paused campaigns and Smart+ campaigns. Every bump and every skip reason shows on <a href="/monitor?view=automation">Health → Automation</a>.</span></div>
+  </div>
+</div>
+
 </section>
 <section class="stab" data-tab="launch">
 <div class="card" id="lifecycle">
@@ -549,7 +575,7 @@
 (function () {
   // one section at a time; the hash picks it (deep links like /settings#security keep working)
   var FORM_TABS = { rules: 1, launch: 1, tracking: 1, events: 1, appeals: 1, server: 1, assistant: 1 };
-  var ALIAS = { profit: "rules", lifecycle: "launch", topups: "launch", sweeps: "server", queue: "server", sources: "tracking", test: "events", audience: "server" };
+  var ALIAS = { profit: "rules", bidbump: "rules", lifecycle: "launch", topups: "launch", sweeps: "server", queue: "server", sources: "tracking", test: "events", audience: "server" };
   var nav = document.getElementById("setNav"), links = nav.querySelectorAll("a[data-tab]"), bar = document.getElementById("setSaveBar"), top = document.getElementById("setSaveTop");
   function show(tab) {
     if (ALIAS[tab]) tab = ALIAS[tab];

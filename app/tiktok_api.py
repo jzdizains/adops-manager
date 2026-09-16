@@ -869,13 +869,18 @@ def update_campaign_name(access_token: str, advertiser_id: str, campaign_id: str
 
 def update_adgroup(access_token: str, advertiser_id: str, adgroup_id: str,
                    budget: float | None = None,
-                   conversion_bid_price: float | None = None) -> dict:
-    """Change an ad group's budget and/or cost cap (/adgroup/update/)."""
+                   conversion_bid_price: float | None = None,
+                   bid_price: float | None = None) -> dict:
+    """Change an ad group's budget, cost cap (conversion_bid_price — oCPM goals) and/or
+    bid (bid_price — click / CPM billing) (/adgroup/update/)."""
     payload: dict = {"advertiser_id": advertiser_id, "adgroup_id": adgroup_id}
     if budget is not None:
         payload["budget"] = round(float(budget), 2)
     if conversion_bid_price is not None:
         payload["conversion_bid_price"] = round(float(conversion_bid_price), 2)
+        payload["bid_type"] = "BID_TYPE_CUSTOM"
+    if bid_price is not None:
+        payload["bid_price"] = round(float(bid_price), 2)
         payload["bid_type"] = "BID_TYPE_CUSTOM"
     return api_post("/adgroup/update/", access_token, payload)
 

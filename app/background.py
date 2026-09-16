@@ -82,7 +82,7 @@ def rss_mb() -> float:
 def _loop():
     import gc
 
-    from . import balances, issues, jobs, live_spend, partners, queue_worker, rules, tensorpix_worker
+    from . import balances, bid_bump, issues, jobs, live_spend, partners, queue_worker, rules, tensorpix_worker
     from .database import SessionLocal
     from . import settings_store
     from .settings_store import get_settings
@@ -113,6 +113,7 @@ def _loop():
                 issues.scan(db)
                 partners.poll(db)               # TikTok-account assignments waiting on accepted invites
                 jobs.prune(db)
+                bid_bump.prune(db)
                 _prune_logins(db)
                 _audience_daily(db)             # once a day: audience breakdowns + hourly heatmap
                 _music_monthly(db)              # TikTok's Audio Library cache, refreshed monthly (doc's advice)
@@ -125,6 +126,7 @@ def _loop():
             for u, us, ids in settings_store.per_user(db):         # each user's rules over their own accounts
                 rules.evaluate_pause_rules(db, us, ids)
                 rules.evaluate_profit_rules(db, us, ids)
+                bid_bump.schedule(db, us, ids, u.id)                  # idle ad groups → bid +step (runs as a job)
             queue_worker.process(db, settings)
             tensorpix_worker.process_pending(db, limit=6)   # advance variant jobs
             try:

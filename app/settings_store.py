@@ -46,6 +46,12 @@ DEFAULTS: dict = {
     "profit_loss_limit": 20.0,     # pause a source losing more than this today
     "profit_min_spend": 15.0,      # only judge sources past this spend today
     "protect_profitable": True,    # metric rules skip sources in profit today
+    # --- idle bid bump ---------------------------------------------------------
+    "bid_bump_enabled": False,     # raise the bid of a delivering ad group that hasn't spent for a while
+    "bid_bump_step": 0.05,         # $ added per bump
+    "bid_bump_idle_min": 60,       # minutes without any spend before a bump
+    "bid_bump_ceiling": 0.0,       # never bid above this ($); 0 = no ceiling
+    "bid_bump_max_per_day": 6,     # bumps per ad group per local day (hard stop)
     # --- auto top-ups ---------------------------------------------------------
     "topup_enabled": False,
     "topup_below": 50.0,           # trigger: account balance below this
@@ -294,6 +300,9 @@ def save_settings(db: Session, values: dict, user_id: int | None = None, global_
         clean["appeal_reason"] = DEFAULT_APPEAL_REASON
     clean["appeal_reason"] = clean["appeal_reason"][:APPEAL_REASON_MAX]
     clean["appeal_daily_cap"] = max(int(clean.get("appeal_daily_cap") or 0), 1)
+    clean["bid_bump_step"] = round(min(max(float(clean.get("bid_bump_step") or 0), 0.0), 100.0), 2)
+    clean["bid_bump_idle_min"] = max(int(clean.get("bid_bump_idle_min") or 0), 15)      # the sweep sees spend once a minute; below 15 min is noise
+    clean["bid_bump_max_per_day"] = min(max(int(clean.get("bid_bump_max_per_day") or 0), 1), 48)
     clean["audience_hours_every_min"] = max(int(clean.get("audience_hours_every_min") or 0), AUDIENCE_HOURS_MIN)
     clean["audience_breakdown_every_min"] = max(int(clean.get("audience_breakdown_every_min") or 0), AUDIENCE_BREAKDOWN_MIN)
     from . import queries

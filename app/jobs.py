@@ -288,6 +288,17 @@ def run_pending(db: Session, limit: int = 20, which: str | None = None) -> int:
     return n
 
 
+FINISHED = ("done", "error", CANCELLED)
+
+
+def clear_finished(db: Session) -> int:
+    """The one-button clear on the Jobs page: drop every finished job (done, failed,
+    cancelled) from the list. Queued and running ones are never touched."""
+    n = db.query(models.Job).filter(models.Job.status.in_(FINISHED)).delete(synchronize_session=False)
+    db.commit()
+    return n
+
+
 def prune(db: Session, keep_days: int = 14) -> int:
     cutoff = _now() - timedelta(days=keep_days)
     return db.query(models.Job).filter(models.Job.created_at < cutoff).delete()

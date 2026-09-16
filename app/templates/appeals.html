@@ -12,6 +12,7 @@
     <form method="post" action="/appeals/scan">{{ keep() }}<button class="btn" type="submit" title="Re-read every account's ads from TikTok now">🔍 Scan now</button></form>
     {% if waiting %}<form method="post" action="/appeals/refresh">{{ keep() }}<button class="btn" type="submit" title="Ask TikTok whether the open appeals were answered">↻ Check answers</button></form>{% endif %}
     {% if open_rows %}
+    <form method="post" action="/appeals/clear" data-confirm="Clear all {{ open_rows|length }} open rejection{{ 's' if open_rows|length != 1 }}?" data-confirm-text="They are dismissed — nothing is filed with TikTok. One comes back only if TikTok reviews that ad group again and rejects it anew." data-ok-label="Clear all" data-danger="1">{{ keep() }}<button class="btn" type="submit" title="Dismiss every open rejection shown — nothing is filed">✕ Clear all ({{ open_rows|length }})</button></form>
     <form method="post" action="/appeals/file-selected" id="selForm" hidden>{{ keep() }}<input type="hidden" name="reason" id="selReason" value=""></form>
     <button class="btn primary" type="button" id="selBtn" disabled>Appeal selected (0)</button>
     {% endif %}
@@ -170,7 +171,8 @@
 
 <div class="card" style="padding:0;overflow:hidden;">
   <div class="card-header" style="padding:12px 14px;margin:0;border-bottom:1px solid var(--border-soft);">
-    <span class="card-title">History</span><span class="card-meta">answered appeals and rejections that cleared on their own · newest first</span></div>
+    <span class="card-title">History</span><span class="card-meta">answered appeals and rejections that cleared on their own · newest first</span>
+    {% if history %}<form method="post" action="/appeals/clear-history" style="margin-left:auto;" data-confirm="Remove {{ history|length }} finished row{{ 's' if history|length != 1 }} from the history?" data-confirm-text="Only the list here is cleared — nothing changes on TikTok." data-ok-label="Clear history" data-danger="1">{{ keep() }}<button class="btn sm" type="submit">✕ Clear history</button></form>{% endif %}</div>
   {% if history %}
   <div class="table-scroll">
   <table class="data dense">
