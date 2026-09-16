@@ -210,6 +210,11 @@ def _web_parse(resp: httpx.Response, path: str = "") -> dict:
         body = resp.json()
     except Exception:
         _note(path, f"HTTP {resp.status_code}", f"non-JSON answer: {resp.text[:200]}")
+        if resp.status_code == 404:
+            # seen live 16 Sep: TikTok's load balancer ("TLB") answers 404 Not Found for a path
+            # that doesn't exist — nothing to do with the session or the region
+            raise WebAuthError(f"TikTok has no endpoint at {path} (HTTP 404 from its load balancer) — "
+                               "this is not a session or region problem; the call itself needs the real path.")
         raise WebAuthError(f"Session expired — TikTok returned an HTML page (HTTP {resp.status_code}) "
                            "instead of JSON. Paste fresh cookies.")
     code = body.get("code", 0)
