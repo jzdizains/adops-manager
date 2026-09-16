@@ -1012,6 +1012,8 @@ def _delete_row(db: Session, row: models.Creative) -> None:
         if row.file_path:
             from pathlib import Path
             Path(row.file_path).unlink(missing_ok=True)
+            for suffix in (".ttfit.mp4", ".cover.jpg"):       # TikTok delivery copy + cut cover (video_fit)
+                Path(row.file_path + suffix).unlink(missing_ok=True)
     except OSError:
         pass
     db.query(models.CreativeUpload).filter_by(creative_id=row.id).delete()

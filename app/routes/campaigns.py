@@ -1122,10 +1122,11 @@ def create_ad_trying_identities(acct: models.AdAccount, build, candidates: list[
 
 
 def _resolve_cover(acct: models.AdAccount, video_id: str, poster: str,
-                   creative_id: int) -> str:
+                   creative_id: int, file_path: str = "") -> str:
     """A cover image_id for a video ad — TikTok requires one ("You must upload an
     image"). (1) suggestcover auto-frames (retried while the video encodes), then
-    (2) re-upload the poster URL as a fallback."""
+    (2) a frame cut from the very file that was uploaded — same pixel size as the
+    video, so it can never be "Unsupported image size" — then (3) the poster URL."""
     import time as _time
     for _ in range(4):
         try:
@@ -1137,6 +1138,15 @@ def _resolve_cover(acct: models.AdAccount, video_id: str, poster: str,
         except tiktok_api.TikTokError:
             pass
         _time.sleep(2)          # video still processing — covers not ready yet
+    if file_path:
+        try:
+            frame = _cover_frame(file_path)
+            if frame:
+                img = tiktok_api.upload_image_file(acct.access_token, acct.advertiser_id, frame, f"cover_c{creative_id}.jpg")
+                if img.get("image_id"):
+                    return str(img["image_id"])
+        except (tiktok_api.TikTokError, RuntimeError, OSError):
+            pass
     if poster:
         try:
             img = tiktok_api.upload_image_by_url(acct.access_token, acct.advertiser_id,
@@ -1145,6 +1155,23 @@ def _resolve_cover(acct: models.AdAccount, video_id: str, poster: str,
         except tiktok_api.TikTokError:
             pass
     return ""
+
+
+def _cover_frame(file_path: str) -> str:
+    """One JPEG frame (t≈1 s) at the video's own size, cached next to it."""
+    import os as _os
+    import subprocess as _sp
+    from .. import video_freshen
+    out = file_path + ".cover.jpg"
+    if _os.path.exists(out) and _os.path.getsize(out) > 0:
+        return out
+    proc = _sp.run([video_freshen.ffmpeg_exe(), "-y", "-hide_banner", "-loglevel", "error", "-ss", "1", "-i", file_path,
+                    "-frames:v", "1", "-q:v", "3", out], capture_output=True, timeout=60)
+    if proc.returncode != 0 or not _os.path.exists(out) or _os.path.getsize(out) == 0:
+        # a clip shorter than a second: take the first frame instead
+        proc = _sp.run([video_freshen.ffmpeg_exe(), "-y", "-hide_banner", "-loglevel", "error", "-i", file_path,
+                        "-frames:v", "1", "-q:v", "3", out], capture_output=True, timeout=60)
+    return out if proc.returncode == 0 and _os.path.exists(out) and _os.path.getsize(out) > 0 else ""
 
 
 def _upload_creative_to_account(db: Session, acct: models.AdAccount,
@@ -1156,35 +1183,79 @@ def _upload_creative_to_account(db: Session, acct: models.AdAccount,
     cached = (db.query(models.CreativeUpload)
               .filter_by(creative_id=creative.id,
                          advertiser_id=acct.advertiser_id).first())
+    # the file that goes to TikTok: the original, or a scaled delivery copy when the
+    # original is below TikTok's minimum size (video_fit) — made once, reused after
+    path = creative.file_path
+    scaled = None
+    try:
+        from .. import video_fit
+        scaled = video_fit.fit(path)
+    except RuntimeError as e:
+        live_log.push("warn", f"couldn't scale creative #{creative.id} ({creative.file_name}) for TikTok: {e} — uploading the original",
+                      advertiser_id=str(acct.advertiser_id))
+    if scaled:
+        path, (ow, oh), (tw, th) = scaled
+        live_log.push("info", f"creative #{creative.id} ({creative.file_name}) is {ow}×{oh} — below TikTok's minimum; "
+                              f"uploading a {tw}×{th} delivery copy", advertiser_id=str(acct.advertiser_id))
+        # a cached upload of the ORIGINAL (too small — that is what "Unsupported image size"
+        # at ad creation was) is stale: the scaled copy must go up instead
+        if cached and cached.video_id:
+            from .. import video_freshen
+            if (cached.upload_md5 or "") != video_freshen._md5_file(path):
+                db.delete(cached)
+                db.commit()
+                cached = None
     if cached and cached.video_id and cached.cover_image_id:
         return cached.video_id, cached.cover_image_id
     if cached and cached.video_id:      # video uploaded before, cover never resolved
-        cover = _resolve_cover(acct, cached.video_id, "", creative.id)
+        cover = _resolve_cover(acct, cached.video_id, "", creative.id, path)
         if cover:
             cached.cover_image_id = cover
             db.commit()
         return cached.video_id, cover
 
-    up = tiktok_api.upload_video_file(acct.access_token, acct.advertiser_id,
-                                      creative.file_path,
+    up = tiktok_api.upload_video_file(acct.access_token, acct.advertiser_id, path,
                                       f"c{creative.id}_{creative.file_name}"[:100])
     video_id = str(up.get("video_id", ""))
     if not video_id:
         raise tiktok_api.TikTokError("APP", "video upload returned no video_id")
     if up.get("flaw_types"):
-        # TikTok flagged the file (black bars, low resolution, …) — the launch went on with
-        # the original; the creative shows the flag so the buyer can fix the file
-        flaws = up["flaw_types"]
-        note = "TikTok flagged: " + (", ".join(str(f) for f in flaws) if isinstance(flaws, list) else str(flaws))
+        flaws = up["flaw_types"] if isinstance(up["flaw_types"], list) else [str(up["flaw_types"])]
+        flaw_txt = ", ".join(str(f) for f in flaws)
+        if any("VIDEO_SIZE" in str(f) for f in flaws):
+            # ILLEGAL_VIDEO_SIZE even now (the size couldn't be read, or scaling failed): the
+            # upload "succeeds" but /ad/create/ refuses with "Unsupported image size" — stop
+            # before a campaign is built around it and take the file out of the pool.
+            dims = ""
+            try:
+                from .. import video_freshen
+                d = video_freshen._dimensions(creative.file_path)
+                dims = f" — it is {d[0]}×{d[1]}" if d else ""
+            except Exception:  # noqa: BLE001
+                pass
+            why = (f"TikTok won't run this video: “{creative.file_name}”{dims}; flagged {flaw_txt}"
+                   f"{' even after scaling' if scaled else ''}. Minimum is 540×960 (vertical), 640×640 (square) or "
+                   f"960×540 (horizontal) — re-export it at 1080×1920 and upload it again.")
+            creative.status = "error"
+            creative.error = why[:500]
+            db.add(models.Alert(kind="creative_flaw", ref_id=str(acct.advertiser_id), level="err", message=why))
+            live_log.push("error", why, advertiser_id=str(acct.advertiser_id))
+            db.commit()
+            raise tiktok_api.TikTokError("ASSET", why)
+        # a softer flag (low resolution, black bars…) — the launch goes on with the original;
+        # the buyer sees the flag so they can fix the file
+        note = "TikTok flagged: " + flaw_txt
         live_log.push("warn", f"{note} on creative #{creative.id} ({creative.file_name}) — uploaded as-is", advertiser_id=str(acct.advertiser_id))
         db.add(models.Alert(kind="creative_flaw", ref_id=str(acct.advertiser_id), level="warn",
                             message=f"{note} on creative “{creative.file_name}” — the launch went on with the original file; "
                                     f"TikTok may review it more strictly. Fix the file (or pick another) on /creatives."))
     poster = up.get("video_cover_url") or up.get("poster_url") or ""
-    cover_image_id = _resolve_cover(acct, video_id, poster, creative.id)
+    cover_image_id = _resolve_cover(acct, video_id, poster, creative.id, path)
+    from .. import video_freshen as _vf
     db.add(models.CreativeUpload(creative_id=creative.id,
                                  advertiser_id=acct.advertiser_id,
-                                 video_id=video_id, cover_image_id=cover_image_id))
+                                 video_id=video_id, cover_image_id=cover_image_id,
+                                 upload_md5=_vf._md5_file(path) if scaled else ""))
     db.commit()
     return video_id, cover_image_id
 

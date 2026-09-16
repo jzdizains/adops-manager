@@ -56,6 +56,12 @@ _MESSAGE_HINTS: list[tuple[re.Pattern, str, str]] = [
      "The spark post's type (video vs photo carousel) doesn't match the ad format sent.",
      "The launcher now reads the post's real type from TikTok at launch and corrects the spark code — "
      "use Retry failed on this batch."),
+    (re.compile(r"unsupported image size", re.I),
+     "TikTok rejected the ad's cover image size — the video it was taken from is below TikTok's minimum.",
+     "The video file is too small (TikTok flags it ILLEGAL_VIDEO_SIZE on upload); its auto-generated cover is "
+     "then refused at ad creation. Re-export the video at 1080×1920 (minimum 540×960 vertical, 640×640 square, "
+     "960×540 horizontal), upload it again and relaunch. The launcher now stops such a video before the "
+     "campaign is built and marks the creative."),
     (re.compile(r"image size is not supported", re.I),
      "TikTok rejected a carousel slide's pixel size.",
      "Carousel slides must be exactly 720×1280, 640×640 or 1200×628. The launcher now sends a "
@@ -130,7 +136,11 @@ def fix_for(log) -> dict | None:
                  r"tiktok profile as the ad's identity", low + " " + raw):
         return {"label": "Open Assets", "href": "/bc-assets?show=all",
                 "why": "The profile the ad runs as isn't usable on this ad account — check it is linked there."}
-    if code in ("40105", "40113", "40102") or "token" in low or "permission" in low or "reconnect" in low:
+    if re.search(r"image size|video size|resolution", raw + " " + low):
+        return {"label": "Open Creatives", "href": "/creatives", "why": "The video file is below TikTok's minimum size — re-export it at 1080×1920 and upload it again."}
+    # "permission" must come from TikTok's own wording (raw), never from our 40002 friendly
+    # text ("…or this session lacks permission…") — that made every 40002 look like a broken link
+    if code in ("40105", "40113", "40102") or "token" in raw or "permission" in raw or "reconnect" in low or (code != "40002" and "permission" in low):
         return {"label": "Reconnect the account", "href": f"/accounts?q={adv}", "why": "The connection to this ad account needs renewing."}
     if code == "40100":
         return None      # rate limit — just retry
