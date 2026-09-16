@@ -59,11 +59,21 @@ def page(request: Request, db: Session = Depends(get_db)):
     names = {a.advertiser_id: a.advertiser_name for a in accounts}
     # the same name across accounts = one preset-usable page; count copies per name
     copies: dict[str, int] = {}
+    have: dict[str, set] = {}                      # page name → accounts that already hold it
     for p in pages:
         copies[p.name] = copies.get(p.name, 0) + 1
+        have.setdefault(p.name, set()).add(p.owner_advertiser_id)
+    # Business Centers (in view) with how many of their accounts still LACK each page name
+    bc_names = {b.bc_id: (b.name or b.bc_id) for b in db.query(models.BusinessCenter).all()}
+    by_bc: dict[str, list] = {}
+    for a in accounts:
+        if a.owner_bc_id:
+            by_bc.setdefault(a.owner_bc_id, []).append(a.advertiser_id)
+    bcs = sorted(({"bc_id": k, "name": bc_names.get(k, k), "n": len(v)} for k, v in by_bc.items()), key=lambda b: b["name"].lower())
+    missing = {name: {bc: sum(1 for aid in ids if aid not in have.get(name, set())) for bc, ids in by_bc.items()} for name in have}
     return render(request, "instant_pages.html", {
         "pages": pages, "accounts": accounts, "names": names, "title": "Instant Pages",
-        "copies": copies, "status_labels": STATUS_LABELS,
+        "copies": copies, "status_labels": STATUS_LABELS, "bcs": bcs, "missing": missing,
         "web_ready": bool(spark_web_api.load_cookies()),
         "ok": request.query_params.get("ok", ""), "err": request.query_params.get("err", ""),
     })
@@ -90,6 +100,65 @@ def sync(db: Session = Depends(get_db)):
         if not ok:
             return RedirectResponse("/instant-pages?err=" + quote(msg), status_code=303)
     return RedirectResponse("/instant-pages?ok=" + quote(msg), status_code=303)
+
+
+@router.post("/instant-pages/clone-bc")
+def clone_bc(request: Request, page_id: str = Form(...), from_advertiser_id: str = Form(...), bc_id: str = Form(...),
+             db: Session = Depends(get_db)):
+    """One button: clone the page to EVERY enabled account of a Business Center (in this
+    view) that doesn't already hold a page with the same name. Runs as a job — one web
+    call per account, paced — and reports per-account results."""
+    from .. import jobs, scope as scope_mod
+    if not spark_web_api.load_cookies():
+        return RedirectResponse("/instant-pages?err=" + quote(
+            "Cloning uses the TikTok web session — paste your ads.tiktok.com cookies on the TikTok Cookies page first."), status_code=303)
+    sc = scope_mod.for_request(request, db)
+    src = db.query(models.InstantPage).filter_by(page_id=page_id, owner_advertiser_id=from_advertiser_id).first()
+    if src is None or not sc.allows(from_advertiser_id):
+        return RedirectResponse("/instant-pages?err=" + quote("That page is no longer listed — sync and try again."), status_code=303)
+    have = {p.owner_advertiser_id for p in db.query(models.InstantPage).filter_by(name=src.name).all()}
+    targets = [a for a in queries.enabled_accounts(db)
+               if a.owner_bc_id == bc_id and sc.allows(a.advertiser_id) and a.advertiser_id != from_advertiser_id and a.advertiser_id not in have]
+    bc = db.query(models.BusinessCenter).filter_by(bc_id=bc_id).first()
+    bc_name = (bc.name if bc else "") or bc_id
+    if not targets:
+        return RedirectResponse("/instant-pages?ok=" + quote(f"Every enabled account in {bc_name} already has “{src.name}” — nothing to clone."), status_code=303)
+    job = jobs.enqueue(db, "instant_page_clone_all", f"Clone “{src.name}” → {len(targets)} account(s) in {bc_name}",
+                       {"page_id": page_id, "from_advertiser_id": from_advertiser_id, "name": src.name,
+                        "targets": [a.advertiser_id for a in targets]}, href="/instant-pages")
+    return RedirectResponse("/instant-pages?ok=" + quote(
+        f"Cloning “{src.name}” to {len(targets)} account(s) in {bc_name} in the background — you'll get a notification (job #{job.id})."), status_code=303)
+
+
+def clone_to_many(db: Session, page_id: str, from_advertiser_id: str, targets: list[str], should_stop=None, on_progress=None) -> dict:
+    """The job body: clone to each target, re-read it so the copy shows up. One web call per
+    account, a short pause between them; per-account failures never stop the rest."""
+    import time as _time
+    ok, failed, stopped = [], [], False
+    accts = {a.advertiser_id: a for a in db.query(models.AdAccount).filter(models.AdAccount.advertiser_id.in_(targets or [""])).all()}
+    for i, adv in enumerate(targets):
+        if should_stop and should_stop():
+            stopped = True
+            break
+        acct = accts.get(adv)
+        label = (acct.advertiser_name if acct else "") or adv
+        if on_progress:
+            on_progress(f"{i + 1} of {len(targets)} — {label}")
+        try:
+            spark_web_api.clone_instant_page(page_id, from_advertiser_id, adv)
+            ok.append(adv)
+        except spark_web_api.WebAuthError as e:
+            failed.append(f"{label}: {str(e)[:120]}")
+            continue
+        if acct:
+            try:
+                sync_account(db, acct)
+                db.commit()
+            except tiktok_api.TikTokError:
+                db.rollback()            # the clone went through; the next Sync will list it
+        if i + 1 < len(targets):
+            _time.sleep(1.0)
+    return {"ok": ok, "failed": failed, "stopped": stopped}
 
 
 @router.post("/instant-pages/clone")

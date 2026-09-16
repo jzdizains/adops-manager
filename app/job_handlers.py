@@ -62,6 +62,19 @@ def _bid_bump(db: Session, p: dict, job: models.Job) -> dict:
     return {"ok": not r["failed"], "detail": d, "href": "/monitor?view=automation"}
 
 
+@jobs.handler("instant_page_clone_all")
+def _instant_page_clone_all(db: Session, p: dict, job: models.Job) -> dict:
+    from .routes import instant_pages
+    r = instant_pages.clone_to_many(db, str(p["page_id"]), str(p["from_advertiser_id"]), [str(t) for t in (p.get("targets") or [])],
+                                    should_stop=lambda: jobs.should_stop(db, job), on_progress=lambda t: jobs.progress(db, job, t))
+    d = f"“{p.get('name', '')}” cloned to {len(r['ok'])} account(s)"
+    if r["failed"]:
+        d += f", {len(r['failed'])} failed — " + " · ".join(r["failed"])[:400]
+    if r["stopped"]:
+        d += " (stopped)"
+    return {"ok": not r["failed"] and not r["stopped"], "detail": d, "href": "/instant-pages"}
+
+
 @jobs.handler("campaign_edit")
 def _edit(db: Session, p: dict, job: models.Job) -> dict:
     from .routes import campaigns as engine
