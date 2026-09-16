@@ -57,6 +57,11 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = DATA_DIR / "adops.db"
 DATABASE_URL = os.environ.get("DATABASE_URL", f"sqlite:///{DB_PATH}")
 COOKIE_FILE = DATA_DIR / "tiktok_cookies.json"   # pasted web cookies persist here
+# Host the cookie web calls go to. Default: the same global host the browser uses —
+# TikTok's edge routes each request to the session's own data centre (tt-target-idc,
+# e.g. eu-ttp2) from the cookies, which are passed through untouched. Set this only if
+# TikTok ever serves your region from a different hostname.
+TIKTOK_ADS_WEB_HOST = (os.environ.get("TIKTOK_ADS_WEB_HOST") or "ads.tiktok.com").strip().replace("https://", "").strip("/")
 
 # --- Business timezone ------------------------------------------------------
 BUSINESS_TZ = os.environ.get("BUSINESS_TZ", "America/New_York")

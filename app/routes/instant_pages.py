@@ -145,11 +145,15 @@ def clone_to_many(db: Session, page_id: str, from_advertiser_id: str, targets: l
         if on_progress:
             on_progress(f"{i + 1} of {len(targets)} — {label}")
         try:
-            spark_web_api.clone_instant_page(page_id, from_advertiser_id, adv)
-            ok.append(adv)
+            body = spark_web_api.clone_instant_page(page_id, from_advertiser_id, adv)
         except spark_web_api.WebAuthError as e:
             failed.append(f"{label}: {str(e)[:120]}")
             continue
+        code = str((body or {}).get("code", 0))
+        if code not in ("0", "200", ""):
+            failed.append(f"{label}: TikTok code {code} {str((body or {}).get('msg') or (body or {}).get('message') or '')[:100]}")
+            continue
+        ok.append(adv)
         if acct:
             try:
                 sync_account(db, acct)
@@ -168,9 +172,15 @@ def clone(page_id: str = Form(...), from_advertiser_id: str = Form(...),
         return RedirectResponse("/instant-pages?err=" + quote(
             "Cloning uses the TikTok web session — paste your ads.tiktok.com cookies on the TikTok Cookies page first."), status_code=303)
     try:
-        spark_web_api.clone_instant_page(page_id, from_advertiser_id, to_advertiser_id)
+        body = spark_web_api.clone_instant_page(page_id, from_advertiser_id, to_advertiser_id)
     except spark_web_api.WebAuthError as e:
         return RedirectResponse("/instant-pages?err=" + quote(f"Clone failed: {str(e)[:200]}"), status_code=303)
+    code = str((body or {}).get("code", 0))
+    if code not in ("0", "200", ""):
+        msg = str((body or {}).get("msg") or (body or {}).get("message") or "")[:160]
+        r = spark_web_api.session_region()
+        return RedirectResponse("/instant-pages?err=" + quote(
+            f"TikTok refused the clone (code {code}: {msg}) — session region {r['idc'] or 'unknown'} on {r['host']}; the full answer is on Diagnostics."), status_code=303)
     # re-read the target so the copy shows up (and reports honestly if it didn't)
     target = db.query(models.AdAccount).filter_by(advertiser_id=to_advertiser_id).first()
     note = ""

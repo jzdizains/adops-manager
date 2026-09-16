@@ -32,6 +32,9 @@
       {% endif %}
     </div>
     {% if cookie_names %}
+    <div class="hint" style="margin-top:10px;" id="regionNote">Region routing: {% if region.idc %}the session is homed on <span class="mono">{{ region.idc }}</span>{% if region.signed %} (signed){% else %} <span style="color:var(--warn);">— but <span class="mono">tt-target-idc-sign</span> is missing; export ALL cookies</span>{% endif %}{% if region.country %} · country {{ region.country }}{% endif %}. Every web call goes to <span class="mono">{{ region.host }}</span> with these cookies passed through untouched, so TikTok routes it to that data centre itself.{% else %}<span style="color:var(--warn);">no <span class="mono">tt-target-idc</span> cookie in the export — TikTok will route web calls by its own default, which may not be this account's region. Re-export ALL cookies for ads.tiktok.com.</span>{% endif %}</div>
+    {% endif %}
+    {% if cookie_names %}
     <div style="margin-top:12px;">
       <div class="stat-label" style="font-size:12px;font-weight:600;color:var(--text-dim);margin-bottom:6px;">Stored cookie names</div>
       <div style="display:flex;gap:4px;flex-wrap:wrap;">

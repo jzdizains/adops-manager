@@ -23,8 +23,14 @@ import httpx
 
 from . import config
 
-ADS_BASE = "https://ads.tiktok.com"
+ADS_BASE = "https://" + config.TIKTOK_ADS_WEB_HOST
 TIMEOUT = httpx.Timeout(30.0, connect=10.0)
+# Region routing: TikTok's edge picks the data centre from these cookies (tt-target-idc =
+# "eu-ttp2", "useast1a", …; tt-target-idc-sign vouches for it). They are sent exactly as
+# exported — the tool never sets, drops or rewrites them. `session_region()` reads them
+# so the Cookies page and Diagnostics can say which IDC the session is homed on.
+REGION_COOKIES = ("tt-target-idc", "tt-target-idc-sign", "store-idc", "store-country-code")
+LOGIN_HOSTS = ("/login", "/i18n/login", "sso", "passport", "account/login")
 
 # Either of these cookie families marks a logged-in session (§9.5)
 CLASSIC_SESSION_COOKIES = {"sessionid", "sessionid_ss"}
@@ -119,6 +125,16 @@ def validate_cookies(cookies: dict[str, str]) -> dict:
 # Authenticated web calls
 # ---------------------------------------------------------------------------
 
+def session_region(cookies: dict[str, str] | None = None) -> dict:
+    """What the stored session says about its home data centre — read straight from
+    the cookies TikTok set: {idc, signed, store_idc, country}. idc "" = the cookie
+    isn't in the export (TikTok then routes by its own default, which may not be the
+    account's region — re-export ALL cookies for ads.tiktok.com)."""
+    c = cookies if cookies is not None else load_cookies()
+    return {"idc": c.get("tt-target-idc", ""), "signed": bool(c.get("tt-target-idc-sign")),
+            "store_idc": c.get("store-idc", ""), "country": c.get("store-country-code", ""), "host": config.TIKTOK_ADS_WEB_HOST}
+
+
 def _client(cookies: dict[str, str] | None = None) -> httpx.Client:
     cookies = cookies if cookies is not None else load_cookies()
     if not cookies:
@@ -127,38 +143,83 @@ def _client(cookies: dict[str, str] | None = None) -> httpx.Client:
         "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                        "(KHTML, like Gecko) Chrome/126.0 Safari/537.36"),
         "Referer": f"{ADS_BASE}/",
+        "Origin": ADS_BASE,
         "X-CSRFToken": cookies.get("csrftoken", ""),
     }
+    # every stored cookie goes out untouched (region cookies included); redirects are
+    # handled by hand so a regional hop is followed and only a LOGIN hop means expiry
     return httpx.Client(base_url=ADS_BASE, cookies=cookies, headers=headers,
                         timeout=TIMEOUT, follow_redirects=False)
 
 
-def web_get(path: str, params: dict | None = None) -> dict:
+def _is_login_redirect(location: str) -> bool:
+    low = (location or "").lower()
+    return any(tok in low for tok in LOGIN_HOSTS)
+
+
+def _same_site(location: str) -> bool:
+    from urllib.parse import urlsplit
+    host = urlsplit(location).netloc.lower().split(":")[0]
+    return host.endswith("tiktok.com") or host == ""
+
+
+def _send(method: str, path: str, *, params: dict | None = None, payload: dict | None = None) -> httpx.Response:
+    """One web call. A same-site, non-login redirect (TikTok moving the request to a
+    regional endpoint) is followed once with the same cookies and noted in Diagnostics;
+    a login redirect is left for _web_parse to report as expiry."""
     with _client() as c:
-        resp = c.get(path, params=params or {})
-    return _web_parse(resp)
+        resp = c.request(method, path, params=params or None, json=payload if method == "POST" else None)
+        if resp.status_code in (301, 302, 303, 307, 308):
+            loc = resp.headers.get("location", "")
+            if loc and _same_site(loc) and not _is_login_redirect(loc):
+                _note(path, "REDIRECT", f"TikTok redirected {method} {path} → {loc[:160]} — followed with the same cookies")
+                # 301/302/303 → GET per the browsers; 307/308 keep the method + body
+                keep = resp.status_code in (307, 308)
+                resp = c.request(method if keep else "GET", loc, json=payload if keep and method == "POST" else None)
+    return resp
+
+
+def web_get(path: str, params: dict | None = None) -> dict:
+    return _web_parse(_send("GET", path, params=params), path)
 
 
 def web_post(path: str, payload: dict) -> dict:
-    with _client() as c:
-        resp = c.post(path, json=payload)
-    return _web_parse(resp)
+    return _web_parse(_send("POST", path, payload=payload), path)
 
 
-def _web_parse(resp: httpx.Response) -> dict:
+def _note(path: str, code, message: str) -> None:
+    """Diagnostics line for a web call — what TikTok answered, on which host, for which
+    region — so a failed clone is a fact, not a theory. Never raises."""
+    try:
+        from . import diag
+        r = session_region()
+        diag.record("tiktok-web", path, code, message,
+                    {"host": r["host"], "idc": r["idc"] or "(no tt-target-idc cookie)", "idc_signed": r["signed"], "store_idc": r["store_idc"]})
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _web_parse(resp: httpx.Response, path: str = "") -> dict:
+    path = path or str(resp.request.url.path if resp.request is not None else "")
     # A login redirect = genuine expiry (§9.6)
     if resp.status_code in (301, 302, 303, 307, 308):
         loc = resp.headers.get("location", "")
+        _note(path, "REDIRECT", f"redirected to {loc[:160]} (HTTP {resp.status_code}) — treated as login / expiry")
         raise WebAuthError(f"Session expired — TikTok redirected to login ({loc[:120]}). Paste fresh cookies.")
     try:
         body = resp.json()
     except Exception:
+        _note(path, f"HTTP {resp.status_code}", f"non-JSON answer: {resp.text[:200]}")
         raise WebAuthError(f"Session expired — TikTok returned an HTML page (HTTP {resp.status_code}) "
                            "instead of JSON. Paste fresh cookies.")
     code = body.get("code", 0)
     if str(code) == "200000":
+        _note(path, code, str(body.get("msg") or body.get("message") or "Please log into your user account"))
         raise WebAuthError("Session expired (TikTok code 200000: 'Please log into your user account'). "
                            "Paste fresh cookies.")
+    if str(code) not in ("0", "200", ""):
+        # not an auth problem — TikTok refused the call itself; the caller decides, the feed remembers
+        _note(path, code, str(body.get("msg") or body.get("message") or "")[:300])
     return body
 
 

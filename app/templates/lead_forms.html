@@ -2,17 +2,16 @@
 {% block content %}
 <div class="page-head">
   <div><h1>Lead Forms</h1>
-    <div class="muted">Per-account lead-gen forms, synced via the API (cookie web fallback).</div></div>
+    <div class="muted">Each instant form belongs to one ad account. Presets pick a form by <b>name</b> — a launch uses the launching account's own form with that name, so give the same form the same name in every account.</div></div>
   <div class="actions">
     <form method="post" action="/lead-forms/sync"><button class="btn primary" type="submit">⇄ Sync from accounts</button></form>
   </div>
 </div>
 
-
 <div class="card">
   {% if forms %}
   <table class="data">
-    <thead><tr><th>Name</th><th>Form ID</th><th>Owner account</th><th>Status</th></tr></thead>
+    <thead><tr><th>Name</th><th>Form ID</th><th>Owner account</th><th>Status</th><th>Accounts with this name</th><th class="num">Clone to…</th></tr></thead>
     <tbody>
     {% for f in forms %}
       <tr>
@@ -20,10 +19,53 @@
         <td class="mono">{{ f.form_id }}</td>
         <td class="muted">{{ names.get(f.owner_advertiser_id, f.owner_advertiser_id) }}</td>
         <td>{{ f.status or "—" }}</td>
+        <td class="muted">{{ copies.get(f.name, 0) }} of {{ accounts|length }}</td>
+        <td class="num">
+          {% if accounts|length > 1 %}
+          <form method="post" action="/lead-forms/clone" hidden>
+            <input type="hidden" name="form_id" value="{{ f.form_id }}">
+            <input type="hidden" name="from_advertiser_id" value="{{ f.owner_advertiser_id }}">
+            <select name="to_advertiser_id">
+              {% for a in accounts %}{% if a.advertiser_id != f.owner_advertiser_id %}<option value="{{ a.advertiser_id }}">{{ a.advertiser_name or a.advertiser_id }}</option>{% endif %}{% endfor %}
+            </select>
+          </form>
+          <form method="post" action="/lead-forms/clone-bc" hidden class="lf-bc-form">
+            <input type="hidden" name="form_id" value="{{ f.form_id }}">
+            <input type="hidden" name="from_advertiser_id" value="{{ f.owner_advertiser_id }}">
+            <select name="bc_id">
+              {% for b in bcs %}{% set n = missing.get(f.name, {}).get(b.bc_id, 0) %}<option value="{{ b.bc_id }}" data-n="{{ n }}">{{ b.name }} — {{ n }} of {{ b.n }} without it</option>{% endfor %}
+            </select>
+          </form>
+          <button class="btn sm lf-clone" type="button" data-name="{{ f.name }}" {{ 'disabled' if not web_ready }} title="{{ 'Copies the form through the TikTok web session (undocumented by TikTok — may stop working).' if web_ready else 'Needs the ads.tiktok.com cookies from the TikTok Cookies page.' }}">⧉ Clone to…</button>
+          {% endif %}
+        </td>
       </tr>
     {% endfor %}
     </tbody>
   </table>
+  <div class="hint" style="margin-top:10px;">
+    “Sync” reads every enabled account's instant forms.
+    {% if not web_ready %}Copying a form to another account isn't offered by TikTok's API; the Clone button uses the TikTok web session and is off until cookies are saved on the <a href="/cookies">TikTok Cookies</a> page.{% else %}Copying a form to another account isn't offered by TikTok's API — the Clone button goes through the TikTok web session and may stop working without notice. Every copy is verified by re-reading the target account.{% endif %}
+  </div>
   {% else %}<div class="empty"><div class="empty-title">No lead forms yet</div>Hit “Sync from accounts” to pull the instant forms your ad accounts already have.</div>{% endif %}
 </div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest(".lf-clone"); if (!b || b.disabled) return;
+    var f = b.parentElement.querySelector('form[action="/lead-forms/clone"]'), sel = f.querySelector("select");
+    var fb = b.parentElement.querySelector(".lf-bc-form"), selb = fb && fb.querySelector("select");
+    var bcBlock = selb && selb.options.length ? '<div style="font-weight:700;margin:12px 0 6px;">…or every account in a Business Center</div><div style="display:flex;gap:6px;"><select data-bc style="flex:1;">' + selb.innerHTML + '</select><button type="button" class="btn sm" data-bc-go>Clone to all</button></div><div class="hint" style="margin-top:6px;">Only accounts that don\'t already have a form with this name; runs in the background, one account at a time, each copy verified.</div>' : '';
+    var p = UI.popover(b, '<div style="font-weight:700;margin-bottom:6px;">Clone “' + UI.esc(b.dataset.name) + '” to</div><div style="display:flex;gap:6px;"><select style="flex:1;">' + sel.innerHTML + '</select><button type="button" class="btn sm primary">Clone</button></div><div class="hint" style="margin-top:6px;">Copies the form through the TikTok web session.</div>' + bcBlock, { alignRight: true });
+    p.querySelector(".primary").addEventListener("click", function () { sel.value = p.querySelector("select").value; this.disabled = true; this.textContent = "Cloning…"; f.submit(); });
+    var go = p.querySelector("[data-bc-go]"), bsel = p.querySelector("[data-bc]");
+    function refresh() { if (!go) return; var n = parseInt(bsel.selectedOptions[0].dataset.n || "0", 10); go.disabled = !n; go.textContent = n ? "Clone to all (" + n + ")" : "All have it"; }
+    if (go) { bsel.addEventListener("change", refresh); refresh();
+      go.addEventListener("click", function () { var n = parseInt(bsel.selectedOptions[0].dataset.n || "0", 10); var name = bsel.selectedOptions[0].textContent.split(" — ")[0];
+        UI.confirm({ title: "Clone “" + b.dataset.name + "” to " + n + " account(s) in " + name + "?", text: "One web call per account through the TikTok web session; each copy is verified by re-reading the account. You'll get a notification when it's done.", ok: "Clone to all" }).then(function (y) { if (!y) return; selb.value = bsel.value; go.disabled = true; go.textContent = "Queuing…"; fb.submit(); }); }); }
+  });
+})();
+</script>
 {% endblock %}

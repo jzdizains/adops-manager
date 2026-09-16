@@ -24,6 +24,7 @@ def cookies_page(request: Request, db: Session = Depends(get_db)):
         "health": health,
         "saved_at": spark_web_api.cookies_saved_at(),
         "cookie_names": sorted(stored.keys()),
+        "region": spark_web_api.session_region(stored),
         "ok": request.query_params.get("ok", ""),
         "err": request.query_params.get("err", ""),
     })
