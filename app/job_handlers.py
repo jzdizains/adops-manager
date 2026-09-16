@@ -89,6 +89,21 @@ def _lead_form_clone_all(db: Session, p: dict, job: models.Job) -> dict:
     return {"ok": not r["failed"] and not r["stopped"], "detail": d, "href": "/lead-forms"}
 
 
+@jobs.handler("instant_page_build")
+def _instant_page_build(db: Session, p: dict, job: models.Job) -> dict:
+    from .routes import instant_pages
+    r = instant_pages.build_on_accounts(db, int(p["template_id"]), [str(t) for t in (p.get("targets") or [])],
+                                        should_stop=lambda: jobs.should_stop(db, job), on_progress=lambda t: jobs.progress(db, job, t))
+    d = f"page “{r.get('name', '')}” built on {len(r['ok'])} account(s)"
+    if r["failed"]:
+        d += f", {len(r['failed'])} failed — " + " · ".join(r["failed"])[:500]
+    if r["stopped"]:
+        d += " (stopped)"
+    if r.get("shots"):
+        d += " · screenshots: " + " ".join(f"/instant-pages/builds/{s}" for s in r["shots"][-3:])
+    return {"ok": not r["failed"] and not r["stopped"], "detail": d[:900], "href": "/instant-pages"}
+
+
 @jobs.handler("campaign_edit")
 def _edit(db: Session, p: dict, job: models.Job) -> dict:
     from .routes import campaigns as engine

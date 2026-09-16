@@ -69,6 +69,7 @@ def parse_form(form) -> dict:
         "schedule_end_time": val("schedule_end_time").replace("T", " "),
         "landing_page_url": val("landing_page_url"),
         "instant_page_name": val("instant_page_name"),
+        "page_template_id": int(val("page_template_id")) if str(val("page_template_id")).isdigit() else None,   # build the page if an account lacks it (v120)
         "lead_form_name": val("lead_form_name"),
         "pixel_code": val("pixel_code"),
         "pixel_id": val("pixel_id"),
@@ -155,6 +156,7 @@ def _form_ctx(db: Session, sc=None) -> dict:
         # pages/forms deduped BY NAME with per-name account counts — the preset
         # stores the name; launches resolve each account's own copy
         "instant_pages": _assets_by_name([r for r in db.query(models.InstantPage).all() if sc.allows(r.owner_advertiser_id)]),
+        "page_templates": sc.owned(db.query(models.PageTemplate), models.PageTemplate).order_by(models.PageTemplate.name).all(),
         "lead_forms": _assets_by_name([r for r in db.query(models.LeadForm).all() if sc.allows(r.owner_advertiser_id)]),
         "display_cards": sc.owned(db.query(models.DisplayCard), models.DisplayCard).order_by(models.DisplayCard.name).all(),
     }

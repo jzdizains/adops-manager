@@ -269,6 +269,9 @@ def synthesize(template: models.Template, overrides: dict[str, Any] | None = Non
     # and sends card_id on the ad). Was saved by the preset form but never carried into
     # the launch fields — so no launch ever placed it (v120 fix).
     fields["display_card_id"] = int(s.get("display_card_id") or 0) or None
+    # Instant Page template: when an account has no page of the preset's name, the
+    # launch builds one from this template first (instant_page_builder), then resolves it
+    fields["page_template_id"] = int(s.get("page_template_id") or 0) or None
     if traffic_goal:
         # Traffic never optimises for a pixel event; Engaged session takes its pixel from
         # the Traffic block (the conversion pixel fields are hidden for this objective)

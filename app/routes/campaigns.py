@@ -1762,10 +1762,26 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                 legacy = (db.query(models.InstantPage)
                           .filter_by(page_id=fields["instant_page_id"]).first())
                 name = legacy.name if legacy else ""
+            tpl = db.get(models.PageTemplate, int(fields["page_template_id"])) if fields.get("page_template_id") else None
+            if not name and tpl is not None:
+                name = tpl.name                      # template-only preset: the page is named after the template
             if not name:
                 raise ConfigError("Preset destination is Instant Page but no page is selected.")
             fields = dict(fields)
-            fields["instant_page_id"] = resolve_page_asset(db, acct, "instant_page", name)
+            try:
+                fields["instant_page_id"] = resolve_page_asset(db, acct, "instant_page", name)
+            except AssetResolveError as miss:
+                if tpl is None or tpl.name != name or "has no instant page" not in str(miss).lower():
+                    raise                            # a read failure, or no template to build from
+                # this account has no page of that name — build it from the template, then resolve
+                from .. import instant_page_builder as ipb, live_log as _ll
+                _ll.push("info", f"building Instant Page “{name}” on {acct.advertiser_name or acct.advertiser_id} from the preset's template",
+                         advertiser_id=str(acct.advertiser_id))
+                r = ipb.build_and_verify(db, acct, tpl)
+                if not r.get("ok"):
+                    raise AssetResolveError(f"This account has no Instant Page “{name}” and building it from the template failed: {r.get('error', 'unknown')}"
+                                            + (" — see the screenshots on Instant Pages" if any(s.get('shot') for s in r.get('steps', [])) else ""))
+                fields["instant_page_id"] = r["page_id"]
         elif dest == "lead_form":
             name = fields.get("lead_form_name") or ""
             if not name and fields.get("lead_form_id"):

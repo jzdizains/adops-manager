@@ -12,7 +12,7 @@ from __future__ import annotations
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse, Response
 from sqlalchemy.orm import Session
 
 from .. import models, queries, spark_web_api, tiktok_api
@@ -20,6 +20,13 @@ from ..database import get_db
 from ..templating import render
 
 router = APIRouter()
+
+
+def _page_names_by_account(db: Session) -> dict[str, set]:
+    out: dict[str, set] = {}
+    for name, adv in db.query(models.InstantPage.name, models.InstantPage.owner_advertiser_id):
+        out.setdefault(name, set()).add(adv)
+    return out
 
 STATUS_LABELS = {"PUBLISHED": "Published", "EDITED": "Draft"}
 
@@ -71,9 +78,16 @@ def page(request: Request, db: Session = Depends(get_db)):
             by_bc.setdefault(a.owner_bc_id, []).append(a.advertiser_id)
     bcs = sorted(({"bc_id": k, "name": bc_names.get(k, k), "n": len(v)} for k, v in by_bc.items()), key=lambda b: b["name"].lower())
     missing = {name: {bc: sum(1 for aid in ids if aid not in have.get(name, set())) for bc, ids in by_bc.items()} for name in have}
+    # page templates (this workspace) with coverage: how many enabled accounts already hold a page of that name
+    from .. import instant_page_builder as ipb
+    templates = sc.owned(db.query(models.PageTemplate), models.PageTemplate).order_by(models.PageTemplate.name).all()
+    tpl_cov = {t.id: sum(1 for a in accounts if a.advertiser_id in have.get(t.name, set())) for t in templates}
+    tpl_missing = {t.id: {bc: sum(1 for aid in ids if aid not in have.get(t.name, set())) for bc, ids in by_bc.items()} for t in templates}
     return render(request, "instant_pages.html", {
         "pages": pages, "accounts": accounts, "names": names, "title": "Instant Pages",
         "copies": copies, "status_labels": STATUS_LABELS, "bcs": bcs, "missing": missing,
+        "templates": templates, "tpl_cov": tpl_cov, "tpl_missing": tpl_missing,
+        "builder_ready": ipb.available() and bool(spark_web_api.load_cookies()), "builder_installed": ipb.available(),
         "web_ready": bool(spark_web_api.load_cookies()),
         "ok": request.query_params.get("ok", ""), "err": request.query_params.get("err", ""),
     })
@@ -100,6 +114,154 @@ def sync(db: Session = Depends(get_db)):
         if not ok:
             return RedirectResponse("/instant-pages?err=" + quote(msg), status_code=303)
     return RedirectResponse("/instant-pages?ok=" + quote(msg), status_code=303)
+
+
+# ---------------------------------------------------------------------------
+# Page templates — built on accounts by driving TikTok's own builder (instant_page_builder)
+# ---------------------------------------------------------------------------
+
+def _tpl(db: Session, sc, tpl_id: int):
+    t = db.get(models.PageTemplate, int(tpl_id))
+    return t if (t is not None and sc.owns(t)) else None
+
+
+def _builder_gate() -> str:
+    from .. import instant_page_builder as ipb
+    if not ipb.available():
+        return "The page builder needs Playwright + Chromium in this deployment (requirements.txt has it; the build runs `playwright install chromium`)."
+    if not spark_web_api.load_cookies():
+        return "The page builder drives Ads Manager with your web session — paste your ads.tiktok.com cookies on the TikTok Cookies page first."
+    return ""
+
+
+@router.post("/instant-pages/templates/save")
+def template_save(request: Request, db: Session = Depends(get_db), tpl_id: str = Form(""), name: str = Form(...),
+                  button_text: str = Form("Continue"), url: str = Form(...), button_color: str = Form(""),
+                  hand_cursor: str = Form(""), bottom_fixed: str = Form(""), color_scheme: str = Form("light")):
+    from .. import scope as scope_mod
+    sc = scope_mod.for_request(request, db)
+    name, url = name.strip()[:100], url.strip()
+    if not name:
+        return RedirectResponse("/instant-pages?err=" + quote("The template needs a name — it becomes the page's name on every account."), status_code=303)
+    if not url.startswith(("http://", "https://")):
+        return RedirectResponse("/instant-pages?err=" + quote("The destination URL must start with http:// or https://"), status_code=303)
+    t = _tpl(db, sc, int(tpl_id)) if str(tpl_id).isdigit() else None
+    if t is None:
+        t = models.PageTemplate(owner_user_id=sc.owner_for_new)
+        db.add(t)
+    t.name, t.button_text, t.url = name, (button_text.strip() or "Continue")[:40], url[:2000]
+    col = button_color.strip()
+    t.button_color = col if (col.startswith("#") and len(col) == 7) else ""
+    t.hand_cursor, t.bottom_fixed = bool(hand_cursor), bool(bottom_fixed)
+    t.color_scheme = "dark" if color_scheme == "dark" else "light"
+    db.commit()
+    return RedirectResponse("/instant-pages?ok=" + quote(f"Template “{t.name}” saved.") + "#templates", status_code=303)
+
+
+@router.post("/instant-pages/templates/{tpl_id}/delete")
+def template_delete(request: Request, tpl_id: int, db: Session = Depends(get_db)):
+    from .. import scope as scope_mod
+    t = _tpl(db, scope_mod.for_request(request, db), tpl_id)
+    if t is None:
+        return RedirectResponse("/instant-pages?err=" + quote("That template is not in your workspace."), status_code=303)
+    db.delete(t)
+    db.commit()
+    return RedirectResponse("/instant-pages?ok=" + quote("Template removed. Pages already built from it stay on their accounts.") + "#templates", status_code=303)
+
+
+@router.post("/instant-pages/templates/{tpl_id}/build")
+def template_build(request: Request, tpl_id: int, advertiser_id: str = Form(...), db: Session = Depends(get_db)):
+    """Build the template's page on ONE account (the test button) — as a job."""
+    from .. import jobs, scope as scope_mod
+    sc = scope_mod.for_request(request, db)
+    t = _tpl(db, sc, tpl_id)
+    if t is None or not sc.allows(advertiser_id):
+        return RedirectResponse("/instant-pages?err=" + quote("That template or account is not in your workspace."), status_code=303)
+    gate = _builder_gate()
+    if gate:
+        return RedirectResponse("/instant-pages?err=" + quote(gate), status_code=303)
+    acct = db.query(models.AdAccount).filter_by(advertiser_id=advertiser_id).first()
+    label = (acct.advertiser_name if acct else "") or advertiser_id
+    job = jobs.enqueue(db, "instant_page_build", f"Build page “{t.name}” on {label}",
+                       {"template_id": t.id, "targets": [advertiser_id]}, href="/instant-pages")
+    return RedirectResponse("/instant-pages?ok=" + quote(f"Building “{t.name}” on {label} in the background (job #{job.id}) — you'll get a notification with the result and screenshots.") + "#templates", status_code=303)
+
+
+@router.post("/instant-pages/templates/{tpl_id}/build-bc")
+def template_build_bc(request: Request, tpl_id: int, bc_id: str = Form(...), db: Session = Depends(get_db)):
+    """Build the page on every enabled account of a Business Center (in view) that lacks a page of that name."""
+    from .. import jobs, scope as scope_mod
+    sc = scope_mod.for_request(request, db)
+    t = _tpl(db, sc, tpl_id)
+    if t is None:
+        return RedirectResponse("/instant-pages?err=" + quote("That template is not in your workspace."), status_code=303)
+    gate = _builder_gate()
+    if gate:
+        return RedirectResponse("/instant-pages?err=" + quote(gate), status_code=303)
+    have = _page_names_by_account(db).get(t.name, set())
+    targets = [a.advertiser_id for a in queries.enabled_accounts(db)
+               if a.owner_bc_id == bc_id and sc.allows(a.advertiser_id) and a.advertiser_id not in have]
+    bc = db.query(models.BusinessCenter).filter_by(bc_id=bc_id).first()
+    bc_name = (bc.name if bc else "") or bc_id
+    if not targets:
+        return RedirectResponse("/instant-pages?ok=" + quote(f"Every enabled account in {bc_name} already has “{t.name}”.") + "#templates", status_code=303)
+    job = jobs.enqueue(db, "instant_page_build", f"Build page “{t.name}” on {len(targets)} account(s) in {bc_name}",
+                       {"template_id": t.id, "targets": targets}, href="/instant-pages")
+    return RedirectResponse("/instant-pages?ok=" + quote(
+        f"Building “{t.name}” on {len(targets)} account(s) in {bc_name} — one browser at a time, about a minute each (job #{job.id}). "
+        "Stop it any time from Jobs.") + "#templates", status_code=303)
+
+
+def build_on_accounts(db: Session, template_id: int, targets: list[str], should_stop=None, on_progress=None) -> dict:
+    """The job body: build + verify on each account in turn. A build TikTok refuses is
+    reported per account and never repeated blindly; a verification challenge stops the
+    whole run — a human has to look."""
+    from .. import instant_page_builder as ipb
+    t = db.get(models.PageTemplate, int(template_id))
+    if t is None:
+        return {"ok": [], "failed": ["template no longer exists"], "stopped": False, "shots": [], "name": ""}
+    ok, failed, shots, stopped = [], [], [], False
+    accts = {a.advertiser_id: a for a in db.query(models.AdAccount).filter(models.AdAccount.advertiser_id.in_(targets or [""])).all()}
+    for i, adv in enumerate(targets):
+        if should_stop and should_stop():
+            stopped = True
+            break
+        acct = accts.get(adv)
+        label = (acct.advertiser_name if acct else "") or adv
+        if acct is None or not acct.access_token:
+            failed.append(f"{label}: account not connected")
+            continue
+        r = ipb.build_and_verify(db, acct, t, on_step=lambda s, l=label, i=i: on_progress and on_progress(f"{i + 1} of {len(targets)} — {l}: {s}"))
+        shots.extend(s.get("shot", "") for s in r.get("steps", []) if s.get("shot"))
+        if r.get("ok"):
+            ok.append(adv)
+        else:
+            failed.append(f"{label}: {r.get('error', 'failed')}")
+            if r.get("challenge"):
+                failed.append("stopped — TikTok asked for verification; open Ads Manager yourself once, then retry")
+                stopped = True
+                break
+            if r.get("retry"):
+                stopped = True          # memory guard: try again later rather than churn
+                break
+    return {"ok": ok, "failed": failed, "stopped": stopped, "shots": shots, "name": t.name}
+
+
+@router.get("/instant-pages/builds/{shot}")
+def build_shot(request: Request, shot: str, db: Session = Depends(get_db)):
+    """One screenshot from a build. Behind the login like every page, and only for an
+    account in the viewer's own workspace (the file name starts with the advertiser id)."""
+    import re as _re
+    from .. import instant_page_builder as ipb, scope as scope_mod
+    m = _re.fullmatch(r"([0-9]{6,25})_[0-9T]+_[a-z-]+\.png", shot)
+    if not m:
+        return Response(status_code=404)
+    if not scope_mod.for_request(request, db).allows(m.group(1)):
+        return Response(status_code=404)
+    p = ipb.SHOT_DIR / shot
+    if not p.exists():
+        return Response(status_code=404)
+    return FileResponse(str(p), media_type="image/png", headers={"Cache-Control": "private, no-store"})
 
 
 @router.post("/instant-pages/clone-bc")

@@ -368,6 +368,26 @@ class SparkSetting(Base):
 # TikTok per-account assets
 # ---------------------------------------------------------------------------
 
+class PageTemplate(Base):
+    """A one-button Instant Page the dashboard can BUILD on any ad account by driving
+    TikTok's own page builder in a headless browser (instant_page_builder). The page it
+    creates carries `name`, which is what presets match on — so pages built by hand with
+    the same name keep working. Per-user workspace like creatives (v120)."""
+    __tablename__ = "page_templates"
+
+    id = Column(Integer, primary_key=True)
+    owner_user_id = Column(Integer, nullable=True, index=True, default=ctx.owner_default)
+    name = Column(String, nullable=False)                  # page name on every account
+    button_text = Column(String, default="Continue")
+    url = Column(Text, default="")                         # View website destination
+    button_color = Column(String, default="")              # hex like #fe2c55; "" = TikTok's default
+    hand_cursor = Column(Boolean, default=True)
+    bottom_fixed = Column(Boolean, default=True)
+    color_scheme = Column(String, default="light")         # light | dark
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+
 class InstantPage(Base):
     __tablename__ = "instant_pages"
 

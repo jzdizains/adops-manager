@@ -52,7 +52,7 @@ class Owned:
     owner_user_id = Col("owner_user_id")
     def __init__(self, owner=None): self.owner_user_id = owner
 models = _mod("app.models", User=User, AdAccount=AdAccount,
-              **{n: type(n, (Owned,), {"owner_user_id": Col("owner_user_id")}) for n in ("Template", "Creative", "DisplayCard", "AdText", "SparkCode", "SparkCodeGroup", "Tag", "BusinessCenter")})
+              **{n: type(n, (Owned,), {"owner_user_id": Col("owner_user_id")}) for n in ("Template", "Creative", "DisplayCard", "AdText", "SparkCode", "SparkCodeGroup", "Tag", "BusinessCenter", "PageTemplate")})
 _mod("app.users", is_owner=lambda u: bool(u) and u.email == "janis@glitchy.ai", norm_email=lambda e: (e or "").strip().lower())
 
 import importlib

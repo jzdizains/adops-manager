@@ -96,7 +96,10 @@
         <span class="hint">Just the page. The source rides along at launch (<span class="mono">?source=__CAMPAIGN_NAME__</span> in campaign-name mode — see Settings → Sources). Other parameters you add are kept.</span></label>
       <label class="field" data-dest="instant_page"><span class="field-label">Instant page <span class="muted">(by name)</span></span>
         <select name="instant_page_name"><option value="">— pick —</option>{% for p in instant_pages %}<option value="{{ p.name }}" {{ 'selected' if blob.get('instant_page_name') == p.name }}>{{ p.name }} — on {{ p.count }} account(s)</option>{% endfor %}</select>
-        <span class="hint">Each account's OWN copy of this page is used; accounts without one fail with a clear message. Sync on <a href="/instant-pages">Instant pages</a>.</span></label>
+        <span class="hint">Each account's OWN copy of this page is used. Sync on <a href="/instant-pages">Instant pages</a>.</span>
+        <span class="field-label" style="margin-top:8px;">Build it if an account has none <span class="muted">(page template)</span></span>
+        <select name="page_template_id"><option value="">— don't build; fail with a clear message —</option>{% for t in page_templates %}<option value="{{ t.id }}" {{ 'selected' if blob.get('page_template_id') == t.id }}>{{ t.name }} — “{{ t.button_text }}” → {{ t.url[:40] }}</option>{% endfor %}</select>
+        <span class="hint">An account without a page of the picked name gets one built from this template at launch (the dashboard drives TikTok's builder with your web session, ~1 min), verified through TikTok's API before the ad is created. With no page picked above, the template's own name is used. Manage templates on <a href="/instant-pages#templates">Instant pages</a>.</span></label>
       <label class="field" data-dest="lead_form"><span class="field-label">Lead form <span class="muted">(by name)</span></span>
         <select name="lead_form_name"><option value="">— pick —</option>{% for f in lead_forms %}<option value="{{ f.name }}" {{ 'selected' if blob.get('lead_form_name') == f.name }}>{{ f.name }} — on {{ f.count }} account(s)</option>{% endfor %}</select>
         <span class="hint">Same per-account matching as instant pages. Sync on <a href="/lead-forms">Lead forms</a>.</span></label>

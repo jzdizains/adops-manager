@@ -8,10 +8,61 @@
   </div>
 </div>
 
+<div class="card" id="templates" style="margin-bottom:12px;">
+  <div class="card-header"><span class="card-title">Page templates</span>
+    <span class="card-meta">a one-button page the dashboard builds on any account by driving TikTok's own builder — presets match the page by name</span>
+    <button class="btn sm primary" type="button" id="tplNew" style="margin-left:auto;">+ New template</button></div>
+  {% if not builder_installed %}<div class="flash err" style="font-size:12.5px;">The page builder needs Playwright + Chromium in this deployment (requirements.txt lists it; the build must run <span class="mono">playwright install chromium</span>). Templates can be saved, builds will refuse until then.</div>
+  {% elif not builder_ready %}<div class="flash" style="font-size:12.5px;">Builds drive Ads Manager with your web session — paste your ads.tiktok.com cookies on the <a href="/cookies">TikTok Cookies</a> page first.</div>{% endif %}
+  {% if templates %}
+  <div class="table-scroll"><table class="data dense">
+    <thead><tr><th>Template · page name</th><th>Button</th><th>Destination</th><th>Built on</th><th class="num">Build</th><th></th></tr></thead>
+    <tbody>
+    {% for t in templates %}
+    <tr>
+      <td><b>{{ t.name }}</b><div class="muted" style="font-size:11px;">{{ t.color_scheme }} scheme{% if t.button_color %} · {{ t.button_color }}{% endif %}{% if t.bottom_fixed %} · pinned to bottom{% endif %}{% if t.hand_cursor %} · hand cursor{% endif %}</div></td>
+      <td>{{ t.button_text }}</td>
+      <td class="mono" style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{{ t.url }}">{{ t.url }}</td>
+      <td><span class="pill {{ 'ok' if tpl_cov.get(t.id, 0) == accounts|length and accounts else ('warn' if tpl_cov.get(t.id, 0) else 'dim') }}">{{ tpl_cov.get(t.id, 0) }} of {{ accounts|length }}</span></td>
+      <td class="num">
+        <form method="post" action="/instant-pages/templates/{{ t.id }}/build" hidden class="tpl-one"><select name="advertiser_id">{% for a in accounts %}<option value="{{ a.advertiser_id }}">{{ a.advertiser_name or a.advertiser_id }}</option>{% endfor %}</select></form>
+        <form method="post" action="/instant-pages/templates/{{ t.id }}/build-bc" hidden class="tpl-bc"><select name="bc_id">{% for b in bcs %}{% set n = tpl_missing.get(t.id, {}).get(b.bc_id, 0) %}<option value="{{ b.bc_id }}" data-n="{{ n }}">{{ b.name }} — {{ n }} of {{ b.n }} without it</option>{% endfor %}</select></form>
+        <button class="btn sm tpl-build" type="button" data-name="{{ t.name }}" {{ 'disabled' if not builder_ready }}>▶ Build on…</button>
+      </td>
+      <td class="num">
+        <button class="btn sm tpl-edit" type="button" data-id="{{ t.id }}" data-name="{{ t.name }}" data-button="{{ t.button_text }}" data-url="{{ t.url }}" data-color="{{ t.button_color }}" data-cursor="{{ 1 if t.hand_cursor else 0 }}" data-bottom="{{ 1 if t.bottom_fixed else 0 }}" data-scheme="{{ t.color_scheme }}">Edit</button>
+        <form method="post" action="/instant-pages/templates/{{ t.id }}/delete" style="display:inline;" data-confirm="Remove template “{{ t.name }}”?" data-confirm-text="Pages already built from it stay on their accounts." data-ok-label="Remove" data-danger="1"><button class="btn sm ghost" type="submit">Remove</button></form>
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}<div class="muted" style="font-size:12.5px;">No templates yet. A template is exactly the one-button page you'd build in Ads Manager — name, button text, destination URL, style — saved once here.</div>{% endif %}
+  <div class="hint" style="margin-top:10px;">How a build works: the dashboard opens Ads Manager in a headless browser with your web session, does Create → Customize → names the page → sets the call-to-action button → Complete, then checks through TikTok's API that the page now exists on the account. One account at a time, about a minute each, with screenshots kept for every build. If TikTok asks for a verification step, the build stops and tells you — it never tries to pass one.</div>
+</div>
+
+<div id="tplFormBox" hidden><div>
+  <form method="post" action="/instant-pages/templates/save" id="tplForm">
+    <input type="hidden" name="tpl_id" id="tplId" value="">
+    <label class="field"><span class="field-label">Template name · becomes the page name on every account</span><input type="text" name="name" id="tplName" required maxlength="100" placeholder="FC UK"></label>
+    <div class="form-row">
+      <label class="field"><span class="field-label">Button text</span><input type="text" name="button_text" id="tplButton" value="Continue" maxlength="40"></label>
+      <label class="field"><span class="field-label">Button colour <span class="muted">(hex, optional)</span></span><input type="text" name="button_color" id="tplColor" placeholder="#fe2c55" maxlength="7"></label>
+    </div>
+    <label class="field"><span class="field-label">Destination URL · View website</span><input type="url" name="url" id="tplUrl" required placeholder="https://your-lander.com/…?source=__CAMPAIGN_NAME__"><span class="hint">Exactly what you'd paste into the builder's "Destination URL" box.</span></label>
+    <div class="form-row">
+      <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;"><input type="checkbox" name="hand_cursor" id="tplCursor" value="1" checked style="width:auto;"> Show hand cursor</label>
+      <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;"><input type="checkbox" name="bottom_fixed" id="tplBottom" value="1" checked style="width:auto;"> Set the button to the bottom of the page</label>
+    </div>
+    <label class="field"><span class="field-label">Colour scheme</span><select name="color_scheme" id="tplScheme"><option value="light">Light</option><option value="dark">Dark</option></select></label>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px;"><button type="button" class="btn" data-close>Cancel</button><button type="submit" class="btn primary">Save template</button></div>
+  </form>
+</div></div>
+
 <div class="card">
   {% if pages %}
   <table class="data">
-    <thead><tr><th>Name</th><th>Page ID</th><th>Owner account</th><th>Status</th><th>Accounts with this name</th><th class="num">Clone to…</th></tr></thead>
+    <thead><tr><th>Name</th><th>Page ID</th><th>Owner account</th><th>Status</th><th>Accounts with this name</th></tr></thead>
     <tbody>
     {% for p in pages %}
       <tr>
@@ -20,7 +71,7 @@
         <td class="muted">{{ names.get(p.owner_advertiser_id, p.owner_advertiser_id) }}</td>
         <td><span class="pill {{ 'ok' if p.status == 'PUBLISHED' else 'dim' }}">{{ status_labels.get(p.status, p.status or "—") }}</span></td>
         <td class="muted">{{ copies.get(p.name, 0) }} of {{ accounts|length }}</td>
-        <td class="num">
+        {% if False %}<td class="num">
           {% if accounts|length > 1 %}
           <form method="post" action="/instant-pages/clone" hidden>
             <input type="hidden" name="page_id" value="{{ p.page_id }}">
@@ -38,14 +89,14 @@
           </form>
           <button class="btn sm ip-clone" type="button" data-name="{{ p.name }}" {{ 'disabled' if not web_ready }} title="{{ 'Copies the page through the TikTok web session (undocumented by TikTok — may stop working).' if web_ready else 'Needs the ads.tiktok.com cookies from the TikTok Cookies page.' }}">⧉ Clone to…</button>
           {% endif %}
-        </td>
+        </td>{% endif %}
       </tr>
     {% endfor %}
     </tbody>
   </table>
   <div class="hint" style="margin-top:10px;">
     “Sync” reads every enabled account's custom Instant Pages (drafts included; drafts have no preview link and can't run in ads until published).
-    {% if not web_ready %}Cloning to another account isn't offered by TikTok's API; the Clone button uses the TikTok web session and is off until cookies are saved on the <a href="/cookies">TikTok Cookies</a> page.{% else %}Cloning to another account isn't offered by TikTok's API — the Clone button goes through the TikTok web session and may stop working without notice; the safe path is to build the page in the other account with the same name.{% endif %}
+Copying a page to another ad account isn't offered by TikTok — not by the Marketing API (only <span class="mono">/page/get/</span> exists) and not in Ads Manager (its Copy duplicates within the same account). Build the page in each account with the same name; presets match by name at launch.
   </div>
   {% else %}<div class="empty"><div class="empty-title">No instant pages yet</div>Hit “Sync from accounts” to read the custom Instant Pages your ad accounts have. If an account's sync fails, the reason is shown at the top.</div>{% endif %}
 </div>
@@ -53,6 +104,37 @@
 {% block scripts %}
 <script>
 (function () {
+  // ---- page templates: new / edit pop-up, build popover ----
+  var box = document.getElementById("tplFormBox");
+  function openForm(d) {
+    d = d || {};
+    document.getElementById("tplId").value = d.id || "";
+    document.getElementById("tplName").value = d.name || "";
+    document.getElementById("tplButton").value = d.button || "Continue";
+    document.getElementById("tplColor").value = d.color || "";
+    document.getElementById("tplUrl").value = d.url || "";
+    document.getElementById("tplCursor").checked = d.cursor === undefined ? true : d.cursor === "1";
+    document.getElementById("tplBottom").checked = d.bottom === undefined ? true : d.bottom === "1";
+    document.getElementById("tplScheme").value = d.scheme || "light";
+    var node = box.firstElementChild; box.hidden = false;
+    UI.modal({ title: d.id ? "Edit template" : "New page template", body: node, onClose: function () { box.appendChild(node); box.hidden = true; } });
+  }
+  var nb = document.getElementById("tplNew"); if (nb) nb.addEventListener("click", function () { openForm(); });
+  document.addEventListener("click", function (e) {
+    var ed = e.target.closest(".tpl-edit"); if (ed) { openForm(ed.dataset); return; }
+    var bb = e.target.closest(".tpl-build"); if (!bb || bb.disabled) return;
+    var cell = bb.parentElement, one = cell.querySelector(".tpl-one"), bc = cell.querySelector(".tpl-bc");
+    var so = one.querySelector("select"), sb = bc.querySelector("select");
+    var bcBlock = sb.options.length ? '<div style="font-weight:700;margin:12px 0 6px;">…or every account in a Business Center</div><div style="display:flex;gap:6px;"><select data-bc style="flex:1;">' + sb.innerHTML + '</select><button type="button" class="btn sm" data-bc-go>Build on all</button></div><div class="hint" style="margin-top:6px;">Only accounts without a page of this name; one browser at a time, about a minute each.</div>' : '';
+    var p = UI.popover(bb, '<div style="font-weight:700;margin-bottom:6px;">Build “' + UI.esc(bb.dataset.name) + '” on</div><div style="display:flex;gap:6px;"><select data-one style="flex:1;">' + so.innerHTML + '</select><button type="button" class="btn sm primary" data-one-go>Build (test)</button></div><div class="hint" style="margin-top:6px;">One account — check the result and the screenshots before building everywhere.</div>' + bcBlock, { alignRight: true });
+    p.querySelector("[data-one-go]").addEventListener("click", function () { so.value = p.querySelector("[data-one]").value; this.disabled = true; this.textContent = "Queuing…"; one.submit(); });
+    var go = p.querySelector("[data-bc-go]"), bsel = p.querySelector("[data-bc]");
+    function refresh() { if (!go) return; var n = parseInt(bsel.selectedOptions[0].dataset.n || "0", 10); go.disabled = !n; go.textContent = n ? "Build on all (" + n + ")" : "All have it"; }
+    if (go) { bsel.addEventListener("change", refresh); refresh();
+      go.addEventListener("click", function () { var n = parseInt(bsel.selectedOptions[0].dataset.n || "0", 10); var name = bsel.selectedOptions[0].textContent.split(" — ")[0];
+        UI.confirm({ title: "Build “" + bb.dataset.name + "” on " + n + " account(s) in " + name + "?", text: "The dashboard drives Ads Manager with your web session, one account at a time (about a minute each). You can stop it from Jobs; you'll get a notification with per-account results and screenshots.", ok: "Build on all" }).then(function (y) { if (!y) return; sb.value = bsel.value; go.disabled = true; go.textContent = "Queuing…"; bc.submit(); }); }); }
+  });
+
   document.addEventListener("click", function (e) {
     var b = e.target.closest(".ip-clone"); if (!b || b.disabled) return;
     var f = b.parentElement.querySelector('form[action="/instant-pages/clone"]'), sel = f.querySelector("select");

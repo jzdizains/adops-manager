@@ -11,7 +11,7 @@
 <div class="card">
   {% if forms %}
   <table class="data">
-    <thead><tr><th>Name</th><th>Form ID</th><th>Owner account</th><th>Status</th><th>Accounts with this name</th><th class="num">Clone to…</th></tr></thead>
+    <thead><tr><th>Name</th><th>Form ID</th><th>Owner account</th><th>Status</th><th>Accounts with this name</th></tr></thead>
     <tbody>
     {% for f in forms %}
       <tr>
@@ -20,7 +20,7 @@
         <td class="muted">{{ names.get(f.owner_advertiser_id, f.owner_advertiser_id) }}</td>
         <td>{{ f.status or "—" }}</td>
         <td class="muted">{{ copies.get(f.name, 0) }} of {{ accounts|length }}</td>
-        <td class="num">
+        {% if False %}<td class="num">
           {% if accounts|length > 1 %}
           <form method="post" action="/lead-forms/clone" hidden>
             <input type="hidden" name="form_id" value="{{ f.form_id }}">
@@ -38,14 +38,14 @@
           </form>
           <button class="btn sm lf-clone" type="button" data-name="{{ f.name }}" {{ 'disabled' if not web_ready }} title="{{ 'Copies the form through the TikTok web session (undocumented by TikTok — may stop working).' if web_ready else 'Needs the ads.tiktok.com cookies from the TikTok Cookies page.' }}">⧉ Clone to…</button>
           {% endif %}
-        </td>
+        </td>{% endif %}
       </tr>
     {% endfor %}
     </tbody>
   </table>
   <div class="hint" style="margin-top:10px;">
     “Sync” reads every enabled account's instant forms.
-    {% if not web_ready %}Copying a form to another account isn't offered by TikTok's API; the Clone button uses the TikTok web session and is off until cookies are saved on the <a href="/cookies">TikTok Cookies</a> page.{% else %}Copying a form to another account isn't offered by TikTok's API — the Clone button goes through the TikTok web session and may stop working without notice. Every copy is verified by re-reading the target account.{% endif %}
+Copying a form to another ad account isn't offered by TikTok — not by the Marketing API and not in Ads Manager. Build the form in each account with the same name; presets match by name at launch.
   </div>
   {% else %}<div class="empty"><div class="empty-title">No lead forms yet</div>Hit “Sync from accounts” to pull the instant forms your ad accounts already have.</div>{% endif %}
 </div>

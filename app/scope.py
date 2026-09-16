@@ -30,7 +30,7 @@ COOKIE = "adops_view"           # "all" | "u:<user id>"
 COOKIE_MAX_AGE = 60 * 60 * 24 * 90
 
 # every model that carries an owner — the backfill, the guards and the tests use this
-OWNED_MODELS = ("AdAccount", "Template", "Creative", "DisplayCard", "AdText", "SparkCode", "SparkCodeGroup", "Tag")
+OWNED_MODELS = ("AdAccount", "Template", "Creative", "DisplayCard", "AdText", "SparkCode", "SparkCodeGroup", "Tag", "PageTemplate")
 
 
 @dataclass
