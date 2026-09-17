@@ -196,8 +196,9 @@ check("Smart+ ABO campaign sends no budget_mode (INFINITE refused: 'Budget mode 
       'payload["budget_mode"] = "BUDGET_MODE_INFINITE"' not in spc_c)
 f_abo = {"objective_type": "TRAFFIC", "campaign_budget_mode": "ABO", "adgroup_budget": 25.0, "template_name": "T", "campaign_name_pattern": "x"}
 cpv = helpers.spc_campaign_variants(f_abo, {"campaign_name": "c", "objective_type": "TRAFFIC"})
-check("Smart+ ABO: budget-less campaign first, then a daily campaign budget equal to the ad-group budget",
-      [(("budget_mode" in c), on) for c, on in cpv] == [(False, False), (True, True)] and cpv[1][0]["budget"] == 25.0 and cpv[1][0]["budget_mode"] == "BUDGET_MODE_DAY", str(cpv))
+check("Smart+ ABO: budget-less campaign first, then CBO daily = the ad-group budget (17 Sep: DAY without CBO is 'Budget mode is invalid'), bare daily last",
+      [(("budget_mode" in c), bool(c.get("budget_optimize_on")), on) for c, on in cpv] == [(False, False, False), (True, True, True), (True, False, True)]
+      and cpv[1][0]["budget"] == 25.0 and cpv[1][0]["budget_mode"] == "BUDGET_MODE_DAY", str(cpv))
 check("Smart+ CBO: one shape, budget on the campaign", helpers.spc_campaign_variants(f_abo, {"budget_optimize_on": True, "budget_mode": "BUDGET_MODE_DAY", "budget": 50.0}) == [({"budget_optimize_on": True, "budget_mode": "BUDGET_MODE_DAY", "budget": 50.0}, True)])
 check("only a budget complaint moves to the campaign-budget shape", 'and "budget" in (e.message or "").lower():' in src[src.index("def _launch_smart_plus"):])
 check("a failed Smart+ launch deletes the empty shell through the Smart+ endpoint",

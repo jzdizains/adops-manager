@@ -948,12 +948,19 @@ def build_spc_campaign_payload(fields: dict, acct: models.AdAccount) -> dict:
 
 def spc_campaign_variants(fields: dict, camp_payload: dict) -> list[tuple[dict, bool]]:
     """(campaign payload, budget-on-campaign?) shapes to try for a Smart+ campaign, in
-    order. ABO: no budget field first; if TikTok insists on a campaign budget, a daily
-    campaign budget equal to the ad-group budget, and the ad group then carries none."""
+    order — TikTok is the judge, one create call per shape, a refused shape creates nothing.
+    Seen live 17 Sep (Traffic, blue bat): no budget fields → "Your budget setting must not be
+    less than $20"; budget_mode DAY + budget WITHOUT budget_optimize_on → "Budget mode is
+    invalid". So the campaign budget has to travel with campaign budget optimization ON.
+    ABO: budget-less first (cheapest if it ever works), then CBO daily = the ad-group budget
+    (a Smart+ launch is one ad group, so the spend is identical), then the bare daily shape
+    last. Whichever lands, the ad group then carries no budget of its own."""
     if camp_payload.get("budget_optimize_on"):
         return [(camp_payload, True)]
-    daily = {**camp_payload, "budget_mode": "BUDGET_MODE_DAY", "budget": float(fields.get("adgroup_budget") or 20.0)}
-    return [(camp_payload, False), (daily, True)]
+    amount = float(fields.get("adgroup_budget") or 20.0)
+    cbo_daily = {**camp_payload, "budget_optimize_on": True, "budget_mode": "BUDGET_MODE_DAY", "budget": amount}
+    daily = {**camp_payload, "budget_mode": "BUDGET_MODE_DAY", "budget": amount}
+    return [(camp_payload, False), (cbo_daily, True), (daily, True)]
 
 
 def build_spc_adgroup_payload(fields: dict, campaign_id: str, spark_ref: dict | None,
