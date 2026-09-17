@@ -1063,15 +1063,21 @@ SPC_CTA_MAX = 3      # /smart_plus/ad/create/: "call_to_action_list: maximum num
 def build_spc_ad_payload(fields: dict, adgroup_id: str, spark_ref: dict,
                          spark: models.SparkCode | None) -> dict:
     ad_format = spark_ad_format(spark_ref, spark)
+    creative_info = {
+        "ad_format": ad_format,
+        "identity_id": spark_ref["identity_id"],
+        "identity_type": spark_ref["identity_type"],
+        "tiktok_item_id": spark_ref["item_id"],
+    }
+    # doc "Create an Upgraded Smart+ Ad" › creative_info.identity_authorized_bc_id: "Required
+    # when identity_type is BC_AUTH_TT" — the ad group carrying it is not enough (18 Sep 2026:
+    # "'identity_bc_id' is required for BC_AUTH_TT type identity" at /smart_plus/ad/create/)
+    if spark_ref.get("identity_authorized_bc_id"):
+        creative_info["identity_authorized_bc_id"] = spark_ref["identity_authorized_bc_id"]
     payload: dict = {
         "adgroup_id": adgroup_id,
         "ad_name": f"{fields['template_name']} smart+ ad"[:512],
-        "creative_list": [{"creative_info": {
-            "ad_format": ad_format,
-            "identity_id": spark_ref["identity_id"],
-            "identity_type": spark_ref["identity_type"],
-            "tiktok_item_id": spark_ref["item_id"],
-        }}],
+        "creative_list": [{"creative_info": creative_info}],
         # Auto on a Smart+ ad = up to SPC_CTA_MAX buttons for TikTok to pick from — the endpoint
         # refuses more ("call_to_action_list: maximum number of items is 3", 18 Sep 2026); the
         # manual flow's CTA portfolio (call_to_action_id) isn't a field of the Smart+ ad create
@@ -1420,6 +1426,8 @@ def _launch_smart_plus(acct: models.AdAccount, fields: dict, spark_ref: dict | N
     if not spark_ref:
         raise ConfigError("Smart+ launches need a spark creative — pick a spark code "
                           "in the preset or at launch time.")
+    if spark_ref.get("identity_type") == "BC_AUTH_TT" and not spark_ref.get("identity_authorized_bc_id") and acct.owner_bc_id:
+        spark_ref = {**spark_ref, "identity_authorized_bc_id": acct.owner_bc_id}   # TikTok requires it with BC_AUTH_TT
     camp_payload = build_spc_campaign_payload(fields, acct)
     camp = None
     variants = spc_campaign_variants(fields, camp_payload)

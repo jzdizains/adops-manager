@@ -233,6 +233,10 @@ helpers.spark_ad_format = lambda ref, spark: "SINGLE_VIDEO"
 _ad = helpers.build_spc_ad_payload(f_auto, "ag1", _sp, None)
 check("Smart+ ad with Auto CTA sends at most 3 buttons (18 Sep: 'call_to_action_list: maximum number of items is 3')",
       len(_ad["call_to_action_list"]) == 3 and _ad["call_to_action_list"][0] == {"call_to_action": "LEARN_MORE"} and helpers.SPC_CTA_MAX == 3, str(_ad["call_to_action_list"]))
+_bc = helpers.build_spc_ad_payload(f_auto, "ag1", {**_sp, "identity_type": "BC_AUTH_TT", "identity_authorized_bc_id": "bc9"}, None)
+check("Smart+ ad creative carries the identity's BC id for BC_AUTH_TT (18 Sep: 'identity_bc_id is required')",
+      _bc["creative_list"][0]["creative_info"].get("identity_authorized_bc_id") == "bc9"
+      and "identity_authorized_bc_id" not in _ad["creative_list"][0]["creative_info"], str(_bc["creative_list"]))
 check("…a chosen CTA is sent alone", helpers.build_spc_ad_payload({**f_auto, "call_to_action": "SHOP_NOW"}, "ag1", _sp, None)["call_to_action_list"] == [{"call_to_action": "SHOP_NOW"}])
 check("Engaged session resolves the pixel like a conversion launch", "or is_engaged(fields))" in src and "not is_engaged(fields) and not fields.get(\"optimization_event\")" in src)
 
