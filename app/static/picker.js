@@ -149,26 +149,26 @@
       mark(); load();
     });
   };
-  /* UI.pickProfileVideos({bcs:[{id,name,accounts}], bc, selected:[{item_id,...}]}) → Promise<[{item_id, identity_id, identity_type, bc_id, handle, text, cover, type, auth_code, url}] | null>
-     Every post of every profile a Business Center shares, multi-select. Data: /super-launcher/profile-videos.json?bc_id= */
+  /* UI.pickProfileVideos({bcs:[{id,name,accounts}], selected:[{item_id,...}]}) → Promise<[{item_id, identity_id, identity_type, bc_id, handle, text, cover, type, auth_code, url}] | null>
+     Every post of every profile the viewer's Business Centers share, loaded BC by BC and shown as it arrives;
+     filter by profile (not BC), multi-select, preview plays the post. Data: /super-launcher/profile-videos.json?bc_id= */
   UI.pickProfileVideos = function (o) {
     o = o || {};
     return new Promise(function (resolve) {
-      var bcs = o.bcs || [], bc = o.bc || (bcs[0] ? bcs[0].id : ""), q = "", profiles = [], sel = {}, order = [], cur = null, done = false, loading = false;
+      var bcs = o.bcs || [], q = "", profiles = [], sel = {}, order = [], cur = null, done = false, loading = 0, pf = "", errors = [];
       (o.selected || []).forEach(function (v) { sel[v.item_id] = v; order.push(v.item_id); });
       var body = UI.el('<div class="pk"><div class="pk-top">' +
-        '<select class="pv-bc" style="max-width:260px;">' + bcs.map(function (b) { return '<option value="' + esc(b.id) + '">' + esc(b.name) + ' · ' + b.accounts + ' account' + (b.accounts === 1 ? '' : 's') + '</option>'; }).join("") + '</select>' +
+        '<select class="pv-profile" style="max-width:280px;"><option value="">All profiles</option></select>' +
         '<input type="text" class="pk-q" placeholder="Search caption or profile…" style="width:220px;">' +
-        '<button type="button" class="btn sm pv-refresh" title="Re-read the profiles from TikTok (the list is kept for 10 minutes)">↻ Refresh</button>' +
+        '<button type="button" class="btn sm pv-refresh" title="Re-read every profile from TikTok (the list is kept for 10 minutes; covers and previews expire after about an hour)">↻ Refresh</button>' +
         '<span class="muted pk-count" style="margin-left:auto;font-size:12px;"></span></div>' +
         '<div class="pk-body"><div class="pk-grid" data-kind="video"></div><div class="pk-side"><div class="muted" style="padding:20px 0;text-align:center;">Hover or click a post to preview</div></div></div></div>');
-      var foot = UI.el('<div style="display:flex;align-items:center;gap:8px;width:100%;"><b class="pk-sel">0 selected</b><span class="muted pk-hint" style="font-size:12px;">Each post runs under its profile\'s identity — no spark code needed. Posts are spread over the accounts (accounts per video on the launcher).</span><button type="button" class="btn" data-close style="margin-left:auto;">Cancel</button><button type="button" class="btn primary pk-use">Use</button></div>');
+      var foot = UI.el('<div class="pv-foot"><b class="pk-sel">0 selected</b><span class="muted pk-hint">Each post runs under its profile\'s identity — no spark code needed.</span><span class="pv-foot-btns"><button type="button" class="btn" data-close>Cancel</button><button type="button" class="btn primary pk-use">Use</button></span></div>');
       var m = UI.modal({ title: o.title || "Pick profile videos", body: body, footer: foot, wide: true, onClose: function () { if (!done) { done = true; resolve(null); } } });
       m.el.classList.add("pk-modal");
-      var grid = body.querySelector(".pk-grid"), side = body.querySelector(".pk-side"), bcSel = body.querySelector(".pv-bc");
-      if (bc) bcSel.value = bc;
-      if (!bcs.length) bcSel.innerHTML = '<option value="">No Business Center in this view</option>';
-      function all() { var out = []; profiles.forEach(function (p) { p.videos.forEach(function (v) { out.push(v); }); }); return out; }
+      var grid = body.querySelector(".pk-grid"), side = body.querySelector(".pk-side"), pfSel = body.querySelector(".pv-profile");
+      function key(p) { return p.bc_id + ":" + p.identity_id; }
+      function shownProfiles() { return profiles.filter(function (p) { return !pf || key(p) === pf; }); }
       function shown(p) { var qq = q.toLowerCase(); return p.videos.filter(function (v) { return !qq || (v.text || "").toLowerCase().indexOf(qq) >= 0 || (p.name || "").toLowerCase().indexOf(qq) >= 0; }); }
       function mark() {
         var n = order.filter(function (id) { return sel[id]; }).length;
@@ -176,65 +176,76 @@
         foot.querySelector(".pk-use").textContent = "Use " + n + " video" + (n === 1 ? "" : "s");
         foot.querySelector(".pk-use").disabled = n === 0;
       }
+      function fillProfiles() {
+        var keep = pfSel.value;
+        pfSel.innerHTML = '<option value="">All profiles · ' + profiles.reduce(function (a, p) { return a + p.videos.length; }, 0) + ' posts</option>' +
+          profiles.slice().sort(function (a, b) { return a.name.localeCompare(b.name); }).map(function (p) { return '<option value="' + esc(key(p)) + '">@' + esc(p.name) + ' · ' + p.videos.length + (p.bc_name ? ' · ' + esc(p.bc_name) : '') + '</option>'; }).join("");
+        pfSel.value = keep; if (pfSel.value !== keep) { pf = ""; }
+      }
       function tile(p, v) {
         var on = !!sel[v.item_id];
-        return '<div class="pk-tile' + (on ? " on" : "") + '" data-id="' + esc(v.item_id) + '" data-pid="' + esc(p.identity_id) + '" title="' + esc(v.text || v.item_id) + '">' +
+        return '<div class="pk-tile' + (on ? " on" : "") + '" data-id="' + esc(v.item_id) + '" data-pid="' + esc(key(p)) + '" title="' + esc(v.text || v.item_id) + '">' +
           '<div class="pk-thumb">' + (v.cover ? '<img loading="lazy" src="' + esc(v.cover) + '" alt="">' : '<span class="sp-ph" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;">✦</span>') +
-          '<span class="pv-type">' + esc(v.type) + '</span><span class="pk-chk">' + (on ? "✓" : "") + '</span></div>' +
+          '<span class="pv-type">' + esc(v.type === "carousel" ? (v.slides ? v.slides + " photos" : "photos") : (v.duration ? v.duration + "s" : "video")) + '</span><span class="pk-chk">' + (on ? "✓" : "") + '</span></div>' +
           '<div class="pk-meta"><div class="pk-name">' + esc(v.text || ("post " + v.item_id.slice(-6))) + '</div><div class="muted" style="font-size:10.5px;">@' + esc(p.name) + (v.created ? " · " + esc(v.created.slice(0, 10)) : "") + '</div></div></div>';
       }
       function render() {
-        var html = "", total = 0, vis = 0;
-        profiles.forEach(function (p) {
+        var html = "", total = 0, vis = 0, list = shownProfiles();
+        list.forEach(function (p) {
           var vs = shown(p); total += p.videos.length; vis += vs.length;
           if (!vs.length && q) return;
           var picked = p.videos.filter(function (v) { return sel[v.item_id]; }).length;
-          html += '<div class="pv-head">' + (p.avatar ? '<img src="' + esc(p.avatar) + '" alt="">' : '<span class="pv-ph">@</span>') + '<b>@' + esc(p.name) + '</b><span class="muted">' + p.videos.length + ' post' + (p.videos.length === 1 ? '' : 's') + (picked ? ' · ' + picked + ' picked' : '') + (p.error ? ' · <span style="color:var(--err);">' + esc(p.error) + '</span>' : '') + '</span>' +
-            (vs.length ? '<button type="button" class="btn sm pv-all" data-pid="' + esc(p.identity_id) + '">' + (vs.every(function (v) { return sel[v.item_id]; }) ? "None" : "Select all") + '</button>' : '') + '</div>';
+          html += '<div class="pv-head">' + (p.avatar ? '<img src="' + esc(p.avatar) + '" alt="">' : '<span class="pv-ph">@</span>') + '<b>@' + esc(p.name) + '</b><span class="muted">' + p.videos.length + ' post' + (p.videos.length === 1 ? '' : 's') + (p.bc_name ? ' · ' + esc(p.bc_name) : '') + (picked ? ' · ' + picked + ' picked' : '') + (p.error ? ' · <span style="color:var(--err);">' + esc(p.error) + '</span>' : '') + '</span>' +
+            (vs.length ? '<button type="button" class="btn sm pv-all" data-pid="' + esc(key(p)) + '">' + (vs.every(function (v) { return sel[v.item_id]; }) ? "None" : "Select all") + '</button>' : '') + '</div>';
           html += vs.map(function (v) { return tile(p, v); }).join("");
           if (!vs.length) html += '<div class="muted pv-empty" style="padding:4px 6px 10px;font-size:12px;">No ad-usable posts on this profile.</div>';
         });
-        grid.innerHTML = profiles.length ? html : '<div class="empty pv-empty">No profiles shared on this Business Center' + (q ? " match “" + esc(q) + "”" : "") + '.</div>';
-        body.querySelector(".pk-count").textContent = profiles.length ? (profiles.length + " profile" + (profiles.length === 1 ? "" : "s") + " · " + (q ? vis + " of " : "") + total + " post" + (total === 1 ? "" : "s")) : "";
+        if (loading) html += '<div class="muted pv-empty" style="padding:10px 6px;font-size:12px;">Reading ' + loading + ' more Business Center' + (loading === 1 ? "" : "s") + '…</div>';
+        if (errors.length) html += '<div class="muted pv-empty" style="padding:4px 6px;font-size:12px;color:var(--err);">' + errors.map(esc).join("<br>") + '</div>';
+        grid.innerHTML = (list.length || loading) ? html : '<div class="empty pv-empty">No profiles shared on your Business Centers' + (q ? " match “" + esc(q) + "”" : "") + '.</div>';
+        body.querySelector(".pk-count").textContent = profiles.length ? (profiles.length + " profile" + (profiles.length === 1 ? "" : "s") + " · " + ((q || pf) ? vis + " of " : "") + profiles.reduce(function (a, p) { return a + p.videos.length; }, 0) + " post" + (total === 1 ? "" : "s")) : "";
         mark();
       }
       function load(refresh) {
-        if (!bc) { profiles = []; render(); return; }
-        loading = true;
-        grid.innerHTML = '<div class="muted pv-empty" style="padding:20px;">Reading the profiles TikTok shares on this Business Center…</div>';
-        UI.get("/super-launcher/profile-videos.json?bc_id=" + encodeURIComponent(bc) + (refresh ? "&refresh=1" : "")).then(function (d) {
-          loading = false;
-          profiles = (d && d.profiles) || [];
-          if (d && d.ok === false) grid.innerHTML = '<div class="empty pv-empty">' + esc(d.error || "TikTok didn't answer.") + '</div>';
-          else render();
-        }).catch(function () { loading = false; grid.innerHTML = '<div class="empty pv-empty">Couldn\'t reach the dashboard — try again.</div>'; });
+        profiles = []; errors = []; loading = bcs.length; fillProfiles(); render();
+        if (!bcs.length) { grid.innerHTML = '<div class="empty pv-empty">No Business Center with a connected account in this view.</div>'; return; }
+        // one Business Center at a time (a few TikTok calls each), shown as each arrives
+        (function next(i) {
+          if (i >= bcs.length) { loading = 0; fillProfiles(); render(); return; }
+          var b = bcs[i];
+          UI.get("/super-launcher/profile-videos.json?bc_id=" + encodeURIComponent(b.id) + (refresh ? "&refresh=1" : "")).then(function (d) {
+            if (d && d.ok === false) errors.push(b.name + ": " + (d.error || "TikTok didn't answer"));
+            ((d && d.profiles) || []).forEach(function (p) { p.bc_name = b.name; profiles.push(p); });
+            loading = bcs.length - i - 1; fillProfiles(); render(); next(i + 1);
+          }).catch(function () { errors.push(b.name + ": couldn't reach the dashboard"); loading = bcs.length - i - 1; render(); next(i + 1); });
+        })(0);
       }
       function find(id) { var hit = null; profiles.forEach(function (p) { p.videos.forEach(function (v) { if (v.item_id == id) hit = { p: p, v: v }; }); }); return hit; }
       function entry(p, v) { return { item_id: v.item_id, identity_id: p.identity_id, identity_type: p.identity_type, bc_id: p.bc_id, handle: p.name, text: v.text, cover: v.cover, type: v.type, auth_code: v.auth_code, url: v.url }; }
       function preview(p, v) {
         cur = v;
-        side.innerHTML = '<div class="pk-phone">' + (v.cover ? '<img src="' + esc(v.cover) + '" alt="">' : "") + '</div><div class="pk-info"><b>@' + esc(p.name) + '</b>' +
+        var media = v.preview ? '<video src="' + esc(v.preview) + '" controls playsinline preload="metadata"' + (v.cover ? ' poster="' + esc(v.cover) + '"' : '') + '></video>' : (v.cover ? '<img src="' + esc(v.cover) + '" alt="">' : '<div class="muted" style="padding:40px 10px;text-align:center;font-size:12px;">No preview from TikTok for this post — open it ↗</div>');
+        side.innerHTML = '<div class="pk-phone">' + media + '</div><div class="pk-info"><b>@' + esc(p.name) + '</b>' +
           '<div style="font-size:12.5px;margin-top:4px;">' + esc(v.text || "(no caption)") + '</div>' +
-          '<div class="muted" style="font-size:11.5px;margin-top:6px;">' + esc(v.type) + (v.created ? " · " + esc(v.created) : "") + (v.duration ? " · " + v.duration + "s" : "") + (v.url ? ' · <a href="' + esc(v.url) + '" target="_blank" rel="noopener">post ↗</a>' : "") + '</div>' +
+          '<div class="muted" style="font-size:11.5px;margin-top:6px;">' + esc(v.type === "carousel" ? (v.slides ? v.slides + " photos" : "photo post") : "video") + (v.created ? " · " + esc(v.created) : "") + (v.duration ? " · " + v.duration + "s" : "") + (v.url ? ' · <a href="' + esc(v.url) + '" target="_blank" rel="noopener">open post ↗</a>' : "") + '</div>' +
           '<div style="margin-top:10px;"><button type="button" class="btn sm ' + (sel[v.item_id] ? "" : "primary") + ' pk-toggle">' + (sel[v.item_id] ? "Remove" : "Add") + "</button></div></div>";
         side.querySelector(".pk-toggle").addEventListener("click", function () { toggle(p, v); preview(p, v); });
       }
       function toggle(p, v) {
         if (sel[v.item_id]) { delete sel[v.item_id]; order = order.filter(function (x) { return x !== v.item_id; }); }
         else { sel[v.item_id] = entry(p, v); order.push(v.item_id); }
-        var t = grid.querySelector('.pk-tile[data-id="' + v.item_id + '"]'); if (t) { t.classList.toggle("on", !!sel[v.item_id]); t.querySelector(".pk-chk").textContent = sel[v.item_id] ? "✓" : ""; }
         render();
       }
       grid.addEventListener("click", function (e) {
         var a = e.target.closest(".pv-all");
-        if (a) { var p = profiles.filter(function (x) { return x.identity_id == a.dataset.pid; })[0]; if (!p) return; var vs = shown(p), every = vs.every(function (v) { return sel[v.item_id]; }); vs.forEach(function (v) { if (every ? sel[v.item_id] : !sel[v.item_id]) toggle(p, v); }); return; }
+        if (a) { var p = profiles.filter(function (x) { return key(x) === a.dataset.pid; })[0]; if (!p) return; var vs = shown(p), every = vs.every(function (v) { return sel[v.item_id]; }); vs.forEach(function (v) { if (every ? sel[v.item_id] : !sel[v.item_id]) { if (sel[v.item_id]) { delete sel[v.item_id]; order = order.filter(function (x) { return x !== v.item_id; }); } else { sel[v.item_id] = entry(p, v); order.push(v.item_id); } } }); render(); return; }
         var t = e.target.closest(".pk-tile"); if (!t) return;
         var hit = find(t.dataset.id); if (!hit) return;
         if (e.target.closest(".pk-thumb")) toggle(hit.p, hit.v);
         preview(hit.p, hit.v);
       });
-      grid.addEventListener("mouseover", function (e) { var t = e.target.closest(".pk-tile"); if (!t) return; var hit = find(t.dataset.id); if (hit && (!cur || cur.item_id !== hit.v.item_id)) preview(hit.p, hit.v); });
-      bcSel.addEventListener("change", function () { bc = bcSel.value; load(false); });
+      grid.addEventListener("mouseover", function (e) { var t = e.target.closest(".pk-tile"); if (!t) return; var hit = find(t.dataset.id); if (hit && (!cur || cur.item_id !== hit.v.item_id) && !(side.querySelector("video") && !side.querySelector("video").paused)) preview(hit.p, hit.v); });
+      pfSel.addEventListener("change", function () { pf = pfSel.value; render(); });
       body.querySelector(".pv-refresh").addEventListener("click", function () { if (!loading) load(true); });
       var qt = null; body.querySelector(".pk-q").addEventListener("input", function (e) { clearTimeout(qt); q = e.target.value; qt = setTimeout(render, 150); });
       foot.querySelector(".pk-use").addEventListener("click", function () {

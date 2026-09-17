@@ -98,11 +98,37 @@ def read_page(page_id: str, target: str, source_owner: str = "", shape: str = ""
         if _ok(ans):
             return ans, name, probes
         last = ans
+        if no_access(ans):
+            break                    # a permission answer — the other shapes can't change who is logged in
     return last, "", probes
 
 
 def _ok(body: dict) -> bool:
     return str((body or {}).get("code", "")) == "0"
+
+
+def _err_msg(body: dict) -> str:
+    """The editor API's real reason lives in data.err_msg (the top-level message is
+    generic — "Internal system error"). Seen live 18 Sep:
+    RPCError{PSM:[ad.advertiser.adv_info_i18n] Method:[GetLoginAdvInfoByUid] …
+    BizStatusCode:[2901] BizStatusMessage:[not any access permission]}"""
+    d = (body or {}).get("data")
+    return str(d.get("err_msg") or "") if isinstance(d, dict) else ""
+
+
+def no_access(body: dict) -> bool:
+    """TikTok says the LOGIN behind the cookies has no access to that ad account —
+    a permission fact, not a request-shape problem; probing other shapes is pointless."""
+    return "access permission" in _err_msg(body).lower() or "GetLoginAdvInfoByUid" in _err_msg(body)
+
+
+def explain(body: dict, account_id: str) -> str:
+    if no_access(body):
+        return (f"the TikTok login behind the stored cookies has no access to ad account {account_id} "
+                "(TikTok: “not any access permission”). Log into ads.tiktok.com with a user that is a member of the "
+                "Business Center holding BOTH the source and the target account, with access to those ad accounts, "
+                "and paste that session's cookies on the TikTok Cookies page")
+    return f"{body.get('code')} {_msg(body)}" + (f" ({_err_msg(body)[:160]})" if _err_msg(body) else "")
 
 
 def _msg(body: dict) -> str:
@@ -157,7 +183,9 @@ def duplicate(source_page_id: str, name: str, target: str, new_url: str = "", ne
     try:
         info, shape, probes = read_page(source_page_id, target, source_owner)
         if not _ok(info):
-            raise CloneError(f"read source: {info.get('code')} {_msg(info)} — tried " + "; ".join(probes))
+            if no_access(info):
+                raise CloneError("read source: " + explain(info, target))
+            raise CloneError(f"read source: {explain(info, target)} — tried " + "; ".join(probes))
         if shape != "target":
             steps.append(f"read shape: {shape}")
         page = ((info.get("data") or {}).get("page_info") or {}) if isinstance(info.get("data"), dict) else {}
@@ -174,7 +202,7 @@ def duplicate(source_page_id: str, name: str, target: str, new_url: str = "", ne
             "template_id": page.get("template_id"), "title": name, "thumbnail_uri": thumb, "account_id": target,
         }, target)
         if not _ok(created):
-            raise CloneError(f"create: {created.get('code')} {_msg(created)}")
+            raise CloneError("create: " + explain(created, target))
         page_id = str(((created.get("data") or {}).get("page_id") if isinstance(created.get("data"), dict) else "") or "")
         if not page_id:
             raise CloneError("create returned no page_id")
@@ -192,7 +220,7 @@ def duplicate(source_page_id: str, name: str, target: str, new_url: str = "", ne
                 "thumbnail_uri": thumb, "account_id": target,
             }, target)
             if not _ok(updated):
-                raise CloneError(f"created {page_id} but update failed: {updated.get('code')} {_msg(updated)}")
+                raise CloneError(f"created {page_id} but update failed: " + explain(updated, target))
             back, _s, _p = read_page(page_id, target, source_owner, shape=shape)
             pi = ((back.get("data") or {}).get("page_info") or {}) if isinstance(back.get("data"), dict) else {}
             blob = str(pi.get("publish_data") or "") + str(pi.get("data") or "")
@@ -202,7 +230,7 @@ def duplicate(source_page_id: str, name: str, target: str, new_url: str = "", ne
 
         published = _post(f"/v1/publish/{page_id}/", {"account_id": target}, target)
         if not _ok(published):
-            raise CloneError(f"created {page_id} but publish failed: {published.get('code')} {_msg(published)}")
+            raise CloneError(f"created {page_id} but publish failed: " + explain(published, target))
         steps.append("published")
         return {"ok": True, "page_id": page_id, "steps": steps, "error": ""}
     except CloneError as e:

@@ -1088,39 +1088,65 @@ def list_identities(access_token: str, advertiser_id: str, identity_type: str | 
     return data.get("identity_list", data.get("list", []))
 
 
+IDENTITY_VIDEO_COUNT = 20          # /identity/video/get/: count 1–20 (more is capped at 20)
+IDENTITY_VIDEO_MAX_PAGES = 15      # up to 300 posts per identity and post type
+
+
 def list_tt_videos(access_token: str, advertiser_id: str, identity_id: str,
                    identity_type: str, page: int = 1, page_size: int = 50,
-                   identity_authorized_bc_id: str = "") -> dict:
-    """Lists a creator identity's AD-AUTHORIZED posts (⚠ §9.4 — nothing else).
+                   identity_authorized_bc_id: str = "", item_types: tuple = ("VIDEO", "CAROUSEL"),
+                   max_pages: int = IDENTITY_VIDEO_MAX_PAGES) -> dict:
+    """EVERY ad-usable post of a creator identity (⚠ §9.4 — nothing else), as
+    {"list": [item, …]}: video posts and photo (carousel) posts.
 
-    Each item carries item_info: auth_code, item_id, item_type (VIDEO/CAROUSEL)
-    and cover image URLs. This powers Spark auto-grab.
+    /identity/video/get/ pages with `cursor` + `count` (count ≤ 20) and answers
+    `has_more`; `page`/`page_size` are not its parameters (kept in the signature for the
+    callers, ignored — with them alone only the first 20 posts ever came back, so a
+    profile's 21st post could never be found or launched). `item_type` defaults to VIDEO,
+    so carousels are asked for separately. Each item: item_id, text, item_type,
+    auth_code, video_info{poster_url, preview_url, url, duration…} (URLs valid ~1 hour)
+    or carousel_info{image_info[…]}.
     ⚠ identity_authorized_bc_id is REQUIRED when identity_type is BC_AUTH_TT.
     """
-    params: dict = {
-        "advertiser_id": advertiser_id,
-        "identity_id": identity_id,
-        "identity_type": identity_type,
-        "page": page,
-        "page_size": page_size,
-    }
-    if identity_authorized_bc_id:
-        params["identity_authorized_bc_id"] = identity_authorized_bc_id
-    data = api_get("/identity/video/get/", access_token, params)
-    if not isinstance(data, dict):
-        return {"list": [], "_keys": []}
-    # normalize: TikTok has shipped the items under different keys over time
     items: list = []
-    for key in ("list", "video_list", "item_list", "videos", "identity_video_list",
-                "tiktok_item_list", "items"):
-        v = data.get(key)
-        if isinstance(v, list) and v:
-            items = v
-            break
-    raw_keys = [k for k in data.keys() if k != "list"]
-    data["list"] = items
-    data["_keys"] = raw_keys
-    return data
+    seen: set = set()
+    for item_type in item_types:
+        cursor = 0
+        for _ in range(max_pages):
+            params: dict = {
+                "advertiser_id": advertiser_id, "identity_id": identity_id, "identity_type": identity_type,
+                "item_type": item_type, "cursor": cursor, "count": IDENTITY_VIDEO_COUNT,
+            }
+            if identity_authorized_bc_id:
+                params["identity_authorized_bc_id"] = identity_authorized_bc_id
+            try:
+                data = api_get("/identity/video/get/", access_token, params)
+            except TikTokError:
+                if item_type != item_types[0]:
+                    break                      # a refused second post type is not an error for the first
+                raise
+            if not isinstance(data, dict):
+                break
+            batch: list = []
+            for key in ("video_list", "list", "item_list", "videos", "identity_video_list", "tiktok_item_list", "items"):
+                v = data.get(key)
+                if isinstance(v, list) and v:
+                    batch = v
+                    break
+            for it in batch:
+                info = it.get("item_info", it) if isinstance(it, dict) else {}
+                iid = str(info.get("item_id") or "")
+                if iid and iid not in seen:
+                    seen.add(iid)
+                    items.append(it)
+            nxt = data.get("cursor")
+            if not data.get("has_more") or not batch or nxt in (None, "", cursor):
+                break
+            try:
+                cursor = int(nxt)
+            except (TypeError, ValueError):
+                cursor = nxt
+    return {"list": items, "_keys": []}
 
 
 def tt_video_info(access_token: str, advertiser_id: str, auth_code: str = "",

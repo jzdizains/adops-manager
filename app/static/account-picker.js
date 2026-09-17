@@ -86,8 +86,39 @@
         filterState = btn.getAttribute("data-f"); applyFilter();
       });
     });
+    // ↻ Refresh: re-read every account's TikTok status in place (no page reload — the
+    // picks, the preset and the creative choice stay as they are)
+    var PILL = { fresh: "ok", used: "dim", active: "warn", cooldown: "err", blocked: "err" };
+    var LABEL = { fresh: "fresh", used: "used", active: "live", cooldown: "cooling", blocked: "blocked" };
+    var TITLE = { fresh: "Never launched — best for a first campaign", used: "Has campaigns, none active", active: "Has an active campaign right now", cooldown: "Cooling down after launch failures" };
+    function applyStates(info, counts) {
+      rows.forEach(function (r) {
+        var b = r.querySelector("input"), d = info[b.value]; if (!d) return;
+        var st = d.state, pill = r.querySelector(".pill"), reason = r.querySelector(".sl-reason");
+        r.setAttribute("data-state", st);
+        b.disabled = st === "blocked"; if (b.disabled) b.checked = false;
+        if (pill) { pill.className = "pill " + (PILL[st] || "dim"); pill.textContent = LABEL[st] || st; pill.title = st === "blocked" ? "Cannot launch: " + (d.reason || "") : (TITLE[st] || ""); }
+        if (!reason && st === "blocked") { reason = document.createElement("span"); reason.className = "muted sl-reason"; reason.style.fontSize = "10.5px"; pill.insertAdjacentElement("afterend", reason); }
+        if (reason) { reason.textContent = st === "blocked" ? (d.reason || "") : ""; reason.hidden = st !== "blocked"; }
+      });
+      if (counts) filterBtns.forEach(function (btn) { var f = btn.getAttribute("data-f"), n = btn.querySelector(".n"); if (f && n && counts[f] !== undefined) n.textContent = counts[f]; });
+      applyFilter();
+    }
+    var refreshBtn = document.getElementById("slRefresh");
+    if (refreshBtn) refreshBtn.addEventListener("click", function () {
+      refreshBtn.disabled = true; var was = refreshBtn.textContent; refreshBtn.textContent = "Refreshing…";
+      fetch("/super-launcher/refresh-accounts", { method: "POST", headers: { "X-Requested-With": "fetch", "Accept": "application/json" }, credentials: "same-origin" })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          if (!d || !d.ok) throw new Error((d && d.error) || "refresh failed");
+          applyStates(d.info || {}, d.counts);
+          if (window.adopsToast) adopsToast("ok", d.changed ? d.changed + " account(s) changed state" + (d.synced ? " · " + d.synced + " statuses re-read from TikTok" : "") : "Statuses re-read from TikTok — nothing changed" + (d.queued ? " · campaign sync running in the background" : ""));
+        })
+        .catch(function (e) { if (window.adopsToast) adopsToast("err", "Couldn't refresh: " + e.message); })
+        .then(function () { refreshBtn.disabled = false; refreshBtn.textContent = was; });
+    });
     applyFilter();
-    return { boxes: boxes, rows: rows, selected: selected, selectRows: selectRows, applyFilter: applyFilter, syncCount: syncCount };
+    return { boxes: boxes, rows: rows, selected: selected, selectRows: selectRows, applyFilter: applyFilter, syncCount: syncCount, applyStates: applyStates };
   }
   window.AccountPicker = { init: init };
 })();

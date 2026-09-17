@@ -307,7 +307,7 @@ check("parity watch knows the candidates (no false 'not offered' on our own ad g
 lst = open(os.path.join(ROOT, "app", "templates", "templates_list.html"), encoding="utf-8").read()
 check("presets list shows the goal", "'Landing page view' if blob.get('traffic_goal') == 'LPV' else 'Engaged session'" in lst)
 cfg = open(os.path.join(ROOT, "app", "config.py"), encoding="utf-8").read()
-check("static version bumped", 'STATIC_VERSION = "121"' in cfg)
+check("static version bumped", 'STATIC_VERSION = "122"' in cfg)
 
 print()
 print("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}")

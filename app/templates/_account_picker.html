@@ -12,6 +12,7 @@
         {% if counts.cooldown %}<button type="button" data-f="cooldown">Cooling <span class="n">{{ counts.cooldown }}</span></button>{% endif %}
         {% if counts.blocked %}<button type="button" data-f="blocked" title="Suspended accounts, punished Business Centers, account-level TikTok blocks — cannot launch">Blocked <span class="n">{{ counts.blocked }}</span></button>{% endif %}
       </div>
+      <button type="button" class="btn sm" id="slRefresh" title="Re-read every account's status from TikTok now, in place — your picks stay">↻ Refresh</button>
     </div>
     <div class="bc-tags" id="slBcTags" title="Click a Business Center to show only its accounts — several can be on at once. Your choice is remembered on this browser.">
       <span class="bc-tags-lab">BC</span>
@@ -35,7 +36,7 @@
           <input type="checkbox" name="advertiser_ids" value="{{ a.advertiser_id }}" class="sl-acct" style="width:auto;" {{ 'disabled' if st == 'blocked' }}>
           <span class="sl-name">{{ a.advertiser_name or a.advertiser_id }}</span>
           <span class="pill {{ {'fresh':'ok','used':'dim','active':'warn','cooldown':'err','blocked':'err'}[st] }}" title="{{ {'fresh':'Never launched — best for a first campaign','used':'Has campaigns, none active','active':'Has an active campaign right now','cooldown':'Cooling down after launch failures','blocked':'Cannot launch: ' ~ info[a.advertiser_id].reason}[st] }}">{{ {'fresh':'fresh','used':'used','active':'live','cooldown':'cooling','blocked':'blocked'}[st] }}</span>
-          {% if st == 'blocked' %}<span class="muted" style="font-size:10.5px;">{{ info[a.advertiser_id].reason }}</span>{% endif %}
+          {% if st == 'blocked' %}<span class="muted sl-reason" style="font-size:10.5px;">{{ info[a.advertiser_id].reason }}</span>{% endif %}
           <span class="mono muted" style="font-size:11px;">{{ a.advertiser_id }}</span>
         </label>
         {% endfor %}

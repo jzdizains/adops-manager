@@ -12,9 +12,11 @@ Launching one of these posts is the existing spark path: the pick becomes a Spar
 (no auth code — `tiktok_item_id` is the key), and resolve_spark's "known item id → an
 identity that lists it" step finds the profile on each target account.
 
-Dashboard-safe: one BC's listing is a handful of API calls (one per profile page of 50
-posts, at most PAGES pages each); the result is cached in memory for CACHE_S seconds and
-the cache holds at most CACHE_MAX Business Centers. Nothing here is a credential.
+Dashboard-safe: one BC's listing is a handful of API calls (per profile, 20 posts per
+call, both post types, capped in tiktok_api); the result is cached in memory for CACHE_S
+seconds and the cache holds at most CACHE_MAX Business Centers. Cover and preview URLs
+TikTok hands out expire after about an hour, hence the short cache and the Refresh button.
+Nothing here is a credential.
 """
 from __future__ import annotations
 
@@ -26,8 +28,6 @@ from sqlalchemy.orm import Session
 
 from . import models, tiktok_api
 
-PAGES = 4               # up to 200 posts per profile
-PAGE_SIZE = 50
 CACHE_S = 600
 CACHE_MAX = 30
 _CACHE: dict[str, tuple[float, dict]] = {}
@@ -44,18 +44,40 @@ def _account_for_bc(db: Session, sc, bc_id: str) -> models.AdAccount | None:
     return None
 
 
+def _first_url(d: dict, *keys: str) -> str:
+    for k in keys:
+        v = d.get(k) if isinstance(d, dict) else None
+        if isinstance(v, str) and v.startswith("http"):
+            return v
+    return ""
+
+
 def _video(info: dict, handle: str) -> dict:
+    """One post as the picker shows it. Cover and preview come from video_info
+    (poster_url / preview_url, valid about an hour — the picker re-reads on Refresh)
+    or, for a photo post, from the first image of carousel_info.image_info."""
     item_id = str(info.get("item_id") or "")
     kind = "carousel" if str(info.get("item_type", "")).upper() == "CAROUSEL" else "video"
+    vi = info.get("video_info") if isinstance(info.get("video_info"), dict) else {}
+    ci = info.get("carousel_info") if isinstance(info.get("carousel_info"), dict) else {}
+    images = ci.get("image_info") if isinstance(ci.get("image_info"), list) else []
+    first_img = images[0] if images and isinstance(images[0], dict) else {}
+    cover = (_first_url(vi, "poster_url", "cover_url", "video_cover_url")
+             or _first_url(info, "video_cover_url", "poster_url", "cover_url", "cover_image_url", "thumbnail_url")
+             or _first_url(first_img, "image_url", "url", "web_uri"))
+    preview = _first_url(vi, "preview_url", "url")
+    duration = vi.get("duration") or info.get("duration") or 0
     return {
         "item_id": item_id,
         "text": (info.get("text") or "")[:200],
-        "cover": info.get("video_cover_url") or info.get("poster_url") or info.get("cover_url") or "",
+        "cover": cover,
+        "preview": preview,
+        "slides": len(images) if kind == "carousel" else 0,
         "type": kind,
         "auth_code": info.get("auth_code") or "",
         "url": info.get("share_url") or (f"https://www.tiktok.com/@{handle}/video/{item_id}" if handle and item_id else ""),
         "created": str(info.get("create_time") or info.get("created_at") or "")[:19],
-        "duration": info.get("duration") or 0,
+        "duration": duration,
     }
 
 
@@ -79,21 +101,17 @@ def fetch_bc(db: Session, sc, bc_id: str) -> dict:
         prof = {"identity_id": iid, "identity_type": "BC_AUTH_TT", "bc_id": bc_id, "name": handle or iid,
                 "avatar": ident.get("profile_image") or ident.get("avatar_icon") or "", "videos": [], "error": ""}
         seen: set[str] = set()
-        for page in range(1, PAGES + 1):
-            try:
-                data = tiktok_api.list_tt_videos(acct.access_token, acct.advertiser_id, iid, "BC_AUTH_TT",
-                                                 page=page, page_size=PAGE_SIZE, identity_authorized_bc_id=bc_id)
-            except tiktok_api.TikTokError as e:
-                prof["error"] = f"{e.code}: {e.message[:80]}"
-                break
-            items = data.get("list", [])
-            for item in items:
-                v = _video(item.get("item_info", item) if isinstance(item, dict) else {}, handle)
-                if v["item_id"] and v["item_id"] not in seen:
-                    seen.add(v["item_id"])
-                    prof["videos"].append(v)
-            if len(items) < PAGE_SIZE:
-                break
+        try:
+            data = tiktok_api.list_tt_videos(acct.access_token, acct.advertiser_id, iid, "BC_AUTH_TT",
+                                             identity_authorized_bc_id=bc_id)     # every post, both types (cursor-paged inside)
+        except tiktok_api.TikTokError as e:
+            prof["error"] = f"{e.code}: {e.message[:80]}"
+            data = {"list": []}
+        for item in data.get("list", []):
+            v = _video(item.get("item_info", item) if isinstance(item, dict) else {}, handle)
+            if v["item_id"] and v["item_id"] not in seen:
+                seen.add(v["item_id"])
+                prof["videos"].append(v)
         profiles.append(prof)
     profiles.sort(key=lambda p: (-len(p["videos"]), p["name"].lower()))
     return {"ok": True, "bc_id": bc_id, "via": acct.advertiser_id, "profiles": profiles,
@@ -143,7 +161,7 @@ def ensure_spark_rows(db: Session, sc, items: list[dict]) -> list[models.SparkCo
                 code=str(it.get("auth_code") or ""),
                 media_type="CAROUSEL" if str(it.get("type") or "").lower() == "carousel" else "VIDEO",
                 tiktok_post_url=str(it.get("url") or ""),
-                thumbnail_url=str(it.get("cover") or ""),
+                thumbnail_url="",             # TikTok's cover URLs expire in about an hour — a stale one is worse than none
                 tiktok_item_id=item_id,
                 group_id=group.id if group is not None else None,
                 source="",

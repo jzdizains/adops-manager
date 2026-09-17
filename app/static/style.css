@@ -1241,3 +1241,8 @@ tr:hover .ctag-add, .ctag-add:focus { opacity: 1; }
 .pv-head .btn { margin-left: auto; }
 .pk-tile .pv-type { position: absolute; left: 6px; bottom: 6px; font-size: 10px; padding: 1px 6px; border-radius: 999px; background: rgba(0,0,0,.55); color: #fff; }
 .pv-empty { grid-column: 1 / -1; }
+.pv-foot { display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; }
+.pv-foot .pk-sel { white-space: nowrap; flex: none; }
+.pv-foot .pk-hint { font-size: 12px; flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pv-foot-btns { display: flex; gap: 8px; flex: none; margin-left: auto; }
+.pk-phone video { width: 100%; height: 100%; object-fit: contain; background: #000; display: block; }

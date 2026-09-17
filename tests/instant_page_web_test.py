@@ -154,6 +154,18 @@ f = Picky(); fake(f); seen.clear()
 r = ipw.duplicate("900", "FC UK", "555")          # no owner known → target, aadvid, int
 check("with no owner known every other shape is probed and the error lists what each answered", not r["ok"] and "tried target: 100000" in r["error"] and "target-int: 100000" in r["error"] and not f.created, r.get("error"))
 
+class NoAccess(Fake):
+    """What TikTok answered live on 18 Sep: the login has no access to the account named in account_id."""
+    def __call__(self, req):
+        if req.url.path.startswith("/instant_page/api/v1/page_info/"):
+            seen.append(req)
+            return httpx.Response(200, json={"code": 100000, "message": "Internal system error. ", "data": {"err_msg": "RPCError{PSM:[ad.advertiser.adv_info_i18n] Method:[GetLoginAdvInfoByUid] ErrType:[RPC_STATUS_CODE_NOT_ZERO] BizStatusCode:[2901] BizStatusMessage:[not any access permission]}"}})
+        return super().__call__(req)
+f = NoAccess(); fake(f); seen.clear()
+r = ipw.duplicate("900", "FC UK", "555", source_owner="111")
+check("'not any access permission' is read out of err_msg: one probe only, nothing created, the message says whose login lacks what",
+      not r["ok"] and len(seen) == 1 and not f.created and "no access to ad account 555" in r["error"] and "Business Center" in r["error"] and "Cookies page" in r["error"], r.get("error"))
+
 print("\n-- dead cookies --")
 f = Fake(dead=True); fake(f)
 try:

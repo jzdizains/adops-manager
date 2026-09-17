@@ -96,6 +96,46 @@ def page(request: Request, db: Session = Depends(get_db)):
     })
 
 
+@router.post("/super-launcher/refresh-accounts")
+def refresh_accounts(request: Request, db: Session = Depends(get_db)):
+    """↻ Refresh on the account picker: re-read every enabled account's status from
+    TikTok (/advertiser/info/, 100 ids per call, grouped by token), queue a campaign
+    sync for the campaign-level blocks, and answer the picker's per-account state so
+    the list updates in place. Nothing is written to TikTok."""
+    from .. import jobs, scope as scope_mod, tiktok_api
+    sc = scope_mod.for_request(request, db)
+    accounts = [a for a in (db.query(models.AdAccount).filter(models.AdAccount.enabled == True)  # noqa: E712
+                            .order_by(models.AdAccount.advertiser_name).all()) if sc.allows(a.advertiser_id)]
+    before = {a.advertiser_id: block_reason(a, None, {}) for a in accounts}
+    by_token: dict[str, list] = {}
+    for a in accounts:
+        if a.access_token:
+            by_token.setdefault(a.access_token, []).append(a.advertiser_id)
+    synced, errors = 0, []
+    info_by_id: dict[str, dict] = {}
+    for tok, ids in by_token.items():
+        for i in range(0, len(ids), 100):
+            try:
+                for info in tiktok_api.get_advertiser_info(tok, ids[i:i + 100]):
+                    info_by_id[str(info.get("advertiser_id", ""))] = info
+            except tiktok_api.TikTokError as e:
+                errors.append(f"{e.code}")
+    for a in accounts:
+        st = str((info_by_id.get(a.advertiser_id) or {}).get("status") or "")
+        if st:
+            a.status = st
+            synced += 1
+    db.commit()
+    queued = False
+    if not db.query(models.Job).filter(models.Job.kind == "status_sync", models.Job.status.in_(("queued", "claimed", "running"))).count():
+        jobs.enqueue(db, "status_sync", "Sync campaigns from TikTok", {}, href="/status")
+        queued = True
+    picker = account_picker_context(db, accounts)
+    changed = sum(1 for a in accounts if block_reason(a, None, {}) != before[a.advertiser_id])
+    return JSONResponse({"ok": True, "synced": synced, "changed": changed, "queued": queued,
+                         "errors": errors[:3], "info": picker["info"], "counts": picker["counts"]})
+
+
 @router.get("/super-launcher/profile-videos.json")
 def profile_videos_json(request: Request, db: Session = Depends(get_db)):
     """Every post of every profile the Business Center shares — the picker's data.
