@@ -1449,13 +1449,27 @@ def _launch_smart_plus(acct: models.AdAccount, fields: dict, spark_ref: dict | N
         log.campaign_id = campaign_id
     ladder = [float(x) for x in fields.get("cost_cap_ladder") or []]
     bid = ladder[0] if ladder else None      # smart+ = single ad group; first cap wins
-    ag = tiktok_api.smart_plus_adgroup_create(
-        acct.access_token, acct.advertiser_id,
-        build_spc_adgroup_payload(fields, campaign_id, spark_ref, pixel_id, bid))
+    ag_payload = build_spc_adgroup_payload(fields, campaign_id, spark_ref, pixel_id, bid)
+    ag = tiktok_api.smart_plus_adgroup_create(acct.access_token, acct.advertiser_id, ag_payload)
     adgroup_id = str(ag.get("adgroup_id"))
-    tiktok_api.smart_plus_ad_create(
-        acct.access_token, acct.advertiser_id,
-        build_spc_ad_payload(fields, adgroup_id, spark_ref, spark))
+    ad_payload = build_spc_ad_payload(fields, adgroup_id, spark_ref, spark)
+    notes: list[str] = []
+    try:
+        tiktok_api.smart_plus_ad_create(acct.access_token, acct.advertiser_id, ad_payload)
+    except tiktok_api.TikTokError as e:
+        # "The selected advanced creative is not supported. Please select another one."
+        # (18 Sep 2026, Smart+ Traffic): the add-on is the only "advanced creative" we send,
+        # so retry once without it and say so on the result — the ad is worth more than the card
+        if "advanced creative" in (e.message or "").lower() and ad_payload.get("interactive_add_on_list"):
+            ad_payload = {k: v for k, v in ad_payload.items() if k != "interactive_add_on_list"}
+            tiktok_api.smart_plus_ad_create(acct.access_token, acct.advertiser_id, ad_payload)
+            notes.append("no display card (TikTok refuses add-ons on this Smart+ ad)")
+        else:
+            raise
+    if log is not None and not is_engaged(fields):
+        log.optimization_event = " · ".join([str(ag_payload.get("optimization_goal") or ""), "Smart+"] + notes)
+    elif log is not None and notes:
+        log.optimization_event = " · ".join(["ENGAGEMENT_SESSION", "Smart+"] + ([] if pixel_id else ["no pixel"]) + notes)
     return campaign_id, camp_payload["campaign_name"]
 
 
@@ -1846,7 +1860,7 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
             log.campaign_id, created_name = _launch_smart_plus(acct, fields, spark_ref, spark, pixel_id, log)
             new_campaign_id = log.campaign_id
             ad_created = True                 # the chain only returns once the ad exists
-            if is_engaged(fields):
+            if is_engaged(fields) and not log.optimization_event:
                 log.optimization_event = "ENGAGEMENT_SESSION · Smart+" + ("" if pixel_id else " · no pixel")
             if source_mode == "campaign":
                 log.source = created_name

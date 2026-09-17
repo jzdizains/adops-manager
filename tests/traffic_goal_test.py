@@ -238,6 +238,37 @@ check("Smart+ ad creative carries the identity's BC id for BC_AUTH_TT (18 Sep: '
       _bc["creative_list"][0]["creative_info"].get("identity_authorized_bc_id") == "bc9"
       and "identity_authorized_bc_id" not in _ad["creative_list"][0]["creative_info"], str(_bc["creative_list"]))
 check("…a chosen CTA is sent alone", helpers.build_spc_ad_payload({**f_auto, "call_to_action": "SHOP_NOW"}, "ag1", _sp, None)["call_to_action_list"] == [{"call_to_action": "SHOP_NOW"}])
+# the Smart+ chain itself, against a fake TikTok that refuses the add-on once
+_ls = src[src.index("def _launch_smart_plus("):src.index("\ndef ", src.index("def _launch_smart_plus(") + 10)]
+_ns2 = dict(helpers.__dict__)
+class _TT:
+    calls = []
+    class TikTokError(Exception):
+        def __init__(self, code, message): super().__init__(message); self.code = code; self.message = message
+    @staticmethod
+    def smart_plus_campaign_create(tok, adv, p): _TT.calls.append(("camp", p)); return {"campaign_id": "c1"}
+    @staticmethod
+    def smart_plus_adgroup_create(tok, adv, p): _TT.calls.append(("ag", p)); return {"adgroup_id": "g1"}
+    @staticmethod
+    def smart_plus_ad_create(tok, adv, p):
+        _TT.calls.append(("ad", p))
+        if p.get("interactive_add_on_list"):
+            raise _TT.TikTokError("40002", "The selected advanced creative is not supported. Please select another one.")
+        return {"ad_id": "a1"}
+_ns2.update({"tiktok_api": _TT, "ConfigError": Exception, "is_engaged": lambda f: False,
+             "build_spc_campaign_payload": lambda f, a: {"campaign_name": "c", "objective_type": "TRAFFIC"}})
+exec(compile(_ls, "launch-smart-plus", "exec"), _ns2)
+_acct = types.SimpleNamespace(access_token="t", advertiser_id="1", owner_bc_id="bc1")
+_log = types.SimpleNamespace(campaign_id="", optimization_event="")
+_f = {"destination_type": "website", "objective_type": "TRAFFIC", "traffic_goal": "CLICK", "template_name": "T", "schedule_type": "SCHEDULE_FROM_NOW",
+      "campaign_budget_mode": "ABO", "adgroup_budget": 25.0, "call_to_action": "AUTO", "_display_card_portfolio_id": "card9", "location_ids": ["6252001"]}
+_cid, _name = _ns2["_launch_smart_plus"](_acct, _f, {**_sp, "identity_type": "BC_AUTH_TT"}, None, "", log=_log)
+_ads = [p for k, p in _TT.calls if k == "ad"]
+check("Smart+ ad refused for its add-on ('advanced creative is not supported') is retried once without it, and the result says so",
+      _cid == "c1" and len(_ads) == 2 and "interactive_add_on_list" in _ads[0] and "interactive_add_on_list" not in _ads[1]
+      and _log.optimization_event == "CLICK · Smart+ · no display card (TikTok refuses add-ons on this Smart+ ad)", str((_ads, _log.optimization_event)))
+check("…a BC identity without a stored BC id gets the account's Business Center on ad group and creative",
+      [p for k, p in _TT.calls if k == "ag"][0].get("identity_authorized_bc_id") == "bc1" and _ads[1]["creative_list"][0]["creative_info"].get("identity_authorized_bc_id") == "bc1")
 check("Engaged session resolves the pixel like a conversion launch", "or is_engaged(fields))" in src and "not is_engaged(fields) and not fields.get(\"optimization_event\")" in src)
 
 # ==== 5 · form + JS + parity + list ====================================================
