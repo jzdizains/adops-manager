@@ -150,6 +150,10 @@ def ensure_spark_rows(db: Session, sc, items: list[dict]) -> list[models.SparkCo
             )
             db.add(row)
             db.flush()
+        # the profile the post was picked from — the identity the launch runs it under
+        if it.get("identity_id") and not getattr(row, "identity_id", ""):
+            row.identity_id = str(it["identity_id"])
+            row.identity_bc_id = str(it.get("bc_id") or "")
         out.append(row)
     db.commit()
     return out

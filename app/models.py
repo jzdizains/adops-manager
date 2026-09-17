@@ -329,6 +329,11 @@ class SparkCode(Base):
     tiktok_post_url = Column(String, default="")
     thumbnail_url = Column(Text, default="")
     tiktok_item_id = Column(String, default="")            # set for auto-grabbed sparks; null/"" for hand-entered
+    # a post picked from a Business-Center profile (Super Launcher › Profile videos): the
+    # profile it belongs to, so the launch runs it under THAT identity on every account of
+    # the BC instead of guessing from whichever identity happens to list the item
+    identity_id = Column(String, default="")
+    identity_bc_id = Column(String, default="")
     group_id = Column(Integer, ForeignKey("spark_code_groups.id"), nullable=True)
     status = Column(String, default="active")              # active | used | expired
     use_count = Column(Integer, default=0)

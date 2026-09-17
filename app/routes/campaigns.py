@@ -336,6 +336,22 @@ def resolve_spark(db: Session, acct: models.AdAccount, spark: models.SparkCode) 
             ref["identity_authorized_bc_id"] = bc
         return ref
 
+    # 0) a post picked from a Business-Center profile knows its identity: use THAT
+    # profile, under its own Business Center, on every account of the BC — never an
+    # AUTH_CODE identity that happens to list the same post (18 Sep: an expired
+    # code-identity answered "aweme_item_id not valid" for a post the profile owns)
+    if getattr(spark, "identity_id", "") and spark.tiktok_item_id:
+        own = {"identity_id": spark.identity_id, "identity_type": "BC_AUTH_TT", "_bc": spark.identity_bc_id or acct.owner_bc_id or ""}
+        try:
+            info = _identity_lists_item(acct, own, spark.tiktok_item_id)
+        except tiktok_api.TikTokError:
+            info = None
+        if info is not None:
+            diag.append(f"profile …{spark.identity_id[-4:]} lists the post under BC …{str(own['_bc'])[-4:]}")
+            return _ref(own, spark.tiktok_item_id, item_media_type(info))
+        diag.append(f"profile …{spark.identity_id[-4:]} doesn't list the post on this account (BC …{str(own['_bc'])[-4:]})")
+        identities = sorted(identities, key=lambda i: 0 if i.get("identity_type") == "BC_AUTH_TT" else 1)
+
     # 1) exact code match across identities' ad-authorized posts
     for ident in identities:
         itype = ident.get("identity_type", "TT_USER")
@@ -2287,7 +2303,11 @@ def run_batch_assigned_sparks(db: Session, pairs: list, base_fields: dict,
 
     from .. import rules as rules_mod
     batch_ref = batch_ref or error_messages.new_ref()
-    _remember_batch(db, batch_ref, {**base_fields, "creative_source": "spark"})
+    # the recipe remembers WHICH post each account got, so "Retry failed" relaunches the
+    # same post on the same account instead of a spark-less ad ("creatives.identity_id
+    # is required", 18 Sep)
+    _remember_batch(db, batch_ref, {**base_fields, "creative_source": "spark",
+                                    "_spark_by_account": {str(a.advertiser_id): int(sid) for a, sid in pairs if sid is not None}})
     pace = _launch_pace(db)
     for i, (acct, sid) in enumerate(pairs):
         if i and pace:
@@ -2525,6 +2545,12 @@ def retry_failed(request: Request, batch_ref: str, db: Session = Depends(get_db)
     if not accounts:
         return RedirectResponse(f"/campaigns/result/{batch_ref}?note=nofail", status_code=303)
     fields["_launched_by"] = fields.get("_launched_by") or sc.owner_for_new
+    by_acct = fields.pop("_spark_by_account", None)
+    if by_acct:      # a profile-video / multi-spark batch: the same post on the same account
+        pairs = [[a.advertiser_id, by_acct[a.advertiser_id]] for a in accounts if a.advertiser_id in by_acct]
+        new_ref = queue_launch(db, f"Retry {len(pairs)} failed account(s) of {batch_ref}",
+                               [p[0] for p in pairs], fields, spark_pairs=pairs)
+        return RedirectResponse(f"/campaigns/result/{new_ref}", status_code=303)
     new_ref = queue_launch(db, f"Retry {len(accounts)} failed account(s) of {batch_ref}",
                            [a.advertiser_id for a in accounts], fields)
     return RedirectResponse(f"/campaigns/result/{new_ref}", status_code=303)

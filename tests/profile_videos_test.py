@@ -126,7 +126,7 @@ check("cache is per workspace and bounded", list(pv._CACHE)[0] == "7:BC1" and pv
 
 print("\n-- spark rows --")
 db.sparks = [SparkCode(tiktok_item_id="7001", name="already here", code="", media_type="VIDEO")]
-picked = [{"item_id": "7002", "handle": "creator.one", "text": "post 2", "cover": "https://cov/2", "type": "carousel", "url": "https://t/2", "auth_code": ""},
+picked = [{"item_id": "7002", "handle": "creator.one", "text": "post 2", "cover": "https://cov/2", "type": "carousel", "url": "https://t/2", "auth_code": "", "identity_id": "P1", "bc_id": "BC1"},
           {"item_id": "7001", "handle": "creator.one", "text": "post 1"}, {"item_id": "7002"}, {"item_id": ""}, {"item_id": "9999", "text": "x" * 200, "type": "video"}]
 rows = pv.ensure_spark_rows(db, sc, picked)
 check("one row per picked post in picked order; an existing row (by item id) is reused, duplicates and blanks dropped",
@@ -134,6 +134,8 @@ check("one row per picked post in picked order; an existing row (by item id) is 
 new = rows[0]
 check("a new row carries the post: no auth code, media type, cover, url, workspace owner, creator group, 80-char name",
       new.code == "" and new.media_type == "CAROUSEL" and new.thumbnail_url == "https://cov/2" and new.tiktok_post_url == "https://t/2" and new.owner_user_id == 7 and new.group_id == Group("creator.one").id and rows[2].name == "x" * 80 and rows[2].media_type == "VIDEO")
+
+check("the row remembers the profile it came from (identity + its Business Center)", new.identity_id == "P1" and new.identity_bc_id == "BC1")
 
 print("\n-- assignment --")
 accts = [f"acct{i}" for i in range(5)]
@@ -145,7 +147,12 @@ def read(p): return open(os.path.join(ROOT, p), encoding="utf-8").read()
 sl = read("app/routes/super_launcher.py"); ca = read("app/routes/campaigns.py"); jh = read("app/job_handlers.py"); th = read("app/templates/super_launcher.html"); pj = read("app/static/picker.js")
 check("feed route: per BC, in view only, cache + refresh", '@router.get("/super-launcher/profile-videos.json")' in sl and "profile_videos.list_for_bc(db, sc, bc_id, refresh=request.query_params.get(\"refresh\") == \"1\")" in sl and "has no account in this view" in sl)
 check("launch: profile mode → spark rows → accounts capped to the picks → spark_pairs job", 'if creative_mode == "profile":' in sl and "profile_videos.ensure_spark_rows(db, sc, items)" in sl and "accounts = accounts[:len(profile_sparks) * per_creative]" in sl and "spark_pairs=[[a.advertiser_id, sid] for a, sid in pairs]" in sl and "Pick+at+least+one+profile+video" in sl)
-check("engine: spark-pairs runner (spark path, fixed text) + queue_launch carries spark_pairs; job handler routes them", "def run_batch_assigned_sparks" in ca and 'fields["creative_source"] = "spark"' in ca.split("def run_batch_assigned_sparks")[1][:900] and '"spark_pairs": spark_pairs' in ca and 'elif p.get("spark_pairs"):' in jh and "engine.run_batch_assigned_sparks(db, pairs, fields, batch_ref=ref, on_progress=prog)" in jh)
+check("resolve_spark: a profile post is checked against ITS profile under ITS Business Center first, BC identities before code identities after that",
+      'if getattr(spark, "identity_id", "") and spark.tiktok_item_id:' in ca and '"_bc": spark.identity_bc_id or acct.owner_bc_id or ""' in ca and 'sorted(identities, key=lambda i: 0 if i.get("identity_type") == "BC_AUTH_TT" else 1)' in ca)
+check("retry of a profile-video batch relaunches the SAME post on the same account (recipe keeps the per-account map)",
+      '"_spark_by_account": {str(a.advertiser_id): int(sid) for a, sid in pairs if sid is not None}' in ca and 'by_acct = fields.pop("_spark_by_account", None)' in ca and "fields, spark_pairs=pairs)" in ca)
+check("SparkCode has the profile columns (auto-migrated at boot)", "identity_id = Column(String, default=\"\")" in read("app/models.py").split("class SparkCode(Base)")[1][:1500] and "identity_bc_id = Column(String, default=\"\")" in read("app/models.py"))
+check("engine: spark-pairs runner (spark path, fixed text) + queue_launch carries spark_pairs; job handler routes them", "def run_batch_assigned_sparks" in ca and 'fields["creative_source"] = "spark"' in ca.split("def run_batch_assigned_sparks")[1][:1600] and '"spark_pairs": spark_pairs' in ca and 'elif p.get("spark_pairs"):' in jh and "engine.run_batch_assigned_sparks(db, pairs, fields, batch_ref=ref, on_progress=prog)" in jh)
 check("page: Profile videos… button, hidden items field, chips, BCs for the picker, summary + validation", 'data-mode="profile"' in th and 'name="profile_items"' in th and "UI.pickProfileVideos({ bcs: BCS" in th and 'profile — none picked yet' not in th and "Pick at least one profile video" in th and "bcs_json" in sl)
 check("picker: BC select, search, refresh, per-profile select all, every post as a tile, multi-select, preview with post link", "UI.pickProfileVideos = function" in pj and 'class="pv-bc"' in pj and 'pv-refresh' in pj and 'pv-all' in pj and "/super-launcher/profile-videos.json?bc_id=" in pj and 'post ↗' in pj and ".pv-head" in read("app/static/style.css"))
 
