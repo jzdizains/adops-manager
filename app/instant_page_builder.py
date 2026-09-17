@@ -51,6 +51,7 @@ except Exception:  # pragma: no cover — optional dependency
 _LOCK = threading.Lock()                 # one browser at a time on the 512 MB host
 MEMORY_CEILING_MB = 330                  # don't open Chromium when the app already sits above this
 STEP_TIMEOUT_MS = 25_000
+LIBRARY_WAIT_S = 75                      # Ads Manager's first paint on a small headless box can take a while
 LIBRARY_PATH = "/i18n/material/instantPage"          # seen live 17 Sep: ads.tiktok.com/i18n/material/instantPage?aadvid=…
 SHOT_DIR = config.DATA_DIR / "page_builds"
 
@@ -193,16 +194,36 @@ def _drive(adv: str, template, cookies: dict, base_url: str, headless: bool, ste
             try:
                 def open_library():
                     page.goto(f"{base_url}{LIBRARY_PATH}?aadvid={adv}", wait_until="domcontentloaded", timeout=60_000)
-                    page.get_by_role("button", name=re.compile(rf"^\s*{T['create']}\s*$", re.I)).first.wait_for()
-                    body = page.inner_text("body")
-                    if looks_like_challenge(body):
-                        raise BuildError("TikTok is asking for verification / login on this session — not attempted")
+                    # Ads Manager is a heavy single-page app: poll up to LIBRARY_WAIT_S for the
+                    # Create control (a button OR any element whose text is "Create"), and stop
+                    # early with the real reason if TikTok sent us to login / a verification page
+                    create = page.get_by_role("button", name=re.compile(r"\bCreate\b", re.I)).or_(
+                        page.get_by_text(re.compile(r"^\s*\+?\s*Create\s*$", re.I)))
+                    deadline = time.time() + LIBRARY_WAIT_S
+                    while True:
+                        url = page.url.lower()
+                        if "/login" in url or "passport" in url or "sso" in url.split("?")[0]:
+                            raise BuildError(f"TikTok sent the browser to its login page ({page.url[:100]}) — the stored cookies don't log this browser in; export ALL cookies for ads.tiktok.com again")
+                        body = ""
+                        try:
+                            body = page.inner_text("body")
+                        except Exception:  # noqa: BLE001
+                            pass
+                        if looks_like_challenge(body):
+                            raise BuildError("TikTok is asking for verification / login on this session — not attempted")
+                        if create.count() and create.first.is_visible():
+                            break
+                        if time.time() > deadline:
+                            snippet = re.sub(r"\s+", " ", body)[:160]
+                            raise BuildError(f"no Create button after {LIBRARY_WAIT_S}s at {page.url[:90]} — page says: “{snippet}”")
+                        time.sleep(1.0)
                 step("open the Instant Page library", open_library)
 
                 def create_customize():
                     # Create may open the builder in a new tab — take whichever appears
                     before = set(ctx.pages)
-                    page.get_by_role("button", name=re.compile(rf"^\s*{T['create']}\s*$", re.I)).first.click()
+                    page.get_by_role("button", name=re.compile(r"\bCreate\b", re.I)).or_(
+                        page.get_by_text(re.compile(r"^\s*\+?\s*Create\s*$", re.I))).first.click()
                     page.get_by_text(T["customize"], exact=False).first.click()
                     time.sleep(1.5)
                     new = [pg for pg in ctx.pages if pg not in before]

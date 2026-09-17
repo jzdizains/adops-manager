@@ -38,6 +38,12 @@
     </tbody>
   </table></div>
   {% else %}<div class="muted" style="font-size:12.5px;">No templates yet. A template is exactly the one-button page you'd build in Ads Manager — name, button text, destination URL, style — saved once here.</div>{% endif %}
+  {% if shots %}
+  <div style="margin-top:12px;"><div class="field-label">Latest build screenshots <span class="muted">(what the headless browser saw — the fastest way to see where a build stopped)</span></div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:6px;">
+      {% for s in shots %}<a href="/instant-pages/builds/{{ s.name }}" target="_blank" rel="noopener" style="display:block;width:150px;text-decoration:none;color:inherit;"><img src="/instant-pages/builds/{{ s.name }}" alt="" loading="lazy" style="width:150px;height:105px;object-fit:cover;object-position:top;border:1px solid var(--border);border-radius:8px;background:#000;"><div style="font-size:11px;margin-top:3px;"><span class="pill {{ 'err' if s.tag == 'failed' else 'dim' }}">{{ s.tag }}</span> {{ s.label[:18] }}</div><div class="muted mono" style="font-size:10px;">{{ s.at }}</div></a>{% endfor %}
+    </div></div>
+  {% endif %}
   <div class="hint" style="margin-top:10px;">How a build works: the dashboard opens Ads Manager in a headless browser with your web session, does Create → Customize → names the page → sets the call-to-action button → Complete, then checks through TikTok's API that the page now exists on the account. One account at a time, about a minute each, with screenshots kept for every build. If TikTok asks for a verification step, the build stops and tells you — it never tries to pass one.</div>
 </div>
 

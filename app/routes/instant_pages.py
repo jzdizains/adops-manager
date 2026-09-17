@@ -86,7 +86,7 @@ def page(request: Request, db: Session = Depends(get_db)):
     return render(request, "instant_pages.html", {
         "pages": pages, "accounts": accounts, "names": names, "title": "Instant Pages",
         "copies": copies, "status_labels": STATUS_LABELS, "bcs": bcs, "missing": missing,
-        "templates": templates, "tpl_cov": tpl_cov, "tpl_missing": tpl_missing,
+        "templates": templates, "tpl_cov": tpl_cov, "tpl_missing": tpl_missing, "shots": recent_shots(db, sc),
         "builder_ready": ipb.available() and bool(spark_web_api.load_cookies()), "builder_installed": ipb.available(),
         "web_ready": bool(spark_web_api.load_cookies()),
         "ok": request.query_params.get("ok", ""), "err": request.query_params.get("err", ""),
@@ -245,6 +245,27 @@ def build_on_accounts(db: Session, template_id: int, targets: list[str], should_
                 stopped = True          # memory guard: try again later rather than churn
                 break
     return {"ok": ok, "failed": failed, "stopped": stopped, "shots": shots, "name": t.name}
+
+
+def recent_shots(db: Session, sc, limit: int = 8) -> list[dict]:
+    """The newest build screenshots for accounts in this view: [{name, adv, label, tag, at}]."""
+    from .. import instant_page_builder as ipb
+    import re as _re
+    out = []
+    try:
+        files = sorted(ipb.SHOT_DIR.glob("*.png"), key=lambda p: p.stat().st_mtime, reverse=True)
+    except OSError:
+        return out
+    names = {a.advertiser_id: a.advertiser_name for a in db.query(models.AdAccount).all()}
+    for p in files:
+        m = _re.fullmatch(r"([0-9]{6,25})_([0-9T]+)_([a-z-]+)\.png", p.name)
+        if not m or not sc.allows(m.group(1)):
+            continue
+        out.append({"name": p.name, "adv": m.group(1), "label": names.get(m.group(1)) or m.group(1), "tag": m.group(3),
+                    "at": m.group(2).replace("T", " ")[:15]})
+        if len(out) >= limit:
+            break
+    return out
 
 
 @router.get("/instant-pages/builds/{shot}")
