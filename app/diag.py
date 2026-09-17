@@ -88,6 +88,22 @@ def record(kind: str, where: str, code: Any = "", message: str = "",
         log.debug("diag.record failed", exc_info=True)
 
 
+def _same_shape(stored: str | None, context: Any) -> bool:
+    """Repeats merge only when the request had the same FIELDS. Two different request
+    shapes that TikTok refuses with the same words (e.g. the budget-mode probes on
+    /smart_plus/campaign/create/) stay two rows, so the feed shows what each call sent
+    instead of overwriting the first body with the second. Same fields, other values
+    (thirty accounts, one mistake) still fold into one row."""
+    try:
+        a = json.loads(stored or "{}").get("body")
+        b = (context or {}).get("body") if isinstance(context, dict) else None
+        if not isinstance(a, dict) or not isinstance(b, dict):
+            return True
+        return sorted(a) == sorted(b)
+    except Exception:      # noqa: BLE001
+        return True
+
+
 def _store(row: dict) -> None:
     from .database import SessionLocal
     from . import models
@@ -101,7 +117,8 @@ def _store(row: dict) -> None:
                        models.DiagEvent.code == row["code"],
                        models.DiagEvent.last_at >= now - MERGE_WINDOW)
                .order_by(models.DiagEvent.id.desc()).first())
-        if hit is not None and (hit.message or "")[:300] == row["message"][:300]:
+        if (hit is not None and (hit.message or "")[:300] == row["message"][:300]
+                and _same_shape(hit.context, row["context"])):
             hit.n = int(hit.n or 1) + 1
             hit.last_at = now
             hit.seen = False

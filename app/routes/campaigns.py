@@ -938,7 +938,7 @@ def build_spc_campaign_payload(fields: dict, acct: models.AdAccount) -> dict:
     mode = fields.get("campaign_budget_mode") or "ABO"
     if mode != "ABO" and fields.get("campaign_budget"):
         payload["budget_optimize_on"] = True
-        payload["budget_mode"] = mode
+        payload["budget_mode"] = SPC_BUDGET_MODE.get(mode, mode)
         payload["budget"] = float(fields["campaign_budget"])
     # ABO: no campaign-level budget field at all — /smart_plus/campaign/create/ refuses
     # BUDGET_MODE_INFINITE ("Budget mode is invalid", 15 Sep 2026); the ad group carries
@@ -946,21 +946,33 @@ def build_spc_campaign_payload(fields: dict, acct: models.AdAccount) -> dict:
     return payload
 
 
+# The Smart+ campaign endpoint has its own budget_mode enum — BUDGET_MODE_DYNAMIC_DAILY_BUDGET
+# (its daily budget) or BUDGET_MODE_TOTAL. Plain BUDGET_MODE_DAY, the manual-campaign value the
+# preset stores, is "Budget mode is invalid." there (seen live 17 Sep, with and without CBO).
+SPC_BUDGET_MODE = {"BUDGET_MODE_DAY": "BUDGET_MODE_DYNAMIC_DAILY_BUDGET",
+                   "BUDGET_MODE_TOTAL": "BUDGET_MODE_TOTAL"}
+
+
 def spc_campaign_variants(fields: dict, camp_payload: dict) -> list[tuple[dict, bool]]:
     """(campaign payload, budget-on-campaign?) shapes to try for a Smart+ campaign, in
     order — TikTok is the judge, one create call per shape, a refused shape creates nothing.
+    What the endpoint documents (Smart+ campaign create): budget_optimize_on DEFAULTS TO
+    TRUE; budget_mode is BUDGET_MODE_DYNAMIC_DAILY_BUDGET or BUDGET_MODE_TOTAL, nothing else.
     Seen live 17 Sep (Traffic, blue bat): no budget fields → "Your budget setting must not be
-    less than $20"; budget_mode DAY + budget WITHOUT budget_optimize_on → "Budget mode is
-    invalid". So the campaign budget has to travel with campaign budget optimization ON.
-    ABO: budget-less first (cheapest if it ever works), then CBO daily = the ad-group budget
-    (a Smart+ launch is one ad group, so the spend is identical), then the bare daily shape
-    last. Whichever lands, the ad group then carries no budget of its own."""
+    less than $20" (CBO by default, no amount); BUDGET_MODE_DAY with or without CBO →
+    "Budget mode is invalid".
+    ABO: budget-less first (that is how the Web Conversions launches land), then the
+    explicit ABO (budget_optimize_on false — the ad group carries the budget, as on Ads
+    Manager's own Smart+ campaigns), then CBO with the endpoint's own daily mode and the
+    ad-group amount (a Smart+ launch is one ad group, so the spend is identical). If that
+    last one lands, the ad group carries no budget of its own."""
     if camp_payload.get("budget_optimize_on"):
         return [(camp_payload, True)]
     amount = float(fields.get("adgroup_budget") or 20.0)
-    cbo_daily = {**camp_payload, "budget_optimize_on": True, "budget_mode": "BUDGET_MODE_DAY", "budget": amount}
-    daily = {**camp_payload, "budget_mode": "BUDGET_MODE_DAY", "budget": amount}
-    return [(camp_payload, False), (cbo_daily, True), (daily, True)]
+    abo = {**camp_payload, "budget_optimize_on": False}
+    cbo = {**camp_payload, "budget_optimize_on": True,
+           "budget_mode": "BUDGET_MODE_DYNAMIC_DAILY_BUDGET", "budget": amount}
+    return [(camp_payload, False), (abo, False), (cbo, True)]
 
 
 def build_spc_adgroup_payload(fields: dict, campaign_id: str, spark_ref: dict | None,

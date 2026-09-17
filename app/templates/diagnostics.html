@@ -28,7 +28,7 @@
 {% else %}
 <div class="card" style="margin-top:12px;">
   <div class="card-header"><span class="card-title">{{ rows|length }} error{{ '' if rows|length == 1 else 's' }}</span>
-    <span class="card-meta">newest first · repeats of one error are counted, not repeated</span></div>
+    <span class="card-meta">newest first · repeats of one error are counted, not repeated · build <code>{{ BUILD_ID() }}</code></span></div>
   <table class="table">
     <thead><tr><th>When</th><th>Where</th><th>Code</th><th>What TikTok said</th><th>Request</th></tr></thead>
     <tbody>

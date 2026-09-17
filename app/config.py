@@ -73,3 +73,29 @@ BC_LOW_BALANCE_THRESHOLD = float(os.environ.get("BC_LOW_BALANCE_THRESHOLD", "50"
 # --- Misc --------------------------------------------------------------------
 APP_NAME = "AdOps Manager"
 STATIC_VERSION = "120"  # bump to cache-bust CSS/JS (§9.9)
+
+
+def build_id() -> str:
+    """A short fingerprint of the code that is actually running — the first 7 hex chars
+    of a SHA-1 over every .py / .html / .js / .css file under app/. Shown on Settings ›
+    Server and in /diagnostics.json so "did the deploy finish?" is answered by comparing
+    two 7-character strings instead of by guessing from behaviour. Computed once, at
+    first use (a few hundred KB read, then cached); a stale STATIC_VERSION can't fake it."""
+    global _BUILD_ID
+    if _BUILD_ID:
+        return _BUILD_ID
+    import hashlib
+    h = hashlib.sha1()
+    root = Path(__file__).resolve().parent
+    for p in sorted(x for x in root.rglob("*") if x.suffix in (".py", ".html", ".js", ".css") and "__pycache__" not in x.parts):
+        h.update(str(p.relative_to(root)).encode()); h.update(b"\0")
+        try:
+            h.update(p.read_bytes())
+        except OSError:
+            pass
+        h.update(b"\0")
+    _BUILD_ID = h.hexdigest()[:7]
+    return _BUILD_ID
+
+
+_BUILD_ID = ""

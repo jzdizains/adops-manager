@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
-from .. import diag
+from .. import config, diag
 from ..database import get_db
 from ..templating import render
 
@@ -44,7 +44,7 @@ def diagnostics_json(request: Request, db: Session = Depends(get_db)):
     except ValueError:
         limit = 100
     rows = diag.recent(db, limit=limit, kind=kind, q=q)
-    return JSONResponse({"ok": True, "count": len(rows),
+    return JSONResponse({"ok": True, "count": len(rows), "build": config.build_id(),
                          "unseen": diag.unseen_count(db),
                          "events": [diag.as_json(r) for r in rows]})
 

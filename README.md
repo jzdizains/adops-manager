@@ -63,8 +63,13 @@ Never commit any of these.
 5. Register `https://<your-render-domain>/oauth/callback` as the Redirect URI
    on your TikTok app, set `OAUTH_REDIRECT_URI` to the same value, then open
    the app → avatar menu → **Connect TikTok**.
-6. If you keep the Playwright-based web-only features, keep
-   `playwright install chromium` in the build command (already in render.yaml).
+6. The Instant Page builder needs Chromium: it installs itself into
+   `$DATA_DIR/pw-browsers` on first use (Render drops the build cache between
+   deploys, so the build command deliberately does not install it).
+7. **Which build is running?** Settings → Server shows `running build <7 hex chars>`
+   (also on Diagnostics and in `/diagnostics.json` as `"build"`). It is a fingerprint
+   of the code files; `BUILD.txt` at the root of each delivered zip holds the value
+   that zip should show once its deploy has finished.
 
 ## First-run checklist
 

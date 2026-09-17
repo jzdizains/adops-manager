@@ -95,6 +95,20 @@ diag.RECENT.clear()
 diag.record("tiktok", "/x/", 1, "m" * 9000, {"big": "z" * 9000})
 check("message is capped", len(diag.RECENT[-1]["message"]) <= 2000, str(len(diag.RECENT[-1]["message"])))
 check("context strings are capped", len(diag.RECENT[-1]["context"]["big"]) <= 400)
+import json as _j
+check("repeats merge only when the request had the same fields (two probe shapes = two rows)",
+      diag._same_shape(_j.dumps({"body": {"advertiser_id": "1", "budget_mode": "X"}}), {"body": {"advertiser_id": "2", "budget_mode": "Y"}})
+      and not diag._same_shape(_j.dumps({"body": {"advertiser_id": "1"}}), {"body": {"advertiser_id": "1", "budget_optimize_on": True}})
+      and diag._same_shape(None, {"body": {}}) and diag._same_shape("not json", {}))
+
+import re as _re, os as _os
+from app import config as _cfg
+_root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+_rd = lambda p: open(_os.path.join(_root, p), encoding="utf-8").read()
+check("build fingerprint: 7 hex chars, stable, shown on Settings › Server, Diagnostics and /diagnostics.json",
+      bool(_re.fullmatch(r"[0-9a-f]{7}", _cfg.build_id())) and _cfg.build_id() == _cfg.build_id()
+      and "{{ BUILD_ID() }}" in _rd("app/templates/settings.html") and "{{ BUILD_ID() }}" in _rd("app/templates/diagnostics.html")
+      and '"build": config.build_id()' in _rd("app/routes/diagnostics.py") and '"BUILD_ID": config.build_id' in _rd("app/templating.py"))
 
 print()
 print(("FAILED: " + ", ".join(fails)) if fails else "all good")

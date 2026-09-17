@@ -309,7 +309,7 @@
 {% if sec.own_view %}
 <section class="stab" data-tab="server">
 <div class="card" id="queue">
-  <div class="card-header"><span class="card-title">Launch queue</span><span class="card-meta">one setting for the whole server — every user's launches share these</span></div>
+  <div class="card-header"><span class="card-title">Launch queue</span><span class="card-meta">one setting for the whole server — every user's launches share these · running build <code title="Fingerprint of the code this server is running — compare with the build in the zip's README to confirm a deploy finished">{{ BUILD_ID() }}</code></span></div>
   <div class="form-row">
     <label class="field"><span class="field-label">Queue launches per sweep</span>
       <input type="number" min="1" name="queue_per_sweep" value="{{ s.queue_per_sweep }}"></label>
