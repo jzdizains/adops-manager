@@ -67,13 +67,14 @@ function complete(){var s={name:document.getElementById('title').textContent,but
  fetch('/saved', {method:'POST', body: JSON.stringify(s)});}
 </script></body></html>"""
 CHALLENGE = "<html><body><h1>Security check</h1><p>Please verify you are human</p><button>Create</button></body></html>"
+BLANK = "<html><head><title>TikTok Ads Manager</title></head><body><script>console.error('boot failed: x')</script></body></html>"
 
 saved = {}
 class H(http.server.BaseHTTPRequestHandler):
     mode = "ok"
     def log_message(self, *a): pass
     def do_GET(self):
-        body = (CHALLENGE if H.mode == "challenge" else FAKE).encode()
+        body = {"challenge": CHALLENGE, "blank": BLANK}.get(H.mode, FAKE).encode()
         self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8"); self.end_headers(); self.wfile.write(body)
     def do_POST(self):
         n = int(self.headers.get("Content-Length") or 0)
@@ -99,6 +100,13 @@ else:
         H.mode = "challenge"
         r2 = ipb.build("7659328211721060370", tpl, base_url=base)
         check("a verification page stops the build and says so", r2["ok"] is False and r2["challenge"] is True and "verification" in r2["error"].lower(), r2.get("error"))
+        H.mode = "blank"; old_wait = ipb.LIBRARY_WAIT_S; ipb.LIBRARY_WAIT_S = 3
+        try:
+            r5 = ipb.build("7659328211721060370", tpl, base_url=base)
+        finally:
+            ipb.LIBRARY_WAIT_S = old_wait
+        check("a blank library page reports HTTP status, title, HTML size, frames and console errors", r5["ok"] is False
+              and "HTTP 200" in r5["error"] and "TikTok Ads Manager" in r5["error"] and "1 frame(s)" in r5["error"] and "boot failed" in r5["error"], r5.get("error"))
         H.mode = "ok"; rss["v"] = 400.0
         r3 = ipb.build("7659328211721060370", tpl, base_url=base)
         check("memory guard: no browser above the ceiling, marked retry", r3["ok"] is False and r3.get("retry") is True and "memory" in r3["error"].lower())

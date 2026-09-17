@@ -75,24 +75,47 @@ APP_NAME = "AdOps Manager"
 STATIC_VERSION = "120"  # bump to cache-bust CSS/JS (§9.9)
 
 
+CODE_SUFFIXES = (".py", ".html", ".js", ".css")
+MANIFEST = "build_manifest.json"     # written into app/ at packaging time (tools/package.py)
+
+
+def code_files(root: Path | None = None) -> list[Path]:
+    """The files the fingerprint covers. With app/build_manifest.json present (every
+    delivered zip has one) it is exactly the files that zip shipped — so a leftover file
+    from an older version sitting in the deploy repo cannot change the value, and a file
+    the zip replaced but the repo still has old shows up as a mismatch, which is the point.
+    Without a manifest (a working copy, the tests): every code file under app/."""
+    root = root or Path(__file__).resolve().parent
+    mf = root / MANIFEST
+    if mf.exists():
+        try:
+            import json
+            names = json.loads(mf.read_text(encoding="utf-8")).get("files") or []
+            return [root / n for n in names]
+        except (OSError, ValueError):
+            pass
+    return sorted(x for x in root.rglob("*") if x.suffix in CODE_SUFFIXES and "__pycache__" not in x.parts)
+
+
 def build_id() -> str:
     """A short fingerprint of the code that is actually running — the first 7 hex chars
-    of a SHA-1 over every .py / .html / .js / .css file under app/. Shown on Settings ›
-    Server and in /diagnostics.json so "did the deploy finish?" is answered by comparing
-    two 7-character strings instead of by guessing from behaviour. Computed once, at
-    first use (a few hundred KB read, then cached); a stale STATIC_VERSION can't fake it."""
+    of a SHA-1 over the code files (see code_files). Shown on Settings › Server and in
+    /diagnostics.json so "did the deploy finish?" is answered by comparing two 7-character
+    strings instead of by guessing from behaviour. Line endings are normalised first, so a
+    Windows checkout (CRLF) fingerprints the same as the zip. Computed once, at first use
+    (a few hundred KB read, then cached); a stale STATIC_VERSION can't fake it."""
     global _BUILD_ID
     if _BUILD_ID:
         return _BUILD_ID
     import hashlib
     h = hashlib.sha1()
     root = Path(__file__).resolve().parent
-    for p in sorted(x for x in root.rglob("*") if x.suffix in (".py", ".html", ".js", ".css") and "__pycache__" not in x.parts):
-        h.update(str(p.relative_to(root)).encode()); h.update(b"\0")
+    for p in code_files(root):
+        h.update(str(p.relative_to(root)).replace("\\", "/").encode()); h.update(b"\0")
         try:
-            h.update(p.read_bytes())
+            h.update(p.read_bytes().replace(b"\r\n", b"\n"))
         except OSError:
-            pass
+            h.update(b"<missing>")
         h.update(b"\0")
     _BUILD_ID = h.hexdigest()[:7]
     return _BUILD_ID

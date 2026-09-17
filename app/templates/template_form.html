@@ -238,7 +238,7 @@
           <button type="button" class="btn sm" data-pick="carousel">{{ 'Change…' if pc else 'Pin a specific carousel…' }}</button></div>
         <span class="hint">Pinned = every account gets that carousel (each uploads its own copies).</span></div>
       <label class="field"><span class="field-label">Call to action</span>
-        <select name="call_to_action" id="ctaSel"><option value="AUTO" {{ 'selected' if blob.get('call_to_action') == 'AUTO' }}>Auto — TikTok picks the best button per viewer</option>{% for cta in cta_options %}<option value="{{ cta }}" {{ 'selected' if blob.get('call_to_action', 'LEARN_MORE') == cta }}>{{ cta.replace('_',' ')|title }}</option>{% endfor %}</select></label>
+        <select name="call_to_action" id="ctaSel"><option value="AUTO" {{ 'selected' if blob.get('call_to_action') == 'AUTO' }}>Auto — TikTok picks the best button per viewer (Smart+: from Learn more / Shop now / Sign up)</option>{% for cta in cta_options %}<option value="{{ cta }}" {{ 'selected' if blob.get('call_to_action', 'LEARN_MORE') == cta }}>{{ cta.replace('_',' ')|title }}</option>{% endfor %}</select></label>
     </div>
     <div class="form-row">
       <label class="field"><span class="field-label">Ad text <span class="muted" id="adTextCount">0 / 100</span></span>

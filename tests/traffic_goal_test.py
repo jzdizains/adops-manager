@@ -227,6 +227,13 @@ check("the launch result records the accepted goal", "log.optimization_event = (
 check("Auto CTA asks the recommender for the nearest known traffic goal (its enum lacks Engaged session)",
       'goal = "TRAFFIC_LANDING_PAGE_VIEW"' in src[src.index("def resolve_cta_portfolio"):src.index("def url_safe_name")]
       and "optimization_goal=goal)" in src[src.index("def resolve_cta_portfolio"):src.index("def url_safe_name")])
+f_auto = {"template_name": "T", "call_to_action": "AUTO"}
+_sp = {"identity_id": "i", "identity_type": "TT_USER", "item_id": "v"}
+helpers.spark_ad_format = lambda ref, spark: "SINGLE_VIDEO"
+_ad = helpers.build_spc_ad_payload(f_auto, "ag1", _sp, None)
+check("Smart+ ad with Auto CTA sends at most 3 buttons (18 Sep: 'call_to_action_list: maximum number of items is 3')",
+      len(_ad["call_to_action_list"]) == 3 and _ad["call_to_action_list"][0] == {"call_to_action": "LEARN_MORE"} and helpers.SPC_CTA_MAX == 3, str(_ad["call_to_action_list"]))
+check("…a chosen CTA is sent alone", helpers.build_spc_ad_payload({**f_auto, "call_to_action": "SHOP_NOW"}, "ag1", _sp, None)["call_to_action_list"] == [{"call_to_action": "SHOP_NOW"}])
 check("Engaged session resolves the pixel like a conversion launch", "or is_engaged(fields))" in src and "not is_engaged(fields) and not fields.get(\"optimization_event\")" in src)
 
 # ==== 5 · form + JS + parity + list ====================================================

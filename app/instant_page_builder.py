@@ -130,7 +130,7 @@ def build(advertiser_id: str, template, base_url: str = "https://ads.tiktok.com"
             fn()
             steps.append({"step": name, "ok": True})
         except Exception as e:  # noqa: BLE001
-            raise BuildError(f"{name}: {str(e).splitlines()[0][:160]}") from e
+            raise BuildError(f"{name}: {str(e).splitlines()[0][:420]}") from e
 
     with _LOCK:
         for attempt in (1, 2):
@@ -192,8 +192,14 @@ def _drive(adv: str, template, cookies: dict, base_url: str, headless: bool, ste
             last_shot = ""
             builder = {"page": page}          # the builder screen may open in a second tab (see create_customize)
             try:
+                console: list[str] = []
+                failed: list[str] = []
+                page.on("console", lambda m: console.append(f"{m.type}: {m.text[:100]}") if m.type in ("error", "warning") and len(console) < 6 else None)
+                page.on("requestfailed", lambda r: failed.append(f"{r.url[:80]} ({r.failure})") if len(failed) < 4 else None)
+
                 def open_library():
-                    page.goto(f"{base_url}{LIBRARY_PATH}?aadvid={adv}", wait_until="domcontentloaded", timeout=60_000)
+                    resp = page.goto(f"{base_url}{LIBRARY_PATH}?aadvid={adv}", wait_until="domcontentloaded", timeout=60_000)
+                    status = resp.status if resp else "?"
                     # Ads Manager is a heavy single-page app: poll up to LIBRARY_WAIT_S for the
                     # Create control (a button OR any element whose text is "Create"), and stop
                     # early with the real reason if TikTok sent us to login / a verification page
@@ -215,7 +221,16 @@ def _drive(adv: str, template, cookies: dict, base_url: str, headless: bool, ste
                             break
                         if time.time() > deadline:
                             snippet = re.sub(r"\s+", " ", body)[:160]
-                            raise BuildError(f"no Create button after {LIBRARY_WAIT_S}s at {page.url[:90]} — page says: “{snippet}”")
+                            # everything a blank page can tell: HTTP status of the document, its
+                            # title, how much HTML arrived, frames, console errors, failed requests
+                            try:
+                                html_len = len(page.content())
+                            except Exception:  # noqa: BLE001
+                                html_len = -1
+                            detail = (f"HTTP {status}, title “{page.title()[:40]}”, {html_len} bytes of HTML, {len(page.frames)} frame(s)"
+                                      + (f", console: {' | '.join(console[:3])}" if console else "")
+                                      + (f", failed requests: {' | '.join(failed[:2])}" if failed else ""))
+                            raise BuildError(f"no Create button after {LIBRARY_WAIT_S}s at {page.url[:90]} — page says: “{snippet}” [{detail}]")
                         time.sleep(1.0)
                 step("open the Instant Page library", open_library)
 

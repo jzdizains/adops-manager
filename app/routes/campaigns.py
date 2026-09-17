@@ -1057,6 +1057,9 @@ def build_spc_adgroup_payload(fields: dict, campaign_id: str, spark_ref: dict | 
     return payload
 
 
+SPC_CTA_MAX = 3      # /smart_plus/ad/create/: "call_to_action_list: maximum number of items is 3"
+
+
 def build_spc_ad_payload(fields: dict, adgroup_id: str, spark_ref: dict,
                          spark: models.SparkCode | None) -> dict:
     ad_format = spark_ad_format(spark_ref, spark)
@@ -1069,7 +1072,11 @@ def build_spc_ad_payload(fields: dict, adgroup_id: str, spark_ref: dict,
             "identity_type": spark_ref["identity_type"],
             "tiktok_item_id": spark_ref["item_id"],
         }}],
-        "call_to_action_list": ([{"call_to_action": c} for c in __import__("app.routes.launch", fromlist=["CTA_AUTO_SET"]).CTA_AUTO_SET]
+        # Auto on a Smart+ ad = up to SPC_CTA_MAX buttons for TikTok to pick from — the endpoint
+        # refuses more ("call_to_action_list: maximum number of items is 3", 18 Sep 2026); the
+        # manual flow's CTA portfolio (call_to_action_id) isn't a field of the Smart+ ad create
+        "call_to_action_list": ([{"call_to_action": c} for c in
+                                 __import__("app.routes.launch", fromlist=["CTA_AUTO_SET"]).CTA_AUTO_SET[:SPC_CTA_MAX]]
                                 if fields.get("call_to_action") == "AUTO"
                                 else [{"call_to_action": fields["call_to_action"]}]),
     }
