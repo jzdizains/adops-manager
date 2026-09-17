@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from .. import models
@@ -80,13 +80,35 @@ def page(request: Request, db: Session = Depends(get_db)):
         dest_labels[p.id] = launch_mod.destination_label(fields)
     picker = account_picker_context(db, accounts)
     preset_info = preset_facts(presets)
+    bcs_by_id = {b.bc_id: b for b in db.query(models.BusinessCenter).all()}
+    bc_counts: dict[str, int] = {}
+    for a in accounts:
+        if a.owner_bc_id:
+            bc_counts[a.owner_bc_id] = bc_counts.get(a.owner_bc_id, 0) + 1
+    bcs = sorted(({"id": bid, "name": (bcs_by_id[bid].name if bid in bcs_by_id else bid), "accounts": n}
+                  for bid, n in bc_counts.items()), key=lambda b: b["name"].lower())
     return render(request, "super_launcher.html", {
         "accounts": accounts, "presets": presets, "sparks": sparks,
-        **picker, "preset_info_json": json.dumps(preset_info),
+        **picker, "preset_info_json": json.dumps(preset_info), "bcs_json": json.dumps(bcs),
         "creatives_available": creatives_available, "carousels_available": carousels_available,
         "dest_labels_json": json.dumps(dest_labels),
         "title": "Super Launcher",
     })
+
+
+@router.get("/super-launcher/profile-videos.json")
+def profile_videos_json(request: Request, db: Session = Depends(get_db)):
+    """Every post of every profile the Business Center shares — the picker's data.
+    ?bc_id=… (&refresh=1 to re-read TikTok instead of the 10-minute cache)."""
+    from .. import profile_videos, scope as scope_mod
+    sc = scope_mod.for_request(request, db)
+    bc_id = (request.query_params.get("bc_id") or "").strip()
+    if not bc_id:
+        return JSONResponse({"ok": False, "error": "Pick a Business Center.", "profiles": []})
+    if not any(a.owner_bc_id == bc_id and sc.allows(a.advertiser_id)
+               for a in db.query(models.AdAccount).filter(models.AdAccount.owner_bc_id == bc_id)):
+        return JSONResponse({"ok": False, "error": "That Business Center has no account in this view.", "profiles": []})
+    return JSONResponse(profile_videos.list_for_bc(db, sc, bc_id, refresh=request.query_params.get("refresh") == "1"))
 
 
 def account_picker_context(db: Session, accounts: list) -> dict:
@@ -250,11 +272,26 @@ async def launch(request: Request, db: Session = Depends(get_db)):
         return RedirectResponse("/super-launcher?err=Pick+at+least+one+creative.", status_code=303)
     if creative_mode == "spark" and not spark_id:
         return RedirectResponse("/super-launcher?err=Pick+a+spark+code.", status_code=303)
+    # profile videos: posts picked straight from the Business Center's profiles — each
+    # becomes a spark row (by item id) and the posts are spread over the accounts
+    profile_sparks: list = []
+    if creative_mode == "profile":
+        from .. import profile_videos
+        try:
+            items = json.loads(form.get("profile_items") or "[]")
+        except ValueError:
+            items = []
+        items = [it for it in items if isinstance(it, dict) and str(it.get("item_id") or "").isdigit()][:200]
+        if not items:
+            return RedirectResponse("/super-launcher?err=Pick+at+least+one+profile+video.", status_code=303)
+        profile_sparks = profile_videos.ensure_spark_rows(db, sc, items)
+        fields["creative_source"] = "spark"
+        fields["ad_text_mode"] = "fixed"
     use_library = (not spark_id) and creative_mode in ("library", "carousel", "pick")
     # creative → account mapping (library only): 1 creative per N accounts
     per_creative = max(_int("accounts_per_creative", 1), 1)
     creatives_count = len(picked_ids) if creative_mode == "pick" else _int("creatives_count")   # 0 = as many as needed
-    assign_mode = use_library and (per_creative > 1 or creatives_count > 0)
+    assign_mode = (use_library and (per_creative > 1 or creatives_count > 0)) or bool(profile_sparks)
 
     # the creative→account assignment needs a fixed account list up front, so it
     # always runs inline (not via the retry queue)
@@ -288,7 +325,14 @@ async def launch(request: Request, db: Session = Depends(get_db)):
                  .filter(models.AdAccount.advertiser_id.in_(ordered)).all()}
         accounts = [by_id[i] for i in ordered if i in by_id]
 
-    if assign_mode:
+    if profile_sparks:
+        from .. import profile_videos
+        accounts = accounts[:len(profile_sparks) * per_creative]     # every account gets a post; none goes without
+        pairs = profile_videos.assign(accounts, profile_sparks, per_creative)
+        batch_ref = engine.queue_launch(db, f"Launch {template.name} → {len(pairs)} account(s) · {len(profile_sparks)} profile video(s)",
+                                        [a.advertiser_id for a, _ in pairs], fields,
+                                        spark_pairs=[[a.advertiser_id, sid] for a, sid in pairs])
+    elif assign_mode:
         if creative_mode == "pick":
             by_cid = {c.id: c for c in sc.owned(db.query(models.Creative), models.Creative).filter(models.Creative.id.in_(picked_ids))}
             avail = [by_cid[i] for i in picked_ids if i in by_cid]

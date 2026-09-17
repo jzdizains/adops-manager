@@ -4,3 +4,8 @@ data/
 *.db
 .env
 .venv/
+
+# dupe-pages.mjs runtime files — the cookie header is a credential
+cookie.txt
+done.csv
+accounts.txt

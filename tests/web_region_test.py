@@ -101,8 +101,8 @@ check("…and is logged with host + idc so a failed clone is a fact", n is not N
 print("\n-- static --")
 def read(p): return open(os.path.join(ROOT, p), encoding="utf-8").read()
 ip = read("app/routes/instant_pages.py"); lf = read("app/routes/lead_forms.py")
-check("instant page clone reports TikTok's refusal (single + BC job)", "TikTok refused the clone (code" in ip and 'failed.append(f"{label}: TikTok code {code}' in ip)
-check("lead form clone checks the code and verifies by re-reading", "TikTok answered code" in lf and "no form with this name appeared" in lf)
+check("instant page clone reports TikTok's refusal (single + BC job)", "Clone to {label} failed" in ip and 'failed.append(f"{label}: {r[\'error\'][:140]}")' in ip)
+check("lead form clone checks the answer and verifies by re-reading", "TikTok refused the copy" in lf and "no form with this name appeared" in lf)
 check("host is a setting, default the global host", 'TIKTOK_ADS_WEB_HOST = (os.environ.get("TIKTOK_ADS_WEB_HOST") or "ads.tiktok.com")' in read("app/config.py") and 'ADS_BASE = "https://" + config.TIKTOK_ADS_WEB_HOST' in read("app/spark_web_api.py"))
 check("Cookies page shows the session's data centre", "Region routing:" in read("app/templates/cookies_admin.html") and '"region": spark_web_api.session_region(stored)' in read("app/routes/cookies_admin.py"))
 

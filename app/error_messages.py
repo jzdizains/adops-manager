@@ -38,6 +38,11 @@ _PERMISSION_HINTS = re.compile(r"permission|not authorized|no access|无权限",
 
 # 40002 messages with a KNOWN cause — matched on TikTok's wording, checked in order
 _MESSAGE_HINTS: list[tuple[re.Pattern, str, str]] = [
+    (re.compile(r"selected advanced creative is not supported", re.I),
+     "TikTok won't run this creative on a Smart+ ad for this objective.",
+     "The launch already retried without the display card and with a single button, so what is left is the "
+     "post itself. Either pick a different spark post for this preset, or run it as a regular campaign: set the "
+     "traffic goal to Click or Landing page view and turn Smart+ off."),
     # "the TikTok account used in this ad" is the IDENTITY (the profile the ad runs as),
     # not the ad account. Reading it as a broken ad-account connection sends the operator
     # to reconnect something that was never disconnected.

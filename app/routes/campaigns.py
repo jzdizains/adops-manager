@@ -519,6 +519,34 @@ class ConfigError(Exception):
     pass
 
 
+def copy_page_from_sibling(db: Session, acct: models.AdAccount, name: str) -> dict:
+    """The launch-time clone: this account has no Instant Page `name`, so copy it from
+    an account that has a PUBLISHED one (same Business Center first) through the page
+    editor's web API and verify it via /page/get/. Returns {page_id, error}; page_id ''
+    with error '' means there is nothing to copy from. Needs the web cookies; without
+    them it simply reports why, and the caller falls back to the template builder."""
+    from .. import spark_web_api
+    from . import instant_pages as ip
+    if not spark_web_api.load_cookies():
+        return {"page_id": "", "error": "no ads.tiktok.com cookies on the TikTok Cookies page (needed to copy pages)"}
+    rows = (db.query(models.InstantPage)
+            .filter(models.InstantPage.name == name, models.InstantPage.status == "PUBLISHED",
+                    models.InstantPage.owner_advertiser_id != acct.advertiser_id).all())
+    if not rows:
+        return {"page_id": "", "error": ""}
+    by_adv = {a.advertiser_id: a for a in db.query(models.AdAccount)
+              .filter(models.AdAccount.advertiser_id.in_([r.owner_advertiser_id for r in rows])).all()}
+    rows.sort(key=lambda r: (0 if (by_adv.get(r.owner_advertiser_id) and by_adv[r.owner_advertiser_id].owner_bc_id == acct.owner_bc_id) else 1, r.page_id))
+    src = rows[0]
+    try:
+        r = ip.clone_one(db, src.page_id, name, acct)
+    except spark_web_api.WebAuthError as e:
+        return {"page_id": "", "error": f"the web session is dead: {str(e)[:140]}"}
+    if not r.get("ok"):
+        return {"page_id": "", "error": r.get("error", "TikTok refused the copy")[:200]}
+    return {"page_id": r["page_id"], "error": ""}
+
+
 def resolve_page_asset(db: Session, acct: models.AdAccount, kind: str, name: str) -> str:
     """Find THIS account's copy of the named page/form. kind: instant_page|lead_form.
 
@@ -1414,6 +1442,23 @@ def build_smart_creative_ad_payload(fields: dict, adgroup_id: str, identity: dic
             "creatives": creatives}
 
 
+def spc_ad_shapes(ad_payload: dict) -> list[tuple[dict, str]]:
+    """Shapes to try for the Smart+ ad when TikTok answers "The selected advanced creative is
+    not supported. Please select another one." (18 Sep 2026, Smart+ Traffic — the message
+    never names the field). Plainest last: full → without the display-card add-on → with one
+    call-to-action button. Each shape that lands carries a note for the result card, so the
+    operator sees what the ad went out without."""
+    shapes = [(ad_payload, "")]
+    cur = ad_payload
+    if cur.get("interactive_add_on_list"):
+        cur = {k: v for k, v in cur.items() if k != "interactive_add_on_list"}
+        shapes.append((cur, "no display card (TikTok refuses add-ons on this Smart+ ad)"))
+    if len(cur.get("call_to_action_list") or []) > 1:
+        cur = {**cur, "call_to_action_list": cur["call_to_action_list"][:1]}
+        shapes.append((cur, f"one button, {cur['call_to_action_list'][0]['call_to_action']} (TikTok refuses several on this Smart+ ad)"))
+    return shapes
+
+
 def _launch_smart_plus(acct: models.AdAccount, fields: dict, spark_ref: dict | None,
                        spark: models.SparkCode | None, pixel_id: str, log=None) -> str:
     """Smart+ creation chain. Returns (campaign_id, campaign_name); raises TikTokError.
@@ -1454,18 +1499,25 @@ def _launch_smart_plus(acct: models.AdAccount, fields: dict, spark_ref: dict | N
     adgroup_id = str(ag.get("adgroup_id"))
     ad_payload = build_spc_ad_payload(fields, adgroup_id, spark_ref, spark)
     notes: list[str] = []
-    try:
-        tiktok_api.smart_plus_ad_create(acct.access_token, acct.advertiser_id, ad_payload)
-    except tiktok_api.TikTokError as e:
-        # "The selected advanced creative is not supported. Please select another one."
-        # (18 Sep 2026, Smart+ Traffic): the add-on is the only "advanced creative" we send,
-        # so retry once without it and say so on the result — the ad is worth more than the card
-        if "advanced creative" in (e.message or "").lower() and ad_payload.get("interactive_add_on_list"):
-            ad_payload = {k: v for k, v in ad_payload.items() if k != "interactive_add_on_list"}
-            tiktok_api.smart_plus_ad_create(acct.access_token, acct.advertiser_id, ad_payload)
-            notes.append("no display card (TikTok refuses add-ons on this Smart+ ad)")
-        else:
+    shapes = spc_ad_shapes(ad_payload)
+    ad_ok = False
+    for s_i, (shape, note) in enumerate(shapes):
+        try:
+            tiktok_api.smart_plus_ad_create(acct.access_token, acct.advertiser_id, shape)
+            notes = [n for _, n in shapes[1:s_i + 1] if n]     # everything the landed shape went without
+            ad_ok = True
+            break
+        except tiktok_api.TikTokError as e:
+            if "advanced creative" in (e.message or "").lower() and s_i < len(shapes) - 1:
+                continue                  # TikTok refused something "advanced" — the next, plainer shape
+            if "advanced creative" in (e.message or "").lower():
+                fmt = ad_payload["creative_list"][0]["creative_info"].get("ad_format", "")
+                raise tiktok_api.TikTokError(e.code, (e.message or "") + " — refused even with one button and no add-on; "
+                                             f"the post itself ({'photo carousel' if fmt == 'CAROUSEL_ADS' else 'video'} spark) "
+                                             "is what this Smart+ objective won't take") from e
             raise
+    if not ad_ok:   # defensive — the loop either lands an ad or raises
+        raise tiktok_api.TikTokError("APP", "Smart+ ad not created")
     if log is not None and not is_engaged(fields):
         log.optimization_event = " · ".join([str(ag_payload.get("optimization_goal") or ""), "Smart+"] + notes)
     elif log is not None and notes:
@@ -1819,17 +1871,30 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
             try:
                 fields["instant_page_id"] = resolve_page_asset(db, acct, "instant_page", name)
             except AssetResolveError as miss:
-                if tpl is None or tpl.name != name or "has no instant page" not in str(miss).lower():
-                    raise                            # a read failure, or no template to build from
-                # this account has no page of that name — build it from the template, then resolve
-                from .. import instant_page_builder as ipb, live_log as _ll
-                _ll.push("info", f"building Instant Page “{name}” on {acct.advertiser_name or acct.advertiser_id} from the preset's template",
-                         advertiser_id=str(acct.advertiser_id))
-                r = ipb.build_and_verify(db, acct, tpl)
-                if not r.get("ok"):
-                    raise AssetResolveError(f"This account has no Instant Page “{name}” and building it from the template failed: {r.get('error', 'unknown')}"
-                                            + (" — see the screenshots on Instant Pages" if any(s.get('shot') for s in r.get('steps', [])) else ""))
-                fields["instant_page_id"] = r["page_id"]
+                if "has no instant page" not in str(miss).lower():
+                    raise                            # a read failure — not a missing page
+                # this account has no page of that name. First choice: copy it from an
+                # account that has it (the page editor's web API, published + verified);
+                # otherwise build it from the preset's template in a browser.
+                from .. import live_log as _ll
+                copied = copy_page_from_sibling(db, acct, name)
+                if copied.get("page_id"):
+                    fields["instant_page_id"] = copied["page_id"]
+                else:
+                    if tpl is None or tpl.name != name:
+                        raise AssetResolveError(f"This account has no Instant Page “{name}”"
+                                                + (f" and copying it failed: {copied['error']}" if copied.get("error") else
+                                                   " and no other account in this workspace has a published page of that name to copy from"))
+                    from .. import instant_page_builder as ipb
+                    _ll.push("info", f"building Instant Page “{name}” on {acct.advertiser_name or acct.advertiser_id} from the preset's template",
+                             advertiser_id=str(acct.advertiser_id))
+                    r = ipb.build_and_verify(db, acct, tpl)
+                    if not r.get("ok"):
+                        raise AssetResolveError(f"This account has no Instant Page “{name}”"
+                                                + (f", copying it failed ({copied['error']})" if copied.get("error") else "")
+                                                + f" and building it from the template failed: {r.get('error', 'unknown')}"
+                                                + (" — see the screenshots on Instant Pages" if any(s.get('shot') for s in r.get('steps', [])) else ""))
+                    fields["instant_page_id"] = r["page_id"]
         elif dest == "lead_form":
             name = fields.get("lead_form_name") or ""
             if not name and fields.get("lead_form_id"):
@@ -2213,15 +2278,48 @@ def run_batch_assigned(db: Session, pairs: list, base_fields: dict,
     return batch_ref
 
 
+def run_batch_assigned_sparks(db: Session, pairs: list, base_fields: dict,
+                              batch_ref: str | None = None, on_progress=None) -> str:
+    """Launch each (account, spark_code_id) with that specific post — the Super Launcher's
+    profile-video pick, where several posts are spread over the accounts. Same shape as
+    run_batch_assigned, with the spark path instead of the library one."""
+    import time as _time
+
+    from .. import rules as rules_mod
+    batch_ref = batch_ref or error_messages.new_ref()
+    _remember_batch(db, batch_ref, {**base_fields, "creative_source": "spark"})
+    pace = _launch_pace(db)
+    for i, (acct, sid) in enumerate(pairs):
+        if i and pace:
+            _time.sleep(pace)
+        fields = dict(base_fields)
+        fields["creative_source"] = "spark"
+        fields["ad_text_mode"] = "fixed"            # pool texts are library-only
+        if sid is None:                              # never produced by the launcher (accounts are capped to the picks)
+            if on_progress:
+                on_progress(i + 1, len(pairs))
+            continue
+        fields["spark_code_id"] = int(sid)
+        log = launch_to_account(db, acct, fields, batch_ref)
+        if log.error_code not in ("ASSET", "CONFIG"):
+            rules_mod.record_launch_outcome(db, acct, log.ok, get_settings(db, fields.get("_launched_by")))
+        if on_progress:
+            on_progress(i + 1, len(pairs))
+    db.commit()
+    return batch_ref
+
+
 def queue_launch(db: Session, title: str, advertiser_ids: list[str], fields: dict,
-                 pairs: list | None = None) -> str:
+                 pairs: list | None = None, spark_pairs: list | None = None) -> str:
     """Hand a launch to the background jobs worker; returns the batch_ref the
-    result page will show (created up front so the notification can link to it)."""
+    result page will show (created up front so the notification can link to it).
+    `pairs` = [[advertiser_id, creative_id]] (library), `spark_pairs` = [[advertiser_id,
+    spark_code_id]] (profile videos / several spark posts)."""
     from .. import jobs
     batch_ref = error_messages.new_ref()
     jobs.enqueue(db, "launch", title, {
         "batch_ref": batch_ref, "advertiser_ids": list(advertiser_ids), "fields": fields,
-        "pairs": pairs,
+        "pairs": pairs, "spark_pairs": spark_pairs,
     }, href=f"/campaigns/result/{batch_ref}")
     return batch_ref
 

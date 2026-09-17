@@ -118,3 +118,23 @@ app/static/topnav.css    light PRODUCTION theme — loaded last, its :root wins
 - Placements are hardcoded TikTok-only (`PLACEMENT_TIKTOK`) — no Pangle.
 - Bump `STATIC_VERSION` in `config.py` to cache-bust CSS/JS after changes.
 - SQLite + pasted cookies persist under `DATA_DIR` — mount a disk in prod.
+
+## Instant Pages on many accounts
+
+An Instant Page belongs to one ad account. **Instant Pages › Clone to…** copies a
+finished (published) page onto another account, or onto every account of a Business
+Center, through the page editor's own web session (the TikTok Cookies page must be set
+up): read → create as a duplicate → optionally re-point the button link → publish, then
+verified through the official `/page/get/`. Clone to ONE account first and open the
+copy in Ads Manager. A launch onto an account that lacks the preset's page copies it
+from an account that has it (same Business Center first); if no account has it, the
+page template builder is the fallback. `tools/dupe-pages.mjs` is the same flow as a
+standalone Node script (cookie.txt + accounts.txt; both are git-ignored).
+
+## Super Launcher › Profile videos
+
+Instead of pasting a spark code, pick posts straight from the profiles a Business Center
+shares (BC → Assets → TikTok accounts): every post of every profile is listed with its
+cover and caption, multi-select, and the picked posts are spread over the accounts
+(accounts per video). Each pick becomes a spark row keyed by the post's item id and runs
+under the profile's own identity on each account — no auth code involved.

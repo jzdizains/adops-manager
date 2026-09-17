@@ -22,5 +22,5 @@ out = Path(sys.argv[1] if len(sys.argv) > 1 else ROOT.parent / "adops-manager.zi
 if out.exists():
     out.unlink()
 subprocess.run(["zip", "-qr", str(out), ROOT.name, "-x", "*/__pycache__/*", "*.pyc", "*/.pytest_cache/*",
-                f"{ROOT.name}/data/*", "*.db", "*.ttfit.mp4", "*/.env", "*/.env.*"], cwd=ROOT.parent, check=True)
+                f"{ROOT.name}/data/*", "*.db", "*.ttfit.mp4", "*/.env", "*/.env.*", "*/cookie.txt", "*/done.csv", "*/accounts.txt"], cwd=ROOT.parent, check=True)
 print(f"{out}  build {bid}  {len(files)} code files")

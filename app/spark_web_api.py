@@ -163,12 +163,14 @@ def _same_site(location: str) -> bool:
     return host.endswith("tiktok.com") or host == ""
 
 
-def _send(method: str, path: str, *, params: dict | None = None, payload: dict | None = None) -> httpx.Response:
+def _send(method: str, path: str, *, params: dict | None = None, payload: dict | None = None,
+          headers: dict | None = None) -> httpx.Response:
     """One web call. A same-site, non-login redirect (TikTok moving the request to a
     regional endpoint) is followed once with the same cookies and noted in Diagnostics;
-    a login redirect is left for _web_parse to report as expiry."""
+    a login redirect is left for _web_parse to report as expiry. `headers` adds to /
+    overrides the client's (e.g. the Referer a page-editor call must carry)."""
     with _client() as c:
-        resp = c.request(method, path, params=params or None, json=payload if method == "POST" else None)
+        resp = c.request(method, path, params=params or None, json=payload if method == "POST" else None, headers=headers or None)
         if resp.status_code in (301, 302, 303, 307, 308):
             loc = resp.headers.get("location", "")
             if loc and _same_site(loc) and not _is_login_redirect(loc):
@@ -183,8 +185,8 @@ def web_get(path: str, params: dict | None = None) -> dict:
     return _web_parse(_send("GET", path, params=params), path)
 
 
-def web_post(path: str, payload: dict) -> dict:
-    return _web_parse(_send("POST", path, payload=payload), path)
+def web_post(path: str, payload: dict, headers: dict | None = None) -> dict:
+    return _web_parse(_send("POST", path, payload=payload, headers=headers), path)
 
 
 def _note(path: str, code, message: str) -> None:
@@ -265,14 +267,8 @@ def probe_health(own_advertiser_id: str | None = None) -> dict:
 # Web-only operations
 # ---------------------------------------------------------------------------
 
-def clone_instant_page(page_id: str, from_advertiser_id: str, to_advertiser_id: str) -> dict:
-    """Clone an instant page to another advertiser — no Marketing-API endpoint
-    exists for this, so it rides the cookie web path."""
-    return web_post("/api/v1/page/copy/", {
-        "page_id": page_id,
-        "aadvid": from_advertiser_id,
-        "target_aadvid": to_advertiser_id,
-    })
+# (the old clone_instant_page — POST /api/v1/page/copy/ — is gone: TikTok's load balancer
+# answers 404 for that path. The page editor's own API lives in instant_page_web.py.)
 
 
 def web_list_lead_forms(advertiser_id: str) -> dict:

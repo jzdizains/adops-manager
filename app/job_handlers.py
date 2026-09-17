@@ -25,6 +25,9 @@ def _launch(db: Session, p: dict, job: models.Job) -> dict:
     if p.get("pairs"):
         pairs = [(by_id[str(a)], cid) for a, cid in p["pairs"] if str(a) in by_id]
         ref = engine.run_batch_assigned(db, pairs, fields, batch_ref=ref, on_progress=prog)
+    elif p.get("spark_pairs"):
+        pairs = [(by_id[str(a)], sid) for a, sid in p["spark_pairs"] if str(a) in by_id]
+        ref = engine.run_batch_assigned_sparks(db, pairs, fields, batch_ref=ref, on_progress=prog)
     else:
         if not accounts:
             return {"ok": False, "detail": "no matching accounts to launch"}
@@ -66,10 +69,13 @@ def _bid_bump(db: Session, p: dict, job: models.Job) -> dict:
 def _instant_page_clone_all(db: Session, p: dict, job: models.Job) -> dict:
     from .routes import instant_pages
     r = instant_pages.clone_to_many(db, str(p["page_id"]), str(p["from_advertiser_id"]), [str(t) for t in (p.get("targets") or [])],
-                                    should_stop=lambda: jobs.should_stop(db, job), on_progress=lambda t: jobs.progress(db, job, t))
+                                    should_stop=lambda: jobs.should_stop(db, job), on_progress=lambda t: jobs.progress(db, job, t),
+                                    name=str(p.get("name") or ""), new_url=str(p.get("new_url") or ""), new_text=str(p.get("new_text") or ""))
     d = f"“{p.get('name', '')}” cloned to {len(r['ok'])} account(s)"
     if r["failed"]:
-        d += f", {len(r['failed'])} failed — " + " · ".join(r["failed"])[:400]
+        d += f", {len(r['failed'])} failed — " + " · ".join(r["failed"])[:500]
+    if r.get("notes"):
+        d += " · " + " · ".join(r["notes"])[:200]
     if r["stopped"]:
         d += " (stopped)"
     return {"ok": not r["failed"] and not r["stopped"], "detail": d, "href": "/instant-pages"}

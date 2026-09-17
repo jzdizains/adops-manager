@@ -80,16 +80,17 @@ def sync(db: Session = Depends(get_db)):
 
 
 def _clone_one(db: Session, form_id: str, from_advertiser_id: str, acct: models.AdAccount, name: str) -> str:
-    """Copy one form to one account through the web session and VERIFY by re-reading the
-    target: '' when a form with that name now exists there, else why not. An instant form
-    is a TikTok page (business_type LEAD_GEN — that is how /page/get/ lists it), so it
-    rides the same undocumented page-copy call as an Instant Page."""
+    """Copy one form to one account through the page editor's web API and VERIFY by
+    re-reading the target: '' when a form with that name now exists there, else why not.
+    An instant form is a TikTok page (business_type LEAD_GEN — that is how /page/get/
+    lists it) built in the same Instant Page editor, so it rides the same recorded
+    duplicate flow (instant_page_web) with the source's own business_type."""
+    from .. import instant_page_web
     try:
-        body = spark_web_api.clone_instant_page(form_id, from_advertiser_id, acct.advertiser_id)
+        r = instant_page_web.duplicate(form_id, name, acct.advertiser_id)
     except spark_web_api.WebAuthError as e:
         return str(e)[:160]
-    code = str((body or {}).get("code", 0))
-    answered = "" if code in ("0", "") else f"TikTok answered code {code}: {str((body or {}).get('msg') or (body or {}).get('message') or '')[:120]}"
+    answered = "" if r.get("ok") else f"TikTok refused the copy — {r.get('error', '')[:140]}"
     try:
         sync_account(db, acct)
         db.commit()
@@ -164,8 +165,15 @@ def clone_to_many(db: Session, form_id: str, from_advertiser_id: str, name: str,
         if acct is None:
             failed.append(f"{label}: account no longer listed")
             continue
+        if db.query(models.LeadForm).filter_by(owner_advertiser_id=adv, name=name).first() is not None:
+            ok.append(adv)                       # a re-run never duplicates
+            continue
         why = _clone_one(db, form_id, from_advertiser_id, acct, name)
+        if why and ("200000" in why or "expired" in why.lower() or "log in" in why.lower()):
+            failed.append(f"{label}: {why} — stopped here, the remaining accounts were not attempted")
+            stopped = True
+            break
         (failed.append(f"{label}: {why}") if why else ok.append(adv))
         if i + 1 < len(targets):
-            _time.sleep(1.0)
+            _time.sleep(1.5)
     return {"ok": ok, "failed": failed, "stopped": stopped}
