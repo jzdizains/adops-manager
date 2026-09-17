@@ -317,13 +317,17 @@ def clone_bc(request: Request, page_id: str = Form(...), from_advertiser_id: str
         f"Cloning “{src.name}” to {len(targets)} account(s) in {bc_name} in the background — you'll get a notification (job #{job.id})."), status_code=303)
 
 
-def clone_one(db: Session, page_id: str, name: str, acct: models.AdAccount, new_url: str = "", new_text: str = "") -> dict:
+def clone_one(db: Session, page_id: str, name: str, acct: models.AdAccount, new_url: str = "", new_text: str = "",
+              source_owner: str = "") -> dict:
     """Copy one page onto one account through the page editor's web API (instant_page_web,
     the recorded duplicate → optional re-point → publish flow), then VERIFY through the
     official /page/get/ that a page of that name now exists there. Returns {ok, page_id,
     error}. Raises WebAuthError when the cookies are dead — the caller stops the run."""
     from .. import instant_page_web
-    r = instant_page_web.duplicate(page_id, name, acct.advertiser_id, new_url=new_url, new_text=new_text)
+    if not source_owner:
+        src = db.query(models.InstantPage).filter_by(page_id=page_id).first()
+        source_owner = src.owner_advertiser_id if src else ""
+    r = instant_page_web.duplicate(page_id, name, acct.advertiser_id, new_url=new_url, new_text=new_text, source_owner=source_owner)
     if not r.get("ok"):
         return {"ok": False, "page_id": "", "error": r.get("error", "TikTok refused the copy")}
     try:
@@ -366,7 +370,7 @@ def clone_to_many(db: Session, page_id: str, from_advertiser_id: str, targets: l
             ok.append(adv)
             continue
         try:
-            r = clone_one(db, page_id, name, acct, new_url=new_url, new_text=new_text)
+            r = clone_one(db, page_id, name, acct, new_url=new_url, new_text=new_text, source_owner=from_advertiser_id)
         except spark_web_api.WebAuthError as e:
             failed.append(f"{label}: {str(e)[:120]} — stopped here, the remaining accounts were not attempted")
             stopped = True
@@ -401,7 +405,7 @@ def clone(request: Request, page_id: str = Form(...), from_advertiser_id: str = 
         return RedirectResponse("/instant-pages?err=" + quote("The new button link must start with http:// or https://."), status_code=303)
     label = target.advertiser_name or to_advertiser_id
     try:
-        r = clone_one(db, page_id, src.name, target, new_url=new_url, new_text=(new_text or "").strip())
+        r = clone_one(db, page_id, src.name, target, new_url=new_url, new_text=(new_text or "").strip(), source_owner=from_advertiser_id)
     except spark_web_api.WebAuthError as e:
         return RedirectResponse("/instant-pages?err=" + quote(f"Clone stopped: {str(e)[:200]}"), status_code=303)
     if not r["ok"]:

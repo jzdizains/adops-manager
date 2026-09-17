@@ -135,6 +135,25 @@ f = Stubborn(); fake(f)
 r = ipw.duplicate("900", "FC UK", "555", new_url="https://new.example/lp")
 check("update accepted but the old link reads back → not published, loud error", not r["ok"] and "read back without the new link" in r["error"] and not f.published)
 
+print("\n-- read shape probing --")
+class Picky(Fake):
+    """page_info answers 'Internal system error' unless account_id is the page's OWNER (as seen live 18 Sep for the recorded shape)."""
+    def __call__(self, req):
+        if req.url.path.startswith("/instant_page/api/v1/page_info/") and json.loads(req.content).get("account_id") != "111":
+            seen.append(req)
+            return httpx.Response(200, json={"code": 100000, "msg": "Internal system error. ", "data": None})
+        return super().__call__(req)
+f = Picky(); fake(f); seen.clear(); notes.clear()
+r = ipw.duplicate("900", "FC UK", "555", source_owner="111")
+paths = [(q.url.path, json.loads(q.content).get("account_id")) for q in seen]
+check("recorded shape refused → the source-owner read is tried (a READ, nothing created in between), then create/publish carry the TARGET as recorded",
+      r["ok"] and paths[0] == ("/instant_page/api/v1/page_info/900/", "555") and paths[1] == ("/instant_page/api/v1/page_info/900/", "111")
+      and f.created[0]["account_id"] == "555" and f.published == ["1000"] and r["steps"][0] == "read shape: source-owner", str((paths, r)))
+check("the refusal is on Diagnostics with TikTok's FULL answer", any("Internal system error" in str(n) and "answer:" in str(n) for n in notes))
+f = Picky(); fake(f); seen.clear()
+r = ipw.duplicate("900", "FC UK", "555")          # no owner known → target, aadvid, int
+check("with no owner known every other shape is probed and the error lists what each answered", not r["ok"] and "tried target: 100000" in r["error"] and "target-int: 100000" in r["error"] and not f.created, r.get("error"))
+
 print("\n-- dead cookies --")
 f = Fake(dead=True); fake(f)
 try:
@@ -153,14 +172,14 @@ check("thumbnail_uri: kept when already tos form; cut from the URL when a full U
 print("\n-- static --")
 def read(p): return open(os.path.join(ROOT, p), encoding="utf-8").read()
 ip = read("app/routes/instant_pages.py"); ca = read("app/routes/campaigns.py"); th = read("app/templates/instant_pages.html"); lf = read("app/routes/lead_forms.py")
-check("clone_one: recorded flow + official /page/get/ verification", "instant_page_web.duplicate(page_id, name, acct.advertiser_id, new_url=new_url, new_text=new_text)" in ip and "sync_account(db, acct)" in ip.split("def clone_one")[1][:1200] and "doesn't list it on the account" in ip)
+check("clone_one: recorded flow + official /page/get/ verification", "instant_page_web.duplicate(page_id, name, acct.advertiser_id, new_url=new_url, new_text=new_text, source_owner=source_owner)" in ip and "sync_account(db, acct)" in ip.split("def clone_one")[1][:1200] and "doesn't list it on the account" in ip)
 body = ip.split("def clone_to_many")[1]
 check("clone_to_many: skips accounts that already hold the name, stops the run on dead cookies, pauses, never stops on a refusal", "a re-run never duplicates" in body and "except spark_web_api.WebAuthError" in body and "stopped = True" in body and "_time.sleep(1.5)" in body and 'failed.append(f"{label}: {r[\'error\'][:140]}")' in body)
 check("routes carry the optional re-point; the link must be http(s)", 'new_url: str = Form("")' in ip and ip.count("The new button link must start with http:// or https://") == 2 and '"new_url": new_url' in ip)
 check("the dead /api/v1/page/copy/ call is gone", "api/v1/page/copy" not in read("app/spark_web_api.py").split("# (the old clone_instant_page")[0] and "clone_instant_page(" not in ip and "clone_instant_page(" not in lf)
 check("UI: clone buttons back (published pages only), optional link + text, test-one-first wording", "{% if False %}" not in th and 'name="new_url"' in th and "Clone (test)" in th and "p.status != 'PUBLISHED'" in th and "data-url" in th)
-check("launch: an account without the page copies it from a sibling (same BC first) before building from the template", "def copy_page_from_sibling" in ca and "copied = copy_page_from_sibling(db, acct, name)" in ca and "ip.clone_one(db, src.page_id, name, acct)" in ca and 'models.InstantPage.status == "PUBLISHED"' in ca)
-check("lead forms ride the same recorded flow, verified by re-read, stop on dead cookies", "instant_page_web.duplicate(form_id, name, acct.advertiser_id)" in lf and "stopped = True" in lf.split("def clone_to_many")[1] and "{% if False %}" not in read("app/templates/lead_forms.html"))
+check("launch: an account without the page copies it from a sibling (same BC first) before building from the template", "def copy_page_from_sibling" in ca and "copied = copy_page_from_sibling(db, acct, name)" in ca and "ip.clone_one(db, src.page_id, name, acct, source_owner=src.owner_advertiser_id)" in ca and 'models.InstantPage.status == "PUBLISHED"' in ca)
+check("lead forms ride the same recorded flow, verified by re-read, stop on dead cookies", "instant_page_web.duplicate(form_id, name, acct.advertiser_id, source_owner=from_advertiser_id)" in lf and "stopped = True" in lf.split("def clone_to_many")[1] and "{% if False %}" not in read("app/templates/lead_forms.html"))
 
 print()
 print("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}")

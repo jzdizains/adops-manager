@@ -51,8 +51,54 @@ def _headers(target: str) -> dict:
             "Accept": "application/json, text/plain, */*"}
 
 
-def _post(path: str, body: dict, target: str) -> dict:
-    return spark_web_api.web_post(BASE + path, body, headers=_headers(target))
+def _post(path: str, body: dict, target: str, params: dict | None = None) -> dict:
+    resp = spark_web_api._send("POST", BASE + path, params=params, payload=body, headers=_headers(target))
+    out = spark_web_api._web_parse(resp, BASE + path)
+    if not _ok(out):
+        # the whole answer, not just its msg — an internal API's refusal is only readable in full
+        _note(path, out.get("code"), f"{_msg(out)} — answer: {str(resp.text)[:500]}")
+    return out
+
+
+def _note(path: str, code, message: str) -> None:
+    try:
+        from . import diag
+        diag.record("tiktok-web", BASE + path, code, message, {})
+    except Exception:  # noqa: BLE001
+        pass
+
+
+# How the source page is read. The recording used the TARGET account for every call; if
+# TikTok answers a code other than 0 to that (18 Sep: 100000 "Internal system error"),
+# the reads are probed in the other plausible shapes — all READS, nothing is created —
+# and the first shape that answers 0 is used for every page_info call of that clone.
+READ_SHAPES = (
+    ("target",        lambda pid, tgt, src: (f"/v1/page_info/{pid}/", {"account_id": tgt}, None, tgt)),
+    ("source-owner",  lambda pid, tgt, src: (f"/v1/page_info/{pid}/", {"account_id": src}, None, src)),
+    ("target+aadvid", lambda pid, tgt, src: (f"/v1/page_info/{pid}/", {"account_id": tgt}, {"aadvid": tgt}, tgt)),
+    ("target-int",    lambda pid, tgt, src: (f"/v1/page_info/{pid}/", {"account_id": int(tgt)}, None, tgt)),
+)
+
+
+def read_page(page_id: str, target: str, source_owner: str = "", shape: str = "") -> tuple[dict, str, list[str]]:
+    """page_info in the recorded shape, or — when that is refused and no shape is fixed
+    yet — in each READ_SHAPE until one answers 0. Returns (answer, shape used, probes)."""
+    probes: list[str] = []
+    shapes = [x for x in READ_SHAPES if x[0] == shape] if shape else list(READ_SHAPES)
+    if not source_owner:
+        shapes = [x for x in shapes if x[0] != "source-owner"]
+    last: dict = {}
+    for name, fn in shapes:
+        path, body, params, ref = fn(page_id, target, source_owner)
+        try:
+            ans = _post(path, body, ref, params=params)
+        except ValueError:
+            continue
+        probes.append(f"{name}: {ans.get('code')} {_msg(ans)[:60]}".strip())
+        if _ok(ans):
+            return ans, name, probes
+        last = ans
+    return last, "", probes
 
 
 def _ok(body: dict) -> bool:
@@ -65,6 +111,11 @@ def _msg(body: dict) -> str:
 
 def page_info(page_id: str, target: str) -> dict:
     return _post(f"/v1/page_info/{page_id}/", {"account_id": str(target)}, target)
+
+
+def probe(page_id: str, target: str, source_owner: str = "") -> list[str]:
+    """Read-only: which read shape TikTok answers 0 to. For the operator's "Test read"."""
+    return read_page(page_id, target, source_owner)[2]
 
 
 def thumb_uri(page: dict) -> str:
@@ -96,16 +147,19 @@ def rewrite_buttons(data: str, url: str, text: str = "") -> str | None:
     return json.dumps(doc, ensure_ascii=False) if touched else None
 
 
-def duplicate(source_page_id: str, name: str, target: str, new_url: str = "", new_text: str = "") -> dict:
+def duplicate(source_page_id: str, name: str, target: str, new_url: str = "", new_text: str = "",
+              source_owner: str = "") -> dict:
     """Copy one finished page onto `target`, published. Returns {ok, page_id, steps,
     error}. Raises WebAuthError when the cookies are dead (the caller stops the run);
     any other refusal is reported in `error` with the step it happened at."""
     steps: list[str] = []
-    source_page_id, target = str(source_page_id), str(target)
+    source_page_id, target, source_owner = str(source_page_id), str(target), str(source_owner or "")
     try:
-        info = page_info(source_page_id, target)
+        info, shape, probes = read_page(source_page_id, target, source_owner)
         if not _ok(info):
-            raise CloneError(f"read source: {info.get('code')} {_msg(info)}")
+            raise CloneError(f"read source: {info.get('code')} {_msg(info)} — tried " + "; ".join(probes))
+        if shape != "target":
+            steps.append(f"read shape: {shape}")
         page = ((info.get("data") or {}).get("page_info") or {}) if isinstance(info.get("data"), dict) else {}
         if not page.get("data"):
             raise CloneError("source page definition is empty")
@@ -129,7 +183,7 @@ def duplicate(source_page_id: str, name: str, target: str, new_url: str = "", ne
         if rewritten:
             seen = {}
             for _ in range(POLL_TRIES):
-                seen = page_info(page_id, target)
+                seen, _s, _p = read_page(page_id, target, source_owner, shape=shape)
                 if _ok(seen) and ((seen.get("data") or {}).get("page_info") or {}).get("data"):
                     break
                 time.sleep(POLL_S)
@@ -139,7 +193,7 @@ def duplicate(source_page_id: str, name: str, target: str, new_url: str = "", ne
             }, target)
             if not _ok(updated):
                 raise CloneError(f"created {page_id} but update failed: {updated.get('code')} {_msg(updated)}")
-            back = page_info(page_id, target)
+            back, _s, _p = read_page(page_id, target, source_owner, shape=shape)
             pi = ((back.get("data") or {}).get("page_info") or {}) if isinstance(back.get("data"), dict) else {}
             blob = str(pi.get("publish_data") or "") + str(pi.get("data") or "")
             if new_url not in blob:

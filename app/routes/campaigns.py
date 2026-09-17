@@ -555,7 +555,7 @@ def copy_page_from_sibling(db: Session, acct: models.AdAccount, name: str) -> di
     rows.sort(key=lambda r: (0 if (by_adv.get(r.owner_advertiser_id) and by_adv[r.owner_advertiser_id].owner_bc_id == acct.owner_bc_id) else 1, r.page_id))
     src = rows[0]
     try:
-        r = ip.clone_one(db, src.page_id, name, acct)
+        r = ip.clone_one(db, src.page_id, name, acct, source_owner=src.owner_advertiser_id)
     except spark_web_api.WebAuthError as e:
         return {"page_id": "", "error": f"the web session is dead: {str(e)[:140]}"}
     if not r.get("ok"):

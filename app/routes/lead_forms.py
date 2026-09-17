@@ -87,7 +87,7 @@ def _clone_one(db: Session, form_id: str, from_advertiser_id: str, acct: models.
     duplicate flow (instant_page_web) with the source's own business_type."""
     from .. import instant_page_web
     try:
-        r = instant_page_web.duplicate(form_id, name, acct.advertiser_id)
+        r = instant_page_web.duplicate(form_id, name, acct.advertiser_id, source_owner=from_advertiser_id)
     except spark_web_api.WebAuthError as e:
         return str(e)[:160]
     answered = "" if r.get("ok") else f"TikTok refused the copy — {r.get('error', '')[:140]}"
