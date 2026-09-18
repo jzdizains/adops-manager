@@ -264,6 +264,27 @@
       <span class="hint">Events API 2.0 names, case-sensitive: CompleteRegistration, Purchase (the old pixel name CompletePayment is auto-converted), PlaceAnOrder, SubmitForm, ViewContent, Subscribe…</span></label>
     <label class="field"><span class="field-label">Currency</span>
       <input type="text" name="events_currency" value="{{ s.events_currency }}"></label>
+    <label class="field"><span class="field-label">Event value</span>
+      <select name="events_value_mode">
+        <option value="payout" {{ 'selected' if s.events_value_mode != 'fixed' }}>The postback's payout</option>
+        <option value="fixed" {{ 'selected' if s.events_value_mode == 'fixed' }}>A fixed amount per event</option>
+      </select>
+      <span class="hint">Fixed = every forwarded event carries the same value (e.g. 6.00), whatever the network paid — for value-based optimisation on a flat-payout offer.</span></label>
+    <label class="field"><span class="field-label">Fixed amount</span>
+      <input type="number" name="events_value_fixed" value="{{ s.events_value_fixed }}" min="0" step="0.01" placeholder="6.00"></label>
+    <label class="field"><span class="field-label">Fixed value only for <span class="muted">(optional)</span></span>
+      <input type="text" name="events_value_match" value="{{ s.events_value_match }}" placeholder="tikmobileplay.com/play, playful">
+      <span class="hint">Comma-separated words matched against the source name and the click's landing URL. Empty = every event. Events that don't match keep the payout.</span></label>
+  </div>
+  <div class="card" style="background:var(--surface-2);margin:4px 0 12px;">
+    <div class="card-header"><span class="card-title">On landing page view</span><span class="card-meta">a server-side event for every visitor who reaches the lander</span></div>
+    <label class="sw" style="margin-bottom:10px;"><input type="checkbox" name="lpv_enabled" {{ 'checked' if s.lpv_enabled }}><span class="tog"></span><span><b>Fire an event when the lander is viewed</b><span class="muted" style="display:block;font-size:11.5px;">Sent from the server on the page's view beacon, once per visitor per page, with the click id, hashed visitor id, IP, browser and page URL. Needs a TikTok click id on the visit.</span></span></label>
+    <div class="form-row-3">
+      <label class="field mb0"><span class="field-label">Event</span><input type="text" name="lpv_event" value="{{ s.lpv_event }}"></label>
+      <label class="field mb0"><span class="field-label">Value</span><input type="number" name="lpv_value" value="{{ s.lpv_value }}" min="0" step="0.01"></label>
+      <label class="field mb0"><span class="field-label">Pages</span><input type="text" name="lpv_pages" value="{{ s.lpv_pages }}" placeholder="play, open-uk"><span class="hint">page names / lander slugs · empty = every page</span></label>
+    </div>
+    <div class="muted" style="font-size:12px;margin-top:8px;">Since start: {{ lpv_stats.sent }} sent · {{ lpv_stats.skipped }} skipped · {{ lpv_stats.failed }} failed{% if lpv_stats.dropped %} · {{ lpv_stats.dropped }} dropped (queue full){% endif %}{% if lpv_stats.last %} · last: {{ lpv_stats.last }}{% endif %}. Note: TikTok then optimises for visits; the offer's own conversions still come from the postback above.</div>
   </div>
   <label class="field"><span class="field-label">Page URL for events without a launch (optional)</span>
     <input type="text" name="events_page_url" value="{{ s.events_page_url }}" placeholder="https://your-lander.com/">

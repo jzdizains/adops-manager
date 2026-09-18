@@ -526,7 +526,7 @@ def track_event(access_token: str, pixel_code: str, event: str,
                 event_id: str = "", ttclid: str = "", value: float = 0.0,
                 currency: str = "USD", event_time: int | None = None,
                 test_event_code: str = "", ip: str = "", user_agent: str = "",
-                page_url: str = "") -> dict:
+                page_url: str = "", ttp: str = "", external_id: str = "", referrer: str = "") -> dict:
     """Events API `/event/track/` — server-side web pixel event (S2S postback
     → pixel). Needs at least one user identifier (ttclid is ours) or TikTok
     can't attribute it. event_id dedupes against browser-pixel events."""
@@ -534,6 +534,10 @@ def track_event(access_token: str, pixel_code: str, event: str,
     user: dict = {}
     if ttclid:
         user["ttclid"] = ttclid
+    if ttp:
+        user["ttp"] = ttp             # the browser pixel's _ttp cookie: a second identifier, better match quality
+    if external_id:
+        user["external_id"] = external_id   # SHA-256 of the lander's anonymous visitor id — the same value the pixel's identify() sends
     if ip:
         user["ip"] = ip
     if user_agent:
@@ -547,6 +551,8 @@ def track_event(access_token: str, pixel_code: str, event: str,
         item["properties"] = {"value": float(value), "currency": currency or "USD"}
     if page_url:
         item["page"] = {"url": page_url}
+        if referrer:
+            item["page"]["referrer"] = referrer
     payload: dict = {"event_source": "web", "event_source_id": pixel_code,
                      "data": [item]}
     if test_event_code:

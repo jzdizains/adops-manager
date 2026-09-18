@@ -76,10 +76,24 @@
   function expose() { try { window.adopsParams = params; } catch (e) {} }
   expose();
 
+  // the lander's stable anonymous visitor id (same key the pixel block hashes into external_id and the
+  // funnel beacon sends): read it, or mint it here so every later script sees the same one. It goes with
+  // the click so the server-side event can carry the SAME hashed external_id as the browser pixel.
+  function visitorId() {
+    var id = "";
+    try { id = new URLSearchParams(location.search).get("svid") || ""; } catch (e) {}     // handed over from the prelander → ONE person across both pages
+    if (!id) { try { id = localStorage.getItem("tmp_vid") || ""; } catch (e) {} }
+    if (!id) { try { var m = /(?:^|;\s*)tmp_vid=([^;]+)/.exec(document.cookie || ""); if (m) id = decodeURIComponent(m[1]); } catch (e) {} }
+    if (!id) { try { id = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(36).slice(2); } catch (e) { id = String(Date.now()) + Math.random().toString(36).slice(2); } }
+    try { localStorage.setItem("tmp_vid", id); } catch (e) {}
+    try { document.cookie = "tmp_vid=" + encodeURIComponent(id) + ";path=/;max-age=31536000;SameSite=Lax" + (location.protocol === "https:" ? ";Secure" : ""); } catch (e) {}
+    return id.slice(0, 64);
+  }
   // register the click once per ad click (a new ttclid / source) → short click id
   function register() {
     if (params.clid || !TRACK_HOST || !(params.source || params.ttclid) || !window.fetch) return;
-    var body = JSON.stringify({ source: params.source || "", ttclid: params.ttclid || "", tt_cid: params.tt_cid || "", tt_aid: params.tt_aid || "", tt_ad: params.tt_ad || "", url: location.href.slice(0, 900), ref: document.referrer.slice(0, 400) });
+    var ttp = ""; try { var mc = /(?:^|;\s*)_ttp=([^;]+)/.exec(document.cookie || ""); ttp = mc ? decodeURIComponent(mc[1]).slice(0, 120) : ""; } catch (e) {}   // the pixel's own cookie → a second Events API identifier
+    var body = JSON.stringify({ source: params.source || "", ttclid: params.ttclid || "", ttp: ttp, vid: visitorId(), tt_cid: params.tt_cid || "", tt_aid: params.tt_aid || "", tt_ad: params.tt_ad || "", url: location.href.slice(0, 900), ref: document.referrer.slice(0, 400) });
     fetch(TRACK_HOST + "/t/click", { method: "POST", mode: "cors", credentials: "omit", keepalive: true, headers: { "Content-Type": "text/plain" }, body: body })
       .then(function (r) { return r.json(); })
       .then(function (d) { if (d && d.click_id) { params.clid = d.click_id; save(params); out = outgoing(params); expose(); refresh(); try { document.dispatchEvent(new CustomEvent("adops:click", { detail: params })); } catch (e) {} } })

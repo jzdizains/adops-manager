@@ -24,6 +24,7 @@ database, and pruning of rows older than KEEP_DAYS at most once an hour.
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta
 
 from sqlalchemy import func
@@ -33,6 +34,10 @@ from . import models
 
 PAGES = ("start", "play")
 STEPS = ("view", "engaged", "continue", "cta")
+# v124: pages built by the dashboard beacon under their slug, with a few more steps
+LANDER_STEPS = ("view", "engaged", "continue", "escaped", "escape_miss", "gate", "route", "cta")
+SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,39}$")
+_slugs: dict = {"at": None, "set": set()}          # known lander slugs, re-read at most once a minute
 STEP_ORDER = (("start", "view"), ("start", "engaged"), ("start", "continue"),
               ("play", "view"), ("play", "engaged"), ("play", "cta"))
 KEEP_DAYS = 30
@@ -51,11 +56,25 @@ def _clean(v, n: int) -> str:
     return "" if ("{" in v or "}" in v or v.startswith("__")) else v[:n]      # unreplaced macros never get stored
 
 
+def known_slugs(db: Session) -> set:
+    """Slugs of the dashboard's landers (cached a minute: beacons are frequent, landers are not)."""
+    now = _utcnow()
+    if _slugs["at"] is None or now - _slugs["at"] > timedelta(minutes=1):
+        try:
+            _slugs["set"] = {r[0] for r in db.query(models.Lander.slug).filter(models.Lander.enabled == True)}  # noqa: E712
+        except Exception:      # noqa: BLE001 — a beacon never fails on a lookup
+            _slugs["set"] = set()
+        _slugs["at"] = now
+    return _slugs["set"]
+
+
 def accept(db: Session, d: dict) -> tuple[bool, str]:
     """Validate + store one beacon. Returns (stored, reason)."""
     page = str(d.get("page") or "")
     step = str(d.get("step") or "")
-    if page not in PAGES or step not in STEPS or (page, step) not in STEP_ORDER:
+    legacy = page in PAGES and step in STEPS and (page, step) in STEP_ORDER
+    built = bool(SLUG_RE.match(page)) and page not in PAGES and step in LANDER_STEPS and page in known_slugs(db)
+    if not (legacy or built):
         return False, "unknown page/step"
     now = _utcnow()
     minute = now.replace(second=0, microsecond=0)
@@ -68,7 +87,10 @@ def accept(db: Session, d: dict) -> tuple[bool, str]:
         source=_clean(d.get("source"), 200), page=page, step=step,
         vid=_clean(d.get("vid"), 64), has_ttclid=bool(d.get("ttclid")),
         campaign_id=_clean(d.get("cid"), 40),
-        via="continue" if str(d.get("via") or "") == "continue" else "")
+        via="continue" if str(d.get("via") or "") == "continue" else "",
+        bucket=_clean(d.get("bucket"), 40), inapp=_clean(d.get("inapp"), 16), os=_clean(d.get("os"), 8),
+        ttclid=_clean(d.get("ttclid"), 2000) if isinstance(d.get("ttclid"), str) and len(d.get("ttclid")) > 1 else "",   # older pages send 1/0
+        ref=_clean(d.get("ref"), 400))
     db.add(row)
     _prune(db)
     return True, ""

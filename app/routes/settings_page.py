@@ -72,7 +72,9 @@ def settings_page(request: Request, db: Session = Depends(get_db)):
                  "sent": sum(1 for e in with_id if (e.forward_status or "").startswith("sent")),
                  "rejected": sum(1 for e in with_id if (e.forward_status or "").startswith("error")),
                  "last": (with_id[0].ttclid if with_id else "")}
+    from .. import lpv_events
     return render(request, "settings.html", {
+        "lpv_stats": lpv_events.STATS,
         "roundtrip": roundtrip, "tr": tracking.stats(db, 1), "clickflare_postback": clickflare_postback, "ad_url_example": ad_url_example, "track_base": track_base,
         "track_host_hint": base_url.split("://", 1)[-1].split("/")[0], "postback_host": config.POSTBACK_HOST,
         "title": "Settings", "s": s, "has_anthropic_key": bool(config.ANTHROPIC_API_KEY),

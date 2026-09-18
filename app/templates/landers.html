@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Landers</h1>
+    <div class="muted" style="font-size:12.5px;max-width:900px;">Pages built here, hosted on <b>your</b> domains. Each export is one self-contained <span class="mono">index.html</span>; the page re-reads its next URL, rules and escape method from this dashboard at every open, so you change them here without re-uploading. Beacons come back as the funnel below.</div>
+  </div>
+  <div class="actions"><button type="button" class="btn primary" id="ldNew">＋ New lander</button></div>
+</div>
+
+{% if ok == 'saved' %}<div class="flash ok">Saved. Download the package again if the texts, colours or pixel changed — the next URL, rules and escape method are live already.</div>
+{% elif ok == 'deleted' %}<div class="flash ok">Deleted.</div>{% endif %}
+{% if err %}<div class="flash err">{{ err }}</div>{% endif %}
+
+{% if not track_host %}
+<div class="flash warn">No tracking host is set (Settings › Tracking). The pages need it for beacons and live settings — set it before exporting.</div>
+{% endif %}
+
+<div class="card" style="padding:0;overflow:hidden;">
+  {% if items %}
+  <table class="data">
+    <thead><tr><th>Lander</th><th>Goes to</th><th>Escape</th><th class="num" title="last 7 days · distinct visitors">Views</th><th class="num">Engaged</th><th class="num">Continued</th><th class="num" title="tapped in the TikTok app and ended up in the real browser">Escaped</th><th class="num">Actions</th></tr></thead>
+    <tbody>
+    {% for it in items %}
+      {% set st = it.stats %}
+      <tr id="{{ it.slug }}" data-id="{{ it.id }}">
+        <td><b>{{ it.name }}</b>{% if not it.enabled %} <span class="pill mute">off</span>{% endif %}<div class="muted" style="font-size:11.5px;"><span class="mono">{{ it.slug }}</span> · {{ it.template_label }}{% if it.domain %} · {{ it.domain }}{% endif %}{% if it.pixel %} · pixel {{ it.pixel }}{% endif %}</div></td>
+        <td style="max-width:280px;"><span class="clip" title="{{ it.next }}">{{ it.next or '—' }}</span>{% if it.rules %}<div class="muted" style="font-size:11.5px;">+ {{ it.rules }} rule{{ '' if it.rules == 1 else 's' }}</div>{% endif %}</td>
+        <td class="muted" style="font-size:11.5px;white-space:nowrap;">Android {{ it.escape.android }}<br>iPhone {{ it.escape.ios }}</td>
+        <td class="num">{{ st.get('view', 0) }}{% if st.get('view_inapp') %}<div class="muted" style="font-size:11px;">{{ st.get('view_inapp') }} in-app</div>{% endif %}</td>
+        <td class="num">{{ st.get('engaged', 0) }}</td>
+        <td class="num">{{ st.get('continue', 0) }}</td>
+        <td class="num">{{ st.get('escaped', 0) }}{% if st.get('escape_miss') %}<div class="muted" style="font-size:11px;">{{ st.get('escape_miss') }} stayed in-app</div>{% endif %}</td>
+        <td class="num" style="white-space:nowrap;">
+          <button type="button" class="btn sm ld-edit" data-id="{{ it.id }}">✎ Edit</button>
+          <a class="btn sm" href="/landers/{{ it.id }}/preview" target="_blank" rel="noopener">Preview</a>
+          <a class="btn sm" href="/landers/{{ it.id }}/package.zip">⬇ Package</a>
+          <form method="post" action="/landers/{{ it.id }}/delete" style="display:inline;" data-confirm="Delete this lander?" data-confirm-text="The page on your domain keeps working but stops getting live settings and its beacons are dropped." data-ok-label="Delete" data-danger><button class="btn sm ghost danger" type="submit">✕</button></form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty"><div class="empty-title">No landers yet</div>Hit <b>＋ New lander</b>. The first template is the open-in-browser prelander: one honest step between the ad and your page that offers to open it in the phone's real browser.</div>
+  {% endif %}
+</div>
+
+<div class="card" style="margin-top:12px;font-size:12.5px;">
+  <div class="card-header"><span class="card-title">How a lander goes live</span></div>
+  <ol style="margin:0;padding-left:18px;line-height:1.7;">
+    <li>Create it here: texts, colours, where <b>Continue</b> goes (the next page or per-rule destinations), the escape method per platform (test them under Tools › Escape test first).</li>
+    <li><b>⬇ Package</b> → upload <span class="mono">index.html</span> to the folder on your domain (Hostinger, Vercel, anywhere static). Put that URL in the preset's landing URL as usual.</li>
+    <li>Change the next URL, rules or escape method here any time — the page reads them from <span class="mono">{{ track_host or '…' }}/t/l/&lt;slug&gt;.json</span> at open. Texts, colours and the pixel are baked in: re-download after changing those.</li>
+  </ol>
+  <div class="muted" style="margin-top:8px;">What the page never does: cloak, show fake states, fire pixel events without a real tap, or trap the back button. In a real browser it simply continues.</div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var ITEMS = {{ items_json|safe }}, TEMPLATES = {{ templates|tojson }}, ESC_A = {{ escape_android|tojson }}, ESC_I = {{ escape_ios|tojson }}, PIXEL_EVENTS = {{ pixel_events|tojson }}, AGE = {{ age_brackets|tojson }};
+  var esc = UI.esc;
+  function opts(list, cur) { return list.map(function (o) { var v = Array.isArray(o) ? o[0] : o, l = Array.isArray(o) ? o[1] : (o || "— none —"); return '<option value="' + esc(v) + '"' + (v === cur ? " selected" : "") + '>' + esc(l) + '</option>'; }).join(""); }
+  function ruleRow(r) {
+    r = r || { when: {}, to: "" }; var w = r.when || {};
+    return '<div class="ld-rule card" style="padding:8px 10px;margin-bottom:8px;background:var(--surface-2);">' +
+      '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px 8px;align-items:end;">' +
+      '<label class="field mb0"><span class="field-label">Name</span><input data-k="name" value="' + esc(r.name || "") + '" placeholder="iOS in-app"></label>' +
+      '<label class="field mb0"><span class="field-label">Platform</span><select data-k="os">' + opts([["", "any"], ["ios", "iPhone"], ["android", "Android"], ["other", "other"]], w.os || "") + '</select></label>' +
+      '<label class="field mb0"><span class="field-label">In-app browser</span><select data-k="inapp">' + opts([["", "any"], ["yes", "yes (TikTok etc.)"], ["no", "no (real browser)"]], w.inapp || "") + '</select></label>' +
+      '<label class="field mb0"><span class="field-label">Age brackets</span><input data-k="age" value="' + esc(w.age || "") + '" placeholder="' + AGE.join(",") + '"></label>' +
+      '<label class="field mb0"><span class="field-label">Countries</span><input data-k="country" value="' + esc(w.country || "") + '" placeholder="US,GB"></label>' +
+      '<label class="field mb0"><span class="field-label">Hours (local)</span><input data-k="hours" value="' + esc(w.hours || "") + '" placeholder="9-17"></label></div>' +
+      '<div style="display:flex;gap:8px;align-items:end;margin-top:6px;"><label class="field mb0" style="flex:1;"><span class="field-label">Send to</span><input data-k="to" value="' + esc(r.to || "") + '" placeholder="https://…" required></label><button type="button" class="btn sm ghost danger ld-rule-x" title="Remove rule">✕</button></div></div>';
+  }
+  function collectRules(body) {
+    return Array.prototype.map.call(body.querySelectorAll(".ld-rule"), function (el) {
+      var g = function (k) { var i = el.querySelector('[data-k="' + k + '"]'); return i ? i.value.trim() : ""; };
+      return { name: g("name"), to: g("to"), when: { os: g("os"), inapp: g("inapp"), age: g("age"), country: g("country"), hours: g("hours") } };
+    });
+  }
+  function openEditor(it) {
+    var isNew = !it, cfg = (it && it.cfg) || TEMPLATES[0].defaults, tpl = (it && it.template) || "prelander";
+    var body = UI.el('<form class="ld-form" style="display:flex;flex-direction:column;gap:12px;">' +
+      '<input type="hidden" name="id" value="' + (it ? it.id : "") + '"><input type="hidden" name="rules" value="">' +
+      '<div class="form-row"><label class="field mb0"><span class="field-label">Name</span><input name="name" value="' + esc(it ? it.name : "") + '" placeholder="Open in browser · UK"></label>' +
+      '<label class="field mb0"><span class="field-label">Slug <span class="muted">· the page id in beacons and links</span></span><input name="slug" value="' + esc(it ? it.slug : "") + '" placeholder="open-uk" pattern="[a-z0-9][a-z0-9-]{1,39}" required></label></div>' +
+      '<div class="form-row"><label class="field mb0"><span class="field-label">Template</span><select name="template">' + opts(TEMPLATES.map(function (t) { return [t.id, t.label]; }), tpl) + '</select></label>' +
+      '<label class="field mb0"><span class="field-label">Hosted at <span class="muted">(optional, for you)</span></span><input name="domain" value="' + esc(it ? it.domain : "") + '" placeholder="start.yourdomain.com"></label></div>' +
+      '<div class="muted" style="font-size:12px;margin-top:-6px;">' + esc(TEMPLATES[0].blurb) + '</div>' +
+      '<div class="card" style="background:var(--surface-2);"><div class="card-header"><span class="card-title">Words &amp; look</span><span class="card-meta">baked into the page — re-download after changing</span></div>' +
+      '<div class="form-row"><label class="field mb0"><span class="field-label">Brand line <span class="muted">(optional)</span></span><input name="brand" value="' + esc(cfg.brand) + '"></label><label class="field mb0"><span class="field-label">Headline</span><input name="headline" value="' + esc(cfg.headline) + '"></label></div>' +
+      '<label class="field mb0"><span class="field-label">Text in the TikTok app</span><input name="text" value="' + esc(cfg.text) + '"></label>' +
+      '<label class="field mb0"><span class="field-label">Text in a real browser</span><input name="inbrowser_text" value="' + esc(cfg.inbrowser_text) + '"></label>' +
+      '<div class="form-row"><label class="field mb0"><span class="field-label">Button</span><input name="button" value="' + esc(cfg.button) + '"></label><label class="field mb0"><span class="field-label">Small note</span><input name="note" value="' + esc(cfg.note) + '"></label></div>' +
+      '<div class="form-row"><label class="field mb0"><span class="field-label">Theme</span><select name="theme">' + opts([["dark", "dark"], ["light", "light"]], cfg.theme) + '</select></label><label class="field mb0"><span class="field-label">Accent colour</span><input name="accent" value="' + esc(cfg.accent) + '" placeholder="#6d4cff"></label></div></div>' +
+      '<div class="card" style="background:var(--surface-2);"><div class="card-header"><span class="card-title">Where Continue goes</span><span class="card-meta">live — changes apply without re-uploading</span></div>' +
+      '<label class="field mb0"><span class="field-label">Next page <span class="muted">· when no rule matches</span></span><input name="next" value="' + esc(cfg.next) + '" placeholder="https://play.yourdomain.com/"></label>' +
+      '<div class="hint">The source, click id and TikTok ids ride along automatically (pass-source.js is inside the page).</div>' +
+      '<div style="margin-top:10px;font-weight:600;font-size:12.5px;">Rules <span class="muted" style="font-weight:400;">· first match wins; empty fields mean “any”</span></div><div class="ld-rules" style="margin-top:6px;"></div>' +
+      '<button type="button" class="btn sm ld-rule-add">＋ Add rule</button></div>' +
+      '<div class="card" style="background:var(--surface-2);"><div class="card-header"><span class="card-title">In the TikTok app</span><span class="card-meta">how Continue tries to reach the real browser · live</span></div>' +
+      '<div class="form-row"><label class="field mb0"><span class="field-label">Android</span><select name="escape_android">' + opts(ESC_A, (cfg.escape || {}).android) + '</select></label><label class="field mb0"><span class="field-label">iPhone</span><select name="escape_ios">' + opts(ESC_I, (cfg.escape || {}).ios) + '</select></label></div>' +
+      '<div class="hint">If the phone is still on the page 1.2 s later it continues in-app to the same URL — never an error screen. Measure what works under Tools › Escape test.</div></div>' +
+      '<div class="card" style="background:var(--surface-2);"><div class="card-header"><span class="card-title">TikTok pixel</span><span class="card-meta">optional · base code baked in, one event on the real tap</span></div>' +
+      '<div class="form-row"><label class="field mb0"><span class="field-label">Pixel code</span><input name="pixel" value="' + esc(cfg.pixel) + '" placeholder="D9I34CBC…"></label><label class="field mb0"><span class="field-label">Event on Continue</span><select name="pixel_event">' + opts(PIXEL_EVENTS.map(function (e) { return [e, e || "none"]; }), cfg.pixel_event) + '</select></label></div></div>' +
+      '<label class="sw"><input type="checkbox" name="enabled" ' + (isNew || it.enabled ? "checked" : "") + '><span class="tog"></span><span>Enabled <span class="muted">· off = the page keeps its baked settings and its beacons are dropped</span></span></label>' +
+      '<div class="ld-msg muted" style="font-size:12.5px;"></div>' +
+      '<div style="display:flex;gap:8px;justify-content:flex-end;"><button type="button" class="btn" data-close>Cancel</button><button type="submit" class="btn primary">' + (isNew ? "Create" : "Save") + '</button></div></form>');
+    var rulesBox = body.querySelector(".ld-rules");
+    (cfg.rules || []).forEach(function (r) { rulesBox.insertAdjacentHTML("beforeend", ruleRow(r)); });
+    body.querySelector(".ld-rule-add").addEventListener("click", function () { rulesBox.insertAdjacentHTML("beforeend", ruleRow()); });
+    rulesBox.addEventListener("click", function (e) { var x = e.target.closest(".ld-rule-x"); if (x) x.closest(".ld-rule").remove(); });
+    var d = UI.drawer({ title: isNew ? "New lander" : it.name, sub: isNew ? "" : '<span class="mono">' + esc(it.slug) + "</span>", body: body });
+    body.addEventListener("submit", function (e) {
+      e.preventDefault();
+      body.querySelector('[name="rules"]').value = JSON.stringify(collectRules(body));
+      var msg = body.querySelector(".ld-msg"); msg.textContent = "Saving…";
+      UI.post("/landers/save", new FormData(body)).then(function (r) {
+        if (!r.ok) { msg.textContent = r.error || "Couldn't save."; msg.style.color = "var(--err)"; return; }
+        location.href = "/landers?ok=saved#" + r.slug;
+      });
+    });
+  }
+  document.getElementById("ldNew").addEventListener("click", function () { openEditor(null); });
+  document.addEventListener("click", function (e) { var b = e.target.closest(".ld-edit"); if (!b) return; var it = ITEMS.filter(function (x) { return String(x.id) === b.dataset.id; })[0]; if (it) openEditor(it); });
+})();
+</script>
+{% endblock %}

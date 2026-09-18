@@ -52,7 +52,7 @@ for (const [page, sel, step] of [["play", "a.cta", "cta"], ["start", "#ctaBtn", 
   r.timers.forEach(t => t.fn());                       // fire the 0 ms and 3 s timers
   check(page + ": exactly one view beacon", r.sent.filter(s => parse(s).step === "view").length === 1, r.sent.length);
   let v = parse(r.sent[0]);
-  check(page + ": view carries page/source/vid/ttclid/cid", v.page === page && v.source === "Camp_120000_a1111" && v.vid === "vid-1" && v.ttclid === 1 && v.cid === "777", JSON.stringify(v));
+  check(page + ": view carries page/source/vid/ttclid (the value, v7)/cid", v.page === page && v.source === "Camp_120000_a1111" && v.vid === "vid-1" && v.ttclid === "E_C_P_abc" && v.cid === "777", JSON.stringify(v));
   check(page + ": via is sent (empty when not a hand-off)", "via" in v && v.via === "", JSON.stringify(v));
   check(page + ": posts to the dashboard beacon endpoint", r.sent[0].url === "https://adops-manager.onrender.com/t/lp");
   check(page + ": body is text/plain (no CORS preflight)", r.sent[0].blob.type === "text/plain");

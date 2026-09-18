@@ -57,7 +57,10 @@ async function run(page, opts) {
     let r = await run(page, { crypto: goodCrypto });
     const names = r.queue.map(q => q[0]);
     check(page + ": order is identify, page, track", names.slice(0, 3).join(",") === "identify,page,track", names.join(","));
-    check(page + ": first track is ViewContent", r.queue[2] && r.queue[2][1] === "ViewContent");
+    // /play (v6): page → LandingPageView → ViewContent; /start keeps page → ViewContent
+    const tracks = r.queue.filter(q => q[0] === "track").map(q => q[1]);
+    check(page + ": tracks after the page view are " + (page === "play" ? "LandingPageView, ViewContent" : "ViewContent"), tracks.join(",") === (page === "play" ? "LandingPageView,ViewContent" : "ViewContent"), tracks.join(","));
+    check(page + ": CompleteRegistration is never fired from the page (server-side only)", !tracks.includes("CompleteRegistration"));
     const ident = r.queue[0][1] || {};
     check(page + ": identify carries a hashed external_id (64 hex)", /^[0-9a-f]{64}$/.test(ident.external_id || ""), JSON.stringify(ident));
     check(page + ": identify sends nothing we don't have (no email/phone)", !("email" in ident) && !("phone_number" in ident));
@@ -70,14 +73,14 @@ async function run(page, opts) {
     r = await run(page, { crypto: undefined });
     const n2 = r.queue.map(q => q[0]);
     check(page + ": without hashing, no identify is queued", !n2.includes("identify"), n2.join(","));
-    check(page + ": …but page and ViewContent still fire", n2[0] === "page" && n2[1] === "track" && r.queue[1][1] === "ViewContent", n2.join(","));
+    check(page + ": …but page and the landing events still fire", n2[0] === "page" && n2[1] === "track" && r.queue.filter(q => q[0] === "track").map(q => q[1]).includes("ViewContent"), n2.join(","));
 
     // hashing hangs forever: the timer rescues the page view
     const hang = { subtle: { digest: () => new Promise(() => {}) }, randomUUID: goodCrypto.randomUUID };
     r = await run(page, { crypto: hang });
     check(page + ": hashing hangs → nothing sent yet", r.queue.length === 0, r.queue.map(q => q[0]).join(","));
     r.timers.find(t => t.ms === 1500).fn();
-    check(page + ": hashing hangs → timer sends page + ViewContent", r.queue.map(q => q[0]).join(",") === "page,track");
+    check(page + ": hashing hangs → timer sends page + the landing events", r.queue.map(q => q[0]).join(",") === (page === "play" ? "page,track,track" : "page,track"), r.queue.map(q => q[0]).join(","));
   }
   console.log(fails ? `\n${fails} FAILED` : "\nALL PASS");
   process.exit(fails ? 1 : 0);

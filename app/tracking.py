@@ -75,7 +75,7 @@ def _clean(v, n: int) -> str:
 
 def record_click(db: Session, *, source: str, ttclid: str = "", tt_campaign_id: str = "", tt_adgroup_id: str = "",
                  tt_ad_id: str = "", ip: str = "", user_agent: str = "", url: str = "", referrer: str = "",
-                 how: str = "direct") -> models.Click:
+                 how: str = "direct", ttp: str = "", vid: str = "") -> models.Click:
     """Store one click; the advertiser is resolved from the campaign id (exact) or the
     campaign name (what the launcher named it) so P&L and the Events API can pick the
     right account's pixel and token."""
@@ -94,7 +94,7 @@ def record_click(db: Session, *, source: str, ttclid: str = "", tt_campaign_id: 
         if not db.query(models.Click.id).filter_by(click_id=cid).first():
             break
     note_long_ttclid(ttclid, "click")
-    row = models.Click(click_id=cid, source=source, ttclid=_clean(ttclid, TTCLID_MAX), tt_campaign_id=tt_campaign_id,
+    row = models.Click(click_id=cid, source=source, ttclid=_clean(ttclid, TTCLID_MAX), ttp=_clean(ttp, 120), vid=_clean(vid, 64), tt_campaign_id=tt_campaign_id,
                        tt_adgroup_id=_clean(tt_adgroup_id, 40), tt_ad_id=_clean(tt_ad_id, 40), advertiser_id=adv,
                        ip=(ip or "")[:64], user_agent=(user_agent or "")[:300], url=(url or "")[:1000],
                        referrer=(referrer or "")[:500], how=how)

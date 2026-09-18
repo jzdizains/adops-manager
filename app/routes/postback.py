@@ -134,6 +134,53 @@ def _events_pixel_code(db: Session, source: str, settings: dict) -> tuple[str, s
     return token, pixel_code
 
 
+def event_value(event, click, s: dict) -> float:
+    """What the Events API gets as the event's value: the postback's revenue, or — in
+    fixed mode — a set amount (v125: "every event is worth $6"), optionally only when the
+    source or the click's landing URL contains one of the match words (so one lander's
+    conversions can carry a fixed value while the rest report the payout)."""
+    if (s.get("events_value_mode") or "payout") != "fixed":
+        return float(event.revenue or 0)
+    fixed = float(s.get("events_value_fixed") or 0)
+    words = [w.strip().lower() for w in str(s.get("events_value_match") or "").split(",") if w.strip()]
+    if not words:
+        return fixed
+    hay = f"{event.source or ''} {(getattr(click, 'url', '') or '') if click is not None else ''}".lower()
+    return fixed if any(w in hay for w in words) else float(event.revenue or 0)
+
+
+def hash_id(v: str) -> str:
+    """SHA-256 hex of a trimmed, lower-cased value — exactly how the lander's pixel block
+    hashes external_id before identify(), so the server-side event carries the SAME id."""
+    import hashlib
+    v = str(v or "").strip().lower()
+    return hashlib.sha256(v.encode("utf-8")).hexdigest() if v else ""
+
+
+def match_signals(db: Session, event, click) -> dict:
+    """Every match signal we hold for this conversion, without asking the visitor for
+    anything (v126): the click's ttclid, the pixel's _ttp cookie, the lander's anonymous
+    visitor id (hashed → external_id), the real visit's ip + user agent, the page URL and
+    its referrer. From the Click row when the lander runs pass-source.js; from the funnel
+    beacon (LanderEvent by ttclid) when it runs a tracker's script instead."""
+    out = {"ttp": "", "external_id": "", "ip": "", "user_agent": "", "page_url": "", "referrer": ""}
+    if click is not None:
+        out.update(ttp=getattr(click, "ttp", "") or "", external_id=hash_id(getattr(click, "vid", "") or ""),
+                   ip=click.ip or "", user_agent=click.user_agent or "", page_url=click.url or "", referrer=getattr(click, "referrer", "") or "")
+    if (not out["external_id"] or not out["referrer"]) and getattr(event, "ttclid", ""):
+        try:
+            hit = (db.query(models.LanderEvent).filter(models.LanderEvent.ttclid == event.ttclid)
+                   .order_by(models.LanderEvent.id.desc()).first())
+        except Exception:   # noqa: BLE001 — a lookup must never bounce a postback
+            hit = None
+        if hit is not None:
+            if not out["external_id"] and hit.vid:
+                out["external_id"] = hash_id(hit.vid)
+            if not out["referrer"] and getattr(hit, "ref", ""):
+                out["referrer"] = hit.ref
+    return out
+
+
 def _forward_to_tiktok(db: Session, event: models.PostbackEvent, s: dict, click: models.Click | None = None) -> str:
     """Fire the Events API for one stored postback. Returns a status string —
     never raises (a pixel hiccup must not bounce Glitchy's postback)."""
@@ -152,17 +199,20 @@ def _forward_to_tiktok(db: Session, event: models.PostbackEvent, s: dict, click:
         return ("error: no pixel to fire to — set one in Settings → Events API, "
                 "or launch this source once so it can be auto-resolved")
     event_name, _how = event_name_for(db, event.source, s)
+    sig = match_signals(db, event, click)
     try:
         tiktok_api.track_event(
             token, pixel_code,
             event=event_name,
             event_id=event.txn or f"pb{event.id}",
-            ttclid=event.ttclid, value=float(event.revenue or 0),
+            ttclid=event.ttclid, value=event_value(event, click, s),
             currency=(s.get("events_currency") or "USD").strip(),
             test_event_code=(s.get("events_test_code") or "").strip(),
-            ip=(click.ip if click else ""), user_agent=(click.user_agent if click else ""),    # better match rate, like the trackers send
-            page_url=(click.url if click and click.url else page_url_for(db, event.source, s)))
-        return f"sent {event_name}"
+            ip=sig["ip"], user_agent=sig["user_agent"],            # the real visit's, like the trackers send
+            ttp=sig["ttp"], external_id=sig["external_id"],       # the pixel's cookie id + the hashed visitor id the pixel also sent
+            page_url=sig["page_url"] or page_url_for(db, event.source, s), referrer=sig["referrer"])
+        got = ["ttclid"] + [k for k in ("external_id", "ttp", "ip", "user_agent", "referrer") if sig[k]]
+        return f"sent {event_name} · signals: {', '.join(got)}"
     except tiktok_api.TikTokError as e:
         return f"error: code {e.code}: {(e.message or '')[:160]}"
 

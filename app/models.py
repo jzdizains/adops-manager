@@ -538,6 +538,30 @@ class LanderEvent(Base):
     has_ttclid = Column(Boolean, default=False)          # a TikTok click id was on the URL
     campaign_id = Column(String, default="")             # tt_cid / cid when the page had one
     via = Column(String, default="")                     # "continue" when /play was reached through /start's button
+    ttclid = Column(String, default="", index=True)      # v126: the click id itself (a lander in ClickFlare mode has no Click row — this maps ttclid → visitor id)
+    ref = Column(Text, default="")                       # v126: the page's referrer at that step
+    bucket = Column(String, default="")                  # v124 landers: which rule / escape method / age bracket the step used
+    inapp = Column(String, default="")                   # v124 landers: tiktok | instagram | … | "" (a real browser) at that step
+    os = Column(String, default="")                      # v124 landers: ios | android | other
+
+
+class Lander(Base):
+    """A lander built by the dashboard (v124): a template + this row's settings, exported as a
+    static page for the operator's own domain. The page carries the settings baked in and
+    re-reads them live from /t/l/<slug>.json, so offers and rules change without re-uploading.
+    Beacons from the page land in LanderEvent under page = slug."""
+    __tablename__ = "landers"
+
+    id = Column(Integer, primary_key=True)
+    owner_user_id = Column(Integer, nullable=True, index=True, default=ctx.owner_default)
+    slug = Column(String, unique=True, nullable=False, index=True)     # a-z 0-9 -, the page's id everywhere
+    name = Column(String, default="")
+    template = Column(String, default="prelander")                     # see landers.TEMPLATES
+    domain = Column(String, default="")                                # where it is hosted (information only)
+    enabled = Column(Boolean, default=True)
+    config = Column(Text, default="{}")                                # JSON: texts, colours, next, rules, escape, pixel …
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
 
 class Click(Base):
@@ -550,6 +574,8 @@ class Click(Base):
     click_id = Column(String, unique=True, index=True, nullable=False)   # 12 chars, a-z 0-9
     source = Column(String, default="", index=True)       # campaign name (the P&L join key)
     ttclid = Column(String, default="")                   # TikTok click id (Events API)
+    ttp = Column(String, default="")                      # the pixel's _ttp cookie on the lander (v125) — a second Events API identifier
+    vid = Column(String, default="")                      # the lander's stable anonymous visitor id (v126) — hashed → external_id on server-side events
     tt_campaign_id = Column(String, default="")           # __CAMPAIGN_ID__
     tt_adgroup_id = Column(String, default="")            # __AID__
     tt_ad_id = Column(String, default="")                 # __CID__ (creative) / __ADID_V2__

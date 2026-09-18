@@ -1303,3 +1303,6 @@ tr:hover .ctag-add, .ctag-add:focus { opacity: 1; }
 .sl-saved.dirty { color: var(--warn); }
 .sl-resume { display: flex; gap: 12px; align-items: center; margin: 0 0 12px; border-color: var(--accent); }
 .sl-resume .cb-strip { flex: none; }
+/* landers editor (v124) */
+.ld-rule input, .ld-rule select { width: 100%; }
+.ld-form .field input, .ld-form .field select { width: 100%; }

@@ -18,7 +18,7 @@ SIDEBAR = [
     None,                                                   # gap
     ("/super-launcher", "rocket", "Launch", ("/super-launcher", "/campaigns/launch", "/campaigns/result", "/queue")),
     ("/presets", "presets", "Presets", ("/presets",)),
-    ("/creatives", "creatives", "Creatives", ("/creatives", "/spark-codes", "/ad-texts", "/instant-pages", "/lead-forms", "/display-cards")),
+    ("/creatives", "creatives", "Creatives", ("/creatives", "/spark-codes", "/ad-texts", "/instant-pages", "/lead-forms", "/display-cards", "/landers")),
 ]
 FOOTER = [
     ("/jobs", "jobs", "Jobs", ("/jobs",)),
@@ -31,7 +31,7 @@ SECTIONS = {
                ("/monitor?view=system", "System"), ("/appeals", "Appeals")],
     "launch": [("/super-launcher", "Super Launcher"), ("/campaigns/launch", "Single campaign"), ("/queue", "Queue")],
     "creatives": [("/creatives", "Creatives"), ("/spark-codes", "Spark codes"), ("/ad-texts", "Ad texts"),
-                  ("/instant-pages", "Instant pages"), ("/lead-forms", "Lead forms")],
+                  ("/instant-pages", "Instant pages"), ("/lead-forms", "Lead forms"), ("/landers", "Landers")],
     "settings": [("/settings", "Settings"), ("/accounts", "Ad accounts"), ("/pixels", "Pixels"), ("/creators", "Creators"), ("/partners", "Partners"), ("/bc-assets", "Assets"), ("/locations", "Locations"),
                  ("/cookies", "Cookies")],
     "tools": [("/campaigns/source-check", "Source check"), ("/escape-test", "Escape test")],
@@ -39,7 +39,7 @@ SECTIONS = {
 _SECTION_OF = {
     "/monitor": "health", "/issues": "health", "/appeals": "health", "/automation": "health",
     "/super-launcher": "launch", "/campaigns/launch": "launch", "/queue": "launch", "/campaigns/result": "launch",
-    "/creatives": "creatives", "/spark-codes": "creatives", "/ad-texts": "creatives", "/instant-pages": "creatives", "/lead-forms": "creatives",
+    "/creatives": "creatives", "/spark-codes": "creatives", "/ad-texts": "creatives", "/instant-pages": "creatives", "/lead-forms": "creatives", "/landers": "creatives",
     "/settings": "settings", "/accounts": "settings", "/pixels": "settings", "/creators": "settings", "/partners": "settings", "/bc-assets": "settings", "/locations": "settings",
     "/cookies": "settings", "/oauth": "settings",
     "/campaigns/source-check": "tools", "/escape-test": "tools",
@@ -70,6 +70,7 @@ JUMP = [
     ("/ad-texts", "Ad texts", "Build", "copy captions"),
     ("/instant-pages", "Instant pages", "Build", "landing pages tiktok"),
     ("/lead-forms", "Lead forms", "Build", "lead generation forms"),
+    ("/landers", "Landers", "Build", "prelander open in browser escape landing page template export"),
     ("/jobs", "Jobs", "System", "background tasks running"),
     ("/settings", "Settings", "System", "postback pixel events api defaults"),
     ("/settings#security", "Security", "System", "2fa password sessions"),

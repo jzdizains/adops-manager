@@ -165,3 +165,65 @@ they will be used, before anything runs.
 server per user 1.5 s after any change (`launch_draft:u<id>` in the settings table, ≤ 96 KB)
 and offered back as a *Resume* banner on the next visit; it clears itself on launch or
 Discard. Arriving with `?creatives=`, `?spark=`, `?accounts=` or `?bc=` skips the offer.
+
+## Landers (v124)
+
+Creatives › **Landers** builds pages for **your own domains** from templates. A lander is a
+row (`models.Lander`: slug, template, settings JSON); **⬇ Package** exports one self-contained
+`index.html` (+ `robots.txt`) with the settings baked in as `window.LANDER_CFG` and the shared
+runtime (`static/lander.js`) and click script (`static/pass-source.js`) inlined. At open the
+page re-reads `/t/l/<slug>.json` (public, uncached, CORS open) for the *live* part — the next
+URL, the routing rules, the escape method and the pixel event — so those change here without
+re-uploading. Texts, colours and the pixel code are baked: re-download after changing them.
+
+The runtime (`window.L`): in-app browser and platform detection (`L.env`), the ad's ids and a
+stable visitor id (`L.params`), one `sendBeacon` per step to `/t/lp` under the slug (view /
+engaged / continue / escaped / escape_miss / gate / route / cta, with the in-app flag and
+platform — the Landers page shows the last 7 days per page), `L.pixel()` that only fires when a
+template asks (never on paint), rules → URL (`L.route()`: platform, in-app, age bracket,
+country from the edge header when the host sets one, local hours; first match wins, else the
+next URL), and `L.escape()` that tries the chosen escape-test method and, if the page is still
+visible 1.2 s later, continues **in-app to the same URL** — no error screens, no decoys, no
+deep-link traps. `L.age.bracket(year)` / `L.setAge(year)` serve an age step (next template).
+
+Templates so far: **Open-in-browser prelander** — in the TikTok app it offers to open the next
+page in the phone's real browser; in a real browser it continues on the tap. Beacons for a
+slug are accepted only while the lander exists and is enabled (`funnel.accept`).
+
+## Events API › value + `_ttp` (v125)
+
+Settings › Events API gained **Event value**: *the postback's payout* (default) or *a fixed
+amount per event* (e.g. 6.00), optionally only for events whose source name or click
+landing URL contains one of the match words (so one lander's conversions carry a flat value
+while the rest report the payout). The dashboard's forwarder already does what a PHP
+"postback bridge" does — the network's postback arrives, the dashboard POSTs the event to
+`/event/track/` with the click's ttclid, ip and user agent — so no PHP file with a token in
+it is needed on the lander host. `pass-source.js` now also reads the pixel's `_ttp` cookie on
+the lander and registers it with the click; the Events API gets it as a second identifier.
+The conversion event (CompleteRegistration on a registration campaign) is sent **only**
+server-side; the Playful lander fires Page view + LandingPageView + ViewContent on landing
+and ClickButton on the CTA, nothing else.
+
+## Events API › match signals (v126)
+
+Every server-side event now carries every match signal the visit can give without asking
+the visitor for anything: the click's **ttclid**, the pixel's **_ttp** cookie, the lander's
+stable anonymous visitor id hashed as **external_id** (SHA-256 of the trimmed, lower-cased
+id — the same value the page's `ttq.identify()` sends, so the browser and server events
+join into one person), the real visit's **ip** and **user agent**, the **page URL** and its
+**referrer**, and a unique **event_id** (the transaction id). `pass-source.js` mints or reads
+the visitor id (`tmp_vid`, handed over as `?svid=` between pages) and registers it with the
+click; a lander on a tracker's script instead (ClickFlare) gets the visitor id and referrer
+from its funnel beacon, which now carries the ttclid value (lander v7). The P&L "sent" pill
+lists which signals went with each event.
+
+## Events API › on landing page view (v127)
+
+Settings › Events API › **On landing page view**: when on, every lander VIEW beacon with a
+TikTok click id fires a server-side event (default CompleteRegistration, fixed value, the
+pages it applies to as a comma list — `play` for the Playful lander, or a kit lander's slug)
+with the click id, the hashed visitor id, the visit's IP and browser, page URL and referrer;
+one per visitor per page (`event_id = lpv-<page>-<visitor id>`). Sent by one background
+thread through a bounded queue (`app/lpv_events.py`), so the beacon still answers at once.
+The offer's real conversions keep coming through the postback path; TikTok will optimise
+the campaign for visits once this is on.
