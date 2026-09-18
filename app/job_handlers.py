@@ -22,12 +22,24 @@ def _launch(db: Session, p: dict, job: models.Job) -> dict:
     def prog(i, n):
         jobs.progress(db, job, f"{i} of {n}")
 
-    if p.get("pairs"):
-        pairs = [(by_id[str(a)], cid) for a, cid in p["pairs"] if str(a) in by_id]
-        ref = engine.run_batch_assigned(db, pairs, fields, batch_ref=ref, on_progress=prog)
-    elif p.get("spark_pairs"):
-        pairs = [(by_id[str(a)], sid) for a, sid in p["spark_pairs"] if str(a) in by_id]
-        ref = engine.run_batch_assigned_sparks(db, pairs, fields, batch_ref=ref, on_progress=prog)
+    lib_pairs = [(by_id[str(a)], cid) for a, cid in (p.get("pairs") or []) if str(a) in by_id]
+    spark_pairs = [(by_id[str(a)], sid) for a, sid in (p.get("spark_pairs") or []) if str(a) in by_id]
+    if lib_pairs or spark_pairs:
+        # a board launch (v123) can carry both: library creatives on some accounts, spark
+        # posts on the others — one batch, one result page, one progress count
+        total = len(lib_pairs) + len(spark_pairs)
+        ref = ref or engine.error_messages.new_ref()
+        if lib_pairs:
+            ref = engine.run_batch_assigned(db, lib_pairs, fields, batch_ref=ref, on_progress=lambda i, n: prog(i, total))
+        if spark_pairs:
+            ref = engine.run_batch_assigned_sparks(db, spark_pairs, fields, batch_ref=ref,
+                                                   on_progress=lambda i, n: prog(len(lib_pairs) + i, total))
+        if lib_pairs and spark_pairs:
+            # each runner remembers its own recipe; a mixed batch needs both per-account maps
+            # so "Retry failed" relaunches the same creative or post on the same account
+            engine._remember_batch(db, ref, {**fields,
+                                             "_creative_by_account": {str(a.advertiser_id): int(cid) for a, cid in lib_pairs if cid is not None},
+                                             "_spark_by_account": {str(a.advertiser_id): int(sid) for a, sid in spark_pairs if sid is not None}})
     else:
         if not accounts:
             return {"ok": False, "detail": "no matching accounts to launch"}

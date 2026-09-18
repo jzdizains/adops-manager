@@ -91,13 +91,22 @@ def spark_list(request: Request, db: Session = Depends(get_db)):
     })
 
 
+def pick_item(s) -> dict:
+    """One spark code the way the pickers (Super Launcher board, Single campaign) show it."""
+    from ..templating import _ago
+    creator = s.group.name if s.group else ""
+    return {"id": s.id, "name": s.name or s.code[:16], "code": s.code, "creator": creator, "type": (s.media_type or "VIDEO").lower(),
+            "state": "fresh" if s.status == "active" else (s.status or "used"), "thumb": s.thumbnail_url or "",
+            "post_url": s.tiktok_post_url or "", "source": s.source or "", "uses": int(s.use_count or 0),
+            "last_used": _ago(s.last_used_at) if s.last_used_at else "", "added": _ago(s.created_at) if s.created_at else ""}
+
+
 @router.get("/spark-codes/pick.json")
 def pick_json(request: Request, db: Session = Depends(get_db)):
     """The spark picker's data (Super Launcher / Single campaign): every code with its
     creator, type, status and post link. state = fresh (active) | used | all; q = search;
     id = one specific code (to show a pre-selected one)."""
     from fastapi.responses import JSONResponse
-    from ..templating import _ago
     qp = request.query_params
     state = qp.get("state") or "fresh"
     q = (qp.get("q") or "").strip().lower()
@@ -116,10 +125,7 @@ def pick_json(request: Request, db: Session = Depends(get_db)):
         hay = f"{s.name} {s.code} {creator} {s.source}".lower()
         if q and q not in hay:
             continue
-        items.append({"id": s.id, "name": s.name or s.code[:16], "code": s.code, "creator": creator, "type": (s.media_type or "VIDEO").lower(),
-                      "state": "fresh" if s.status == "active" else (s.status or "used"), "thumb": s.thumbnail_url or "",
-                      "post_url": s.tiktok_post_url or "", "source": s.source or "", "uses": int(s.use_count or 0),
-                      "last_used": _ago(s.last_used_at) if s.last_used_at else "", "added": _ago(s.created_at) if s.created_at else ""})
+        items.append(pick_item(s))
     counts = {"fresh": sc.owned(db.query(models.SparkCode), models.SparkCode).filter_by(status="active").count(),
               "used": sc.owned(db.query(models.SparkCode), models.SparkCode).filter(models.SparkCode.status != "active").count()}
     return JSONResponse({"items": items, "counts": counts})
@@ -249,9 +255,14 @@ async def add_bulk(request: Request, db: Session = Depends(get_db)):
     default_source = str(form.get("source") or "").strip()
     rows, bad = parse_bulk(text, default_media)
     if not rows:
-        return RedirectResponse("/spark-codes?err=" + quote(
-            "No codes found. One per line — the auth code alone, or  name | code | video/carousel | post URL | source."), status_code=303)
+        no = "No codes found. One per line — the auth code alone, or  name | code | video/carousel | post URL | source."
+        if request.headers.get("x-requested-with") == "fetch":
+            from fastapi.responses import JSONResponse
+            return JSONResponse({"ok": False, "error": no, "bad": bad[:5], "items": []})
+        return RedirectResponse("/spark-codes?err=" + quote(no), status_code=303)
     existing = {c.code for c in db.query(models.SparkCode.code).all()}
+    wants_json = request.headers.get("x-requested-with") == "fetch"
+    touched: list = []             # rows added or already there — the launcher's paste pop-up puts them on the board
     groups: dict[str, models.SparkCodeGroup] = {}
 
     def group_for(name: str):
@@ -267,12 +278,19 @@ async def add_bulk(request: Request, db: Session = Depends(get_db)):
     for r in rows:
         if r["code"] in existing or r["code"] in seen:
             dupes += 1
+            if wants_json and r["code"] not in seen:
+                seen.add(r["code"])
+                had = sc.owned(db.query(models.SparkCode), models.SparkCode).filter_by(code=r["code"]).first()
+                if had is not None:
+                    touched.append(had)
             continue
         seen.add(r["code"])
         g = group_for(r["group_name"] or default_group)
-        db.add(models.SparkCode(name=r["name"] or r["code"][:12], code=r["code"], media_type=r["media_type"],
-                                tiktok_post_url=r["tiktok_post_url"], source=r["source"] or default_source,
-                                group_id=g.id if g else None, owner_user_id=sc.owner_for_new))
+        row = models.SparkCode(name=r["name"] or r["code"][:12], code=r["code"], media_type=r["media_type"],
+                               tiktok_post_url=r["tiktok_post_url"], source=r["source"] or default_source,
+                               group_id=g.id if g else None, owner_user_id=sc.owner_for_new)
+        db.add(row)
+        touched.append(row)
         added += 1
     db.commit()
     msg = f"added {added} spark code(s)"
@@ -280,6 +298,10 @@ async def add_bulk(request: Request, db: Session = Depends(get_db)):
         msg += f", {dupes} already existed"
     if bad:
         msg += f", {len(bad)} line(s) had no code (" + "; ".join(bad[:3]) + ("…" if len(bad) > 3 else "") + ")"
+    if wants_json:
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"ok": bool(added or dupes), "added": added, "dupes": dupes, "bad": bad[:5], "message": msg,
+                             "items": [pick_item(r) for r in touched]})
     return RedirectResponse(("/spark-codes?ok=" if added else "/spark-codes?err=") + quote(msg), status_code=303)
 
 

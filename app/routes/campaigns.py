@@ -2273,7 +2273,10 @@ def run_batch_assigned(db: Session, pairs: list, base_fields: dict,
     batch_ref = batch_ref or error_messages.new_ref()
     kinds = {c.id: c.kind for c in db.query(models.Creative).filter(models.Creative.id.in_([cid for _, cid in pairs if cid]))} if pairs else {}
     first_kind = next((kinds.get(cid) for _, cid in pairs if cid), None)
-    _remember_batch(db, batch_ref, {**base_fields, "creative_source": "carousel" if first_kind == "carousel" else "library"})
+    # the recipe remembers WHICH creative each account got, so "Retry failed" relaunches
+    # the same one there (v123 — the board's picks are exact, not "next unused")
+    _remember_batch(db, batch_ref, {**base_fields, "creative_source": "carousel" if first_kind == "carousel" else "library",
+                                    "_creative_by_account": {str(a.advertiser_id): int(cid) for a, cid in pairs if cid is not None}})
     pace = _launch_pace(db)
     for i, (acct, cid) in enumerate(pairs):
         if i and pace:
@@ -2545,12 +2548,17 @@ def retry_failed(request: Request, batch_ref: str, db: Session = Depends(get_db)
     if not accounts:
         return RedirectResponse(f"/campaigns/result/{batch_ref}?note=nofail", status_code=303)
     fields["_launched_by"] = fields.get("_launched_by") or sc.owner_for_new
-    by_acct = fields.pop("_spark_by_account", None)
-    if by_acct:      # a profile-video / multi-spark batch: the same post on the same account
+    by_acct = fields.pop("_spark_by_account", None) or {}
+    by_creative = fields.pop("_creative_by_account", None) or {}
+    if by_acct or by_creative:      # an assigned batch (board / profile videos / picked creatives): the same post or creative on the same account
         pairs = [[a.advertiser_id, by_acct[a.advertiser_id]] for a in accounts if a.advertiser_id in by_acct]
-        new_ref = queue_launch(db, f"Retry {len(pairs)} failed account(s) of {batch_ref}",
-                               [p[0] for p in pairs], fields, spark_pairs=pairs)
-        return RedirectResponse(f"/campaigns/result/{new_ref}", status_code=303)
+        lib_pairs = [[a.advertiser_id, by_creative[a.advertiser_id]] for a in accounts
+                     if a.advertiser_id in by_creative and a.advertiser_id not in by_acct]
+        ids = [p[0] for p in lib_pairs] + [p[0] for p in pairs]
+        if ids:
+            new_ref = queue_launch(db, f"Retry {len(ids)} failed account(s) of {batch_ref}", ids, fields,
+                                   pairs=lib_pairs or None, spark_pairs=pairs or None)
+            return RedirectResponse(f"/campaigns/result/{new_ref}", status_code=303)
     new_ref = queue_launch(db, f"Retry {len(accounts)} failed account(s) of {batch_ref}",
                            [a.advertiser_id for a in accounts], fields)
     return RedirectResponse(f"/campaigns/result/{new_ref}", status_code=303)

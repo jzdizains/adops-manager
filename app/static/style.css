@@ -1246,3 +1246,60 @@ tr:hover .ctag-add, .ctag-add:focus { opacity: 1; }
 .pv-foot .pk-hint { font-size: 12px; flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pv-foot-btns { display: flex; gap: 8px; flex: none; margin-left: auto; }
 .pk-phone video { width: 100%; height: 100%; object-fit: contain; background: #000; display: block; }
+
+/* ---- the creative board (v123): what this launch will show, as tiles ------------------- */
+.cb { margin-top: 10px; }
+.cb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 8px; align-content: start; }
+.cb-tile { position: relative; border-radius: 12px; overflow: hidden; background: var(--panel); outline: 1px solid var(--border); cursor: pointer; }
+.cb-tile:hover { outline-color: var(--accent); }
+.cb-tile .cb-thumb { position: relative; aspect-ratio: 9 / 13; background: var(--panel-hover); }
+.cb-tile .cb-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.cb-tile .cb-thumb .cb-ph { position: absolute; inset: 0; display: grid; place-items: center; color: var(--text-dim); font-size: 22px; }
+.cb-src { position: absolute; left: 5px; top: 5px; font-size: 9.5px; font-weight: 700; padding: 1px 6px; border-radius: 999px; background: rgba(0,0,0,.6); color: #fff; max-width: calc(100% - 34px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cb-src.lib { background: var(--accent); }
+.cb-type { position: absolute; left: 5px; bottom: 5px; font-size: 10px; padding: 1px 6px; border-radius: 999px; background: rgba(0,0,0,.55); color: #fff; }
+.cb-no { position: absolute; right: 5px; bottom: 5px; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 6px; background: rgba(0,0,0,.55); color: #fff; }
+.cb-x { position: absolute; right: 4px; top: 4px; width: 22px; height: 22px; border-radius: 7px; border: none; background: rgba(0,0,0,.6); color: #fff; font-size: 12px; cursor: pointer; display: grid; place-items: center; opacity: 0; transition: opacity .12s; }
+.cb-tile:hover .cb-x, .cb-tile:focus-within .cb-x { opacity: 1; }
+.cb-x:hover { background: var(--err); }
+.cb-meta { padding: 5px 8px 6px; }
+.cb-name { font-size: 11.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cb-sub { font-size: 10.5px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cb-add { aspect-ratio: 9 / 13; border: 1.5px dashed var(--border-strong); border-radius: 12px; background: transparent; color: var(--text-soft); cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font: inherit; font-size: 12.5px; font-weight: 600; min-height: 120px; }
+.cb-add:hover, .cb-add.open { border-color: var(--accent); color: var(--accent-ink); background: var(--accent-soft); }
+.cb-add .big { font-size: 26px; line-height: 1; font-weight: 400; }
+.cb-add .muted { font-weight: 500; font-size: 11px; }
+.cb-empty .cb-add { grid-column: span 2; aspect-ratio: auto; padding: 22px 12px; }
+.cb-bar { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; margin-top: 8px; font-size: 12.5px; }
+.cb-bar .muted { font-size: 12px; }
+.cb-bar .linkish { font-size: 12px; }
+.cb-menu { width: 290px; margin: -6px -8px; }
+.cb-menu a, .cb-menu button { display: flex; gap: 10px; align-items: center; width: 100%; text-align: left; padding: 8px 10px; border-radius: 9px; border: none; background: transparent; color: var(--text); font: inherit; font-size: 12.5px; cursor: pointer; }
+.cb-menu a:hover, .cb-menu button:hover { background: var(--panel-hover); text-decoration: none; }
+.cb-menu .ico { width: 26px; height: 26px; border-radius: 8px; background: var(--accent-soft); color: var(--accent-ink); display: grid; place-items: center; font-size: 14px; flex: none; }
+.cb-menu small { display: block; color: var(--text-dim); font-size: 11px; }
+.cb-menu hr { border: none; border-top: 1px solid var(--border-soft); margin: 4px 6px; }
+.cb-strip { display: flex; gap: 4px; flex-wrap: wrap; }
+.cb-strip img, .cb-strip .cb-ph { width: 30px; height: 40px; object-fit: cover; border-radius: 6px; background: var(--panel-hover); display: inline-grid; place-items: center; font-size: 11px; color: var(--text-dim); }
+.cb-strip .more { display: inline-grid; place-items: center; width: 30px; height: 40px; border-radius: 6px; background: var(--panel-hover); font-size: 10.5px; font-weight: 700; color: var(--text-soft); }
+.cb-next { display: flex; gap: 6px; overflow: auto; padding: 2px 0 6px; }
+.cb-next .nx { flex: none; width: 74px; }
+.cb-next .nx .cb-thumb { aspect-ratio: 9 / 13; border-radius: 9px; overflow: hidden; background: var(--panel-hover); position: relative; }
+.cb-next .nx img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.cb-next .nx .cb-name { font-size: 10.5px; margin-top: 3px; }
+/* upload pop-up */
+.up-drop { border: 1.5px dashed var(--border-strong); border-radius: 12px; padding: 26px 14px; text-align: center; cursor: pointer; background: var(--surface-2); }
+.up-drop.over, .up-drop:hover { border-color: var(--accent); background: var(--accent-soft); }
+.up-list { margin-top: 8px; max-height: 180px; overflow: auto; }
+.up-row { display: flex; gap: 10px; align-items: center; font-size: 12.5px; padding: 4px 2px; border-bottom: 1px solid var(--border-soft); }
+.up-row .up-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.up-bar { height: 6px; border-radius: 999px; background: var(--panel-hover); margin-top: 10px; overflow: hidden; }
+.up-fill { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+.pk-prev { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 14px; }
+.pk-prev .pk-phone { max-height: 60vh; }
+@media (max-width: 700px) { .pk-prev { grid-template-columns: 1fr; } }
+/* autosave chip + resume banner */
+.sl-saved { font-size: 11.5px; color: var(--text-dim); white-space: nowrap; }
+.sl-saved.dirty { color: var(--warn); }
+.sl-resume { display: flex; gap: 12px; align-items: center; margin: 0 0 12px; border-color: var(--accent); }
+.sl-resume .cb-strip { flex: none; }

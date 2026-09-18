@@ -138,3 +138,30 @@ shares (BC → Assets → TikTok accounts): every post of every profile is liste
 cover and caption, multi-select, and the picked posts are spread over the accounts
 (accounts per video). Each pick becomes a spark row keyed by the post's item id and runs
 under the profile's own identity on each account — no auth code involved.
+
+## Super Launcher › The creative board (v123)
+
+Step 2 has one "Choose myself…" mode. Everything you pick lands on a board of tiles
+(cover, source badge, type, order number; click = preview), from any source, mixed:
+
+* **Library** — your uploaded videos and carousels (the usual picker).
+* **Profile posts** — the Business Centers' shared profiles, with covers.
+* **Spark codes** — several at once (the spark picker now multi-selects).
+* **Upload videos** — the files go into the library *and* onto the board, with an upload bar.
+* **Paste spark codes** — saved to Spark codes and put on the board (known codes too).
+
+The picks are spread over the selected accounts in the board's order. *Accounts per
+creative* `0` (the default) spreads them evenly — one pick means every account gets it,
+like the old spark mode; `N` gives each pick N accounts and caps the accounts to what the
+picks cover. Library picks go through the library path (preset text, one creative per
+account, reuse allowed), spark and profile picks through the spark path; a mixed board is
+one batch with one result page, and *Retry failed* relaunches the same creative or post on
+the same account (the recipe keeps both per-account maps).
+
+"Fresh videos" / "Fresh carousels" show the next unused items as a strip, in the order
+they will be used, before anything runs.
+
+**Autosave.** The launcher's state (preset, board, accounts, options, step) is saved to the
+server per user 1.5 s after any change (`launch_draft:u<id>` in the settings table, ≤ 96 KB)
+and offered back as a *Resume* banner on the next visit; it clears itself on launch or
+Discard. Arriving with `?creatives=`, `?spark=`, `?accounts=` or `?bc=` skips the offer.

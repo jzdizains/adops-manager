@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import FileResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 from sqlalchemy.orm import Session
@@ -829,6 +829,7 @@ async def upload_creatives(request: Request, db: Session = Depends(get_db)):
     CREATIVES_DIR.mkdir(parents=True, exist_ok=True)
     saved, queued, images, skipped = 0, 0, 0, []
     image_variants = 0
+    new_rows: list = []            # what landed ready to launch (the launcher's upload pop-up selects these)
     for f in files:
         fname = _safe_name(f.filename)
         ext = ("." + fname.rsplit(".", 1)[-1].lower()) if "." in fname else ""
@@ -868,6 +869,8 @@ async def upload_creatives(request: Request, db: Session = Depends(get_db)):
                 skipped.append(why)
             else:
                 images += 1
+                if _row is not None:
+                    new_rows.append(_row)
             continue
         if ext not in ALLOWED_VIDEO:
             skipped.append(f"{fname}: not a video (mp4/mov/webm) or image (png/jpg/webp)")
@@ -912,6 +915,7 @@ async def upload_creatives(request: Request, db: Session = Depends(get_db)):
                 row.source = f"{source_prefix}_{row.id}"
             db.commit()
             saved += 1
+            new_rows.append(row)
             continue
 
         # VARIATIONS: keep ONE source copy, queue N variants for TensorPix
@@ -969,6 +973,13 @@ async def upload_creatives(request: Request, db: Session = Depends(get_db)):
     if skipped:
         q += "&err=" + "+·+".join(skipped)[:300].replace(" ", "+")
     video_side = saved or (queued - image_variants)
+    if _wants_json(request):
+        # the launcher's "Upload here" pop-up: the new rows, picker-shaped, so they go straight onto the board
+        return JSONResponse({"ok": bool(saved or queued or images), "saved": saved, "queued": queued, "images": images,
+                             "skipped": skipped, "message": ", ".join(parts) or "nothing to do",
+                             "items": [{"id": r.id, "name": r.name, "kind": r.kind or "video", "state": "fresh",
+                                        "poster": f"/creatives/{r.id}/poster", "file": f"/creatives/{r.id}/file" if (r.kind or "video") != "carousel" else ""}
+                                       for r in new_rows]})
     return RedirectResponse(f"/creatives?view={'images' if (images and not video_side) else 'library'}&{q}", status_code=303)
 
 

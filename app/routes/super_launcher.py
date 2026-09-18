@@ -4,6 +4,7 @@ accounts via the launch engine."""
 from __future__ import annotations
 
 import json
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -149,6 +150,123 @@ def profile_videos_json(request: Request, db: Session = Depends(get_db)):
                for a in db.query(models.AdAccount).filter(models.AdAccount.owner_bc_id == bc_id)):
         return JSONResponse({"ok": False, "error": "That Business Center has no account in this view.", "profiles": []})
     return JSONResponse(profile_videos.list_for_bc(db, sc, bc_id, refresh=request.query_params.get("refresh") == "1"))
+
+
+# ---------------------------------------------------------------------------
+# the creative board (v123): one list of picks from every source
+# ---------------------------------------------------------------------------
+
+ITEMS_MAX = 200
+
+
+def parse_items(raw) -> list[dict]:
+    """The board's hidden field: a JSON list of {kind: library|spark|profile, …}.
+    Anything unreadable is dropped; at most ITEMS_MAX picks."""
+    try:
+        items = json.loads(raw or "[]")
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(items, list):
+        return []
+    out = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        kind = str(it.get("kind") or "")
+        if kind in ("library", "spark") and str(it.get("id") or "").isdigit():
+            out.append({"kind": kind, "id": int(it["id"])})
+        elif kind == "profile" and str(it.get("item_id") or "").isdigit():
+            out.append({**it, "kind": "profile"})
+    return out[:ITEMS_MAX]
+
+
+def creative_units(db: Session, sc, raw) -> tuple[list[tuple[str, int]], str]:
+    """The board's picks → [("library", creative_id) | ("spark", spark_code_id)] in the
+    picked order, only what this workspace owns (a profile post becomes its spark row).
+    Returns (units, problem)."""
+    from .. import profile_videos
+    items = parse_items(raw)
+    if not items:
+        return [], "Pick at least one creative."
+    lib_ids = [it["id"] for it in items if it["kind"] == "library"]
+    spark_ids = [it["id"] for it in items if it["kind"] == "spark"]
+    profile_items = [it for it in items if it["kind"] == "profile"]
+    lib = {c.id: c for c in sc.owned(db.query(models.Creative), models.Creative).filter(models.Creative.id.in_(lib_ids))} if lib_ids else {}
+    sparks = {s.id: s for s in sc.owned(db.query(models.SparkCode), models.SparkCode).filter(models.SparkCode.id.in_(spark_ids))} if spark_ids else {}
+    by_item = {r.tiktok_item_id: r for r in profile_videos.ensure_spark_rows(db, sc, profile_items)} if profile_items else {}
+    units: list[tuple[str, int]] = []
+    seen: set = set()
+    for it in items:
+        if it["kind"] == "library" and it["id"] in lib:
+            c = lib[it["id"]]
+            if c.status == "processing" or (c.error or ""):
+                continue                                              # still rendering / broken: never launched
+            unit = ("library", c.id)
+        elif it["kind"] == "spark" and it["id"] in sparks:
+            unit = ("spark", it["id"])
+        elif it["kind"] == "profile" and str(it["item_id"]) in by_item:
+            unit = ("spark", by_item[str(it["item_id"])].id)
+        else:
+            continue
+        if unit not in seen:
+            seen.add(unit)
+            units.append(unit)
+    if not units:
+        return [], "None of the picked creatives is in this workspace (or they are still processing)."
+    return units, ""
+
+
+# ---------------------------------------------------------------------------
+# autosave (v123): the launcher's state per user, so closing the tab loses nothing
+# ---------------------------------------------------------------------------
+
+DRAFT_MAX = 96 * 1024
+
+
+def draft_key(sc) -> str:
+    return f"launch_draft:u{sc.me_id if sc.me_id is not None else 0}"
+
+
+def clear_draft(db: Session, sc) -> None:
+    from .. import queries
+    try:
+        queries.set_setting(db, draft_key(sc), "")
+    except Exception:  # noqa: BLE001 — a draft is a convenience, never a reason to fail a launch
+        pass
+
+
+@router.get("/super-launcher/draft.json")
+def draft_get(request: Request, db: Session = Depends(get_db)):
+    from .. import queries, scope as scope_mod
+    sc = scope_mod.for_request(request, db)
+    raw = queries.get_setting(db, draft_key(sc), "")
+    try:
+        state = json.loads(raw) if raw else None
+    except (ValueError, TypeError):
+        state = None
+    return JSONResponse({"ok": True, "draft": state if isinstance(state, dict) else None})
+
+
+@router.post("/super-launcher/draft")
+async def draft_put(request: Request, db: Session = Depends(get_db)):
+    """Save (state=JSON) or discard (clear=1) the viewer's unfinished launch."""
+    from .. import queries, scope as scope_mod
+    sc = scope_mod.for_request(request, db)
+    form = await request.form()
+    if form.get("clear"):
+        clear_draft(db, sc)
+        return JSONResponse({"ok": True, "cleared": True})
+    raw = str(form.get("state") or "")
+    if len(raw) > DRAFT_MAX:
+        return JSONResponse({"ok": False, "error": "draft too large"}, status_code=413)
+    try:
+        state = json.loads(raw)
+    except (ValueError, TypeError):
+        return JSONResponse({"ok": False, "error": "bad state"}, status_code=400)
+    if not isinstance(state, dict):
+        return JSONResponse({"ok": False, "error": "bad state"}, status_code=400)
+    queries.set_setting(db, draft_key(sc), json.dumps(state))
+    return JSONResponse({"ok": True})
 
 
 def account_picker_context(db: Session, accounts: list) -> dict:
@@ -327,11 +445,21 @@ async def launch(request: Request, db: Session = Depends(get_db)):
         profile_sparks = profile_videos.ensure_spark_rows(db, sc, items)
         fields["creative_source"] = "spark"
         fields["ad_text_mode"] = "fixed"
+    # the creative board (v123): library videos/carousels, spark codes and profile posts
+    # picked together, spread over the accounts in the picked order
+    units: list[tuple[str, int]] = []
+    if creative_mode == "items":
+        units, why = creative_units(db, sc, form.get("items"))
+        if why:
+            return RedirectResponse("/super-launcher?err=" + quote(why), status_code=303)
+        if all(k == "spark" for k, _ in units):
+            fields["creative_source"] = "spark"
+            fields["ad_text_mode"] = "fixed"
     use_library = (not spark_id) and creative_mode in ("library", "carousel", "pick")
     # creative → account mapping (library only): 1 creative per N accounts
     per_creative = max(_int("accounts_per_creative", 1), 1)
     creatives_count = len(picked_ids) if creative_mode == "pick" else _int("creatives_count")   # 0 = as many as needed
-    assign_mode = (use_library and (per_creative > 1 or creatives_count > 0)) or bool(profile_sparks)
+    assign_mode = (use_library and (per_creative > 1 or creatives_count > 0)) or bool(profile_sparks) or bool(units)
 
     # the creative→account assignment needs a fixed account list up front, so it
     # always runs inline (not via the retry queue)
@@ -345,6 +473,7 @@ async def launch(request: Request, db: Session = Depends(get_db)):
             from .. import queue_worker
             queue_worker.enqueue(db, template.id, spark_id, auto_count=count,
                                  use_library=use_library, launched_by=sc.owner_for_new)
+            clear_draft(db, sc)
             return RedirectResponse("/queue?ok=queued", status_code=303)
         accounts = eligible_accounts(db, fields.get("account_policy", "new_only"), count, owner_user_id=sc.user_id)
         if not accounts:
@@ -357,6 +486,7 @@ async def launch(request: Request, db: Session = Depends(get_db)):
             from .. import queue_worker
             queue_worker.enqueue(db, template.id, spark_id, advertiser_ids=advertiser_ids,
                                  use_library=use_library, launched_by=sc.owner_for_new)
+            clear_draft(db, sc)
             return RedirectResponse("/queue?ok=queued", status_code=303)
         # preserve the picked order, dedupe
         seen: set = set()
@@ -365,6 +495,22 @@ async def launch(request: Request, db: Session = Depends(get_db)):
                  .filter(models.AdAccount.advertiser_id.in_(ordered)).all()}
         accounts = [by_id[i] for i in ordered if i in by_id]
 
+    if units:
+        # 0 accounts per creative = spread the picks evenly over every selected account
+        # (one pick → every account, like the old spark mode); N = each pick covers N
+        per = _int("accounts_per_creative", 0)
+        if per <= 0:
+            per = max(1, -(-len(accounts) // len(units)))
+        else:
+            accounts = accounts[:len(units) * per]                    # every account gets a creative; none goes without
+        assigned = [(a, units[i // per]) for i, a in enumerate(accounts)]
+        lib_pairs = [[a.advertiser_id, ref_id] for a, (k, ref_id) in assigned if k == "library"]
+        spk_pairs = [[a.advertiser_id, ref_id] for a, (k, ref_id) in assigned if k == "spark"]
+        batch_ref = engine.queue_launch(db, f"Launch {template.name} → {len(assigned)} account(s) · {len(units)} creative(s)",
+                                        [a.advertiser_id for a, _ in assigned], fields,
+                                        pairs=lib_pairs or None, spark_pairs=spk_pairs or None)
+        clear_draft(db, sc)
+        return RedirectResponse(f"/campaigns/result/{batch_ref}", status_code=303)
     if profile_sparks:
         from .. import profile_videos
         accounts = accounts[:len(profile_sparks) * per_creative]     # every account gets a post; none goes without
@@ -396,4 +542,5 @@ async def launch(request: Request, db: Session = Depends(get_db)):
     else:
         batch_ref = engine.queue_launch(db, f"Launch {template.name} → {len(accounts)} account(s)",
                                         [a.advertiser_id for a in accounts], fields)
+    clear_draft(db, sc)
     return RedirectResponse(f"/campaigns/result/{batch_ref}", status_code=303)
