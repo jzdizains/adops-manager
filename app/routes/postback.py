@@ -167,7 +167,7 @@ def match_signals(db: Session, event, click) -> dict:
     if click is not None:
         out.update(ttp=getattr(click, "ttp", "") or "", external_id=hash_id(getattr(click, "vid", "") or ""),
                    ip=click.ip or "", user_agent=click.user_agent or "", page_url=click.url or "", referrer=getattr(click, "referrer", "") or "")
-    if (not out["external_id"] or not out["referrer"]) and getattr(event, "ttclid", ""):
+    if (not out["external_id"] or not out["referrer"] or not out["ip"] or not out["ttp"]) and getattr(event, "ttclid", ""):
         try:
             hit = (db.query(models.LanderEvent).filter(models.LanderEvent.ttclid == event.ttclid)
                    .order_by(models.LanderEvent.id.desc()).first())
@@ -178,6 +178,10 @@ def match_signals(db: Session, event, click) -> dict:
                 out["external_id"] = hash_id(hit.vid)
             if not out["referrer"] and getattr(hit, "ref", ""):
                 out["referrer"] = hit.ref
+            if not out["ip"] and getattr(hit, "ip", ""):
+                out["ip"], out["user_agent"] = hit.ip, getattr(hit, "ua", "") or ""
+            if not out["ttp"] and getattr(hit, "ttp", ""):
+                out["ttp"] = hit.ttp
     return out
 
 

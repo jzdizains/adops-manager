@@ -74,10 +74,11 @@
 
   // ---- funnel beacon ------------------------------------------------------------------
   var sent = {};
+  function ttpCookie() { try { var m = /(?:^|;\s*)_ttp=([^;]+)/.exec(d.cookie || ""); return m ? decodeURIComponent(m[1]).slice(0, 120) : ""; } catch (e) { return ""; } }   // the pixel's own id → a second Events API identifier
   L.track = function (step, extra) {
     if (!HOST || !cfg.slug || sent[step]) return false;
     sent[step] = true;
-    var body = { page: cfg.slug, step: step, source: L.params.source || "", vid: L.params.vid, ttclid: L.params.ttclid || L.params.clid || "", cid: L.params.tt_cid || "", inapp: L.env.inapp || "", os: L.env.os, url: String(location.href || "").slice(0, 900), ref: (d.referrer || "").slice(0, 400) };
+    var body = { page: cfg.slug, step: step, source: L.params.source || "", vid: L.params.vid, ttclid: L.params.ttclid || L.params.clid || "", cid: L.params.tt_cid || "", inapp: L.env.inapp || "", os: L.env.os, url: String(location.href || "").slice(0, 900), ref: (d.referrer || "").slice(0, 400), ttp: ttpCookie() };
     if (extra && typeof extra === "object") { if (extra.via) body.via = String(extra.via); if (extra.bucket) body.bucket = String(extra.bucket).slice(0, 40); }
     try {
       var s = JSON.stringify(body);

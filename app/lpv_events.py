@@ -4,7 +4,8 @@ When a lander's VIEW beacon arrives (/t/lp) and the setting is on for that page,
 server-side Events API event (default CompleteRegistration, a fixed value) is fired for
 the visit, with the same match signals the postback path sends: the TikTok click id, the
 visitor id hashed as external_id, the visit's ip + user agent, the page URL. One event
-per visitor per page (event_id = lpv-<page>-<visitor id>, so TikTok dedupes repeats).
+per VISITOR (event_id = lpv-<visitor id>): a visitor who passes /start and then /play is one
+registration, not two — TikTok dedupes on the id whichever listed page fired first.
 
 Sent from ONE background thread through a bounded queue, so the beacon answers at once and
 a flood cannot pile up threads or memory (over the cap the view is dropped, counted).
@@ -46,7 +47,7 @@ def enqueue(d: dict, ip: str, user_agent: str) -> bool:
         return False
     item = {"page": str(d.get("page") or "")[:40], "source": str(d.get("source") or "")[:200], "vid": str(d.get("vid") or "")[:64],
             "ttclid": str(d.get("ttclid") or "")[:2000], "url": str(d.get("url") or "")[:900], "ref": str(d.get("ref") or "")[:400],
-            "ip": ip or "", "ua": (user_agent or "")[:500]}
+            "ip": ip or "", "ua": (user_agent or "")[:500], "ttp": str(d.get("ttp") or "")[:120]}
     try:
         _q.put_nowait(item)
     except queue.Full:
@@ -104,10 +105,10 @@ def fire(db, item: dict) -> str:
     event = (s.get("lpv_event") or "CompleteRegistration").strip()
     try:
         tiktok_api.track_event(
-            token, pixel_code, event=event, event_id=f"lpv-{item['page']}-{item['vid']}"[:256], ttclid=ttclid,
+            token, pixel_code, event=event, event_id=f"lpv-{item['vid']}"[:256], ttclid=ttclid,
             value=float(s.get("lpv_value") or 0), currency=(s.get("events_currency") or "USD").strip(),
             test_event_code=(s.get("events_test_code") or "").strip(),
-            ip=item["ip"], user_agent=item["ua"], external_id=hash_id(item["vid"]),
+            ip=item["ip"], user_agent=item["ua"], external_id=hash_id(item["vid"]), ttp=item.get("ttp", ""),
             page_url=item["url"] or page_url_for(db, item["source"], s), referrer=item["ref"])
         return f"sent {event}"
     except tiktok_api.TikTokError as e:

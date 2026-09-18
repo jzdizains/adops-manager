@@ -63,7 +63,7 @@ check("hash_id: trim + lower-case + sha256, like the pixel block", pb.hash_id(" 
 class C2:
     def __init__(self, **kw): self.ttp = ""; self.vid = ""; self.ip = ""; self.user_agent = ""; self.url = ""; self.referrer = ""; self.__dict__.update(kw)
 class LE:
-    def __init__(self, vid, ref): self.vid, self.ref = vid, ref
+    def __init__(self, vid, ref, ip="9.9.9.9", ua="UA-beacon", ttp="ttp-b"): self.vid, self.ref, self.ip, self.ua, self.ttp = vid, ref, ip, ua, ttp
 class LEQ:
     hits = []
     def __init__(self, *a): pass
@@ -79,7 +79,7 @@ check("from the Click row: ttp, hashed visitor id, ip, ua, page, referrer", sig 
 LEQ.hits = [LE("vid-9", "https://www.tiktok.com/")]
 ev = Ev(1, "x"); ev.ttclid = "E.C.P.abc"
 sig2 = pb.match_signals(LDB(), ev, None)
-check("no Click row (ClickFlare lander): visitor id + referrer from the funnel beacon by ttclid", sig2["external_id"] == pb.hash_id("vid-9") and sig2["referrer"] == "https://www.tiktok.com/" and sig2["ip"] == "" and sig2["ttp"] == "", sig2)
+check("no Click row (ClickFlare lander): visitor id, referrer, ip + browser from the view beacon by ttclid", sig2["external_id"] == pb.hash_id("vid-9") and sig2["referrer"] == "https://www.tiktok.com/" and sig2["ip"] == "9.9.9.9" and sig2["user_agent"] == "UA-beacon" and sig2["ttp"] == "ttp-b", sig2)
 LEQ.hits = []
 sig3 = pb.match_signals(LDB(), ev, None)
 check("nothing known → empty signals, no crash", all(v == "" for v in sig3.values()))

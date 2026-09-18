@@ -70,7 +70,7 @@ async def lander_beacon(request: Request, db: Session = Depends(get_db)):
             d = {}
     except ValueError:
         d = {}
-    stored, _why = funnel.accept(db, d)
+    stored, _why = funnel.accept(db, d, ip=_ip(request), user_agent=request.headers.get("user-agent", ""))
     if stored:
         db.commit()
         if d.get("step") == "view":

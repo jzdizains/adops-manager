@@ -278,7 +278,7 @@
   </div>
   <div class="card" style="background:var(--surface-2);margin:4px 0 12px;">
     <div class="card-header"><span class="card-title">On landing page view</span><span class="card-meta">a server-side event for every visitor who reaches the lander</span></div>
-    <label class="sw" style="margin-bottom:10px;"><input type="checkbox" name="lpv_enabled" {{ 'checked' if s.lpv_enabled }}><span class="tog"></span><span><b>Fire an event when the lander is viewed</b><span class="muted" style="display:block;font-size:11.5px;">Sent from the server on the page's view beacon, once per visitor per page, with the click id, hashed visitor id, IP, browser and page URL. Needs a TikTok click id on the visit.</span></span></label>
+    <label class="sw" style="margin-bottom:10px;"><input type="checkbox" name="lpv_enabled" {{ 'checked' if s.lpv_enabled }}><span class="tog"></span><span><b>Fire an event when the lander is viewed</b><span class="muted" style="display:block;font-size:11.5px;">Sent from the server on the page's view beacon, once per visitor (a visitor who passes the prelander and the lander counts once), with the click id, hashed visitor id, IP, browser and page URL. Needs a TikTok click id on the visit.</span></span></label>
     <div class="form-row-3">
       <label class="field mb0"><span class="field-label">Event</span><input type="text" name="lpv_event" value="{{ s.lpv_event }}"></label>
       <label class="field mb0"><span class="field-label">Value</span><input type="number" name="lpv_value" value="{{ s.lpv_value }}" min="0" step="0.01"></label>

@@ -68,8 +68,10 @@ def known_slugs(db: Session) -> set:
     return _slugs["set"]
 
 
-def accept(db: Session, d: dict) -> tuple[bool, str]:
-    """Validate + store one beacon. Returns (stored, reason)."""
+def accept(db: Session, d: dict, ip: str = "", user_agent: str = "") -> tuple[bool, str]:
+    """Validate + store one beacon. Returns (stored, reason). ip / user agent (the beacon
+    request's) are kept on VIEW rows only — the Events API match signals for a conversion
+    that comes back through ClickFlare, where no Click row exists."""
     page = str(d.get("page") or "")
     step = str(d.get("step") or "")
     legacy = page in PAGES and step in STEPS and (page, step) in STEP_ORDER
@@ -90,7 +92,9 @@ def accept(db: Session, d: dict) -> tuple[bool, str]:
         via="continue" if str(d.get("via") or "") == "continue" else "",
         bucket=_clean(d.get("bucket"), 40), inapp=_clean(d.get("inapp"), 16), os=_clean(d.get("os"), 8),
         ttclid=_clean(d.get("ttclid"), 2000) if isinstance(d.get("ttclid"), str) and len(d.get("ttclid")) > 1 else "",   # older pages send 1/0
-        ref=_clean(d.get("ref"), 400))
+        ref=_clean(d.get("ref"), 400),
+        ip=(ip or "")[:64] if step == "view" else "", ua=(user_agent or "")[:400] if step == "view" else "",
+        ttp=_clean(d.get("ttp"), 120) if step == "view" else "")
     db.add(row)
     _prune(db)
     return True, ""

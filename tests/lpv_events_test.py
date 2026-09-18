@@ -50,19 +50,19 @@ check("only a VIEW with a visitor id and a click id is wanted", lpv.wanted({"ste
 lpv._ensure_worker = lambda: None          # keep the thread out of the test
 check("enqueue keeps the fields, trimmed, and counts", lpv.enqueue({"step": "view", "vid": "v1", "ttclid": "E.C.P.x", "page": "play", "source": "camp", "url": "https://l/?a=1", "ref": "https://www.tiktok.com/"}, "1.2.3.4", "UA") and lpv.STATS["queued"] == 1 and lpv._q.qsize() == 1)
 item = lpv._q.get()
-check("queued item shape", item["ip"] == "1.2.3.4" and item["ua"] == "UA" and item["url"] == "https://l/?a=1" and item["page"] == "play")
+check("queued item shape", item["ip"] == "1.2.3.4" and item["ttp"] == "" and item["ua"] == "UA" and item["url"] == "https://l/?a=1" and item["page"] == "play")
 old_q = lpv._q; lpv._q = __import__("queue").Queue(maxsize=1)
 lpv.enqueue({"step": "view", "vid": "v1", "ttclid": "E.C.P.x"}, "", ""); ok2 = lpv.enqueue({"step": "view", "vid": "v2", "ttclid": "E.C.P.y"}, "", "")
 check("over the cap: dropped and counted, never blocks", ok2 is False and lpv.STATS["dropped"] == 1)
 lpv._q = old_q
 
 print("-- fire --")
-base = {"page": "play", "source": "camp", "vid": "vid-1", "ttclid": "E.C.P.x", "url": "https://l/", "ref": "https://www.tiktok.com/", "ip": "1.2.3.4", "ua": "UA"}
+base = {"page": "play", "source": "camp", "vid": "vid-1", "ttclid": "E.C.P.x", "url": "https://l/", "ref": "https://www.tiktok.com/", "ip": "1.2.3.4", "ua": "UA", "ttp": "ttp-cookie-1"}
 r = lpv.fire(None, dict(base))
-check("sent: event, fixed value, dedupe id per visitor + page, hashed visitor id, ip, ua, page url, referrer, settings token wins",
-      r == "sent CompleteRegistration" and calls[-1]["event"] == "CompleteRegistration" and calls[-1]["value"] == 6.0 and calls[-1]["event_id"] == "lpv-play-vid-1"
+check("sent: event, fixed value, dedupe id per visitor (same id on /start and /play), hashed visitor id, ip, ua, page url, referrer, settings token wins",
+      r == "sent CompleteRegistration" and calls[-1]["event"] == "CompleteRegistration" and calls[-1]["value"] == 6.0 and calls[-1]["event_id"] == "lpv-vid-1"
       and calls[-1]["external_id"] == hashlib.sha256(b"vid-1").hexdigest() and calls[-1]["ip"] == "1.2.3.4" and calls[-1]["user_agent"] == "UA" and calls[-1]["page_url"] == "https://l/"
-      and calls[-1]["referrer"] == "https://www.tiktok.com/" and calls[-1]["ttclid"] == "E.C.P.x" and calls[-1]["token"] == "tok" and calls[-1]["pixel"] == "PIXEL1", (r, calls[-1]))
+      and calls[-1]["referrer"] == "https://www.tiktok.com/" and calls[-1]["ttclid"] == "E.C.P.x" and calls[-1]["ttp"] == "ttp-cookie-1" and calls[-1]["token"] == "tok" and calls[-1]["pixel"] == "PIXEL1", (r, calls[-1]))
 lpv._settings_cache.clear(); SETTINGS["lpv_pages"] = "open-uk"
 check("page not listed → skipped", lpv.fire(None, dict(base)).startswith("skipped: page"))
 lpv._settings_cache.clear(); SETTINGS["lpv_pages"] = ""
@@ -88,8 +88,9 @@ check("beacons carry the page url + referrer (kit runtime and the tikmobileplay 
 lander = os.environ.get("LANDER_DIR") or os.path.join(os.path.dirname(ROOT), "lander")
 play = os.path.join(lander, "play", "index.html")
 if os.path.exists(play):
-    check("tikmobileplay v8 beacon: ttclid value, referrer, url", 'ttclid: p("ttclid") || 0, ref: (document.referrer || "").slice(0, 400), url: location.href.slice(0, 900)' in read(play) if False else 'url: String(location.href || "").slice(0, 900), cid:' in open(play, encoding="utf-8").read())
-check("STATIC_VERSION bumped", 'STATIC_VERSION = "127"' in read("app/config.py"))
+    ph = open(play, encoding="utf-8").read()
+    check("tikmobileplay v9 beacon: ttclid value, referrer, url, _ttp cookie", 'url: String(location.href || "").slice(0, 900), ttp: (function () {' in ph and '_ttp=([^;]+)' in ph)
+check("STATIC_VERSION bumped", 'STATIC_VERSION = "128"' in read("app/config.py"))
 
 print()
 print("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}")

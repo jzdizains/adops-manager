@@ -223,7 +223,7 @@ Settings › Events API › **On landing page view**: when on, every lander VIEW
 TikTok click id fires a server-side event (default CompleteRegistration, fixed value, the
 pages it applies to as a comma list — `play` for the Playful lander, or a kit lander's slug)
 with the click id, the hashed visitor id, the visit's IP and browser, page URL and referrer;
-one per visitor per page (`event_id = lpv-<page>-<visitor id>`). Sent by one background
+one per visitor (`event_id = lpv-<visitor id>`, so /start → /play is one registration). Sent by one background
 thread through a bounded queue (`app/lpv_events.py`), so the beacon still answers at once.
 The offer's real conversions keep coming through the postback path; TikTok will optimise
 the campaign for visits once this is on.

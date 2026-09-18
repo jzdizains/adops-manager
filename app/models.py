@@ -540,6 +540,9 @@ class LanderEvent(Base):
     via = Column(String, default="")                     # "continue" when /play was reached through /start's button
     ttclid = Column(String, default="", index=True)      # v126: the click id itself (a lander in ClickFlare mode has no Click row — this maps ttclid → visitor id)
     ref = Column(Text, default="")                       # v126: the page's referrer at that step
+    ip = Column(String, default="")                      # v127: the visit's ip + browser (VIEW only) — match signals for conversions that arrive through a tracker (no Click row)
+    ua = Column(String, default="")
+    ttp = Column(String, default="")                     # v128: the pixel's _ttp cookie (VIEW only) — the second TikTok identifier
     bucket = Column(String, default="")                  # v124 landers: which rule / escape method / age bracket the step used
     inapp = Column(String, default="")                   # v124 landers: tiktok | instagram | … | "" (a real browser) at that step
     os = Column(String, default="")                      # v124 landers: ios | android | other
