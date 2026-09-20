@@ -2,16 +2,16 @@
 {% block content %}
 <div class="page-head">
   <div><h1>Instant Pages</h1>
-    <div class="muted">Each page belongs to one ad account. Presets pick a page by <b>name</b> — a launch uses the launching account's own page with that name, so give the same page the same name in every account.</div></div>
+    <div class="muted">One row per page <b>name</b> — that's what presets and launches match on. Star the ones you use, tag them, and open a row to see exactly which accounts have it and which still need a copy.</div></div>
   <div class="actions">
     <form method="post" action="/instant-pages/sync"><button class="btn primary" type="submit">⇄ Sync from accounts</button></form>
   </div>
 </div>
 
-<div class="card" id="templates" style="margin-bottom:12px;">
-  <div class="card-header"><span class="card-title">Page templates</span>
+<details class="card tpl-card" id="templates" style="margin-bottom:12px;" {% if templates and not groups %}open{% endif %}>
+  <summary class="card-header"><span class="card-title">Page templates{% if templates %} <span class="n">{{ templates|length }}</span>{% endif %}</span>
     <span class="card-meta">a one-button page the dashboard builds on any account by driving TikTok's own builder — presets match the page by name</span>
-    <button class="btn sm primary" type="button" id="tplNew" style="margin-left:auto;">+ New template</button></div>
+    <button class="btn sm primary" type="button" id="tplNew" style="margin-left:auto;">+ New template</button></summary>
   {% if not builder_installed %}<div class="flash err" style="font-size:12.5px;">The page builder needs Playwright + Chromium in this deployment (requirements.txt lists it; the build must run <span class="mono">playwright install chromium</span>). Templates can be saved, builds will refuse until then.</div>
   {% elif not builder_ready %}<div class="flash" style="font-size:12.5px;">Builds drive Ads Manager with your web session — paste your ads.tiktok.com cookies on the <a href="/cookies">TikTok Cookies</a> page first.</div>{% endif %}
   {% if templates %}
@@ -45,7 +45,7 @@
     </div></div>
   {% endif %}
   <div class="hint" style="margin-top:10px;">How a build works: the dashboard opens Ads Manager in a headless browser with your web session, does Create → Customize → names the page → sets the call-to-action button → Complete, then checks through TikTok's API that the page now exists on the account. One account at a time, about a minute each, with screenshots kept for every build. If TikTok asks for a verification step, the build stops and tells you — it never tries to pass one.</div>
-</div>
+</details>
 
 <div id="tplFormBox" hidden><div>
   <form method="post" action="/instant-pages/templates/save" id="tplForm">
@@ -65,49 +65,40 @@
   </form>
 </div></div>
 
-<div class="card">
-  {% if pages %}
-  <table class="data">
-    <thead><tr><th>Name</th><th>Page ID</th><th>Owner account</th><th>Status</th><th>Accounts with this name</th><th></th></tr></thead>
+<div class="card" id="pagesCard">
+  <div class="card-header ip-head"><span class="card-title">Pages</span>
+    <span class="card-meta" id="ipCount">{{ groups|length }} page{{ '' if groups|length == 1 else 's' }} · {{ accounts|length }} accounts</span>
+    <button type="button" class="btn sm ghost" style="margin-left:auto;" data-expand="Sync reads every enabled account's custom Instant Pages (drafts included; drafts have no preview link and can't run in ads until published). Clone to… copies a finished page onto other accounts through the page editor's own web session — the flow Ads Manager itself uses to duplicate a page (read → create as a duplicate → optionally re-point the button → publish) — then re-reads the account through TikTok's official API before calling it done. Clone to ONE account first and open it in Ads Manager; then clone to the whole Business Center. Launches match pages by name, and a launch onto an account without the page copies it from an account that has it." data-expand-title="How Sync and Clone work">ⓘ How it works</button>
+  </div>
+  {% if groups %}
+  <div class="filterbar ip-bar">
+    <div class="search-wrap"><input type="search" id="ipSearch" placeholder="Search page, account, page ID or Business Center…" autocomplete="off" title="Press / to search"></div>
+    <button type="button" class="chip" id="ipFav" title="Only your favourites">★ Favourites <span class="n">{{ groups|selectattr('favorite')|list|length }}</span></button>
+    <select id="ipBc" title="Only pages on accounts in this Business Center; coverage then counts that BC's accounts"><option value="">All Business Centers</option>{% for b in bcs %}<option value="{{ b.bc_id }}">{{ b.name }} ({{ b.n }})</option>{% endfor %}</select>
+    <select id="ipStatus"><option value="">Any status</option><option value="published">Published</option><option value="draft">Has drafts</option></select>
+    <select id="ipCov"><option value="">Any coverage</option><option value="full">On every account</option><option value="partial">Missing somewhere</option></select>
+  </div>
+  <div class="ip-tags" id="ipTags" {% if not tags %}hidden{% endif %}>{% for t in tags %}<button type="button" class="chip" data-tag="{{ t.id }}" title="Only pages tagged {{ t.name }}"><span class="ctag ctag-{{ t.color }}" style="margin-left:0;">{{ t.name }}</span> <span class="n">0</span></button>{% endfor %}</div>
+  <div class="table-scroll"><table class="data ip-table" id="ipTable">
+    <thead><tr><th style="width:34px;"></th><th>Page</th><th>Status</th><th>Coverage</th><th class="num"></th></tr></thead>
     <tbody>
-    {% for p in pages %}
-      <tr>
-        <td>{% if p.preview_url %}<a href="{{ p.preview_url }}" target="_blank" rel="noopener">{{ p.name or p.page_id }}</a>{% else %}{{ p.name or p.page_id }}{% endif %}</td>
-        <td class="mono">{{ p.page_id }}</td>
-        <td class="muted">{{ names.get(p.owner_advertiser_id, p.owner_advertiser_id) }}</td>
-        <td><span class="pill {{ 'ok' if p.status == 'PUBLISHED' else 'dim' }}">{{ status_labels.get(p.status, p.status or "—") }}</span></td>
-        <td class="muted">{{ copies.get(p.name, 0) }} of {{ accounts|length }}</td>
-        <td class="num">
-          {% if accounts|length > 1 %}
-          <form method="post" action="/instant-pages/clone" hidden>
-            <input type="hidden" name="page_id" value="{{ p.page_id }}">
-            <input type="hidden" name="from_advertiser_id" value="{{ p.owner_advertiser_id }}">
-            <input type="hidden" name="new_url" value=""><input type="hidden" name="new_text" value="">
-            <select name="to_advertiser_id">
-              {% for a in accounts %}{% if a.advertiser_id != p.owner_advertiser_id %}<option value="{{ a.advertiser_id }}" {{ 'disabled' if a.advertiser_id in have.get(p.name, []) }}>{{ a.advertiser_name or a.advertiser_id }}{{ ' — has it' if a.advertiser_id in have.get(p.name, []) }}</option>{% endif %}{% endfor %}
-            </select>
-          </form>
-          <form method="post" action="/instant-pages/clone-bc" hidden class="ip-bc-form">
-            <input type="hidden" name="page_id" value="{{ p.page_id }}">
-            <input type="hidden" name="from_advertiser_id" value="{{ p.owner_advertiser_id }}">
-            <input type="hidden" name="new_url" value=""><input type="hidden" name="new_text" value="">
-            <select name="bc_id">
-              {% for b in bcs %}{% set n = missing.get(p.name, {}).get(b.bc_id, 0) %}<option value="{{ b.bc_id }}" data-n="{{ n }}">{{ b.name }} — {{ n }} of {{ b.n }} without it</option>{% endfor %}
-            </select>
-          </form>
-          <button class="btn sm ip-clone" type="button" data-name="{{ p.name }}" {{ 'disabled' if not web_ready or p.status != 'PUBLISHED' }} title="{{ ('Copies the finished page onto other accounts through the page editor’s web session (an internal TikTok API — can change without warning).' if p.status == 'PUBLISHED' else 'Publish the page first — only a finished page can be copied.') if web_ready else 'Needs the ads.tiktok.com cookies from the TikTok Cookies page.' }}">⧉ Clone to…</button>
-          {% endif %}
-        </td>
-      </tr>
+    {% for g in groups %}
+    <tr class="ip-row" data-name="{{ g.name }}" data-fav="{{ 1 if g.favorite else 0 }}">
+      <td class="num"><button type="button" class="ip-star{{ ' on' if g.favorite }}" title="{{ 'Favourite — click to remove' if g.favorite else 'Add to favourites' }}">★</button></td>
+      <td><a href="#" class="ip-name ip-open" title="See which accounts have this page">{{ g.name }}</a><span class="ctags">{% for t in g.tags %}<span class="ctag ctag-{{ t.color }}" data-tag="{{ t.id }}">{{ t.name }}<span class="ctag-x" title="Remove tag">×</span></span>{% endfor %}</span><span class="ctag-add" tabindex="0" title="Add a tag">+</span>
+        <div class="muted ip-sub">{{ g.count }} cop{{ 'y' if g.count == 1 else 'ies' }}{% if g.bc_count %} · {{ g.bc_count }} Business Center{{ '' if g.bc_count == 1 else 's' }}{% endif %}</div></td>
+      <td>{% if g.published %}<span class="pill ok">{{ g.published }} published</span>{% endif %}{% if g.drafts %} <span class="pill dim">{{ g.drafts }} draft{{ '' if g.drafts == 1 else 's' }}</span>{% endif %}</td>
+      <td><div class="cov"><div class="cov-bar"><i class="{{ 'full' if accounts and g.count >= accounts|length else '' }}" style="width:{{ ((100 * g.count / accounts|length)|round|int) if accounts else 0 }}%;"></i></div><span>{{ g.count }} of {{ accounts|length }}</span></div></td>
+      <td class="num"><button type="button" class="btn sm ip-accounts">Accounts</button>
+        <button type="button" class="btn sm ip-clone" {{ 'disabled' if not web_ready or not g.source }} title="{{ ('Copies the finished page onto other accounts through the page editor’s web session (an internal TikTok API — can change without warning).' if g.source else 'Publish the page first — only a finished page can be copied.') if web_ready else 'Needs the ads.tiktok.com cookies from the TikTok Cookies page.' }}">⧉ Clone to…</button></td>
+    </tr>
     {% endfor %}
     </tbody>
-  </table>
-  <div class="hint" style="margin-top:10px;">
-    “Sync” reads every enabled account's custom Instant Pages (drafts included; drafts have no preview link and can't run in ads until published).
-“Clone to…” copies a finished page onto other accounts through the page editor's own web session — the flow Ads Manager itself uses to duplicate a page (read → create as a duplicate → optionally re-point the button → publish) — then re-reads the account through TikTok's official API before calling it done. Clone to ONE account first and open it in Ads Manager; then clone to the whole Business Center. Launches match pages by name, and a launch onto an account without the page copies it from an account that has it.
-  </div>
+  </table></div>
+  <div class="empty" id="ipEmpty" hidden><div class="empty-title">No pages match</div>Clear the search or a filter above.</div>
   {% else %}<div class="empty"><div class="empty-title">No instant pages yet</div>Hit “Sync from accounts” to read the custom Instant Pages your ad accounts have. If an account's sync fails, the reason is shown at the top.</div>{% endif %}
 </div>
+<script type="application/json" id="ipData" data-web="{{ 1 if web_ready else 0 }}">{{ page_data|tojson }}</script>
 {% endblock %}
 {% block scripts %}
 <script>
@@ -127,7 +118,7 @@
     var node = box.firstElementChild; box.hidden = false;
     UI.modal({ title: d.id ? "Edit template" : "New page template", body: node, onClose: function () { box.appendChild(node); box.hidden = true; } });
   }
-  var nb = document.getElementById("tplNew"); if (nb) nb.addEventListener("click", function () { openForm(); });
+  var nb = document.getElementById("tplNew"); if (nb) nb.addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); openForm(); });
   document.addEventListener("click", function (e) {
     var ed = e.target.closest(".tpl-edit"); if (ed) { openForm(ed.dataset); return; }
     var bb = e.target.closest(".tpl-build"); if (!bb || bb.disabled) return;
@@ -143,21 +134,7 @@
         UI.confirm({ title: "Build “" + bb.dataset.name + "” on " + n + " account(s) in " + name + "?", text: "The dashboard drives Ads Manager with your web session, one account at a time (about a minute each). You can stop it from Jobs; you'll get a notification with per-account results and screenshots.", ok: "Build on all" }).then(function (y) { if (!y) return; sb.value = bsel.value; go.disabled = true; go.textContent = "Queuing…"; bc.submit(); }); }); }
   });
 
-  document.addEventListener("click", function (e) {
-    var b = e.target.closest(".ip-clone"); if (!b || b.disabled) return;
-    var f = b.parentElement.querySelector('form[action="/instant-pages/clone"]'), sel = f.querySelector("select");
-    var fb = b.parentElement.querySelector(".ip-bc-form"), selb = fb && fb.querySelector("select");
-    var linkBlock = '<div style="font-weight:700;margin:12px 0 6px;">Button link <span class="muted" style="font-weight:500;">(optional)</span></div><input type="url" data-url placeholder="Leave empty to keep the page’s own link" style="width:100%;"><input type="text" data-text placeholder="New button text (optional)" style="width:100%;margin-top:6px;"><div class="hint" style="margin-top:4px;">Re-points every link on the copy; the copy is read back and only published once the new link is in it.</div>';
-    var bcBlock = selb && selb.options.length ? '<div style="font-weight:700;margin:12px 0 6px;">…or every account in a Business Center</div><div style="display:flex;gap:6px;"><select data-bc style="flex:1;">' + selb.innerHTML + '</select><button type="button" class="btn sm" data-bc-go>Clone to all</button></div><div class="hint" style="margin-top:6px;">Only accounts that don\'t already have a page with this name; runs in the background, one account at a time, and stops the moment the session is dead.</div>' : '';
-    var p = UI.popover(b, '<div style="font-weight:700;margin-bottom:6px;">Clone “' + UI.esc(b.dataset.name) + '” to</div><div style="display:flex;gap:6px;"><select style="flex:1;">' + sel.innerHTML + '</select><button type="button" class="btn sm primary">Clone (test)</button></div><div class="hint" style="margin-top:6px;">One account first — open the copy in Ads Manager and check it before cloning everywhere.</div>' + linkBlock + bcBlock, { alignRight: true });
-    function carry(form) { form.querySelector('[name="new_url"]').value = p.querySelector("[data-url]").value.trim(); form.querySelector('[name="new_text"]').value = p.querySelector("[data-text]").value.trim(); }
-    p.querySelector(".primary").addEventListener("click", function () { sel.value = p.querySelector("select").value; carry(f); this.disabled = true; this.textContent = "Cloning…"; f.submit(); });
-    var go = p.querySelector("[data-bc-go]"), bsel = p.querySelector("[data-bc]");
-    function refresh() { if (!go) return; var n = parseInt(bsel.selectedOptions[0].dataset.n || "0", 10); go.disabled = !n; go.textContent = n ? "Clone to all (" + n + ")" : "All have it"; }
-    if (go) { bsel.addEventListener("change", refresh); refresh();
-      go.addEventListener("click", function () { var n = parseInt(bsel.selectedOptions[0].dataset.n || "0", 10); var name = bsel.selectedOptions[0].textContent.split(" — ")[0];
-        UI.confirm({ title: "Clone “" + b.dataset.name + "” to " + n + " account(s) in " + name + "?", text: "Through the page editor's web session, one account at a time with a pause; each copy is published and verified. You'll get a notification with per-account results.", ok: "Clone to all" }).then(function (y) { if (!y) return; selb.value = bsel.value; carry(fb); go.disabled = true; go.textContent = "Queuing…"; fb.submit(); }); }); }
-  });
 })();
 </script>
+<script src="/static/instant-pages.js?v={{ STATIC_V }}"></script>
 {% endblock %}

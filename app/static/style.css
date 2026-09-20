@@ -1306,3 +1306,35 @@ tr:hover .ctag-add, .ctag-add:focus { opacity: 1; }
 /* landers editor (v124) */
 .ld-rule input, .ld-rule select { width: 100%; }
 .ld-form .field input, .ld-form .field select { width: 100%; }
+/* Instant Pages (v132): one row per page name, search + filters, favourites, tags, accounts drawer */
+details.card > summary { list-style: none; cursor: pointer; }
+details.card > summary::-webkit-details-marker { display: none; }
+details.card > summary .card-title::before { content: "▸ "; color: var(--text-dim); }
+details.card[open] > summary .card-title::before { content: "▾ "; }
+details.card > summary .card-title .n { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); font-weight: 500; }
+.ip-bar { margin: 10px 0 8px; }
+.ip-tags { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 10px; }
+.ip-table td { vertical-align: middle; }
+.ip-name { font-weight: 700; color: var(--text); text-decoration: none; }
+.ip-name:hover { text-decoration: underline; }
+.ip-sub { font-size: 11px; margin-top: 3px; }
+.ip-star { background: none; border: 0; font-size: 17px; line-height: 1; color: var(--text-dim); cursor: pointer; padding: 2px 4px; opacity: .45; }
+.ip-star:hover, .ip-star.on { opacity: 1; }
+.ip-star.on { color: #f5b301; }
+.cov { display: flex; align-items: center; gap: 10px; min-width: 190px; }
+.cov-bar { width: 110px; height: 6px; border-radius: 3px; background: var(--raised); overflow: hidden; flex: none; }
+.cov-bar i { display: block; height: 100%; background: var(--accent); transition: width .2s; }
+.cov-bar i.full { background: var(--ok); }
+.cov span { font-size: 12px; color: var(--text-soft); white-space: nowrap; }
+.ipd-tools { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.ipd-tools input { flex: 1; }
+.ipd-bc { margin-bottom: 14px; }
+.ipd-bch { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border-soft); margin-bottom: 4px; }
+.ipd-row { display: flex; align-items: center; gap: 8px; padding: 6px 4px; border-radius: 6px; font-size: 12.5px; }
+.ipd-row:hover { background: var(--panel-hover); }
+.ipd-row.miss { color: var(--text-soft); }
+.ipd-dot { width: 16px; text-align: center; color: var(--ok); flex: none; }
+.ipd-row.miss .ipd-dot { color: var(--text-dim); }
+.ipd-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ipd-id { font-size: 11px; color: var(--text-dim); }
+.ipd-row a { font-size: 11.5px; white-space: nowrap; }

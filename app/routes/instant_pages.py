@@ -9,6 +9,7 @@ stop working without notice.
 """
 from __future__ import annotations
 
+import json
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, Request
@@ -57,40 +58,93 @@ def sync_account(db: Session, acct: models.AdAccount) -> int:
     return len(seen)
 
 
+def _mark_owner(sc) -> int | None:
+    """Whose favourites/tags a view uses: the workspace in view, else the logged-in user
+    (the super admin on "Everyone" keeps their own marks)."""
+    return sc.user_id if sc.user_id is not None else sc.me_id
+
+
+def _marks_for(db: Session, owner: int | None) -> dict[str, dict]:
+    from .. import instant_pages_view as ipv
+    if owner is None:
+        return {}
+    return {m.page_name: {"favorite": bool(m.favorite), "tag_ids": ipv.parse_tag_ids(m.tag_ids)}
+            for m in db.query(models.InstantPageMark).filter(models.InstantPageMark.owner_user_id == owner)}
+
+
 @router.get("/instant-pages")
 def page(request: Request, db: Session = Depends(get_db)):
-    from .. import scope as scope_mod
+    from .. import scope as scope_mod, instant_pages_view as ipv, tags as tags_mod
     sc = scope_mod.for_request(request, db)
     pages = [p for p in db.query(models.InstantPage).order_by(models.InstantPage.name, models.InstantPage.owner_advertiser_id).all() if sc.allows(p.owner_advertiser_id)]
     accounts = [a for a in queries.enabled_accounts(db) if sc.allows(a.advertiser_id)]
-    names = {a.advertiser_id: a.advertiser_name for a in accounts}
-    # the same name across accounts = one preset-usable page; count copies per name
-    copies: dict[str, int] = {}
-    have: dict[str, set] = {}                      # page name → accounts that already hold it
-    for p in pages:
-        copies[p.name] = copies.get(p.name, 0) + 1
-        have.setdefault(p.name, set()).add(p.owner_advertiser_id)
-    # Business Centers (in view) with how many of their accounts still LACK each page name
     bc_names = {b.bc_id: (b.name or b.bc_id) for b in db.query(models.BusinessCenter).all()}
+    owner = _mark_owner(sc)
+    tags = tags_mod.all_tags(db, sc.user_id)
+    grouped = ipv.group_pages(pages, accounts, bc_names, _marks_for(db, owner), {t["id"]: t for t in tags})
+    have: dict[str, set] = {g["name"]: {c["adv"] for c in g["copies"]} for g in grouped["groups"]}
     by_bc: dict[str, list] = {}
     for a in accounts:
         if a.owner_bc_id:
             by_bc.setdefault(a.owner_bc_id, []).append(a.advertiser_id)
-    bcs = sorted(({"bc_id": k, "name": bc_names.get(k, k), "n": len(v)} for k, v in by_bc.items()), key=lambda b: b["name"].lower())
-    missing = {name: {bc: sum(1 for aid in ids if aid not in have.get(name, set())) for bc, ids in by_bc.items()} for name in have}
+    bcs = [b for b in grouped["bcs"] if b["bc_id"]]          # the template builder's BC choices
     # page templates (this workspace) with coverage: how many enabled accounts already hold a page of that name
     from .. import instant_page_builder as ipb
     templates = sc.owned(db.query(models.PageTemplate), models.PageTemplate).order_by(models.PageTemplate.name).all()
     tpl_cov = {t.id: sum(1 for a in accounts if a.advertiser_id in have.get(t.name, set())) for t in templates}
     tpl_missing = {t.id: {bc: sum(1 for aid in ids if aid not in have.get(t.name, set())) for bc, ids in by_bc.items()} for t in templates}
     return render(request, "instant_pages.html", {
-        "pages": pages, "accounts": accounts, "names": names, "title": "Instant Pages",
-        "copies": copies, "have": have, "status_labels": STATUS_LABELS, "bcs": bcs, "missing": missing,
+        "groups": grouped["groups"], "page_data": ipv.page_json(grouped), "tags": tags, "accounts": accounts,
+        "title": "Instant Pages", "status_labels": STATUS_LABELS, "bcs": bcs,
         "templates": templates, "tpl_cov": tpl_cov, "tpl_missing": tpl_missing, "shots": recent_shots(db, sc),
         "builder_ready": ipb.available() and bool(spark_web_api.load_cookies()), "builder_installed": ipb.available(),
         "web_ready": bool(spark_web_api.load_cookies()),
         "ok": request.query_params.get("ok", ""), "err": request.query_params.get("err", ""),
     })
+
+
+@router.post("/instant-pages/mark")
+async def mark(request: Request, db: Session = Depends(get_db)):
+    """Favourite / tag a page NAME for this workspace (fetch; answers JSON so the row
+    updates in place). Fields: name; favorite=1|0 to set the star; tag_id + on=1|0 to
+    put a tag on or take it off."""
+    from fastapi.responses import JSONResponse
+    from .. import scope as scope_mod, instant_pages_view as ipv, tags as tags_mod
+    from ..database import safe_commit
+    form = await request.form()
+    name = str(form.get("name") or "").strip()[:200]
+    if not name:
+        return JSONResponse({"ok": False, "error": "Which page?"}, status_code=400)
+    sc = scope_mod.for_request(request, db)
+    owner = _mark_owner(sc)
+    if owner is None:
+        return JSONResponse({"ok": False, "error": "No workspace to save this in."}, status_code=400)
+    row = (db.query(models.InstantPageMark)
+           .filter(models.InstantPageMark.owner_user_id == owner, models.InstantPageMark.page_name == name).first())
+    if row is None:
+        row = models.InstantPageMark(owner_user_id=owner, page_name=name, favorite=False, tag_ids="[]")
+        db.add(row)
+    if form.get("favorite") is not None:
+        row.favorite = str(form.get("favorite")) in ("1", "true", "on", "yes")
+    tag_ids = ipv.parse_tag_ids(row.tag_ids)
+    if form.get("tag_id") is not None:
+        try:
+            tid = int(form.get("tag_id") or 0)
+        except (TypeError, ValueError):
+            tid = 0
+        if not tid or tags_mod.get_in_view(db, tid, sc.user_id) is None:
+            return JSONResponse({"ok": False, "error": "That tag isn't in this workspace."}, status_code=404)
+        on = str(form.get("on") or "1") in ("1", "true", "on", "yes")
+        if on and tid not in tag_ids:
+            tag_ids.append(tid)
+        if not on:
+            tag_ids = [t for t in tag_ids if t != tid]
+        row.tag_ids = json.dumps(tag_ids)
+    if not safe_commit(db):
+        return JSONResponse({"ok": False, "error": "The dashboard is busy for a moment — try again."}, status_code=503)
+    by_id = {t["id"]: t for t in tags_mod.all_tags(db, sc.user_id)}
+    return JSONResponse({"ok": True, "name": name, "favorite": bool(row.favorite),
+                         "tags": [by_id[t] for t in tag_ids if t in by_id]})
 
 
 @router.post("/instant-pages/sync")

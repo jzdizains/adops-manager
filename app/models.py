@@ -405,6 +405,22 @@ class InstantPage(Base):
     created_at = Column(DateTime, default=utcnow)
 
 
+class InstantPageMark(Base):
+    """Favourite + tags on an Instant Page NAME (v132). The name is the unit presets and
+    launches use — one name = one logical page across every account — so that is what
+    gets starred and tagged, per workspace (like campaign tags). tag_ids: JSON list of
+    Tag ids; a tag deleted elsewhere is simply ignored when read."""
+    __tablename__ = "instant_page_marks"
+    __table_args__ = (UniqueConstraint("owner_user_id", "page_name", name="uq_ip_mark"),)
+
+    id = Column(Integer, primary_key=True)
+    owner_user_id = Column(Integer, nullable=True, index=True, default=ctx.owner_default)
+    page_name = Column(String, nullable=False, index=True)
+    favorite = Column(Boolean, default=False)
+    tag_ids = Column(Text, default="[]")
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+
 class LeadForm(Base):
     __tablename__ = "lead_forms"
 
