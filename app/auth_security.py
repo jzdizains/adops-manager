@@ -305,9 +305,14 @@ def access_log(db: Session, limit: int = 60) -> list[dict]:
 
 
 def touch_seen(db: Session, user, ip: str, ua: str) -> None:
-    """Called on requests: keeps last_seen / last_ip / last_ua, at most every 5 min."""
+    """Called on requests: keeps last_seen / last_ip / last_ua, at most every 5 min.
+
+    This runs on EVERY logged-in request, so its write must never take a page
+    down: if SQLite's one writer is busy (a sweep mid-write), skip the update —
+    it's only 'last active', and the page renders from reads either way."""
     now = _now()
     if user.last_seen_at and (now - user.last_seen_at) < timedelta(minutes=5) and user.last_ip == ip:
         return
     user.last_seen_at, user.last_ip, user.last_ua = now, ip[:64], (ua or "")[:500]
-    db.commit()
+    from .database import safe_commit
+    safe_commit(db)

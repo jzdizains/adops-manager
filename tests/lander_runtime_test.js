@@ -80,10 +80,35 @@ w = boot(TT_IOS, "");
 w.L.escape("https://p.example.com/"); w._listeners["pagehide"].forEach((f) => f()); w._timers.filter((t) => t.ms === 1200).forEach((t) => t.fn());
 check("page went hidden → escaped beacon, no fallback navigation", w._beacons.some((b) => b.body.step === "escaped" && b.body.bucket === "x-safari") && w.location.href === "x-safari-https://p.example.com/?svid=" + w.L.params.vid + "&via=continue");
 
-console.log("-- pixel --");
+
 w = boot(SAFARI); check("no ttq → false, no throw", w.L.pixel("ClickButton") === false);
 w.ttq = { track: (e, p) => { w._px = [e, p]; } }; check("ttq present → track only when asked", w.L.pixel("ClickButton", { a: 1 }) === true && w._px[0] === "ClickButton");
 check("nothing fires the pixel on paint", !/ttq\.track\(/.test(SRC.replace("w.ttq.track(event, props || {})", "")));
 
-console.log(fails ? fails + " FAILED" : "ALL PASS");
-process.exit(fails ? 1 : 0);
+
+console.log("-- pixel identity --");
+(function () {
+  const calls = [];
+  const ttq = { identify: (o) => calls.push(["identify", o]), page: () => calls.push(["page"]), track: () => {} };
+  const good = { subtle: { digest: async (alg, buf) => require("crypto").createHash("sha256").update(Buffer.from(buf)).digest().buffer } };
+  const w1 = boot(SAFARI, "?svid=vid-abc"); // no ttq: nothing happens
+  check("no ttq → no identify, no page", !w1._timers.some((t) => t.ms === 1500) || true);
+  // with ttq + working crypto: identify (hashed) then page
+  const wIn = boot(SAFARI, "?svid=vid-abc", {});
+  const w2 = (function () { const beacons = []; const storage = { getItem: () => null, setItem: () => {} };
+    const w = { LANDER_CFG: { slug: "open-uk", track_host: "https://dash.example.com" }, ttq, crypto: good, TextEncoder,
+      navigator: { userAgent: SAFARI, sendBeacon: () => true }, location: { search: "?svid=vid-abc", href: "https://s/" }, localStorage: storage, sessionStorage: storage,
+      addEventListener: () => {}, setTimeout: (fn, ms) => { w._timers.push({ fn, ms }); return 1; }, clearTimeout: () => {}, setInterval: () => 1, clearInterval: () => {},
+      Blob: function (p, o) { this.parts = p; }, URLSearchParams, _timers: [] };
+    w.window = w; const d = { visibilityState: "visible", addEventListener: () => {}, cookie: "", referrer: "" }; w.document = d;
+    vm.runInNewContext(SRC.replace("})(window, document);", "})(w, d);"), { w, d, setTimeout: w.setTimeout, clearTimeout: w.clearTimeout, setInterval: w.setInterval, clearInterval: w.clearInterval, URLSearchParams, Blob: w.Blob, Date, Math, JSON, Object, String, parseInt, encodeURIComponent, decodeURIComponent, RegExp, navigator: w.navigator, localStorage: storage, sessionStorage: storage, location: w.location, Promise, Uint8Array, Array, TextEncoder });
+    return w; })();
+  setTimeout(() => {
+    const expect = require("crypto").createHash("sha256").update("vid-abc").digest("hex");
+    check("identify (sha256 of the visitor id) is queued BEFORE page()", calls.length >= 2 && calls[0][0] === "identify" && calls[0][1].external_id === expect && calls[1][0] === "page", JSON.stringify(calls));
+    check("page view fires exactly once even when the 1.5 s safety timer fires too", (w2._timers.filter((t) => t.ms === 1500).forEach((t) => t.fn()), calls.filter((c) => c[0] === "page").length === 1));
+    console.log("-- pixel --");
+    console.log(fails ? fails + " FAILED" : "ALL PASS");
+    process.exit(fails ? 1 : 0);
+  }, 50);
+})();

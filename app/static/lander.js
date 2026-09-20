@@ -95,6 +95,27 @@
   })();
   L.track("view", { via: L.params.via || "" });
 
+  // ---- pixel identity: hashed visitor id BEFORE the page view (Advanced Matching) --------------
+  // The template's pixel snippet loads ttq but does not call page(); this does, right after
+  // identify() resolves — so the page view and every later event carry the same external_id
+  // the server events send. If hashing is unavailable or slow (>1.5 s), the page view goes anyway.
+  function sha256(str) {
+    try {
+      if (!(w.crypto && w.crypto.subtle && w.crypto.subtle.digest && w.TextEncoder)) return Promise.resolve(null);
+      return w.crypto.subtle.digest("SHA-256", new w.TextEncoder().encode(String(str).trim().toLowerCase())).then(function (buf) {
+        return Array.prototype.map.call(new Uint8Array(buf), function (b) { return ("0" + b.toString(16)).slice(-2); }).join("");
+      }).catch(function () { return null; });
+    } catch (e) { return Promise.resolve(null); }
+  }
+  L.hash = sha256;
+  (function pixelIdentify() {
+    if (!w.ttq || cfg.pixel_page === false) return;
+    var fired = false;
+    function pageView() { if (fired) return; fired = true; try { w.ttq.page(); } catch (e) {} }
+    sha256(L.params.vid).then(function (h) { if (h) { try { w.ttq.identify({ external_id: h }); } catch (e) {} } pageView(); }, pageView);
+    setTimeout(pageView, 1500);
+  })();
+
   // ---- pixel: real actions only ----------------------------------------------------------
   L.pixel = function (event, props) {
     try { if (w.ttq && typeof w.ttq.track === "function" && event) { w.ttq.track(event, props || {}); return true; } } catch (e) {}

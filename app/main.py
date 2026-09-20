@@ -133,7 +133,21 @@ async def require_login(request: Request, call_next):
             # expired session logs this device out. The lookup runs OFF the event loop
             # (a locked SQLite file must never stall every other user's request) and
             # is remembered for a few seconds per session so pollers don't hit the DB.
-            user = await run_in_threadpool(_auth_user, request, sess.get("uid"), sess.get("fp"), sec.client_ip(request), request.headers.get("user-agent", ""))
+            # resolving the user is a READ (WAL lets it run while a sweep writes); on the
+            # rare moment the file is briefly exclusive (a checkpoint), retry once, then
+            # serve a short "busy, retry" instead of a bare 500 — never log the user out
+            # over a transient lock.
+            from sqlalchemy.exc import OperationalError as _OpErr
+            try:
+                user = await run_in_threadpool(_auth_user, request, sess.get("uid"), sess.get("fp"), sec.client_ip(request), request.headers.get("user-agent", ""))
+            except _OpErr:
+                try:
+                    await run_in_threadpool(_time.sleep, 0.2)
+                    user = await run_in_threadpool(_auth_user, request, sess.get("uid"), sess.get("fp"), sec.client_ip(request), request.headers.get("user-agent", ""))
+                except _OpErr:
+                    from fastapi.responses import PlainTextResponse
+                    return PlainTextResponse("The dashboard is busy for a moment — refreshing…", status_code=503,
+                                             headers={"Retry-After": "2", "Refresh": "2"})
             if user is None or _time.time() - float(sess.get("at") or 0) > config.SESSION_MAX_AGE_S:
                 sess.clear()
                 return RedirectResponse(f"{config.LOGIN_PATH}?err=expired", status_code=303)

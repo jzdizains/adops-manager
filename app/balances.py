@@ -103,8 +103,9 @@ def sync_bc_balances(db: Session) -> int:
             updated += 1
         except tiktok_api.TikTokError as e:
             note_finance_refusal(db, bc.bc_id, e.message)
-            continue
-    db.commit()
+        # commit per BC — SQLite has one writer, and holding it open across the NEXT
+        # BC's network call is what locks every page out. Release it each round.
+        db.commit()
     return updated
 
 
@@ -158,14 +159,16 @@ def sync_account_balances(db: Session) -> int:
                 if bal is not None:
                     acct.balance = bal
                     updated += 1
+            db.commit()   # commit this page before fetching the next — never hold the
+            #               one writer open across the next network call
             total_pages = int((data.get("page_info", {}) or {}).get("total_page", 1) or 1)
             if page >= total_pages:
                 break
             page += 1
         _time.sleep(0.15)
-    db.commit()
     queries.set_setting(db, "balance_report", _json.dumps({
         "updated": updated, "errors": errors[:10]}))
+    db.commit()
     return updated
 
 

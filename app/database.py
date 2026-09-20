@@ -138,6 +138,31 @@ def get_db():
         db.close()
 
 
+def safe_commit(db) -> bool:
+    """Commit, but never let a transient 'database is locked' become a 500.
+
+    SQLite has ONE writer. When the background sweep is mid-write, a request's
+    own small write (recording last-seen, marking a job seen, minting a settings
+    row) can hit the busy timeout and raise OperationalError. Under WAL the page's
+    READS still succeed, so the right thing is to drop the cosmetic/deferrable
+    write and let the page render — not to take the whole page down. Returns True
+    if the commit landed, False if it was rolled back because the DB was busy.
+    Any other error is re-raised (a real bug must still surface)."""
+    from sqlalchemy.exc import OperationalError
+    try:
+        db.commit()
+        return True
+    except OperationalError as exc:  # "database is locked" / "busy"
+        msg = str(getattr(exc, "orig", exc)).lower()
+        if "lock" in msg or "busy" in msg:
+            try:
+                db.rollback()
+            except Exception:  # noqa: BLE001
+                pass
+            return False
+        raise
+
+
 def init_db():
     from . import models  # noqa: F401 — register all models on Base
 

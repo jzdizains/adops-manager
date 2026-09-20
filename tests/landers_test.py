@@ -83,7 +83,7 @@ check("texts are escaped in the markup and the baked JSON can't close the script
       "&lt;/script&gt;" in html and "</script><script>alert(1)" not in html.split("window.LANDER_CFG")[1].split("</script>")[0] and "<\\/script>" in html)
 check("no pixel code → no pixel block", "analytics.tiktok.com" not in html and "ttq.load" not in html)
 html_px = kit.build_html(Lander(slug="open-uk", config=json.dumps(cfg)), "https://dash.example.com")
-check("pixel code → base code + page(), the event only on the tap (in the runtime call, not on paint)", "ttq.load('D9I34CBC'); ttq.page();" in html_px and "L.pixel(cfg.pixel_event" in html_px and html_px.count("ttq.track(") == 1)
+check("pixel code → base code; page() comes from the runtime after identify(); the event only on the tap", "ttq.load('D9I34CBC');" in html_px and "ttq.load('D9I34CBC'); ttq.page();" not in html_px and "w.ttq.identify({ external_id: h })" in html_px and "L.pixel(cfg.pixel_event" in html_px and html_px.count("ttq.track(") == 1)
 check("honest page: in a real browser it continues; in-app it escapes via L.escape; never a fake error / decoy / deep-link trap",
       "if (L.env.inapp) { L.escape(to); } else {" in html and "snssdk" not in html and "loading error" not in html.lower() and "popped" not in html)
 check("theme + accent applied", 'data-theme="light"' in html and "--accent:#123abc" in html)
@@ -118,7 +118,7 @@ check("model: Lander table, LanderEvent bucket/inapp/os", "class Lander(Base):" 
 check("editor: rules rows, escape selects, pixel, live/baked split explained", "function ruleRow(r)" in th and 'name="escape_android"' in th and 'name="pixel_event"' in th and "re-download after changing" in th and "live — changes apply without re-uploading" in th)
 check("runtime: env detection, live config with budget, beacon, pixel only on demand, rules, escape with in-app fallback (no fake error), age brackets",
       "L.detect = env" in js and "live_budget_ms" in js and "/t/lp" in js and "L.pixel = function" in js and "L.match = function" in js and "escape_miss" in js and "L.age = {" in js and "fake" not in js.lower().replace("never a fake error", ""))
-check("STATIC_VERSION bumped", 'STATIC_VERSION = "128"' in read("app/config.py"))
+check("STATIC_VERSION bumped", 'STATIC_VERSION = "129"' in read("app/config.py"))
 
 print()
 print("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}")

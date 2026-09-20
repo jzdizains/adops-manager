@@ -46,7 +46,12 @@ def jobs_data(request: Request, db: Session = Depends(get_db)):
                .order_by(models.Job.id).all())
     done_count = db.query(func.count(models.Job.id)).filter(models.Job.status.in_(("done", "error", "cancelled"))).scalar() or 0
     if items or more:
-        db.commit()      # only a write when something was marked seen — every tab polls this, and SQLite has one writer
+        # only a write when something was marked seen — every tab polls this, and
+        # SQLite has one writer. If it's busy, don't 500 the poller: leave those jobs
+        # unseen (they surface on the next poll) and return what we have.
+        from ..database import safe_commit
+        if not safe_commit(db):
+            items, more = [], 0
     return JSONResponse({"done": items, "more": more, "done_count": done_count,
                          "running": [{"id": j.id, "kind": j.kind, "title": j.title, "status": j.status,
                                       "progress": j.progress or ""} for j in running]})

@@ -18,6 +18,7 @@ import re
 import json
 import secrets
 
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from . import models
@@ -181,8 +182,11 @@ def get_settings(db: Session, user_id: int | None = None) -> dict:
         if not merged["postback_key"]:
             merged["postback_key"] = secrets.token_hex(16)
             from . import queries
+            from .database import safe_commit
             queries.upsert_setting(db, KEY, json.dumps({**gdata, "postback_key": merged["postback_key"]}))
-            db.commit()
+            # if the one writer is busy, don't 500 the page: return the key in memory,
+            # it persists on the next call that gets the lock
+            safe_commit(db)
         return merged
     udata = _load(db, user_key(user_id))
     if udata is None:
@@ -193,7 +197,12 @@ def get_settings(db: Session, user_id: int | None = None) -> dict:
     merged.update({k: v for k, v in udata.items() if k in USER_KEYS})
     if not merged["postback_key"]:
         merged["postback_key"] = secrets.token_hex(16)
-        save_settings(db, merged, user_id=user_id, global_too=False)
+        try:
+            save_settings(db, merged, user_id=user_id, global_too=False)
+        except OperationalError as exc:  # one busy writer must not 500 a page load
+            if "lock" not in str(getattr(exc, "orig", exc)).lower() and "busy" not in str(getattr(exc, "orig", exc)).lower():
+                raise
+            db.rollback()   # key stays in memory this request; persists on the next
     return merged
 
 

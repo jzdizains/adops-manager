@@ -122,7 +122,7 @@ if os.path.exists(play):
     ph = open(play, encoding="utf-8").read()
     first = ph.split("function firstEvents()")[1][:600]
     check("on landing: Page view + LandingPageView (+ ViewContent), after identify", "ttq.page();" in first and 'ttq.track("LandingPageView"' in first and "viewContent();" in first)
-    check("CompleteRegistration is never called from the page", "completeRegistration()" not in ph.replace("window.ttEvents.completeRegistration() stays available", ""))
+    check("browser CompleteRegistration on view (v10) shares the server event id lpv-<visitor id>, value 6", 'ttq.track("CompleteRegistration", { contents: contentsFull(), value: REG_VALUE' in ph and '{ event_id: "lpv-" + visitorId() }' in ph and "var REG_VALUE = 6;" in ph)
     check("beacon (v7) carries the ttclid value and the referrer", 'ttclid: p("ttclid") || 0, ref: (document.referrer || "").slice(0, 400)' in ph)
 else:
     print("SKIP lander files not found (set LANDER_DIR)")
