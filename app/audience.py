@@ -51,6 +51,7 @@ ALL_DIMS = list(DIMS) + [HOUR]
 KEEP_DAYS = 45              # stored history
 REGION_REFRESH_DAYS = 7
 CALL_GAP = 0.12             # seconds between TikTok calls — rate-limit courtesy at 286 accounts
+CHECKPOINT_KEY = "audience_sync_checkpoint"   # {"run": <days key>, "done": [advertiser ids]} while a run is in flight
 
 
 def _now() -> datetime:
@@ -82,12 +83,31 @@ def default_days(today: date | None = None) -> dict[str, list[str]]:
     return {"hours": [t.isoformat(), d1, d2], "audience": [d1, d2]}
 
 
+STORE_BATCH = 500           # rows per INSERT — the peak memory of a store is ONE batch of plain dicts
+
+
 def _store(db: Session, acct: models.AdAccount, day: str, dim: str, rows: list[dict],
            cfg: dict | None = None) -> int:
-    """Replace this account's rows for (day, dim) with the report's rows."""
-    db.query(models.AudienceStat).filter_by(advertiser_id=acct.advertiser_id, date=day, dim=dim).delete()
+    """Replace this account's rows for (day, dim) with the report's rows.
+
+    Memory (v131): rows are written as plain dicts through one executemany INSERT
+    per STORE_BATCH — never one ORM object per row. The old version put every row
+    into the session as an ORM object and, with autoflush off, held ALL of an account-day's rows (up to
+    nine reports × 20,000 rows) as pending ORM objects until the commit at the end
+    of the account-day; a big account was a ~300 MB burst that killed the 512 MB
+    instance at the same minute after every boot. Now the peak is one batch.
+
+    Locks: commits at the end, so the one SQLite writer is released before the
+    NEXT report's network call (it used to be held across all nine)."""
+    from sqlalchemy import insert
+    db.query(models.AudienceStat).filter_by(advertiser_id=acct.advertiser_id, date=day, dim=dim) \
+        .delete(synchronize_session=False)
     n = 0
     seen: set[tuple[str, str]] = set()
+    batch: list[dict] = []
+    stmt = insert(models.AudienceStat)
+    now = _now()
+    adv = acct.advertiser_id
     for r in rows:
         d = r.get("dimensions") or {}
         m = r.get("metrics") or {}
@@ -108,12 +128,18 @@ def _store(db: Session, acct: models.AdAccount, day: str, dim: str, rows: list[d
         if (cid, key) in seen:
             continue
         seen.add((cid, key))
-        db.add(models.AudienceStat(
-            advertiser_id=acct.advertiser_id, campaign_id=cid, campaign_name=str(m.get("campaign_name") or "")[:200],
-            date=day, dim=dim, key=key[:120], label=label[:120],
-            spend=_f(m, "spend"), impressions=_i(m, "impressions"), clicks=_i(m, "clicks"),
-            conversions=_i(m, "conversion"), reach=_i(m, "reach"), synced_at=_now()))
+        batch.append({
+            "advertiser_id": adv, "campaign_id": cid, "campaign_name": str(m.get("campaign_name") or "")[:200],
+            "date": day, "dim": dim, "key": key[:120], "label": label[:120],
+            "spend": _f(m, "spend"), "impressions": _i(m, "impressions"), "clicks": _i(m, "clicks"),
+            "conversions": _i(m, "conversion"), "reach": _i(m, "reach"), "synced_at": now})
         n += 1
+        if len(batch) >= STORE_BATCH:
+            db.execute(stmt, batch)
+            batch = []
+    if batch:
+        db.execute(stmt, batch)
+    db.commit()
     return n
 
 
@@ -136,10 +162,10 @@ def sync_account_day(db: Session, acct: models.AdAccount, day: str, *, hours: bo
                 tok, acct.advertiser_id, dimensions=cfg["dims"] + ["campaign_id"],
                 metrics=BASE_METRICS + ["reach", "campaign_name"], start_date=day, end_date=day)
             out["calls"] += 1
-            out["rows"] += _store(db, acct, day, "age_gender", rows, cfg)
-            if not rows:
+            stored = _store(db, acct, day, "age_gender", rows, cfg)
+            out["rows"] += stored
+            if not stored:
                 out["skipped"] = True
-                db.commit()
                 return out
             for dim, cfg in DIMS.items():
                 if dim == "age_gender":
@@ -179,11 +205,27 @@ def sync(db: Session, days: dict[str, list[str]] | None = None, should_stop=None
     hour_days, aud_days = list(days.get("hours") or []), list(days.get("audience") or [])
     all_days = sorted(set(hour_days) | set(aud_days), reverse=True)
     stats = {"accounts": len(accounts), "ok": 0, "failed": 0, "rows": 0, "calls": 0, "stopped": False,
-             "errors": []}
+             "errors": [], "resumed": 0}
+    # Checkpoint (v131): the run over 100+ accounts takes long; if the process is
+    # restarted mid-way (deploy, out-of-memory), the next run of the SAME days
+    # resumes after the accounts already done instead of starting from the first
+    # account again — which is how one run kept restarting from scratch forever.
+    run_key = json.dumps({"hours": sorted(hour_days), "audience": sorted(aud_days), "hot": bool(hot_only)}, sort_keys=True)
+    done: set[str] = set()
+    try:
+        ck = json.loads(queries.get_setting(db, CHECKPOINT_KEY, "") or "{}")
+        if ck.get("run") == run_key:
+            done = set(str(x) for x in (ck.get("done") or []))
+    except (ValueError, TypeError):
+        done = set()
     for i, acct in enumerate(accounts, 1):
         if should_stop and should_stop():
             stats["stopped"] = True
             break
+        if acct.advertiser_id in done:
+            stats["resumed"] += 1
+            stats["ok"] += 1
+            continue
         if on_progress and (i == 1 or i % 5 == 0 or i == len(accounts)):
             on_progress(f"{i} of {len(accounts)} accounts")
         failed = False
@@ -199,6 +241,10 @@ def sync(db: Session, days: dict[str, list[str]] | None = None, should_stop=None
                                             "name": acct.advertiser_name or acct.advertiser_id, "error": r["error"]})
                 break
         stats["failed" if failed else "ok"] += 1
+        done.add(acct.advertiser_id)
+        queries.set_setting(db, CHECKPOINT_KEY, json.dumps({"run": run_key, "done": sorted(done)}))
+    if not stats["stopped"]:
+        queries.set_setting(db, CHECKPOINT_KEY, "")      # finished: the next run starts clean
     have_names = db.query(func.count(models.RegionName.id)).scalar() or 0
     if not hot_only or not have_names:    # weekly names + pruning ride on the daily full run (names: also when empty)
         refresh_region_names(db, accounts[0] if accounts else None, candidates=accounts[1:3])

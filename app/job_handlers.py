@@ -351,6 +351,7 @@ def _audience_sync(db: Session, p: dict, job: models.Job) -> dict:
                                        f"({r['rows']} rows stored)", "href": "/audience"}
     return {"ok": r["failed"] == 0,
             "detail": f"{r['rows']} breakdown rows from {r['ok']} account(s) in {r['calls']} calls"
+                      + (f" (resumed — {r['resumed']} already done before a restart)" if r.get("resumed") else "")
                       + (f" — {r['failed']} account(s) failed: " + "; ".join(e["name"] + ": " + e["error"][:60] for e in r["errors"][:3]) if r["failed"] else ""),
             "href": "/audience"}
 
