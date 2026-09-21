@@ -100,10 +100,31 @@ hrows = [{"dimensions": {"campaign_id": "c1", "stat_time_hour": "2026-09-20 14:0
 n2 = audience._store(db2, Acct(2), "2026-09-20", audience.HOUR, hrows)
 check("hour rows: key is the hour number; unparsable stamp skipped", n2 == 1 and db2.batches[0][0]["key"] == "14", (n2, db2.batches))
 
+print("-- streaming: a report is consumed page by page (peak = one page) --")
+# _Sink fed in pages must dedup ACROSS pages and hold only the current batch
+db3 = FakeDB()
+sink = audience._Sink(db3, Acct(3), "2026-09-19", "age_gender", audience.DIMS["age_gender"])
+page = [{"dimensions": {"campaign_id": "c1", "age": "AGE_25_34", "gender": "MALE"}, "metrics": {"spend": "1"}}]
+sink.add(page); sink.add(page)     # same row on two pages → stored once (cross-page dedup)
+sink.add([{"dimensions": {"campaign_id": "c2", "age": "AGE_18_24", "gender": "FEMALE"}, "metrics": {"spend": "2"}}])
+total = sink.finish()
+check("cross-page dedup; delete once up front; one commit at finish", total == 2 and db3.deletes[0]["dim"] == "age_gender" and db3.commits == 1, (total, db3.commits))
+big = [{"dimensions": {"campaign_id": f"c{i}", "age": "AGE_25_34", "gender": "MALE"}, "metrics": {}} for i in range(600)]
+db4 = FakeDB(); s4 = audience._Sink(db4, Acct(4), "2026-09-19", "age_gender", audience.DIMS["age_gender"])
+s4.add(big); mid = len(db4.batches)     # a 600-row page already flushed one 500 batch before finish
+s4.finish()
+check("a page flushes at STORE_BATCH, so RAM never holds more than one batch", mid == 1 and [len(b) for b in db4.batches] == [500, 100], [len(b) for b in db4.batches])
+
 src = open(os.path.join(ROOT, "app", "audience.py"), encoding="utf-8").read()
-store_src = src.split("def _store(")[1].split("\ndef ")[0]
-check("source: _store never uses db.add", "db.add(" not in store_src)
-check("source: the no-delivery short-circuit keys off the STORED count", "stored = _store(db, acct, day, \"age_gender\", rows, cfg)" in src and "if not stored:" in src)
+sink_src = src.split("class _Sink")[1].split("\ndef _store(")[0]
+tk = open(os.path.join(ROOT, "app", "tiktok_api.py"), encoding="utf-8").read()
+check("source: the sink never uses db.add (no per-row ORM objects)", "db.add(" not in sink_src and "self.db.execute(self.stmt" in sink_src)
+check("source: reports stream into the sink via on_page (no full report in RAM)",
+      "on_page=sink.add" in src and "sink.finish()" in src and "def get_report_pages(" in tk and "if on_page is not None:" in tk and "on_page(rows)" in tk)
+check("source: the no-delivery short-circuit keys off the STORED count", 'stored = sink.finish()' in src and "if not stored:" in src)
+check("source: audience job records its own peak RSS (it runs in the jobs worker, not the sweep)", '"peak_mb"' in src and 'source="mem"' in src)
+bg = open(os.path.join(ROOT, "app", "background.py"), encoding="utf-8").read()
+check("source: the sweep tags peak RSS with the step and logs a 'mem' line when high", "peak[\"mb\"], peak[\"step\"]" in bg and 'source="mem"' in bg and "MEM_WATCH_MB" in bg)
 
 print("-- sync(): checkpoint per account, resume after a restart --")
 class Killed(BaseException):

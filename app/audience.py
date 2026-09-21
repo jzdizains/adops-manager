@@ -58,6 +58,18 @@ def _now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def _rss_mb() -> float:
+    """Resident memory in MB (Linux), for the job's own peak-memory breadcrumb."""
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    return round(int(line.split()[1]) / 1024, 1)
+    except OSError:
+        pass
+    return 0.0
+
+
 def _f(m: dict, k: str) -> float:
     try:
         v = m.get(k)
@@ -86,61 +98,75 @@ def default_days(today: date | None = None) -> dict[str, list[str]]:
 STORE_BATCH = 500           # rows per INSERT — the peak memory of a store is ONE batch of plain dicts
 
 
+class _Sink:
+    """Streams one report into audience_stats without ever holding the whole report.
+
+    Memory (v131 → v132): the report is consumed PAGE BY PAGE (get_report_pages'
+    on_page), each page written as plain dicts through executemany INSERTs of
+    STORE_BATCH — never one ORM object per row, and never the whole report in RAM.
+    Old paths held all of an account-day's rows (nine reports × up to 20k rows) as
+    pending ORM objects until one commit — a ~300 MB burst that OOM-killed the 512 MB
+    instance every sweep. Peak is now one page + one batch.
+
+    Locks: one commit at the end of the report, so the single SQLite writer is
+    released before the next report's network call."""
+    def __init__(self, db, acct, day, dim, cfg=None):
+        from sqlalchemy import insert
+        self.db, self.day, self.dim, self.cfg = db, day, dim, cfg
+        self.adv = acct.advertiser_id
+        self.now = _now()
+        self.stmt = insert(models.AudienceStat)
+        self.seen: set[tuple[str, str]] = set()
+        self.batch: list[dict] = []
+        self.n = 0
+        db.query(models.AudienceStat).filter_by(advertiser_id=self.adv, date=day, dim=dim) \
+            .delete(synchronize_session=False)
+
+    def add(self, rows) -> None:
+        for r in rows:
+            d = r.get("dimensions") or {}
+            m = r.get("metrics") or {}
+            cid = str(d.get("campaign_id") or "")
+            if not cid:
+                continue
+            if self.dim == HOUR:
+                stamp = str(d.get("stat_time_hour") or "")      # "2026-09-06 14:00:00"
+                try:
+                    key = str(int(stamp[11:13]))
+                except ValueError:
+                    continue
+                label = ""
+            else:
+                parts = [str(d.get(x) if d.get(x) is not None else "") for x in self.cfg["dims"]]
+                key = "|".join(parts)
+                label = str(m.get(self.cfg.get("label_metric", ""), "") or "") if self.cfg.get("label_metric") else ""
+            if (cid, key) in self.seen:
+                continue
+            self.seen.add((cid, key))
+            self.batch.append({
+                "advertiser_id": self.adv, "campaign_id": cid, "campaign_name": str(m.get("campaign_name") or "")[:200],
+                "date": self.day, "dim": self.dim, "key": key[:120], "label": label[:120],
+                "spend": _f(m, "spend"), "impressions": _i(m, "impressions"), "clicks": _i(m, "clicks"),
+                "conversions": _i(m, "conversion"), "reach": _i(m, "reach"), "synced_at": self.now})
+            self.n += 1
+            if len(self.batch) >= STORE_BATCH:
+                self.db.execute(self.stmt, self.batch)
+                self.batch = []
+
+    def finish(self) -> int:
+        if self.batch:
+            self.db.execute(self.stmt, self.batch)
+            self.batch = []
+        self.db.commit()
+        return self.n
+
+
 def _store(db: Session, acct: models.AdAccount, day: str, dim: str, rows: list[dict],
            cfg: dict | None = None) -> int:
-    """Replace this account's rows for (day, dim) with the report's rows.
-
-    Memory (v131): rows are written as plain dicts through one executemany INSERT
-    per STORE_BATCH — never one ORM object per row. The old version put every row
-    into the session as an ORM object and, with autoflush off, held ALL of an account-day's rows (up to
-    nine reports × 20,000 rows) as pending ORM objects until the commit at the end
-    of the account-day; a big account was a ~300 MB burst that killed the 512 MB
-    instance at the same minute after every boot. Now the peak is one batch.
-
-    Locks: commits at the end, so the one SQLite writer is released before the
-    NEXT report's network call (it used to be held across all nine)."""
-    from sqlalchemy import insert
-    db.query(models.AudienceStat).filter_by(advertiser_id=acct.advertiser_id, date=day, dim=dim) \
-        .delete(synchronize_session=False)
-    n = 0
-    seen: set[tuple[str, str]] = set()
-    batch: list[dict] = []
-    stmt = insert(models.AudienceStat)
-    now = _now()
-    adv = acct.advertiser_id
-    for r in rows:
-        d = r.get("dimensions") or {}
-        m = r.get("metrics") or {}
-        cid = str(d.get("campaign_id") or "")
-        if not cid:
-            continue
-        if dim == HOUR:
-            stamp = str(d.get("stat_time_hour") or "")          # "2026-09-06 14:00:00"
-            try:
-                key = str(int(stamp[11:13]))
-            except ValueError:
-                continue
-            label = ""
-        else:
-            parts = [str(d.get(x) if d.get(x) is not None else "") for x in cfg["dims"]]
-            key = "|".join(parts)
-            label = str(m.get(cfg.get("label_metric", ""), "") or "") if cfg.get("label_metric") else ""
-        if (cid, key) in seen:
-            continue
-        seen.add((cid, key))
-        batch.append({
-            "advertiser_id": adv, "campaign_id": cid, "campaign_name": str(m.get("campaign_name") or "")[:200],
-            "date": day, "dim": dim, "key": key[:120], "label": label[:120],
-            "spend": _f(m, "spend"), "impressions": _i(m, "impressions"), "clicks": _i(m, "clicks"),
-            "conversions": _i(m, "conversion"), "reach": _i(m, "reach"), "synced_at": now})
-        n += 1
-        if len(batch) >= STORE_BATCH:
-            db.execute(stmt, batch)
-            batch = []
-    if batch:
-        db.execute(stmt, batch)
-    db.commit()
-    return n
+    """Replace this account's rows for (day, dim) — for a report already in hand."""
+    sink = _Sink(db, acct, day, dim, cfg)
+    sink.add(rows)
+    return sink.finish()
 
 
 def sync_account_day(db: Session, acct: models.AdAccount, day: str, *, hours: bool, audience: bool,
@@ -150,19 +176,21 @@ def sync_account_day(db: Session, acct: models.AdAccount, day: str, *, hours: bo
     tok = acct.access_token
     try:
         if hours:
-            rows = tiktok_api.get_hourly_report(tok, acct.advertiser_id, metrics=BASE_METRICS + ["campaign_name"], day=day)
+            sink = _Sink(db, acct, day, HOUR)
+            tiktok_api.get_hourly_report(tok, acct.advertiser_id, metrics=BASE_METRICS + ["campaign_name"], day=day, on_page=sink.add)
             out["calls"] += 1
-            out["rows"] += _store(db, acct, day, HOUR, rows)
+            out["rows"] += sink.finish()
             time.sleep(CALL_GAP)
         if audience:
             # age × gender first: an empty answer means no delivery that day →
             # the other seven queries would be empty too, so they are skipped.
             cfg = DIMS["age_gender"]
-            rows = tiktok_api.get_audience_report(
+            sink = _Sink(db, acct, day, "age_gender", cfg)
+            tiktok_api.get_audience_report(
                 tok, acct.advertiser_id, dimensions=cfg["dims"] + ["campaign_id"],
-                metrics=BASE_METRICS + ["reach", "campaign_name"], start_date=day, end_date=day)
+                metrics=BASE_METRICS + ["reach", "campaign_name"], start_date=day, end_date=day, on_page=sink.add)
             out["calls"] += 1
-            stored = _store(db, acct, day, "age_gender", rows, cfg)
+            stored = sink.finish()
             out["rows"] += stored
             if not stored:
                 out["skipped"] = True
@@ -175,11 +203,12 @@ def sync_account_day(db: Session, acct: models.AdAccount, day: str, *, hours: bo
                 time.sleep(CALL_GAP)
                 metrics = BASE_METRICS + ["campaign_name"] + (["reach"] if cfg["reach"] else []) \
                     + ([cfg["label_metric"]] if cfg.get("label_metric") else [])
-                rows = tiktok_api.get_audience_report(
+                sink = _Sink(db, acct, day, dim, cfg)
+                tiktok_api.get_audience_report(
                     tok, acct.advertiser_id, dimensions=cfg["dims"] + ["campaign_id"],
-                    metrics=metrics, start_date=day, end_date=day)
+                    metrics=metrics, start_date=day, end_date=day, on_page=sink.add)
                 out["calls"] += 1
-                out["rows"] += _store(db, acct, day, dim, rows, cfg)
+                out["rows"] += sink.finish()
         db.commit()
     except tiktok_api.TikTokError as e:
         db.rollback()
@@ -241,8 +270,16 @@ def sync(db: Session, days: dict[str, list[str]] | None = None, should_stop=None
                                             "name": acct.advertiser_name or acct.advertiser_id, "error": r["error"]})
                 break
         stats["failed" if failed else "ok"] += 1
+        mb = _rss_mb()
+        if mb > stats.get("peak_mb", 0):
+            stats["peak_mb"], stats["peak_acct"] = mb, (acct.advertiser_name or acct.advertiser_id)
         done.add(acct.advertiser_id)
         queries.set_setting(db, CHECKPOINT_KEY, json.dumps({"run": run_key, "done": sorted(done)}))
+    if stats.get("peak_mb", 0) >= 360:      # this job runs in the jobs worker, not the sweep — it records its own peak
+        try:
+            queries.log(db, f"audience sync memory peaked at {stats['peak_mb']:.0f} MB (account {stats.get('peak_acct','?')}, limit 512)", level="warning", source="mem")
+        except Exception:  # noqa: BLE001
+            pass
     if not stats["stopped"]:
         queries.set_setting(db, CHECKPOINT_KEY, "")      # finished: the next run starts clean
     have_names = db.query(func.count(models.RegionName.id)).scalar() or 0

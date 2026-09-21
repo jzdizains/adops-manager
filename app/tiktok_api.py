@@ -1301,10 +1301,16 @@ REPORT_PAGE_SIZE = 1000    # /report/integrated/get/ page_size range 1–1,000
 
 def get_report_pages(access_token: str, advertiser_id: str, *, report_type: str, data_level: str,
                      dimensions: list[str], metrics: list[str], start_date: str, end_date: str,
-                     filtering: list[dict] | None = None, max_pages: int = 20) -> list[dict]:
-    """Every page of a synchronous report (BASIC or AUDIENCE), rate limits
-    retried. Rows are {"dimensions": {...}, "metrics": {...}}."""
+                     filtering: list[dict] | None = None, max_pages: int = 20, on_page=None):
+    """Every page of a synchronous report (BASIC or AUDIENCE), rate limits retried.
+    Rows are {"dimensions": {...}, "metrics": {...}}.
+
+    Memory: pass `on_page(rows)` to consume each page as it arrives and NOT hold the
+    whole report in RAM — the caller then sees at most one page (REPORT_PAGE_SIZE rows)
+    at a time. Returns the total row count in that mode. With no callback it returns the
+    full list, as before (used where the report is known to be small)."""
     out: list[dict] = []
+    total = 0
     page = 1
     while page <= max_pages:
         params: dict = {
@@ -1316,30 +1322,34 @@ def get_report_pages(access_token: str, advertiser_id: str, *, report_type: str,
             params["filtering"] = filtering
         data = api_get_retry("/report/integrated/get/", access_token, params) or {}
         rows = data.get("list") or []
-        out.extend(rows)
+        if on_page is not None:
+            on_page(rows)
+            total += len(rows)
+        else:
+            out.extend(rows)
         info = data.get("page_info") or {}
         if page >= int(info.get("total_page") or 1) or not rows:
             break
         page += 1
-    return out
+    return total if on_page is not None else out
 
 
 def get_audience_report(access_token: str, advertiser_id: str, *, dimensions: list[str],
-                        metrics: list[str], start_date: str, end_date: str) -> list[dict]:
+                        metrics: list[str], start_date: str, end_date: str, on_page=None):
     """report_type=AUDIENCE at campaign level. Rules (API guide): ONE audience
     dimension (age + gender may be combined) + one ID dimension + optionally
     one time dimension; device_brand_id takes no time dimension; audience data
-    lags 10–12 h; no lifetime metrics."""
+    lags 10–12 h; no lifetime metrics. `on_page` streams (see get_report_pages)."""
     return get_report_pages(access_token, advertiser_id, report_type="AUDIENCE", data_level="AUCTION_CAMPAIGN",
-                            dimensions=dimensions, metrics=metrics, start_date=start_date, end_date=end_date)
+                            dimensions=dimensions, metrics=metrics, start_date=start_date, end_date=end_date, on_page=on_page)
 
 
-def get_hourly_report(access_token: str, advertiser_id: str, *, metrics: list[str], day: str) -> list[dict]:
+def get_hourly_report(access_token: str, advertiser_id: str, *, metrics: list[str], day: str, on_page=None):
     """report_type=BASIC by campaign × hour for ONE day (stat_time_hour limits
-    the range to a single day)."""
+    the range to a single day). `on_page` streams (see get_report_pages)."""
     return get_report_pages(access_token, advertiser_id, report_type="BASIC", data_level="AUCTION_CAMPAIGN",
                             dimensions=["campaign_id", "stat_time_hour"], metrics=metrics,
-                            start_date=day, end_date=day)
+                            start_date=day, end_date=day, on_page=on_page)
 
 
 # ---------------------------------------------------------------------------
