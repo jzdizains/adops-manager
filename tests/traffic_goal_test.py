@@ -306,8 +306,11 @@ par = open(os.path.join(ROOT, "app", "parity.py"), encoding="utf-8").read()
 check("parity watch knows the candidates (no false 'not offered' on our own ad groups)", "launch.ENGAGED_CANDIDATES" in par)
 lst = open(os.path.join(ROOT, "app", "templates", "templates_list.html"), encoding="utf-8").read()
 check("presets list shows the goal", "'Landing page view' if blob.get('traffic_goal') == 'LPV' else 'Engaged session'" in lst)
+check("creative-type filter removed (all-carousel made it dead weight); search box stays",
+      'id="prCreative"' not in lst and 'data-c="spark"' not in lst and '#prCreative button' not in lst
+      and "r.dataset.creative === c" not in lst and 'id="prQ"' in lst and "r.dataset.search.indexOf(q)" in lst)
 cfg = open(os.path.join(ROOT, "app", "config.py"), encoding="utf-8").read()
-check("static version bumped", 'STATIC_VERSION = "132"' in cfg)
+check("static version bumped", 'STATIC_VERSION = "134"' in cfg)
 
 print()
 print("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}")

@@ -253,7 +253,21 @@ async def add_bulk(request: Request, db: Session = Depends(get_db)):
     default_media = "CAROUSEL" if str(form.get("media_type") or "").upper() == "CAROUSEL" else "VIDEO"
     default_group = str(form.get("group_name") or "").strip().lstrip("@")
     default_source = str(form.get("source") or "").strip()
-    rows, bad = parse_bulk(text, default_media)
+    # Structured entry (v133): the "Add spark codes" modal posts one row per code as
+    # parallel row_name / row_code fields — a name and exactly one code each, no parsing
+    # guesswork. When those are present they ARE the input; the paste box / CSV are the
+    # other way in. A row with an empty code is just an unfilled row and is dropped.
+    row_codes = [str(c).strip() for c in form.getlist("row_code")]
+    row_names = [str(n).strip() for n in form.getlist("row_name")]
+    rows, bad = [], []
+    if any(row_codes):
+        for i, code in enumerate(row_codes):
+            if not code:
+                continue
+            rows.append({"name": (row_names[i] if i < len(row_names) else "")[:120], "code": code,
+                         "media_type": default_media, "tiktok_post_url": "", "source": "", "group_name": ""})
+    else:
+        rows, bad = parse_bulk(text, default_media)
     if not rows:
         no = "No codes found. One per line — the auth code alone, or  name | code | video/carousel | post URL | source."
         if request.headers.get("x-requested-with") == "fetch":

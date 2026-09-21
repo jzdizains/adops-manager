@@ -9,7 +9,6 @@
 {% if rows %}
 <div class="filterbar" style="margin-bottom:12px;">
   <div class="search-wrap" style="max-width:260px;"><input type="text" id="prQ" placeholder="Name, goal, destination, URL…"></div>
-  <div class="seg" id="prCreative"><button type="button" data-c="" class="on">All</button><button type="button" data-c="spark">Spark</button><button type="button" data-c="library">Library video</button><button type="button" data-c="carousel">Carousel</button></div>
   <span class="muted" style="margin-left:auto;font-size:12px;" id="prShown"></span>
 </div>
 <div class="card" style="padding:0;overflow:hidden;">
@@ -43,9 +42,8 @@
 <script>
 (function () {
   var $ = function (s, r) { return (r || document).querySelector(s); }, $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
-  var rows = $$(".pr-row"), c = "", q = "";
-  function apply() { var n = 0; rows.forEach(function (r) { var ok = (!c || r.dataset.creative === c) && (!q || r.dataset.search.indexOf(q) >= 0); r.hidden = !ok; if (ok) n++; }); var e = $("#prEmpty"); if (e) e.hidden = n > 0; var s = $("#prShown"); if (s) s.textContent = n === rows.length ? "" : n + " of " + rows.length; }
-  $$("#prCreative button").forEach(function (b) { b.addEventListener("click", function () { $$("#prCreative button").forEach(function (o) { o.classList.remove("on"); }); b.classList.add("on"); c = b.dataset.c; apply(); }); });
+  var rows = $$(".pr-row"), q = "";
+  function apply() { var n = 0; rows.forEach(function (r) { var ok = (!q || r.dataset.search.indexOf(q) >= 0); r.hidden = !ok; if (ok) n++; }); var e = $("#prEmpty"); if (e) e.hidden = n > 0; var s = $("#prShown"); if (s) s.textContent = n === rows.length ? "" : n + " of " + rows.length; }
   var qi = $("#prQ"); if (qi) qi.addEventListener("input", function () { q = this.value.trim().toLowerCase(); apply(); });
   document.addEventListener("click", function (e) {
     var b = e.target.closest(".pr-menu"); if (!b) return; e.stopPropagation();

@@ -1338,3 +1338,10 @@ details.card > summary .card-title .n { font-family: var(--font-mono); font-size
 .ipd-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ipd-id { font-size: 11px; color: var(--text-dim); }
 .ipd-row a { font-size: 11.5px; white-space: nowrap; }
+/* Add spark codes: one row per code (v133) */
+.sp-rows { display: flex; flex-direction: column; gap: 6px; }
+.sp-row-in { display: flex; gap: 6px; align-items: center; }
+.sp-row-in .sp-in-name { flex: 0 0 200px; }
+.sp-row-in .sp-in-code { flex: 1 1 auto; font-size: 12px; }
+.sp-row-in .sp-in-x { flex: none; width: 30px; height: 30px; border-radius: 8px; border: 1px solid var(--card-border); background: var(--raised); color: var(--text-dim); cursor: pointer; font-size: 12px; line-height: 1; }
+.sp-row-in .sp-in-x:hover { border-color: var(--danger, #d64550); color: var(--danger, #d64550); }

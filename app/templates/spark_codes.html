@@ -51,17 +51,31 @@
 
 <div id="spAddBox" hidden>
   <form method="post" action="/spark-codes/bulk" enctype="multipart/form-data" id="spBulkForm">
-    <label class="field"><span class="field-label">Codes — one per line</span>
-      <textarea name="lines" rows="7" class="mono" style="font-size:12px;" placeholder="#HEO5xA4whgKls1Q8rJOuNp7p2KGP…
+    <div id="spRows" class="sp-rows">
+      <div class="sp-row-in">
+        <input type="text" name="row_name" class="sp-in-name" placeholder="Name (e.g. hook v3)" maxlength="120" autocomplete="off">
+        <input type="text" name="row_code" class="sp-in-code mono" placeholder="Spark auth code" autocomplete="off">
+        <button type="button" class="sp-in-x" title="Remove this code" aria-label="Remove">✕</button>
+      </div>
+    </div>
+    <div style="margin:8px 0 4px;"><button type="button" class="btn sm" id="spAddRow">＋ Add another</button>
+      <button type="button" class="btn sm ghost" id="spPasteToggle" style="margin-left:6px;">Paste a list / CSV instead</button></div>
+
+    <div id="spPasteBox" hidden style="margin-top:6px;">
+      <label class="field"><span class="field-label">Codes — one per line</span>
+        <textarea name="lines" rows="6" class="mono" style="font-size:12px;" placeholder="#HEO5xA4whgKls1Q8rJOuNp7p2KGP…
 hook v3 | #ohMN6mHyMnI2RNpwXy0GiyzUxeRG… | video | https://www.tiktok.com/@creator/video/123 | src-hook-v3
 Slides1, #SD93QJYXLZVH3jCUI09AWIYt2CfB…, carousel"></textarea>
-      <span class="hint">Just the auth code works. Optional, in any order, separated by <span class="mono">|</span> / tab / comma: a name, <span class="mono">video</span> or <span class="mono">carousel</span>, the post URL, a source, <span class="mono">@creator</span>. Duplicates are skipped; the launcher checks the real post type with TikTok.</span></label>
-    <div class="form-row-3">
+        <span class="hint">Just the auth code works. Optional, in any order, separated by <span class="mono">|</span> / tab / comma: a name, <span class="mono">video</span> or <span class="mono">carousel</span>, the post URL, a source, <span class="mono">@creator</span>.</span></label>
       <label class="field"><span class="field-label">…or a CSV / TSV</span><input type="file" name="file" accept=".csv,.tsv,.txt"></label>
-      <label class="field"><span class="field-label">Type when a line doesn't say</span><select name="media_type"><option value="VIDEO">Video</option><option value="CAROUSEL">Carousel</option></select></label>
-      <label class="field"><span class="field-label">Creator for all (optional)</span><input type="text" name="group_name" placeholder="@creatorhandle"></label>
     </div>
-    <label class="field"><span class="field-label">Source for all (optional)</span><input type="text" name="source" placeholder="e.g. src-batch-sept" style="max-width:300px;"><span class="hint">Rides the landing URL and matches Glitchy postbacks. Leave empty in campaign-name mode.</span></label>
+
+    <div class="form-row-3" style="margin-top:8px;">
+      <label class="field"><span class="field-label">Type when not obvious</span><select name="media_type"><option value="VIDEO">Video</option><option value="CAROUSEL">Carousel</option></select></label>
+      <label class="field"><span class="field-label">Creator for all (optional)</span><input type="text" name="group_name" placeholder="@creatorhandle"></label>
+      <label class="field"><span class="field-label">Source for all (optional)</span><input type="text" name="source" placeholder="e.g. src-batch-sept"></label>
+    </div>
+    <span class="hint">Duplicates are skipped; the launcher checks the real post type with TikTok. Source rides the landing URL and matches Glitchy postbacks — leave empty in campaign-name mode.</span>
   </form>
 </div>
 {% endblock %}
@@ -72,13 +86,45 @@ Slides1, #SD93QJYXLZVH3jCUI09AWIYt2CfB…, carousel"></textarea>
   $$("[data-fsel]").forEach(function (fs) { fs.querySelector("button").addEventListener("click", function (e) { e.stopPropagation(); var o = fs.classList.contains("open"); $$("[data-fsel].open").forEach(function (x) { x.classList.remove("open"); }); if (!o) fs.classList.add("open"); }); });
   document.addEventListener("click", function () { $$("[data-fsel].open").forEach(function (o) { o.classList.remove("open"); }); });
   $("#spFilter").addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); this.submit(); } });
-  // add codes pop-up
+  // add codes pop-up: one row per code (name + code, ＋ to add more), with a paste/CSV fallback
   var box = $("#spAddBox");
+  function newRow() {
+    var r = UI.el('<div class="sp-row-in">' +
+      '<input type="text" name="row_name" class="sp-in-name" placeholder="Name (e.g. hook v3)" maxlength="120" autocomplete="off">' +
+      '<input type="text" name="row_code" class="sp-in-code mono" placeholder="Spark auth code" autocomplete="off">' +
+      '<button type="button" class="sp-in-x" title="Remove this code" aria-label="Remove">✕</button></div>');
+    return r;
+  }
+  function rowCount() { return $$("#spRows .sp-row-in").length; }
+  function addRow(focus) { var r = newRow(); $("#spRows").appendChild(r); if (focus) r.querySelector(".sp-in-name").focus(); return r; }
   $("#spAddBtn").addEventListener("click", function () {
     var node = box.firstElementChild; box.hidden = false;
+    // start clean: one empty row, paste box hidden
+    $("#spRows").innerHTML = ""; addRow(false);
+    var pb = $("#spPasteBox"); if (pb) { pb.hidden = true; pb.querySelector("textarea").value = ""; }
     var f = UI.el('<div><button type="button" class="btn" data-close>Cancel</button><button type="button" class="btn primary">＋ Add all</button></div>');
-    f.querySelector(".primary").addEventListener("click", function () { node.submit(); });
+    f.querySelector(".primary").addEventListener("click", function () {
+      // a code typed in a row but not the paste box → submit the rows; else the paste box
+      var hasRow = $$("#spRows .sp-in-code").some(function (i) { return i.value.trim(); });
+      var hasPaste = $("#spPasteBox") && !$("#spPasteBox").hidden && $('#spPasteBox textarea').value.trim();
+      var hasFile = ($('#spBulkForm input[type=file]').files || []).length;
+      if (!hasRow && !hasPaste && !hasFile) { var e = $("#spRows .sp-in-code"); if (e) e.focus(); return; }
+      this.disabled = true; this.textContent = "Adding…"; node.submit();
+    });
     UI.modal({ title: "Add spark codes", body: node, footer: f, wide: true, onClose: function () { box.appendChild(node); box.hidden = true; } });
+    setTimeout(function () { var n = $("#spRows .sp-in-name"); if (n) n.focus(); }, 30);
+  });
+  document.addEventListener("click", function (e) {
+    if (e.target.id === "spAddRow") { addRow(true); return; }
+    if (e.target.id === "spPasteToggle") { var pb = $("#spPasteBox"); if (pb) { pb.hidden = !pb.hidden; if (!pb.hidden) pb.querySelector("textarea").focus(); e.target.textContent = pb.hidden ? "Paste a list / CSV instead" : "Hide the paste box"; } return; }
+    var x = e.target.closest(".sp-in-x"); if (x) { var rows = $$("#spRows .sp-row-in"); if (rows.length > 1) x.closest(".sp-row-in").remove(); else { x.closest(".sp-row-in").querySelectorAll("input").forEach(function (i) { i.value = ""; }); } }
+  });
+  document.addEventListener("keydown", function (e) {
+    // Enter in a code field jumps to (or creates) the next row — fast entry of many codes
+    if (e.key === "Enter" && e.target.classList && e.target.classList.contains("sp-in-code")) {
+      e.preventDefault(); var row = e.target.closest(".sp-row-in"), next = row.nextElementSibling;
+      if (!next) next = addRow(false); next.querySelector(".sp-in-name").focus();
+    }
   });
   if (/[?&]add=1/.test(location.search)) $("#spAddBtn").click();
   // selection + bulk
