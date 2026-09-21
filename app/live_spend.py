@@ -29,9 +29,14 @@ def sync_campaigns(db: Session, accounts: list[models.AdAccount] | None = None) 
     accounts = accounts or queries.enabled_accounts(db)
     today = timeutil.local_date_str()
     synced, errors = 0, []
-    for acct in accounts:
+    for _idx, acct in enumerate(accounts, 1):
         if not acct.access_token:
             continue
+        try:
+            from . import background
+            background.set_activity(f"sync_campaigns {_idx}/{len(accounts)} {acct.advertiser_name or acct.advertiser_id}")
+        except Exception:  # noqa: BLE001
+            pass
         if synced:
             _time.sleep(0.15)   # spread calls — rate-limit safety at scale
         try:

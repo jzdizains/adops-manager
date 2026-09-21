@@ -142,6 +142,11 @@ def scan(db: Session, should_stop=None, on_progress=None) -> dict:
                 break
             if on_progress and (i == 1 or i % 5 == 0 or i == len(with_token)):
                 on_progress(f"{i} of {len(with_token)} accounts")
+            try:
+                from . import background
+                background.set_activity(f"issues.scan {i}/{len(with_token)} {acct.advertiser_name or acct.advertiser_id}")
+            except Exception:  # noqa: BLE001
+                pass
             run.accounts_total += 1
             # Stream the account's ads page by page (memory): a heavy account can have
             # up to 20,000 ads; loading them all at once was a transient spike that

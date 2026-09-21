@@ -19,8 +19,49 @@ import time
 log = logging.getLogger("adops.background")
 
 MEM_TRAIL_MB = 300     # once a sweep step starts above this RSS, log a "mem trail" breadcrumb naming it (512 MB box)
+MEM_PROBE_MB = 330     # the always-on sampler logs a "mem" line only once RSS climbs past this
+MEM_SAMPLE_SEC = 6     # how often the sampler reads process RSS (no DB write unless RSS is high)
 _started = False
 _lock = threading.Lock()
+
+# What the app is doing RIGHT NOW, across all threads (sweep, jobs worker). The memory
+# sampler stamps its readings with this, so a crash names the exact operation + account
+# that was running when RSS hit the roof. Plain string assignment is atomic under the GIL.
+_activity = "idle"
+
+
+def set_activity(s: str) -> None:
+    global _activity
+    _activity = str(s)[:140]
+
+
+def _mem_sampler() -> None:
+    """Process-wide black box: reads RSS every few seconds and — only when it has already
+    climbed past MEM_PROBE_MB — writes ONE Diagnostics line naming the current activity.
+    A healthy app writes nothing; an app about to be OOM-killed leaves a trail whose LAST
+    line is the operation that did it. Covers every thread (the sweep AND the jobs worker),
+    which the per-step breadcrumb could not."""
+    from .database import SessionLocal
+    from . import queries
+    time.sleep(25)
+    last = ""
+    while True:
+        try:
+            mb = rss_mb()
+            if mb >= MEM_PROBE_MB:
+                line = f"mem: {mb:.0f} MB during {_activity}"
+                if line != last:
+                    db = SessionLocal()
+                    try:
+                        queries.log(db, line + " (limit 512)", level="warning", source="mem")
+                    finally:
+                        db.close()
+                    last = line
+            elif mb < MEM_PROBE_MB - 40:
+                last = ""      # dropped back to safe — the next climb logs afresh
+        except Exception:  # noqa: BLE001 — the sampler must never take the app down
+            pass
+        time.sleep(MEM_SAMPLE_SEC)
 
 
 def _posters_pass(db, limit: int = 3) -> int:
@@ -108,6 +149,7 @@ def _loop():
             # step the instance died in.
             peak = {"mb": 0.0, "step": "start"}
             def beat(step):
+                set_activity("sweep:" + step)
                 mb = rss_mb()
                 if mb > peak["mb"]:
                     peak["mb"], peak["step"] = mb, step
@@ -174,6 +216,7 @@ def start():
         _started = True
     t = threading.Thread(target=_loop, name="adops-background", daemon=True)
     t.start()
+    threading.Thread(target=_mem_sampler, name="adops-mem-sampler", daemon=True).start()
 
 
 def _audience_quick(db, settings: dict) -> None:

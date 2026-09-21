@@ -257,6 +257,11 @@ def sync(db: Session, days: dict[str, list[str]] | None = None, should_stop=None
             continue
         if on_progress and (i == 1 or i % 5 == 0 or i == len(accounts)):
             on_progress(f"{i} of {len(accounts)} accounts")
+        try:
+            from . import background
+            background.set_activity(f"audience {i}/{len(accounts)} {acct.advertiser_name or acct.advertiser_id}")
+        except Exception:  # noqa: BLE001
+            pass
         failed = False
         for day in all_days:
             r = sync_account_day(db, acct, day, hours=day in hour_days, audience=day in aud_days,
