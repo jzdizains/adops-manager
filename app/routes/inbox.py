@@ -11,6 +11,35 @@ from ..templating import render
 
 router = APIRouter()
 
+GROUP_ROW_CAP = 200      # collapsed rows drawn per group; the rest fold into a "+N more" line
+
+
+def _collapse_rows(rows: list[dict]) -> tuple[list[dict], int]:
+    """Fold near-identical rows (same title + message + account) into ONE row that
+    carries a `count`, so a batch of 1,000 ads all "rejected (no reason returned)"
+    becomes a single line "× 1000" instead of a thousand identical rows. Keeps the
+    newest timestamp and the fix action. Returns (rows, hidden) where `hidden` is how
+    many collapsed rows past the cap were dropped from the render."""
+    from collections import OrderedDict
+    buckets: "OrderedDict[tuple, dict]" = OrderedDict()
+    for it in rows:
+        sig = (it.get("title", ""), it.get("message", ""), it.get("where", ""))
+        b = buckets.get(sig)
+        if b is None:
+            nb = dict(it)
+            nb["count"] = 1
+            buckets[sig] = nb
+        else:
+            b["count"] += 1
+            if it.get("at") and (b.get("at") is None or it["at"] > b["at"]):
+                b["at"] = it["at"]
+    collapsed = list(buckets.values())
+    hidden = 0
+    if len(collapsed) > GROUP_ROW_CAP:
+        hidden = len(collapsed) - GROUP_ROW_CAP
+        collapsed = collapsed[:GROUP_ROW_CAP]
+    return collapsed, hidden
+
 
 @router.get("/inbox")
 def inbox_page(request: Request, db: Session = Depends(get_db)):
@@ -34,6 +63,9 @@ def inbox_page(request: Request, db: Session = Depends(get_db)):
         if g["fix"] is None and it["fix"] and not it["fix"][0].get("ext"):
             g["fix"] = it["fix"][0]
     ordered = sorted(groups.values(), key=lambda g: ({"err": 0, "warn": 1, "info": 2}[g["level"]], -len(g["rows"])))
+    for g in ordered:
+        g["total"] = len(g["rows"])                       # true number of issues in this group
+        g["rows"], g["hidden"] = _collapse_rows(g["rows"])  # one line per distinct message
     return render(request, "inbox.html", {
         "title": "Inbox", "items": items, "counts": counts, "level": level, "groups": ordered,
     })

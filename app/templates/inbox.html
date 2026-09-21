@@ -20,17 +20,18 @@
 <div class="card ib-group" style="padding:0;overflow:hidden;">
   <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border-soft);">
     <span class="pill {{ {'err':'err','warn':'warn','info':'dim'}[g.level] }}">{{ {'err':'error','warn':'warning','info':'info'}[g.level] }}</span>
-    <b style="font-size:13px;">{{ g.label }}</b><span class="muted ib-n" style="font-size:12px;">{{ g.rows|length }}</span>
-    {% if g.fix and g.rows|length > 1 %}<a class="btn sm" href="{{ g.fix.href }}" {% if g.fix.ext %}target="_blank" rel="noopener"{% endif %} style="margin-left:auto;">{{ g.fix.label }}</a>{% endif %}
+    <b style="font-size:13px;">{{ g.label }}</b><span class="muted ib-n" style="font-size:12px;" data-total="{{ g.total }}">{{ g.total }}</span>
+    {% if g.fix and g.total > 1 %}<a class="btn sm" href="{{ g.fix.href }}" {% if g.fix.ext %}target="_blank" rel="noopener"{% endif %} style="margin-left:auto;">{{ g.fix.label }}</a>{% endif %}
   </div>
   {% for it in g.rows %}
-  <div class="inbox-row lvl-{{ it.level }} ib-row" data-id="{{ it.id }}" data-level="{{ it.level }}" data-search="{{ (it.title ~ ' ' ~ it.message ~ ' ' ~ it.where)|lower }}" style="padding:9px 14px;">
+  <div class="inbox-row lvl-{{ it.level }} ib-row" data-id="{{ it.id }}" data-level="{{ it.level }}" data-count="{{ it.count or 1 }}" data-search="{{ (it.title ~ ' ' ~ it.message ~ ' ' ~ it.where)|lower }}" style="padding:9px 14px;">
     <span class="inbox-dot"></span>
-    <div class="inbox-body"><div class="inbox-title">{{ it.title }}{% if it.where %} <span class="muted">· {{ it.where }}</span>{% endif %}</div><div class="inbox-msg">{{ it.message }}</div></div>
+    <div class="inbox-body"><div class="inbox-title">{{ it.title }}{% if it.where %} <span class="muted">· {{ it.where }}</span>{% endif %}{% if it.count and it.count > 1 %} <span class="pill dim" title="{{ it.count }} identical items folded together">× {{ it.count }}</span>{% endif %}</div><div class="inbox-msg">{{ it.message }}</div></div>
     <div class="inbox-when muted" title="{{ it.at|local('%Y-%m-%d %H:%M') if it.at else '' }}">{% if it.at %}{{ it.at|ago }}{% else %}now{% endif %}</div>
     <div class="inbox-acts">{% for a in it.fix %}<a class="btn sm" href="{{ a.href }}" {% if a.ext %}target="_blank" rel="noopener"{% endif %}>{{ a.label }}</a>{% endfor %}{% if it.ack %}<button type="button" class="btn sm ghost ib-dismiss" title="Dismiss">✕</button>{% endif %}</div>
   </div>
   {% endfor %}
+  {% if g.hidden %}<div class="inbox-row muted" style="padding:9px 14px;font-size:12px;">+ {{ g.hidden }} more kind{{ 's' if g.hidden != 1 }} of {{ g.label|lower }} — refine with search above</div>{% endif %}
 </div>
 {% endfor %}
 {% if not groups %}
@@ -48,7 +49,14 @@
   function apply() {
     var n = 0;
     rows.forEach(function (r) { var ok = (!lvl || r.dataset.level === lvl) && (!q || r.dataset.search.indexOf(q) >= 0); r.hidden = !ok; if (ok) n++; });
-    $$(".ib-group").forEach(function (g) { var vis = $$(".ib-row", g).filter(function (r) { return !r.hidden; }).length; g.hidden = vis === 0; $(".ib-n", g).textContent = vis; });
+    $$(".ib-group").forEach(function (g) {
+      var visRows = $$(".ib-row", g).filter(function (r) { return !r.hidden; });
+      g.hidden = visRows.length === 0;
+      var el = $(".ib-n", g);
+      // no search/filter → show the group's true total; while filtering → sum the folded counts of the visible rows
+      if (!q && !lvl) { el.textContent = el.dataset.total; }
+      else { el.textContent = visRows.reduce(function (s, r) { return s + (parseInt(r.dataset.count || "1", 10) || 1); }, 0); }
+    });
     $("#ibEmpty").hidden = n > 0 || !rows.length;
   }
   $$("#ibLevel button").forEach(function (b) { b.addEventListener("click", function () { $$("#ibLevel button").forEach(function (o) { o.classList.remove("on"); }); b.classList.add("on"); lvl = b.dataset.l; history.replaceState(null, "", lvl ? "/inbox?level=" + lvl : "/inbox"); apply(); }); });
