@@ -2,7 +2,10 @@ services:
   - type: web
     name: adops-manager
     runtime: python
-    plan: starter
+    # 512 MB (starter) could not hold the background sweep + Chromium + hundreds of
+    # accounts: fresh deploys OOM-killed ~18 min in, every time (Render events 21 Sep).
+    # 2 GB (standard) gives the sweep and the Instant-Page browser real headroom.
+    plan: standard
     # Chromium for the Instant Page builder is NOT taken from this build step: Render's native
     # runtime drops the build-time ~/.cache. The app installs it once into /data/pw-browsers on
     # first use (app/instant_page_builder.py) — the disk persists across deploys.
