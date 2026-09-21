@@ -58,6 +58,11 @@ def monitor(request: Request, db: Session = Depends(get_db)):
         kinds[it["kind"]] = kinds.get(it["kind"], 0) + 1
     for it in items:
         it["fix"] = _fix_actions(it)
+    # fold identical rows (same title + message + account) into one "× N" line so a
+    # batch of 1,041 "Ad rejected" rows for one account doesn't render 1,041 DOM rows.
+    # `items`/`counts`/`kinds` keep the TRUE totals; only the table draws the folded rows.
+    from .inbox import _collapse_rows
+    issue_rows, issue_hidden = _collapse_rows(items)
 
     # ---- balances --------------------------------------------------------------------------------
     spend_by_aid = {r[0]: float(r[1] or 0) for r in db.query(models.CampaignRecord.advertiser_id, func.sum(models.CampaignRecord.spend_today)).group_by(models.CampaignRecord.advertiser_id)}
@@ -138,7 +143,8 @@ def monitor(request: Request, db: Session = Depends(get_db)):
                   "rejected": ap["open"], "appealing": ap["appealing"], "won": ap["won"], "lost": ap["lost"],
                   "low_bcs": low_bcs, "n_bc": len(bcs), "token_ok": token_ok, "synced_ago": queries.campaigns_synced_ago(db),
                   "today_pauses": today_pauses, "today_topups": today_topups, "errors": counts["err"], "warns": counts["warn"]},
-        "items": items, "counts": counts, "kinds": sorted(kinds.items(), key=lambda kv: -kv[1]),
+        "items": items, "issue_rows": issue_rows, "issue_hidden": issue_hidden,
+        "counts": counts, "kinds": sorted(kinds.items(), key=lambda kv: -kv[1]),
         "balance_rows": balance_rows, "btotals": btotals, "last_bal": last_bal,
         "actions": actions, "topups": topups, "paused_ids": paused_ids, "names": names, "still_paused": still_paused, "rules": rules, "s": s,
         "sync_reports": reports, "token_ok": token_ok, "accounts_count": len(accounts), "running_jobs": running,

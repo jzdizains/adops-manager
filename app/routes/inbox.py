@@ -14,12 +14,15 @@ router = APIRouter()
 GROUP_ROW_CAP = 200      # collapsed rows drawn per group; the rest fold into a "+N more" line
 
 
-def _collapse_rows(rows: list[dict]) -> tuple[list[dict], int]:
+def _collapse_rows(rows: list[dict], cap: int = GROUP_ROW_CAP) -> tuple[list[dict], int]:
     """Fold near-identical rows (same title + message + account) into ONE row that
-    carries a `count`, so a batch of 1,000 ads all "rejected (no reason returned)"
-    becomes a single line "× 1000" instead of a thousand identical rows. Keeps the
-    newest timestamp and the fix action. Returns (rows, hidden) where `hidden` is how
-    many collapsed rows past the cap were dropped from the render."""
+    carries a `count`, so a batch of 1,041 ads all "rejected (no reason returned)"
+    becomes a single line "× 1041" instead of 1,041 identical rows. Keeps the newest
+    timestamp and the first row's fix action / level / kind. Returns (rows, hidden)
+    where `hidden` is how many distinct collapsed rows past the cap were dropped.
+
+    Shared by the Inbox groups and the Health (/monitor) Issues table so both fold
+    the same way and neither renders thousands of DOM rows the browser then chokes on."""
     from collections import OrderedDict
     buckets: "OrderedDict[tuple, dict]" = OrderedDict()
     for it in rows:
@@ -35,9 +38,9 @@ def _collapse_rows(rows: list[dict]) -> tuple[list[dict], int]:
                 b["at"] = it["at"]
     collapsed = list(buckets.values())
     hidden = 0
-    if len(collapsed) > GROUP_ROW_CAP:
-        hidden = len(collapsed) - GROUP_ROW_CAP
-        collapsed = collapsed[:GROUP_ROW_CAP]
+    if len(collapsed) > cap:
+        hidden = len(collapsed) - cap
+        collapsed = collapsed[:cap]
     return collapsed, hidden
 
 

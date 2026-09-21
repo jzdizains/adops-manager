@@ -36,22 +36,23 @@
   <div class="table-scroll"><table class="data dense" id="hlTable">
     <thead><tr><th style="width:96px;">Level</th><th>What</th><th style="width:200px;">Where</th><th style="width:90px;">When</th><th style="width:230px;"></th></tr></thead>
     <tbody>
-    {% for it in items %}
-    <tr class="hl-row" data-id="{{ it.id }}" data-level="{{ it.level }}" data-kind="{{ it.kind }}" data-search="{{ (it.title ~ ' ' ~ it.message ~ ' ' ~ it.where)|lower }}">
+    {% for it in issue_rows %}
+    <tr class="hl-row" data-id="{{ it.id }}" data-level="{{ it.level }}" data-kind="{{ it.kind }}" data-count="{{ it.count }}" data-search="{{ (it.title ~ ' ' ~ it.message ~ ' ' ~ it.where)|lower }}">
       <td><span class="pill {{ {'err':'err','warn':'warn','info':'dim'}[it.level] }}">{{ {'err':'error','warn':'warning','info':'info'}[it.level] }}</span></td>
-      <td><div style="font-weight:600;">{{ it.title }}</div><div class="muted clip" style="font-size:11.5px;max-width:640px;" title="{{ it.message }}">{{ it.message }}</div></td>
+      <td><div style="font-weight:600;">{{ it.title }}{% if it.count > 1 %} <span class="pill dim" title="{{ it.count }} identical rows folded into one">× {{ it.count }}</span>{% endif %}</div><div class="muted clip" style="font-size:11.5px;max-width:640px;" title="{{ it.message }}">{{ it.message }}</div></td>
       <td class="muted" style="font-size:12px;">{{ it.where or '—' }}</td>
       <td class="muted" style="white-space:nowrap;font-size:12px;">{% if it.at %}<span title="{{ it.at|local('%Y-%m-%d %H:%M') }}">{{ it.at|ago }}</span>{% else %}now{% endif %}</td>
       <td style="white-space:nowrap;text-align:right;">{% for a in it.fix %}<a class="btn sm" href="{{ a.href }}" {% if a.ext %}target="_blank" rel="noopener"{% endif %}>{{ a.label }}</a> {% endfor %}{% if it.ack %}<button type="button" class="btn sm ghost hl-dismiss" title="Dismiss">✕</button>{% endif %}</td>
     </tr>
     {% endfor %}
     </tbody></table></div>
+  {% if issue_hidden %}<div class="muted" style="padding:8px 12px;font-size:11.5px;border-top:1px solid var(--border-soft);">+{{ issue_hidden }} more distinct message{{ 's' if issue_hidden != 1 }} not shown — narrow it down with the search or filters above.</div>{% endif %}
   <div class="empty" id="hlEmpty" hidden>Nothing matches.</div>
   {% else %}
   <div class="empty" style="padding:48px 0;"><div style="font-size:30px;margin-bottom:6px;color:var(--ok);">✓</div><div style="font-weight:650;">All clear</div><div class="muted" style="margin-top:3px;">No blocks, rejections, failed launches or low wallets right now.</div></div>
   {% endif %}
 </div>
-<div class="muted" style="font-size:11px;margin-top:8px;">Notices (wallet, rule actions) can be dismissed. TikTok-side issues clear on the next scan once fixed; failed launches age out after 24 h.</div>
+<div class="muted" style="font-size:11px;margin-top:8px;">Identical rows for the same account are folded into one line with a × count. Notices (wallet, rule actions) can be dismissed. TikTok-side issues clear on the next scan once fixed; failed launches age out after 24 h.</div>
 
 {# ======================= BALANCES ======================= #}
 </section>
