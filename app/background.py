@@ -18,7 +18,7 @@ import time
 
 log = logging.getLogger("adops.background")
 
-MEM_WATCH_MB = 360      # a slow sweep whose RSS tops this writes one "mem" line to Diagnostics (512 MB box)
+MEM_TRAIL_MB = 300     # once a sweep step starts above this RSS, log a "mem trail" breadcrumb naming it (512 MB box)
 _started = False
 _lock = threading.Lock()
 
@@ -100,61 +100,62 @@ def _loop():
             sweep_n += 1
             slow = (sweep_n % slow_every == 0) or sweep_n == 1
 
-            # memory breadcrumb: measure RSS after each step and remember the highest.
-            # On a 512 MB box the OOM killer strikes on a transient spike the 1-minute
-            # metric graph never samples, so the app records for itself which step the
-            # RSS peaked at — but only writes a line when the peak is genuinely high, so
-            # a healthy sweep costs nothing. `mem_watch` is read from Diagnostics.
+            # A black-box recorder for the OOM: the killer strikes on a transient spike
+            # the 1-minute metric graph never samples AND before any "peaked" summary can
+            # be written, so instead we log a breadcrumb BEFORE each heavy step — but only
+            # once RSS is already climbing (>= MEM_TRAIL_MB), so a healthy sweep stays
+            # silent. Whatever step the last "mem trail" line on Diagnostics names is the
+            # step the instance died in.
             peak = {"mb": 0.0, "step": "start"}
-            def _m(step):
+            def beat(step):
                 mb = rss_mb()
                 if mb > peak["mb"]:
                     peak["mb"], peak["step"] = mb, step
+                if mb >= MEM_TRAIL_MB:
+                    try:
+                        from . import queries
+                        queries.log(db, f"mem trail: {mb:.0f} MB entering {step} (sweep {sweep_n}, limit 512)", level="warning", source="mem")
+                    except Exception:  # noqa: BLE001
+                        pass
                 return mb
-            _m("start")
+            beat("start")
 
             if slow:
                 # full pass: every account, balances, alerts, top-ups, inventory
-                balances.resync_structure(db); _m("resync_structure")   # BC list + account mapping + access-lost
-                live_spend.sync_campaigns(db); _m("sync_campaigns")
-                balances.sync_bc_balances(db); balances.sync_account_balances(db); _m("balances")
+                beat("resync_structure"); balances.resync_structure(db)   # BC list + account mapping + access-lost
+                beat("sync_campaigns"); live_spend.sync_campaigns(db)
+                beat("balances"); balances.sync_bc_balances(db); balances.sync_account_balances(db)
                 balances.evaluate_bc_alerts(db)
                 for u, us, ids in settings_store.per_user(db):     # each user's thresholds over their own accounts
                     rules.evaluate_topups(db, us, ids)
                     rules.check_fresh_inventory(db, us, u.id)
                     rules.check_pool_inventory(db, us, u.id)
-                issues.scan(db); _m("issues.scan")
+                beat("issues.scan"); issues.scan(db)
                 partners.poll(db)               # TikTok-account assignments waiting on accepted invites
                 jobs.prune(db)
                 bid_bump.prune(db)
                 _prune_logins(db)
-                _audience_daily(db); _m("audience_daily")             # once a day: audience breakdowns + hourly heatmap
-                _music_monthly(db); _m("music_monthly")               # TikTok's Audio Library cache, refreshed monthly (doc's advice)
-            _audience_quick(db, settings); _m("audience_quick")       # every N minutes: today's hours / today+yesterday breakdowns, active accounts
+                beat("audience_daily"); _audience_daily(db)           # once a day: audience breakdowns + hourly heatmap
+                beat("music_monthly"); _music_monthly(db)             # TikTok's Audio Library cache, refreshed monthly (doc's advice)
+            beat("audience_quick"); _audience_quick(db, settings)     # every N minutes: today's hours / today+yesterday breakdowns, active accounts
             if not slow:
                 # fast pass: only accounts with something running
                 hot = _accounts_with_active_campaigns(db)
                 if hot:
-                    live_spend.sync_campaigns(db, hot); _m("sync_campaigns(hot)")
+                    beat("sync_campaigns(hot)"); live_spend.sync_campaigns(db, hot)
             for u, us, ids in settings_store.per_user(db):         # each user's rules over their own accounts
                 rules.evaluate_pause_rules(db, us, ids)
                 rules.evaluate_profit_rules(db, us, ids)
                 bid_bump.schedule(db, us, ids, u.id)                  # idle ad groups → bid +step (runs as a job)
-            queue_worker.process(db, settings); _m("queue_worker")
-            tensorpix_worker.process_pending(db, limit=6); _m("tensorpix")   # advance variant jobs
+            beat("queue_worker"); queue_worker.process(db, settings)
+            beat("tensorpix"); tensorpix_worker.process_pending(db, limit=6)   # advance variant jobs
             try:
                 from .routes.creatives import recover_stuck_ai
                 recover_stuck_ai(db, max_age_min=20)          # an AI edit that never came back (thread died) → failed + Retry
             except Exception:  # noqa: BLE001
                 pass
-            _posters_pass(db); _m("posters")                  # pre-make a few missing video posters, one at a time
+            beat("posters"); _posters_pass(db)                # pre-make a few missing video posters, one at a time
             log.info("sweep %s done (slow=%s) rss=%.0fMB peak=%.0fMB@%s", sweep_n, slow, rss_mb(), peak["mb"], peak["step"])
-            if peak["mb"] >= MEM_WATCH_MB:
-                try:
-                    from . import queries
-                    queries.log(db, f"sweep {sweep_n} ({'slow' if slow else 'fast'}) memory peaked at {peak['mb']:.0f} MB during {peak['step']} (limit 512)", level="warning", source="mem")
-                except Exception:  # noqa: BLE001
-                    pass
         except Exception:  # one bad sweep must never kill the worker
             log.exception("background sweep failed")
         finally:

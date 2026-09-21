@@ -124,7 +124,7 @@ check("source: reports stream into the sink via on_page (no full report in RAM)"
 check("source: the no-delivery short-circuit keys off the STORED count", 'stored = sink.finish()' in src and "if not stored:" in src)
 check("source: audience job records its own peak RSS (it runs in the jobs worker, not the sweep)", '"peak_mb"' in src and 'source="mem"' in src)
 bg = open(os.path.join(ROOT, "app", "background.py"), encoding="utf-8").read()
-check("source: the sweep tags peak RSS with the step and logs a 'mem' line when high", "peak[\"mb\"], peak[\"step\"]" in bg and 'source="mem"' in bg and "MEM_WATCH_MB" in bg)
+check("source: the sweep logs a 'mem trail' breadcrumb naming the step BEFORE it runs when RSS is high", "peak[\"mb\"], peak[\"step\"]" in bg and 'source="mem"' in bg and "MEM_TRAIL_MB" in bg and 'beat("issues.scan"); issues.scan(db)' in bg)
 
 print("-- sync(): checkpoint per account, resume after a restart --")
 class Killed(BaseException):

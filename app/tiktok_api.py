@@ -973,12 +973,18 @@ AD_LIST_MAX_PAGES = 20       # safety cap: 20,000 ads per account per scan
 
 
 def list_all_ads(access_token: str, advertiser_id: str, filtering: dict | None = None,
-                 fields: list[str] | None = None) -> list[dict]:
+                 fields: list[str] | None = None, on_page=None) -> list[dict]:
     """EVERY (non-deleted) ad of an account: walks /ad/get/ page by page at the
     maximum page size, retrying rate limits, so a busy account with hundreds of
     ads doesn't hide older rejections behind page 1. Results are newest-first
-    (TikTok sorts by ad_id descending). Raises TikTokError on a failed page."""
+    (TikTok sorts by ad_id descending). Raises TikTokError on a failed page.
+
+    Memory: pass `on_page(rows)` to consume each page as it arrives and NOT keep the
+    whole account's ads in RAM — a big account can have up to 20,000 ads, and holding
+    them all was a transient spike that OOM-killed the 512 MB box mid-scan. With no
+    callback it returns the full list, as before."""
     out: list[dict] = []
+    total = 0
     page = 1
     while page <= AD_LIST_MAX_PAGES:
         params: dict = {"advertiser_id": advertiser_id, "page": page, "page_size": AD_LIST_PAGE_SIZE}
@@ -987,12 +993,18 @@ def list_all_ads(access_token: str, advertiser_id: str, filtering: dict | None =
         if fields:
             params["fields"] = fields
         data = api_get_retry("/ad/get/", access_token, params) or {}
-        out.extend(data.get("list") or [])
+        rows = data.get("list") or []
+        if on_page is not None:
+            on_page(rows)
+            total += len(rows)
+        else:
+            out.extend(rows)
         info = data.get("page_info") or {}
         total_pages = int(info.get("total_page") or 1)
-        if page >= total_pages or not data.get("list"):
+        if page >= total_pages or not rows:
             break
         page += 1
+    return total if on_page is not None else out
     return out
 
 

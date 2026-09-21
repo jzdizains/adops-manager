@@ -143,8 +143,28 @@ def scan(db: Session, should_stop=None, on_progress=None) -> dict:
             if on_progress and (i == 1 or i % 5 == 0 or i == len(with_token)):
                 on_progress(f"{i} of {len(with_token)} accounts")
             run.accounts_total += 1
+            # Stream the account's ads page by page (memory): a heavy account can have
+            # up to 20,000 ads; loading them all at once was a transient spike that
+            # OOM-killed the 512 MB box every slow sweep. We keep only the REJECTED ones,
+            # and only the fields the appeal/inbox need — not the whole ad.
+            def _take(rows, _acct=acct):
+                for ad in rows:
+                    sec = str(ad.get("secondary_status", "") or "")
+                    run.ads_read += 1
+                    status_counts[sec or "(none)"] = status_counts.get(sec or "(none)", 0) + 1
+                    if not _status_is_bad(sec):
+                        continue
+                    run.rejected_found += 1
+                    rejected_ads.append({
+                        "ad_id": ad.get("ad_id", ""), "ad_name": ad.get("ad_name", ""),
+                        "campaign_id": ad.get("campaign_id", ""), "campaign_name": ad.get("campaign_name", ""),
+                        "adgroup_id": ad.get("adgroup_id", ""),
+                        "secondary_status": sec, "operation_status": ad.get("operation_status", ""),
+                        "advertiser_id": _acct.advertiser_id,
+                        "advertiser_name": names.get(_acct.advertiser_id, _acct.advertiser_id),
+                        "access_token": _acct.access_token})
             try:
-                ads = tiktok_api.list_all_ads(acct.access_token, acct.advertiser_id, fields=AD_SCAN_FIELDS)
+                tiktok_api.list_all_ads(acct.access_token, acct.advertiser_id, fields=AD_SCAN_FIELDS, on_page=_take)
             except tiktok_api.TikTokError as e:
                 run.accounts_failed += 1
                 if len(errors) < 50:
@@ -153,16 +173,6 @@ def scan(db: Session, should_stop=None, on_progress=None) -> dict:
                 continue
             run.accounts_ok += 1
             scanned.add(acct.advertiser_id)
-            for ad in ads:
-                sec = str(ad.get("secondary_status", "") or "")
-                run.ads_read += 1
-                status_counts[sec or "(none)"] = status_counts.get(sec or "(none)", 0) + 1
-                if not _status_is_bad(sec):
-                    continue
-                run.rejected_found += 1
-                rejected_ads.append({**ad, "advertiser_id": acct.advertiser_id,
-                                     "advertiser_name": names.get(acct.advertiser_id, acct.advertiser_id),
-                                     "access_token": acct.access_token})
     run.status_counts = json.dumps(status_counts, sort_keys=True)
     run.errors = json.dumps(errors)
     run.duration_s = round(time.monotonic() - t0, 1)
