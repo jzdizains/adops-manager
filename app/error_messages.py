@@ -130,6 +130,17 @@ def fix_for(log) -> dict | None:
     if code == "CONFIG":
         if "caption" in low and "carousel" in low:
             return {"label": "Add the caption", "href": "/creatives?view=carousels", "why": "Open the carousel and type its caption, or add ad text to the preset."}
+        # A destination-type / creative-source mismatch (e.g. "Library creatives support
+        # Website / Pixel destinations only") mentions "Pixel" as a destination TYPE, not a
+        # missing pixel — send the operator to the PRESET, not the Pixels page.
+        if ("destinations only" in low or "library creative" in low or "landing page url" in low
+                or "website destination" in low or "change the destination" in low):
+            why = ("This preset's destination doesn't match its creative source — set a Website "
+                   "destination with a landing page URL, or use a spark / profile creative "
+                   "instead of library videos.")
+            if template_id:
+                return {"label": "Edit the preset", "href": f"/presets/{template_id}/edit", "why": why}
+            return {"label": "Open Presets", "href": "/presets", "why": why}
         if "pixel" in low or "optimization event" in low:
             return {"label": "Open Pixels", "href": "/pixels", "why": "Pick a pixel + event that exists, or fix the preset."}
         if template_id:
