@@ -209,9 +209,11 @@ def synthesize(template: models.Template, overrides: dict[str, Any] | None = Non
         "smart_creative": bool(s.get("smart_creative")),
         "smart_creative_videos": int(s.get("smart_creative_videos") or 5),
         "smart_creative_texts": int(s.get("smart_creative_texts") or 5),
-        # Traffic: the picked goal decides goal + billing (a stale stored value never overrides it)
-        "optimization_goal": opt_goal if traffic_goal else (s.get("optimization_goal") or opt_goal),
-        "billing_event": billing_event if traffic_goal else (s.get("billing_event") or billing_event),
+        # Traffic: the picked goal decides goal + billing. A native Instant Form is ALWAYS the
+        # LEAD goal, so a preset saved back when the map wrongly stored "CONVERT" must not
+        # override it — force the computed goal for lead_form (a stale stored value never wins).
+        "optimization_goal": opt_goal if (traffic_goal or destination == "lead_form") else (s.get("optimization_goal") or opt_goal),
+        "billing_event": billing_event if (traffic_goal or destination == "lead_form") else (s.get("billing_event") or billing_event),
         "traffic_goal": traffic_goal,
         "bid_type": s.get("bid_type") or bid_type,
         "cost_cap_ladder": s.get("cost_cap_ladder") or [],       # list of bid prices

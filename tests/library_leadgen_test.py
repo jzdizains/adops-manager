@@ -64,6 +64,20 @@ check("lead_form maps to the LEAD optimization goal (OCPM), not CONVERT",
 check("the ad group promotes LEAD_GENERATION for a lead form (no pixel/event forced)",
       'elif dest == "lead_form":' in src and 'payload["promotion_type"] = "LEAD_GENERATION"' in src)
 
+print("-- a preset saved with a stale CONVERT goal is forced to LEAD for a native form --")
+import types as _t, json as _j, importlib as _il
+_m = _t.ModuleType("app"); _m.__path__ = [os.path.join(ROOT, "app")]; sys.modules["app"] = _m
+_mm = _t.ModuleType("app.models"); _mm.Template = object; sys.modules["app.models"] = _mm
+_launch = _il.import_module("app.routes.launch")
+def _syn(dest, stored_goal):
+    blob = {"destination_type": dest, "optimization_goal": stored_goal, "billing_event": "OCPM",
+            "lead_form_name": "F", "landing_page_url": "https://x", "adgroup_budget": 20}
+    T = _t.SimpleNamespace(id=1, name="P", objective_type="LEAD_GENERATION", campaign_budget_mode="ABO",
+                           campaign_budget=None, campaign_name_pattern=None, adgroup_settings=_j.dumps(blob))
+    return _launch.synthesize(T)
+check("lead_form preset with a stored CONVERT goal is forced to LEAD", _syn("lead_form", "CONVERT")["optimization_goal"] == "LEAD")
+check("external web-form lead gen (website) keeps CONVERT — not touched", _syn("website", "CONVERT")["optimization_goal"] == "CONVERT")
+
 print("-- video/image upload retries transient network timeouts --")
 tk = open(os.path.join(ROOT, "app", "tiktok_api.py"), encoding="utf-8").read()
 check("video upload retries on WriteTimeout/transport errors before failing",
