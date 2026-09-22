@@ -103,42 +103,51 @@
   {% if forms %}
   <div class="filterbar" style="margin-bottom:12px;">
     <div class="search-wrap"><input type="search" id="lfSearch" placeholder="Search form, account or form ID…" autocomplete="off" title="Press / to search"></div>
-    <select id="lfBc" title="Only forms whose owner account is in this Business Center"><option value="">All Business Centers</option>{% for b in bcs %}<option value="{{ b.bc_id }}">{{ b.name }} ({{ b.n }})</option>{% endfor %}</select>
-    <select id="lfStatus"><option value="">Any status</option><option value="published">Published</option><option value="unpublished">Not published</option></select>
+    <select id="lfBc" title="Only form names present on an account in this Business Center"><option value="">All Business Centers</option>{% for b in bcs %}<option value="{{ b.bc_id }}">{{ b.name }} ({{ b.n }})</option>{% endfor %}</select>
+    <select id="lfStatus"><option value="">Any status</option><option value="published">Published</option><option value="unpublished">Has unpublished</option></select>
     <select id="lfCov" title="How many accounts have a form with this name"><option value="">Any coverage</option><option value="full">On every account</option><option value="partial">Missing somewhere</option></select>
     <span class="muted" id="lfCount" style="margin-left:auto;font-size:12px;white-space:nowrap;"></span>
   </div>
   <table class="data" id="lfTable">
-    <thead><tr><th>Name</th><th>Form ID</th><th>Owner account</th><th>Status</th><th>Accounts with this name</th><th></th></tr></thead>
+    <thead><tr><th style="width:26px;"></th><th>Name</th><th class="num">Accounts</th><th>Business Centers</th><th>Status</th><th></th></tr></thead>
     <tbody>
-    {% for f in forms %}
-      <tr class="lf-row" data-bc="{{ acct_bc.get(f.owner_advertiser_id, '') }}" data-status="{{ (f.status or '')|lower }}" data-cov="{{ 'full' if copies.get(f.name, 0) >= n_accounts else 'partial' }}" data-search="{{ ((f.name or '') ~ ' ' ~ names.get(f.owner_advertiser_id, f.owner_advertiser_id) ~ ' ' ~ f.form_id)|lower }}">
-        <td>{{ f.name or f.form_id }}</td>
-        <td class="mono">{{ f.form_id }}</td>
-        <td class="muted">{{ names.get(f.owner_advertiser_id, f.owner_advertiser_id) }}</td>
-        <td>{{ f.status or "—" }}</td>
-        <td class="muted">{{ copies.get(f.name, 0) }} of {{ n_accounts }}</td>
+    {% for g in groups %}
+      <tr class="lf-row" data-bcs="{{ g.bcs|join(' ') }}" data-status="{{ 'unpublished' if g.n_pub < g.count else 'published' }}" data-cov="{{ g.cov }}" data-search="{{ (g.name ~ ' ' ~ (g.accounts|map(attribute='name')|join(' ')) ~ ' ' ~ (g.accounts|map(attribute='form_id')|join(' ')))|lower }}">
+        <td class="num"><button type="button" class="btn sm ghost lf-exp" title="Show the accounts that have this form" style="padding:2px 7px;">▸</button></td>
+        <td><b>{{ g.name }}</b></td>
+        <td class="num muted">{{ g.count }} of {{ n_accounts }}</td>
+        <td class="muted">{% if g.bcs %}{{ g.bcs|length }} BC{{ 's' if g.bcs|length != 1 }}{% else %}—{% endif %}</td>
+        <td class="muted">{% if g.n_pub == g.count %}<span class="pill ok">all published</span>{% else %}<span class="pill warn">{{ g.count - g.n_pub }} unpublished</span>{% endif %}</td>
         <td class="num">
-          <button class="btn sm lf-inspect" type="button" data-form="{{ f.form_id }}" data-adv="{{ f.owner_advertiser_id }}" {{ 'disabled' if not web_ready }} title="{{ 'Read this form’s definition (read-only) — used to map its fields.' if web_ready else 'Needs the ads.tiktok.com cookies from the TikTok Cookies page.' }}">🔍 Inspect</button>
+          <button class="btn sm lf-inspect" type="button" data-form="{{ g.rep_form_id }}" data-adv="{{ g.rep_owner }}" {{ 'disabled' if not web_ready }} title="{{ 'Read this form’s definition (read-only).' if web_ready else 'Needs the ads.tiktok.com cookies from the TikTok Cookies page.' }}">🔍 Inspect</button>
           {% if accounts|length > 1 %}
           <form method="post" action="/lead-forms/clone" hidden>
-            <input type="hidden" name="form_id" value="{{ f.form_id }}">
-            <input type="hidden" name="from_advertiser_id" value="{{ f.owner_advertiser_id }}">
+            <input type="hidden" name="form_id" value="{{ g.rep_form_id }}">
+            <input type="hidden" name="from_advertiser_id" value="{{ g.rep_owner }}">
             <select name="to_advertiser_id">
-              {% for a in accounts %}{% if a.advertiser_id != f.owner_advertiser_id %}<option value="{{ a.advertiser_id }}">{{ a.advertiser_name or a.advertiser_id }}</option>{% endif %}{% endfor %}
+              {% for a in accounts %}{% if a.advertiser_id != g.rep_owner %}<option value="{{ a.advertiser_id }}">{{ a.advertiser_name or a.advertiser_id }}</option>{% endif %}{% endfor %}
             </select>
           </form>
           <form method="post" action="/lead-forms/clone-bc" hidden class="lf-bc-form">
-            <input type="hidden" name="form_id" value="{{ f.form_id }}">
-            <input type="hidden" name="from_advertiser_id" value="{{ f.owner_advertiser_id }}">
+            <input type="hidden" name="form_id" value="{{ g.rep_form_id }}">
+            <input type="hidden" name="from_advertiser_id" value="{{ g.rep_owner }}">
             <select name="bc_id">
-              {% for b in bcs %}{% set n = missing.get(f.name, {}).get(b.bc_id, 0) %}<option value="{{ b.bc_id }}" data-n="{{ n }}">{{ b.name }} — {{ n }} of {{ b.n }} without it</option>{% endfor %}
+              {% for b in bcs %}{% set n = missing.get(g.name, {}).get(b.bc_id, 0) %}<option value="{{ b.bc_id }}" data-n="{{ n }}">{{ b.name }} — {{ n }} of {{ b.n }} without it</option>{% endfor %}
             </select>
           </form>
-          <button class="btn sm lf-clone" type="button" data-name="{{ f.name }}" {{ 'disabled' if not web_ready }} title="{{ 'Copies the form through the page editor’s web session — the same recorded flow as Instant Pages (a form is a page of another type). Test on one account first.' if web_ready else 'Needs the ads.tiktok.com cookies from the TikTok Cookies page.' }}">⧉ Clone to…</button>
+          <button class="btn sm lf-clone" type="button" data-name="{{ g.name }}" {{ 'disabled' if not web_ready }} title="{{ 'Copies this form onto more accounts through the page editor’s web session. Test on one account first.' if web_ready else 'Needs the ads.tiktok.com cookies from the TikTok Cookies page.' }}">⧉ Clone to…</button>
           {% endif %}
         </td>
       </tr>
+      <tr class="lf-accts" hidden><td></td><td colspan="5" style="padding:0 0 8px;">
+        <div style="max-height:260px;overflow:auto;border:1px solid var(--border-soft);border-radius:8px;">
+          {% for a in g.accounts %}<div style="display:flex;gap:10px;align-items:center;padding:6px 12px;font-size:12px;border-bottom:1px solid var(--border-soft);">
+            <span style="min-width:220px;">{{ a.name }}</span>
+            <span class="mono muted" style="font-size:10.5px;">{{ a.form_id }}</span>
+            <span class="pill {{ 'ok' if 'PUBLISH' in a.status.upper() else 'dim' }}" style="font-size:10px;">{{ a.status or '—' }}</span>
+            <button class="btn sm ghost lf-inspect" type="button" data-form="{{ a.form_id }}" data-adv="{{ a.advertiser_id }}" {{ 'disabled' if not web_ready }} style="margin-left:auto;" title="Inspect this account's copy">🔍</button>
+          </div>{% endfor %}
+        </div></td></tr>
     {% endfor %}
     </tbody>
   </table>
@@ -153,22 +162,32 @@
 {% block scripts %}
 <script>
 (function () {
-  // Client-side filters over the forms table: search + Business Center + status + coverage.
+  // One row per form NAME; filters (search + Business Center + status + coverage) and an
+  // expand toggle that reveals the individual accounts that have each form.
   var rows = Array.prototype.slice.call(document.querySelectorAll(".lf-row"));
   if (!rows.length) return;
   var $ = function (id) { return document.getElementById(id); };
   var q = "", bc = "", st = "", cov = "";
   var empty = $("lfEmpty"), count = $("lfCount");
+  function subOf(r) { var s = r.nextElementSibling; return (s && s.classList.contains("lf-accts")) ? s : null; }
   function apply() {
     var n = 0;
     rows.forEach(function (r) {
-      var okStatus = !st || (st === "published" ? r.dataset.status.indexOf("publish") >= 0 : r.dataset.status.indexOf("publish") < 0);
-      var ok = (!q || r.dataset.search.indexOf(q) >= 0) && (!bc || r.dataset.bc === bc) && okStatus && (!cov || r.dataset.cov === cov);
-      r.hidden = !ok; if (ok) n++;
+      var okBc = !bc || (" " + (r.dataset.bcs || "") + " ").indexOf(" " + bc + " ") >= 0;
+      var okStatus = !st || r.dataset.status === st;
+      var ok = (!q || r.dataset.search.indexOf(q) >= 0) && okBc && okStatus && (!cov || r.dataset.cov === cov);
+      r.hidden = !ok;
+      var sub = subOf(r); if (sub && !ok) sub.hidden = true;      // a hidden group can't leave its accounts showing
+      if (ok) n++;
     });
     if (empty) empty.hidden = n > 0;
-    if (count) count.textContent = n + " form" + (n === 1 ? "" : "s");
+    if (count) count.textContent = n + " form name" + (n === 1 ? "" : "s");
   }
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest(".lf-exp"); if (!b) return;
+    var sub = subOf(b.closest(".lf-row")); if (!sub) return;
+    sub.hidden = !sub.hidden; b.textContent = sub.hidden ? "▸" : "▾";
+  });
   $("lfSearch").addEventListener("input", function () { q = this.value.trim().toLowerCase(); apply(); });
   $("lfBc").addEventListener("change", function () { bc = this.value; apply(); });
   $("lfStatus").addEventListener("change", function () { st = this.value; apply(); });

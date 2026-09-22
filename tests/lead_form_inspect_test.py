@@ -109,7 +109,7 @@ check("inspect writes nothing (no commit/add/delete in the route body)",
 
 print("-- template --")
 t = read("app/templates/lead_forms.html")
-check("an Inspect button carries the form id + owner account", 'lf-inspect' in t and 'data-form="{{ f.form_id }}"' in t and 'data-adv="{{ f.owner_advertiser_id }}"' in t)
+check("an Inspect button carries the form id + owner account", 'lf-inspect' in t and 'data-form="{{ g.rep_form_id }}"' in t and 'data-form="{{ a.form_id }}"' in t)
 check("clicking it fetches the read-only endpoint and offers a copy", '/lead-forms/inspect?form_id=' in t and 'lf-copy' in t)
 check("STATIC_VERSION bumped", 'STATIC_VERSION = "137"' in read("app/config.py"))
 

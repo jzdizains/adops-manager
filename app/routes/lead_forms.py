@@ -65,8 +65,25 @@ def page(request: Request, db: Session = Depends(get_db)):
             by_bc.setdefault(a.owner_bc_id, []).append(a.advertiser_id)
     bcs = sorted(({"bc_id": k, "name": bc_names.get(k, k), "n": len(v)} for k, v in by_bc.items()), key=lambda b: b["name"].lower())
     missing = {name: {bc: sum(1 for aid in ids if aid not in have.get(name, set())) for bc, ids in by_bc.items()} for name in have}
+    # one row per form NAME (a form copied to 282 accounts is 282 DB rows but ONE line here),
+    # each expandable to the accounts that have it — otherwise the table is thousands of rows.
+    by_name: dict[str, list] = {}
+    for f in forms:
+        by_name.setdefault(f.name or f.form_id, []).append(f)
+    groups = []
+    for gname in sorted(by_name, key=lambda s: s.lower()):
+        fl = by_name[gname]
+        rep = fl[0]                                            # any copy is a fine clone source
+        gbcs = sorted({acct_bc.get(f.owner_advertiser_id, "") for f in fl if acct_bc.get(f.owner_advertiser_id)})
+        n_pub = sum(1 for f in fl if "PUBLISH" in (f.status or "").upper())
+        accts = sorted(({"name": names.get(f.owner_advertiser_id, f.owner_advertiser_id), "form_id": f.form_id,
+                         "advertiser_id": f.owner_advertiser_id, "status": f.status or ""} for f in fl),
+                       key=lambda a: a["name"].lower())
+        groups.append({"name": gname, "count": len(fl), "rep_form_id": rep.form_id, "rep_owner": rep.owner_advertiser_id,
+                       "bcs": gbcs, "n_pub": n_pub, "accounts": accts,
+                       "cov": "full" if len(fl) >= len(accounts) else "partial"})
     return render(request, "lead_forms.html", {
-        "forms": forms, "names": names, "title": "Lead Forms", "accounts": accounts,
+        "forms": forms, "groups": groups, "names": names, "title": "Lead Forms", "accounts": accounts,
         "copies": copies, "bcs": bcs, "missing": missing, "acct_bc": acct_bc, "n_accounts": len(accounts),
         "web_ready": bool(spark_web_api.load_cookies()),
         "ok": request.query_params.get("ok", ""), "err": request.query_params.get("err", ""),

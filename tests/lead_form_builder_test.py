@@ -143,7 +143,9 @@ check("the builder opens as a pop-up (UI.modal), not an inline panel",
       'UI.modal({ title: "Build a new instant form"' in t and 'id="lfNewHolder"' in t and 'id="lfNewPanel"' not in t)
 check("the forms table has search + Business Center + status + coverage filters over data-tagged rows",
       'id="lfSearch"' in t and 'id="lfBc"' in t and 'id="lfStatus"' in t and 'id="lfCov"' in t
-      and 'class="lf-row"' in t and 'data-cov=' in t and 'data-bc=' in t)
+      and 'class="lf-row"' in t and 'data-cov=' in t and 'data-bcs=' in t)
+check("forms are grouped one row per NAME, expandable to the accounts that have it",
+      "{% for g in groups %}" in t and 'class="lf-accts"' in t and "lf-exp" in t and "{{ g.count }} of {{ n_accounts }}" in t)
 
 print()
 print("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}")
