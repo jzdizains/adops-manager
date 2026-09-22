@@ -4,9 +4,43 @@
   <div><h1>Lead Forms</h1>
     <div class="muted">Each instant form belongs to one ad account. Presets pick a form by <b>name</b> — a launch uses the launching account's own form with that name, so give the same form the same name in every account.</div></div>
   <div class="actions">
-    <form method="post" action="/lead-forms/sync"><button class="btn primary" type="submit">⇄ Sync from accounts</button></form>
+    <button class="btn primary" type="button" id="lfNewBtn" {{ 'disabled' if not web_ready }} title="{{ 'Build a new instant form on one account from an existing form.' if web_ready else 'Needs the ads.tiktok.com cookies from the TikTok Cookies page.' }}">+ New form</button>
+    <form method="post" action="/lead-forms/sync"><button class="btn" type="submit">⇄ Sync from accounts</button></form>
   </div>
 </div>
+
+{% if forms and accounts %}
+<div class="card" id="lfNewPanel" hidden style="margin-bottom:14px;">
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;"><b>Build a new instant form</b><span class="muted" style="font-size:11.5px;">Copies an existing form's layout onto one account, changing only the fields below. It then appears by name in your presets.</span><button type="button" class="btn sm ghost" id="lfNewClose" style="margin-left:auto;">✕</button></div>
+  <form method="post" action="/lead-forms/build" id="lfBuildForm">
+    <input type="hidden" name="from_advertiser_id" id="lfFromAdv" value="">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;">
+      <label class="field"><span class="field-label">Start from (template)</span>
+        <select name="template_form_id" id="lfTemplate" required>{% for f in forms %}<option value="{{ f.form_id }}" data-owner="{{ f.owner_advertiser_id }}">{{ f.name or f.form_id }}</option>{% endfor %}</select>
+        <span class="hint">Its questions &amp; layout are copied; only the fields below change.</span></label>
+      <label class="field"><span class="field-label">Create on account</span>
+        <select name="target_advertiser_id" required>{% for a in accounts %}<option value="{{ a.advertiser_id }}">{{ a.advertiser_name or a.advertiser_id }}</option>{% endfor %}</select>
+        <span class="hint">Copy it to other accounts afterward with “Clone to…”.</span></label>
+      <label class="field"><span class="field-label">New form name</span>
+        <input type="text" name="name" required placeholder="e.g. Games – 18+ – Aug"><span class="hint">Presets match forms by this name.</span></label>
+      <label class="field"><span class="field-label">Destination link <span class="muted">(after submit)</span></span>
+        <input type="url" name="destination_url" placeholder="https://…"><span class="hint">Where a lead is sent — keep your tracking macros.</span></label>
+    </div>
+    <details style="margin-top:8px;"><summary class="linkish" style="font-size:12.5px;">More fields (optional)</summary>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin-top:8px;">
+        <label class="field"><span class="field-label">Question</span><input type="text" name="question_label" placeholder="Are you 18+?"></label>
+        <label class="field"><span class="field-label">Answer options <span class="muted">(one per line)</span></span><textarea name="question_options" rows="2" placeholder="Yes&#10;No"></textarea></label>
+        <label class="field"><span class="field-label">Privacy policy URL</span><input type="url" name="privacy_url" placeholder="https://…/privacy"></label>
+        <label class="field"><span class="field-label">Company name</span><input type="text" name="company_name" placeholder="Acme"></label>
+        <label class="field"><span class="field-label">Thank-you title</span><input type="text" name="thanks_title" placeholder="You're in!"></label>
+        <label class="field"><span class="field-label">Thank-you text</span><input type="text" name="thanks_description" placeholder="Tap below to continue"></label>
+        <label class="field"><span class="field-label">Button label</span><input type="text" name="cta_title" placeholder="Start here"></label>
+      </div>
+    </details>
+    <div style="margin-top:10px;"><button class="btn primary" type="submit" id="lfBuildGo">Build form</button> <span class="hint">Takes a few seconds — TikTok's editor builds and publishes it.</span></div>
+  </form>
+</div>
+{% endif %}
 
 <div class="card">
   {% if forms %}
@@ -53,6 +87,18 @@
 {% endblock %}
 {% block scripts %}
 <script>
+(function () {
+  // "+ New form" builder panel: show/hide, and keep the template's owner account in sync
+  var btn = document.getElementById("lfNewBtn"), panel = document.getElementById("lfNewPanel");
+  var tmpl = document.getElementById("lfTemplate"), fromAdv = document.getElementById("lfFromAdv");
+  function syncOwner() { if (tmpl && fromAdv) { var o = tmpl.selectedOptions[0]; fromAdv.value = o ? (o.dataset.owner || "") : ""; } }
+  if (btn && panel) {
+    btn.addEventListener("click", function () { panel.hidden = !panel.hidden; if (!panel.hidden) { syncOwner(); panel.scrollIntoView({ behavior: "smooth", block: "nearest" }); } });
+    var close = document.getElementById("lfNewClose"); if (close) close.addEventListener("click", function () { panel.hidden = true; });
+    if (tmpl) tmpl.addEventListener("change", syncOwner);
+    var f = document.getElementById("lfBuildForm"); if (f) f.addEventListener("submit", function () { syncOwner(); var go = document.getElementById("lfBuildGo"); if (go) { go.disabled = true; go.textContent = "Building…"; } });
+  }
+})();
 (function () {
   document.addEventListener("click", function (e) {
     var b = e.target.closest(".lf-inspect"); if (!b || b.disabled) return;

@@ -36,6 +36,7 @@
 "jobs.py",
 "lander_templates/prelander.html",
 "landers.py",
+"lead_form_builder.py",
 "live_log.py",
 "live_spend.py",
 "lpv_events.py",

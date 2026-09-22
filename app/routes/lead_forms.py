@@ -112,6 +112,48 @@ def inspect(request: Request, form_id: str, advertiser_id: str, db: Session = De
     })
 
 
+@router.post("/lead-forms/build")
+def build(request: Request,
+          template_form_id: str = Form(...), from_advertiser_id: str = Form(...),
+          target_advertiser_id: str = Form(...), name: str = Form(...),
+          destination_url: str = Form(""), privacy_url: str = Form(""), company_name: str = Form(""),
+          thanks_title: str = Form(""), thanks_description: str = Form(""), cta_title: str = Form(""),
+          question_label: str = Form(""), question_options: str = Form(""),
+          db: Session = Depends(get_db)):
+    """Build a new instant form on ONE account from a template form, with the key fields
+    overridden, then re-read the account so it shows up. Uses the page-editor web session
+    (no browser); runs like the single clone."""
+    from .. import lead_form_builder, scope as scope_mod
+    if not spark_web_api.load_cookies():
+        return RedirectResponse("/lead-forms?err=" + quote("Building uses the TikTok web session — paste your ads.tiktok.com cookies on the TikTok Cookies page first."), status_code=303)
+    sc = scope_mod.for_request(request, db)
+    if not (sc.allows(from_advertiser_id) and sc.allows(target_advertiser_id)):
+        return RedirectResponse("/lead-forms?err=" + quote("That template form or account isn't in your workspace."), status_code=303)
+    name = (name or "").strip()
+    if not name:
+        return RedirectResponse("/lead-forms?err=" + quote("Give the new form a name."), status_code=303)
+    opts = [o.strip() for o in (question_options or "").replace("\r", "").split("\n") if o.strip()]
+    edits = {"destination_url": destination_url.strip(), "privacy_url": privacy_url.strip(),
+             "company_name": company_name.strip(), "thanks_title": thanks_title.strip(),
+             "thanks_description": thanks_description.strip(), "cta_title": cta_title.strip(),
+             "question_label": question_label.strip(), "question_options": opts}
+    target = db.query(models.AdAccount).filter_by(advertiser_id=target_advertiser_id).first()
+    label = (target.advertiser_name if target else "") or target_advertiser_id
+    try:
+        res = lead_form_builder.build_form(template_form_id, name, target_advertiser_id, edits, source_owner=from_advertiser_id)
+    except spark_web_api.WebAuthError as e:
+        return RedirectResponse("/lead-forms?err=" + quote(f"TikTok session expired — re-paste cookies. ({str(e)[:120]})"), status_code=303)
+    if not res.get("ok"):
+        return RedirectResponse("/lead-forms?err=" + quote(f"Couldn't build “{name}” on {label}: {res.get('error', '')[:200]}"), status_code=303)
+    try:
+        if target:
+            sync_account(db, target)
+        db.commit()
+    except Exception:  # noqa: BLE001 — the form is built; a failed re-read just means Sync later
+        db.rollback()
+    return RedirectResponse("/lead-forms?ok=" + quote(f"Built “{name}” on {label} — it'll appear by name in your presets."), status_code=303)
+
+
 def _clone_one(db: Session, form_id: str, from_advertiser_id: str, acct: models.AdAccount, name: str) -> str:
     """Copy one form to one account through the page editor's web API and VERIFY by
     re-reading the target: '' when a form with that name now exists there, else why not.
