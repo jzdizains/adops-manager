@@ -211,8 +211,34 @@
   }
   tabs.forEach(function (a) { a.addEventListener("click", function (e) { e.preventDefault(); show(a.dataset.tab); }); });
   document.addEventListener("click", function (e) { var b = e.target.closest("[data-next]"); if (b) show(b.dataset.next); });
+  // A failed launch links here as ?fix=<field> — jump to that field, ring it, and explain it.
+  var FIX_WHY = {
+    destination: "This preset's creative can't run to this destination. Uploaded Library videos and carousels need a Website (or Website + pixel) destination with a landing page URL. To keep an Instant page or Lead form, switch the creative in step 5 to a Spark code or profile post.",
+    creative_source: "This creative source doesn't match the rest of the preset. Library videos need a Website destination; Instant pages, Lead forms and Smart+ need a Spark code.",
+    landing_page_url: "This destination needs a landing page URL — the web page the ad sends people to.",
+    ad_text: "TikTok requires ad text on every ad. Type one here, or set “Text per launch” to Unique to pull the next line from your Ad texts list.",
+    pixel_event: "Conversion campaigns need a pixel AND an optimisation event that already exists on it (has received data). Pick both here."
+  };
+  var fixParam = (location.search.match(/[?&]fix=([a-z_]+)/) || [])[1] || "";
+  var fixEl = fixParam ? document.querySelector('[data-fix="' + fixParam + '"]') : null;
+
   var start = (location.hash || "").slice(1); if (!start) { try { start = sessionStorage.getItem(key) || ""; } catch (e) {} }
+  if (fixEl) { var fs = fixEl.closest(".stab"); if (fs) start = fs.dataset.tab; }   // open on the field that needs fixing
   show(start || "campaign");
+  if (fixEl) {
+    setTimeout(function () {
+      fixEl.scrollIntoView({ behavior: "smooth", block: "center" });
+      fixEl.classList.add("fix-flash");
+      if (!fixEl.previousElementSibling || !fixEl.previousElementSibling.classList.contains("fix-note")) {
+        var note = document.createElement("div"); note.className = "fix-note";
+        note.innerHTML = '<b>⚠ This is what failed your launch.</b> ' + (FIX_WHY[fixParam] || "Adjust this and Retry failed.") +
+          ' <button type="button" class="fix-note-x" title="Dismiss">✕</button>';
+        note.querySelector(".fix-note-x").addEventListener("click", function () { note.remove(); });
+        fixEl.parentNode.insertBefore(note, fixEl);
+      }
+      setTimeout(function () { fixEl.classList.remove("fix-flash"); }, 4500);
+    }, 300);
+  }
   form.addEventListener("submit", function (e) {
     if (form.checkValidity()) { if ($("#creativeSource").value === "library" && $("#adTextMode").value === "fixed" && !$("#pbAdText").value.trim() && !$("#smartCreative").checked) { e.preventDefault(); show("ad"); adopsToast && adopsToast("err", "TikTok needs ad text — type one or switch to Unique per launch."); $("#pbAdText").focus(); } return; }
     e.preventDefault();

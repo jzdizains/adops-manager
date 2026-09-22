@@ -104,6 +104,24 @@ def explain(code, raw_message: str = "") -> dict:
     }
 
 
+def _config_field(low: str) -> str:
+    """Which preset field a CONFIG launch failure is about — the editor rings it and explains
+    it when linked with ?fix=<field>. Order matters (a message can mention several words)."""
+    if "landing page url" in low:
+        return "landing_page_url"
+    if "ad text" in low or "ad texts" in low:
+        return "ad_text"
+    if ("optimization event" in low or "optimisation event" in low
+            or ("pixel" in low and "conversion" in low)):
+        return "pixel_event"
+    if ("set the creative source" in low or "use a spark" in low or "need a spark" in low
+            or "aren't supported on smart+" in low):
+        return "creative_source"
+    if "destinations only" in low or "library creative" in low or "website destination" in low or "destination" in low:
+        return "destination"
+    return ""
+
+
 def fix_for(log) -> dict | None:
     """Where a failed launch can actually be FIXED in the dashboard — {label, href, why} or None.
     Read from the launch log (error_code + message), so the result page can offer a button
@@ -130,6 +148,8 @@ def fix_for(log) -> dict | None:
     if code == "CONFIG":
         if "caption" in low and "carousel" in low:
             return {"label": "Add the caption", "href": "/creatives?view=carousels", "why": "Open the carousel and type its caption, or add ad text to the preset."}
+        field = _config_field(low)          # which preset field to jump to + ring (or "")
+        anchor = f"?fix={field}" if field else ""
         # A destination-type / creative-source mismatch (e.g. "Library creatives support
         # Website / Pixel destinations only") mentions "Pixel" as a destination TYPE, not a
         # missing pixel — send the operator to the PRESET, not the Pixels page.
@@ -139,12 +159,12 @@ def fix_for(log) -> dict | None:
                    "destination with a landing page URL, or use a spark / profile creative "
                    "instead of library videos.")
             if template_id:
-                return {"label": "Edit the preset", "href": f"/presets/{template_id}/edit", "why": why}
+                return {"label": "Edit the preset", "href": f"/presets/{template_id}/edit{anchor}", "why": why}
             return {"label": "Open Presets", "href": "/presets", "why": why}
         if "pixel" in low or "optimization event" in low:
             return {"label": "Open Pixels", "href": "/pixels", "why": "Pick a pixel + event that exists, or fix the preset."}
         if template_id:
-            return {"label": "Edit the preset", "href": f"/presets/{template_id}/edit", "why": "The preset's settings need a change."}
+            return {"label": "Edit the preset", "href": f"/presets/{template_id}/edit{anchor}", "why": "The preset's settings need a change."}
         return {"label": "Open Presets", "href": "/presets", "why": "The preset's settings need a change."}
     if code == "ASSET":
         return {"label": "Open Assets", "href": "/creatives", "why": "The instant page / lead form / creative wasn't found on this account."}

@@ -84,14 +84,14 @@
   <div class="card">
     <div class="card-header"><span class="card-title">2 · Destination</span><span class="card-meta">where the click lands and what counts as a conversion</span></div>
     <select name="destination_type" id="destType" hidden>{% for d in destinations %}<option value="{{ d }}" {{ 'selected' if blob.get('destination_type', 'website') == d }}>{{ d }}</option>{% endfor %}</select>
-    <div class="pb-cards" id="destCards">
+    <div class="pb-cards" id="destCards" data-fix="destination">
       {% for d, label, sub in [('website', 'Website', 'landing page URL, no pixel event'), ('pixel', 'Website + pixel', 'landing page URL, optimised for a pixel event'), ('instant_page', 'Instant page', "TikTok-hosted page, no pixel — each account's own copy, by name"), ('lead_form', 'Instant form', 'TikTok lead form, no pixel — by name')] %}
       <button type="button" class="pb-card" data-val="{{ d }}"><b>{{ label }}</b><span class="muted">{{ sub }}</span></button>
       {% endfor %}
     </div>
     <div class="hint" id="destNote" hidden style="margin-top:8px;">A plain website under this goal needs a pixel + event (Ads Manager: "a data connection is required"). Without a pixel, use <b>Instant page</b> (Website engagements — TikTok optimises for the page's button clicks) or <b>Instant form</b> (Leads); or run plain traffic with the <b>Click</b> goal: <button type="button" class="linkish" id="destToClick">switch to Click</button>.</div>
     <div class="form-row" style="margin-top:12px;">
-      <label class="field" data-dest="website pixel"><span class="field-label">Landing page URL</span>
+      <label class="field" data-dest="website pixel" data-fix="landing_page_url"><span class="field-label">Landing page URL</span>
         <input type="url" name="landing_page_url" id="pbLanding" value="{{ blob.get('landing_page_url', '') }}" placeholder="https://offer.example.com/page">
         <span class="hint">Just the page. The source rides along at launch (<span class="mono">?source=__CAMPAIGN_NAME__</span> in campaign-name mode — see Settings → Sources). Other parameters you add are kept.</span></label>
       <label class="field" data-dest="instant_page"><span class="field-label">Instant page <span class="muted">(by name)</span></span>
@@ -104,7 +104,7 @@
         <select name="lead_form_name"><option value="">— pick —</option>{% for f in lead_forms %}<option value="{{ f.name }}" {{ 'selected' if blob.get('lead_form_name') == f.name }}>{{ f.name }} — on {{ f.count }} account(s)</option>{% endfor %}</select>
         <span class="hint">Same per-account matching as instant pages. Sync or <a href="/lead-forms">build a new form</a>.</span></label>
     </div>
-    <div class="pb-sub" data-dest="pixel website" data-needs-event="1">
+    <div class="pb-sub" data-dest="pixel website" data-needs-event="1" data-fix="pixel_event">
       <div class="pb-sub-h">Pixel &amp; optimisation event</div>
       <div class="form-row-3">
         <label class="field"><span class="field-label">Pixel</span>
@@ -206,7 +206,7 @@
   <div class="card">
     <div class="card-header"><span class="card-title">5 · Ad &amp; creative</span><span class="card-meta">what gets published to each account</span></div>
     <select name="creative_source" id="creativeSource" hidden><option value="spark" {{ 'selected' if blob.get('creative_source', 'spark') == 'spark' }}>spark</option><option value="library" {{ 'selected' if blob.get('creative_source') == 'library' }}>library</option><option value="carousel" {{ 'selected' if blob.get('creative_source') == 'carousel' }}>carousel</option></select>
-    <div class="pb-cards" id="creativeCards">
+    <div class="pb-cards" id="creativeCards" data-fix="creative_source">
       <button type="button" class="pb-card" data-val="spark"><b>✦ Spark code</b><span class="muted">a creator's own post</span></button>
       <button type="button" class="pb-card" data-val="library"><b>🎬 Library video</b><span class="muted">next unused per launch, or pinned</span></button>
       <button type="button" class="pb-card" data-val="carousel"><b>🖼 Carousel</b><span class="muted">images + music, next unused or pinned</span></button>
@@ -241,7 +241,7 @@
         <select name="call_to_action" id="ctaSel"><option value="AUTO" {{ 'selected' if blob.get('call_to_action') == 'AUTO' }}>Auto — TikTok picks the best button per viewer (Smart+: from Learn more / Shop now / Sign up)</option>{% for cta in cta_options %}<option value="{{ cta }}" {{ 'selected' if blob.get('call_to_action', 'LEARN_MORE') == cta }}>{{ cta.replace('_',' ')|title }}</option>{% endfor %}</select></label>
     </div>
     <div class="form-row">
-      <label class="field"><span class="field-label">Ad text <span class="muted" id="adTextCount">0 / 100</span></span>
+      <label class="field" data-fix="ad_text"><span class="field-label">Ad text <span class="muted" id="adTextCount">0 / 100</span></span>
         <input type="text" name="ad_text" id="pbAdText" value="{{ blob.get('ad_text', '') }}" maxlength="100" placeholder="if you know you know…"></label>
       <label class="field" id="poolModes"><span class="field-label">Text per launch</span>
         <select name="ad_text_mode" id="adTextMode"><option value="fixed" {{ 'selected' if blob.get('ad_text_mode', 'fixed') == 'fixed' }}>Always this text</option><option value="pool" {{ 'selected' if blob.get('ad_text_mode') == 'pool' }}>Unique — take the next one from Ad texts</option></select>

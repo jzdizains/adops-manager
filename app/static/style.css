@@ -1242,6 +1242,15 @@ tr:hover .ctag-add, .ctag-add:focus { opacity: 1; }
 .pv-star { flex: none; border: 0; background: transparent; cursor: pointer; font-size: 16px; line-height: 1; padding: 2px 4px; color: var(--muted); border-radius: 6px; }
 .pv-star:hover { background: var(--panel-hover); color: var(--text); }
 .pv-star.on { color: #f5b301; }
+
+/* deep-link from a failed launch: the field that caused it, ringed + explained */
+.fix-note { display:flex; align-items:flex-start; gap:8px; margin:0 0 10px; padding:10px 12px; font-size:12.5px; line-height:1.5;
+  border:1px solid var(--warn); border-radius:10px; background:color-mix(in srgb, var(--warn) 12%, var(--panel)); color:var(--text); }
+.fix-note b { color:var(--warn); }
+.fix-note-x { margin-left:auto; flex:none; border:0; background:transparent; color:var(--muted); cursor:pointer; font-size:13px; line-height:1; padding:2px 4px; border-radius:6px; }
+.fix-note-x:hover { background:var(--panel-hover); color:var(--text); }
+.fix-flash { border-radius:12px; animation:fixFlash 1.1s ease-out 3; outline:2px solid var(--warn); outline-offset:3px; }
+@keyframes fixFlash { 0%,100% { outline-color:var(--warn); } 50% { outline-color:transparent; } }
 .pk-tile .pv-type { position: absolute; left: 6px; bottom: 6px; font-size: 10px; padding: 1px 6px; border-radius: 999px; background: rgba(0,0,0,.55); color: #fff; }
 .pv-empty { grid-column: 1 / -1; }
 .pv-foot { display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; }

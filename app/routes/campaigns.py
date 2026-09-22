@@ -939,6 +939,20 @@ def remember_traffic_goal(db: Session, fields: dict, accepted: dict) -> None:
         pass
 
 
+def apply_destination(creative: dict, fields: dict) -> None:
+    """Attach the ad's destination to the creative — an Instant Page / Instant Form is a
+    `page_id` (per-account, resolved by name before this), otherwise a `landing_page_url`.
+    Works the same for spark, library-video and Smart-Creative ads (TikTok accepts an
+    uploaded video with an Instant Form on a Lead-Gen campaign, not just spark posts)."""
+    dest = fields.get("destination_type")
+    if dest == "instant_page" and fields.get("instant_page_id"):
+        creative["page_id"] = fields["instant_page_id"]
+    elif dest == "lead_form" and fields.get("lead_form_id"):
+        creative["page_id"] = fields["lead_form_id"]
+    elif fields.get("landing_page_url"):
+        creative["landing_page_url"] = fields["landing_page_url"]
+
+
 def build_ad_payload(fields: dict, adgroup_id: str, spark_ref: dict | None,
                      spark: models.SparkCode | None) -> dict:
     creative: dict = {
@@ -953,13 +967,7 @@ def build_ad_payload(fields: dict, adgroup_id: str, spark_ref: dict | None,
         creative["tiktok_item_id"] = spark_ref["item_id"]
         if spark_ref.get("identity_authorized_bc_id"):
             creative["identity_authorized_bc_id"] = spark_ref["identity_authorized_bc_id"]
-    dest = fields["destination_type"]
-    if dest == "instant_page" and fields.get("instant_page_id"):
-        creative["page_id"] = fields["instant_page_id"]
-    elif dest == "lead_form" and fields.get("lead_form_id"):
-        creative["page_id"] = fields["lead_form_id"]
-    elif fields.get("landing_page_url"):
-        creative["landing_page_url"] = fields["landing_page_url"]
+    apply_destination(creative, fields)
     if fields.get("_display_card_portfolio_id") and creative["ad_format"] != "CAROUSEL_ADS":
         creative["card_id"] = fields["_display_card_portfolio_id"]     # Display Card (doc "Cards")
     return {"adgroup_id": adgroup_id, "creatives": [creative]}
@@ -1421,8 +1429,8 @@ def build_library_ad_payload(fields: dict, adgroup_id: str, identity: dict,
         "identity_id": identity["identity_id"],
         "identity_type": identity["identity_type"],
         "video_id": video_id,
-        "landing_page_url": fields["landing_page_url"],
     }
+    apply_destination(creative, fields)      # website URL, or an Instant Page / Instant Form page_id
     if identity.get("identity_authorized_bc_id"):
         creative["identity_authorized_bc_id"] = identity["identity_authorized_bc_id"]
     if cover_image_id:
@@ -1445,8 +1453,8 @@ def build_smart_creative_ad_payload(fields: dict, adgroup_id: str, identity: dic
             "identity_id": identity["identity_id"],
             "identity_type": identity["identity_type"],
             "video_id": video_id,
-            "landing_page_url": fields["landing_page_url"],
         }
+        apply_destination(c, fields)
         if identity.get("identity_authorized_bc_id"):
             c["identity_authorized_bc_id"] = identity["identity_authorized_bc_id"]
         if cover_image_id:
@@ -1604,11 +1612,15 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                 raise ConfigError("Smart+ launches need a spark creative — pick a spark code "
                                   "in the preset or at launch time.")
         if use_library:
-            if fields["destination_type"] not in ("website", "pixel"):
-                raise ConfigError("Library creatives support Website / Pixel destinations only.")
-            if not fields.get("landing_page_url"):
+            # A library (uploaded) video runs to any destination TikTok allows it with:
+            # a Website / Pixel landing page, an Instant Page, or an Instant Form (Lead Gen).
+            if fields["destination_type"] not in ("website", "pixel", "instant_page", "lead_form"):
+                raise ConfigError("Library creatives support Website, Pixel, Instant Page or Instant Form destinations.")
+            if fields["destination_type"] in ("website", "pixel") and not fields.get("landing_page_url"):
                 raise ConfigError("Library-creative presets need a landing page URL "
                                   "(the video ad's destination).")
+            # an Instant Page / Instant Form destination is resolved by name per account below
+            # (it fails there with a clear message if no page/form is selected)
             # TikTok now REQUIRES ad text on ads
             if fields.get("ad_text_mode") != "pool" and not (fields.get("ad_text") or "").strip():
                 raise ConfigError("TikTok requires ad text on every ad — enter it in the "

@@ -310,7 +310,7 @@ check("creative-type filter removed (all-carousel made it dead weight); search b
       'id="prCreative"' not in lst and 'data-c="spark"' not in lst and '#prCreative button' not in lst
       and "r.dataset.creative === c" not in lst and 'id="prQ"' in lst and "r.dataset.search.indexOf(q)" in lst)
 cfg = open(os.path.join(ROOT, "app", "config.py"), encoding="utf-8").read()
-check("static version bumped", 'STATIC_VERSION = "143"' in cfg)
+check("static version bumped", 'STATIC_VERSION = "144"' in cfg)
 
 print()
 print("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}")
