@@ -268,17 +268,28 @@ def link_all(record_id: int, db: Session = Depends(get_db)):
     return RedirectResponse("/pixels?ok=Linking+in+the+background+—+you%27ll+get+a+notification.", status_code=303)
 
 
-@router.post("/pixels/{record_id}/link-one")
-def link_one(record_id: int, advertiser_id: str = Form(...), db: Session = Depends(get_db)):
+@router.post("/pixels/{record_id}/link-multi")
+def link_multi(record_id: int, target_ids: str = Form(""), db: Session = Depends(get_db)):
+    """Link the pixel to the accounts picked in the account pop-up (comma-separated ids,
+    all within the pixel's own Business Center). One account runs inline; several go to a job."""
     p = db.get(models.PixelRecord, record_id)
     token = queries.any_access_token(db)
     if not p or not token or not p.owner_bc_id:
         return RedirectResponse("/pixels?err=missing", status_code=303)
-    ok_count, failed = _link_pixel_to_bc_accounts(db, token, p.owner_bc_id, p.pixel_code or p.pixel_id,
-                                                  only=[advertiser_id])
-    if failed:
-        return RedirectResponse(f"/pixels?err=Link+failed:+{failed[0]}", status_code=303)
-    return RedirectResponse("/pixels?ok=Linked", status_code=303)
+    in_bc = {a.advertiser_id for a in queries.enabled_accounts(db) if a.owner_bc_id == p.owner_bc_id}
+    ids = [x.strip() for x in (target_ids or "").split(",") if x.strip() and x.strip() in in_bc]
+    ids = list(dict.fromkeys(ids))
+    if not ids:
+        return RedirectResponse("/pixels?err=No+accounts+in+this+pixel%27s+Business+Center+were+selected.", status_code=303)
+    if len(ids) == 1:
+        ok_count, failed = _link_pixel_to_bc_accounts(db, token, p.owner_bc_id, p.pixel_code or p.pixel_id, only=ids)
+        if failed:
+            return RedirectResponse(f"/pixels?err=Link+failed:+{failed[0]}", status_code=303)
+        return RedirectResponse("/pixels?ok=Linked", status_code=303)
+    from .. import jobs
+    jobs.enqueue(db, "pixel_link_all", f"Link pixel {p.pixel_name or p.pixel_id} to {len(ids)} account(s)",
+                 {"record_id": record_id, "only": ids}, href="/pixels")
+    return RedirectResponse(f"/pixels?ok=Linking+to+{len(ids)}+account(s)+in+the+background+—+you%27ll+get+a+notification.", status_code=303)
 
 
 @router.post("/pixels/{record_id}/rename")

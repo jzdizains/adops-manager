@@ -277,7 +277,8 @@ def _pixel_link_all(db: Session, p: dict, job: models.Job) -> dict:
     token = queries.any_access_token(db)
     if not rec or not token or not rec.owner_bc_id:
         return {"ok": False, "detail": "pixel not found, not BC-owned, or TikTok not connected"}
-    ok_count, failed = pixels._link_pixel_to_bc_accounts(db, token, rec.owner_bc_id, rec.pixel_code or rec.pixel_id)
+    only = p.get("only") or None
+    ok_count, failed = pixels._link_pixel_to_bc_accounts(db, token, rec.owner_bc_id, rec.pixel_code or rec.pixel_id, only=only)
     return {"ok": not failed, "detail": f"linked to {ok_count} account(s)" + (f", failed: {' '.join(failed[:8])}" if failed else ""), "href": "/pixels"}
 
 

@@ -119,23 +119,9 @@
         <td class="muted">{% if g.bcs %}{{ g.bcs|length }} BC{{ 's' if g.bcs|length != 1 }}{% else %}—{% endif %}</td>
         <td class="muted">{% if g.n_pub == g.count %}<span class="pill ok">all published</span>{% else %}<span class="pill warn">{{ g.count - g.n_pub }} unpublished</span>{% endif %}</td>
         <td class="num">
-          <button class="btn sm lf-inspect" type="button" data-form="{{ g.rep_form_id }}" data-adv="{{ g.rep_owner }}" {{ 'disabled' if not web_ready }} title="{{ 'Read this form’s definition (read-only).' if web_ready else 'Needs the ads.tiktok.com cookies from the TikTok Cookies page.' }}">🔍 Inspect</button>
+          <button class="btn sm lf-preview" type="button" data-form="{{ g.rep_form_id }}" data-adv="{{ g.rep_owner }}" data-name="{{ g.name }}" {{ 'disabled' if not web_ready }} title="{{ 'See what this form looks like — a live TikTok-style preview.' if web_ready else 'Needs the ads.tiktok.com cookies from the TikTok Cookies page.' }}">👁 Preview</button>
           {% if accounts|length > 1 %}
-          <form method="post" action="/lead-forms/clone" hidden>
-            <input type="hidden" name="form_id" value="{{ g.rep_form_id }}">
-            <input type="hidden" name="from_advertiser_id" value="{{ g.rep_owner }}">
-            <select name="to_advertiser_id">
-              {% for a in accounts %}{% if a.advertiser_id != g.rep_owner %}<option value="{{ a.advertiser_id }}">{{ a.advertiser_name or a.advertiser_id }}</option>{% endif %}{% endfor %}
-            </select>
-          </form>
-          <form method="post" action="/lead-forms/clone-bc" hidden class="lf-bc-form">
-            <input type="hidden" name="form_id" value="{{ g.rep_form_id }}">
-            <input type="hidden" name="from_advertiser_id" value="{{ g.rep_owner }}">
-            <select name="bc_id">
-              {% for b in bcs %}{% set n = missing.get(g.name, {}).get(b.bc_id, 0) %}<option value="{{ b.bc_id }}" data-n="{{ n }}">{{ b.name }} — {{ n }} of {{ b.n }} without it</option>{% endfor %}
-            </select>
-          </form>
-          <button class="btn sm lf-clone" type="button" data-name="{{ g.name }}" {{ 'disabled' if not web_ready }} title="{{ 'Copies this form onto more accounts through the page editor’s web session. Test on one account first.' if web_ready else 'Needs the ads.tiktok.com cookies from the TikTok Cookies page.' }}">⧉ Clone to…</button>
+          <button class="btn sm lf-clone" type="button" data-name="{{ g.name }}" data-form="{{ g.rep_form_id }}" data-adv="{{ g.rep_owner }}" {{ 'disabled' if not web_ready }} title="{{ 'Pick the accounts to copy this form onto — search, filter by Business Center or status, multi-select.' if web_ready else 'Needs the ads.tiktok.com cookies from the TikTok Cookies page.' }}">⧉ Clone to…</button>
           {% endif %}
         </td>
       </tr>
@@ -145,7 +131,7 @@
             <span style="min-width:220px;">{{ a.name }}</span>
             <span class="mono muted" style="font-size:10.5px;">{{ a.form_id }}</span>
             <span class="pill {{ 'ok' if 'PUBLISH' in a.status.upper() else 'dim' }}" style="font-size:10px;">{{ a.status or '—' }}</span>
-            <button class="btn sm ghost lf-inspect" type="button" data-form="{{ a.form_id }}" data-adv="{{ a.advertiser_id }}" {{ 'disabled' if not web_ready }} style="margin-left:auto;" title="Inspect this account's copy">🔍</button>
+            <button class="btn sm ghost lf-preview" type="button" data-form="{{ a.form_id }}" data-adv="{{ a.advertiser_id }}" data-name="{{ a.name }}" {{ 'disabled' if not web_ready }} style="margin-left:auto;" title="Preview this account's copy">👁</button>
           </div>{% endfor %}
         </div></td></tr>
     {% endfor %}
@@ -242,30 +228,77 @@
   });
 })();
 (function () {
+  // Preview: renders an EXISTING form in the same TikTok-style phone the builder uses,
+  // from the fields read back live (GET /lead-forms/inspect → j.fields). Read-only.
+  var esc = function (s) { return (window.UI && UI.esc) ? UI.esc(s) : String(s == null ? "" : s); };
+  function phoneNode() {
+    var w = document.createElement("div"); w.style.cssText = "display:flex;flex-direction:column;align-items:center;gap:12px;";
+    w.innerHTML =
+      '<div class="lfp-tabs"><button type="button" class="lfp-tab on" data-screen="form">Form</button><button type="button" class="lfp-tab" data-screen="thanks">Thank-you</button></div>'
+      + '<div class="lfp-phone"><div class="lfp-screen">'
+      + '<div class="lfp-brand"></div>'
+      + '<div class="lfp-view" data-view="form" style="display:contents;">'
+      + '<div class="lfp-body"><div class="lfp-q" data-q></div><div data-opts></div>'
+      + '<div class="lfp-priv"><span class="lfp-check"></span><span>I agree. <a>View <span data-co>your company</span>’s privacy policy.</a></span></div></div>'
+      + '<div class="lfp-foot"><button type="button" class="lfp-submit" data-sub>Submit</button></div></div>'
+      + '<div class="lfp-view" data-view="thanks" style="display:none;flex-direction:column;">'
+      + '<div class="lfp-thanks"><div class="t" data-tt></div><div class="d" data-td></div>'
+      + '<button type="button" class="lfp-submit" data-cta style="max-width:240px;"></button><div class="lfp-dest" data-dest></div></div></div>'
+      + '</div></div>'
+      + '<div class="muted" data-status style="font-size:11.5px;text-align:center;min-height:16px;"></div>';
+    w.querySelectorAll(".lfp-tab").forEach(function (b) {
+      b.addEventListener("click", function () {
+        w.querySelectorAll(".lfp-tab").forEach(function (o) { o.classList.toggle("on", o === b); });
+        w.querySelectorAll(".lfp-view").forEach(function (v) { v.style.display = (v.dataset.view === b.dataset.screen) ? (b.dataset.screen === "thanks" ? "flex" : "contents") : "none"; });
+      });
+    });
+    return w;
+  }
+  function fill(w, f) {
+    var q = function (s) { return w.querySelector(s); };
+    q("[data-q]").textContent = f.question_label || "Are you 18+?";
+    q("[data-co]").textContent = f.company_name || "your company";
+    q("[data-tt]").textContent = f.thanks_title || "Thanks for your response!";
+    q("[data-td]").textContent = f.thanks_description || "Tap the button below to start";
+    q("[data-cta]").textContent = f.cta_title || "Start here";
+    var opts = (f.question_options && f.question_options.length) ? f.question_options : ["Yes", "No"];
+    var box = q("[data-opts]"); box.textContent = "";
+    opts.slice(0, 8).forEach(function (label) {
+      var row = document.createElement("div"); row.className = "lfp-opt";
+      var r = document.createElement("span"); r.className = "lfp-radio";
+      var t = document.createElement("span"); t.textContent = label;
+      row.appendChild(r); row.appendChild(t); box.appendChild(row);
+    });
+    var dest = f.destination_url || "", cap = q("[data-dest]");
+    try { cap.textContent = dest ? ("→ " + new URL(dest).hostname) : ""; } catch (e) { cap.textContent = dest ? "→ " + dest.slice(0, 40) : ""; }
+  }
   document.addEventListener("click", function (e) {
-    var b = e.target.closest(".lf-inspect"); if (!b || b.disabled) return;
-    var fid = b.dataset.form, adv = b.dataset.adv;
-    var p = UI.popover(b, '<div style="font-weight:700;margin-bottom:4px;">Form definition <span class="mono muted" style="font-size:11px;">' + UI.esc(fid) + '</span></div><div class="muted" style="font-size:11px;margin-bottom:6px;">Read-only. Copy this and paste it to Claude to map the fields.</div><pre class="lf-json" style="max-height:340px;overflow:auto;white-space:pre-wrap;word-break:break-all;font-size:11px;line-height:1.4;background:var(--surface-2,#111);padding:8px;border-radius:6px;margin:0 0 8px;">Reading…</pre><button type="button" class="btn sm lf-copy">Copy JSON</button>', { alignRight: true });
-    var pre = p.querySelector(".lf-json");
+    var b = e.target.closest(".lf-preview"); if (!b || b.disabled || !window.UI || !UI.modal) return;
+    var fid = b.dataset.form, adv = b.dataset.adv, nm = b.dataset.name || "";
+    var w = phoneNode(), st = w.querySelector("[data-status]");
+    st.textContent = "Reading the live form from TikTok…";
+    UI.modal({ title: "Preview" + (nm ? " — " + nm : ""), body: w });
     fetch("/lead-forms/inspect?form_id=" + encodeURIComponent(fid) + "&advertiser_id=" + encodeURIComponent(adv), { headers: { "x-requested-with": "fetch" } })
       .then(function (r) { return r.json(); })
-      .then(function (j) { pre.textContent = j.ok ? JSON.stringify(j, null, 2) : ("Couldn't read it: " + (j.error || "unknown")); })
-      .catch(function () { pre.textContent = "Couldn't reach the server — try again."; });
-    var c = p.querySelector(".lf-copy");
-    if (c) c.addEventListener("click", function () { try { navigator.clipboard.writeText(pre.textContent); this.textContent = "Copied ✓"; } catch (_e) { this.textContent = "Select & copy manually"; } });
+      .then(function (j) {
+        if (!j.ok) { st.textContent = "Couldn't read it: " + (j.error || "unknown"); return; }
+        fill(w, j.fields || {});
+        st.innerHTML = '<span class="mono">' + esc(fid) + '</span> · read live from TikTok';
+      })
+      .catch(function () { st.textContent = "Couldn't reach the server — try again."; });
   });
+  // "Clone to…" opens the reusable account pop-up (search + BC + status + multi-select);
+  // the chosen accounts are cloned to in one verified background job.
   document.addEventListener("click", function (e) {
-    var b = e.target.closest(".lf-clone"); if (!b || b.disabled) return;
-    var f = b.parentElement.querySelector('form[action="/lead-forms/clone"]'), sel = f.querySelector("select");
-    var fb = b.parentElement.querySelector(".lf-bc-form"), selb = fb && fb.querySelector("select");
-    var bcBlock = selb && selb.options.length ? '<div style="font-weight:700;margin:12px 0 6px;">…or every account in a Business Center</div><div style="display:flex;gap:6px;"><select data-bc style="flex:1;">' + selb.innerHTML + '</select><button type="button" class="btn sm" data-bc-go>Clone to all</button></div><div class="hint" style="margin-top:6px;">Only accounts that don\'t already have a form with this name; runs in the background, one account at a time, each copy verified.</div>' : '';
-    var p = UI.popover(b, '<div style="font-weight:700;margin-bottom:6px;">Clone “' + UI.esc(b.dataset.name) + '” to</div><div style="display:flex;gap:6px;"><select style="flex:1;">' + sel.innerHTML + '</select><button type="button" class="btn sm primary">Clone</button></div><div class="hint" style="margin-top:6px;">Copies the form through the TikTok web session.</div>' + bcBlock, { alignRight: true });
-    p.querySelector(".primary").addEventListener("click", function () { sel.value = p.querySelector("select").value; this.disabled = true; this.textContent = "Cloning…"; f.submit(); });
-    var go = p.querySelector("[data-bc-go]"), bsel = p.querySelector("[data-bc]");
-    function refresh() { if (!go) return; var n = parseInt(bsel.selectedOptions[0].dataset.n || "0", 10); go.disabled = !n; go.textContent = n ? "Clone to all (" + n + ")" : "All have it"; }
-    if (go) { bsel.addEventListener("change", refresh); refresh();
-      go.addEventListener("click", function () { var n = parseInt(bsel.selectedOptions[0].dataset.n || "0", 10); var name = bsel.selectedOptions[0].textContent.split(" — ")[0];
-        UI.confirm({ title: "Clone “" + b.dataset.name + "” to " + n + " account(s) in " + name + "?", text: "One web call per account through the TikTok web session; each copy is verified by re-reading the account. You'll get a notification when it's done.", ok: "Clone to all" }).then(function (y) { if (!y) return; selb.value = bsel.value; go.disabled = true; go.textContent = "Queuing…"; fb.submit(); }); }); }
+    var b = e.target.closest(".lf-clone"); if (!b || b.disabled || !UI.pickAccounts) return;
+    UI.pickAccounts({ title: "Clone “" + b.dataset.name + "” to…", confirmLabel: "Clone to selected", exclude: [b.dataset.adv] }).then(function (ids) {
+      if (!ids || !ids.length) return;
+      var f = document.createElement("form"); f.method = "post"; f.action = "/lead-forms/clone-multi"; f.style.display = "none";
+      [["form_id", b.dataset.form], ["from_advertiser_id", b.dataset.adv], ["name", b.dataset.name], ["target_ids", ids.join(",")]].forEach(function (kv) {
+        var i = document.createElement("input"); i.type = "hidden"; i.name = kv[0]; i.value = kv[1]; f.appendChild(i);
+      });
+      document.body.appendChild(f); f.submit();
+    });
   });
 })();
 </script>

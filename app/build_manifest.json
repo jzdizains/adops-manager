@@ -102,6 +102,7 @@
 "settings_store.py",
 "source_check.py",
 "spark_web_api.py",
+"static/account-picker-modal.js",
 "static/account-picker.js",
 "static/accounts.js",
 "static/assistant.js",

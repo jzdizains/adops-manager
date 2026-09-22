@@ -253,29 +253,19 @@
     e.preventDefault(); var row = a.closest("tr"), g = byName[row.dataset.name]; if (g) openDrawer(g);
   });
 
-  // ---- clone popover (one account first, or a whole BC) ----
+  // ---- Clone to… : opens the reusable account pop-up (search + BC + status + multi-select) ----
   document.addEventListener("click", function (e) {
-    var b = e.target.closest && e.target.closest(".ip-clone"); if (!b || b.disabled) return;
+    var b = e.target.closest && e.target.closest(".ip-clone"); if (!b || b.disabled || !UI.pickAccounts) return;
     var row = b.closest("tr"), g = byName[row.dataset.name]; if (!g || !g.source) return;
-    var ch = IP.cloneChoices(g, DATA);
-    var opts = ch.accounts.filter(function (a) { return a.id !== g.source.adv; }).map(function (a) { return '<option value="' + esc(a.id) + '"' + (a.has ? " disabled" : "") + ">" + esc(a.name) + (a.has ? " — has it" : "") + "</option>"; }).join("");
-    var bopts = ch.bcs.map(function (x) { return '<option value="' + esc(x.bc_id) + '" data-n="' + x.missing + '">' + esc(x.name) + " — " + x.missing + " of " + x.n + " without it</option>"; }).join("");
-    var linkBlock = '<div style="font-weight:700;margin:12px 0 6px;">Button link <span class="muted" style="font-weight:500;">(optional)</span></div><input type="url" data-url placeholder="Leave empty to keep the page’s own link" style="width:100%;"><input type="text" data-text placeholder="New button text (optional)" style="width:100%;margin-top:6px;"><div class="hint" style="margin-top:4px;">Re-points every link on the copy; the copy is read back and only published once the new link is in it.</div>';
-    var bcBlock = bopts ? '<div style="font-weight:700;margin:12px 0 6px;">…or every account in a Business Center</div><div style="display:flex;gap:6px;"><select data-bc style="flex:1;">' + bopts + '</select><button type="button" class="btn sm" data-bc-go>Clone to all</button></div><div class="hint" style="margin-top:6px;">Only accounts that don\'t already have a page with this name; runs in the background, one account at a time, and stops the moment the session is dead.</div>' : "";
-    var p = UI.popover(b, '<div style="font-weight:700;margin-bottom:6px;">Clone “' + esc(g.name) + '” to</div><div style="display:flex;gap:6px;"><select data-one style="flex:1;">' + opts + '</select><button type="button" class="btn sm primary" data-one-go>Clone (test)</button></div><div class="hint" style="margin-top:6px;">One account first — open the copy in Ads Manager and check it before cloning everywhere.</div>' + linkBlock + bcBlock, { alignRight: true });
-    function extra() { return { new_url: p.querySelector("[data-url]").value.trim(), new_text: p.querySelector("[data-text]").value.trim() }; }
-    p.querySelector("[data-one-go]").addEventListener("click", function () {
-      var to = p.querySelector("[data-one]").value; if (!to) return; this.disabled = true; this.textContent = "Cloning…";
-      var x = extra(); postForm("/instant-pages/clone", { page_id: g.source.page_id, from_advertiser_id: g.source.adv, to_advertiser_id: to, new_url: x.new_url, new_text: x.new_text });
+    UI.pickAccounts({
+      title: "Clone “" + g.name + "” to…", confirmLabel: "Clone to selected", exclude: [g.source.adv],
+      extra: [{ name: "new_url", label: "Button link (optional) — leave empty to keep the page’s own", type: "url", placeholder: "https://…" },
+              { name: "new_text", label: "New button text (optional)", type: "text", placeholder: "" }]
+    }).then(function (r) {
+      if (!r || !r.ids || !r.ids.length) return;
+      postForm("/instant-pages/clone-multi", { page_id: g.source.page_id, from_advertiser_id: g.source.adv,
+        target_ids: r.ids.join(","), new_url: (r.values && r.values.new_url) || "", new_text: (r.values && r.values.new_text) || "" });
     });
-    var go = p.querySelector("[data-bc-go]"), bsel = p.querySelector("[data-bc]");
-    function refresh() { if (!go) return; var n = parseInt(bsel.selectedOptions[0].dataset.n || "0", 10); go.disabled = !n; go.textContent = n ? "Clone to all (" + n + ")" : "All have it"; }
-    if (go) { bsel.addEventListener("change", refresh); refresh();
-      go.addEventListener("click", function () { var n = parseInt(bsel.selectedOptions[0].dataset.n || "0", 10), name = bsel.selectedOptions[0].textContent.split(" — ")[0];
-        UI.confirm({ title: "Clone “" + g.name + "” to " + n + " account(s) in " + name + "?", text: "Through the page editor's web session, one account at a time with a pause; each copy is published and verified. You'll get a notification with per-account results.", ok: "Clone to all" }).then(function (y) {
-          if (!y) return; go.disabled = true; go.textContent = "Queuing…"; var x = extra();
-          postForm("/instant-pages/clone-bc", { page_id: g.source.page_id, from_advertiser_id: g.source.adv, bc_id: bsel.value, new_url: x.new_url, new_text: x.new_text });
-        }); }); }
   });
 
   apply();

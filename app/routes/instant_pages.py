@@ -266,6 +266,29 @@ def template_build_bc(request: Request, tpl_id: int, bc_id: str = Form(...), db:
         "Stop it any time from Jobs.") + "#templates", status_code=303)
 
 
+@router.post("/instant-pages/templates/{tpl_id}/build-multi")
+def template_build_multi(request: Request, tpl_id: int, target_ids: str = Form(""), db: Session = Depends(get_db)):
+    """Build the template's page on the accounts picked in the account pop-up (comma-separated ids)."""
+    from .. import jobs, scope as scope_mod
+    sc = scope_mod.for_request(request, db)
+    t = _tpl(db, sc, tpl_id)
+    if t is None:
+        return RedirectResponse("/instant-pages?err=" + quote("That template is not in your workspace."), status_code=303)
+    gate = _builder_gate()
+    if gate:
+        return RedirectResponse("/instant-pages?err=" + quote(gate), status_code=303)
+    have = _page_names_by_account(db).get(t.name, set())
+    ids = [x.strip() for x in (target_ids or "").split(",") if x.strip() and sc.allows(x.strip())]
+    ids = [i for i in dict.fromkeys(ids) if i not in have]
+    if not ids:
+        return RedirectResponse("/instant-pages?ok=" + quote(f"Every selected account already has “{t.name}”.") + "#templates", status_code=303)
+    job = jobs.enqueue(db, "instant_page_build", f"Build page “{t.name}” on {len(ids)} account(s)",
+                       {"template_id": t.id, "targets": ids}, href="/instant-pages")
+    return RedirectResponse("/instant-pages?ok=" + quote(
+        f"Building “{t.name}” on {len(ids)} account(s) — one browser at a time, about a minute each (job #{job.id}). "
+        "Stop it any time from Jobs.") + "#templates", status_code=303)
+
+
 def build_on_accounts(db: Session, template_id: int, targets: list[str], should_stop=None, on_progress=None) -> dict:
     """The job body: build + verify on each account in turn. A build TikTok refuses is
     reported per account and never repeated blindly; a verification challenge stops the
@@ -438,6 +461,35 @@ def clone_to_many(db: Session, page_id: str, from_advertiser_id: str, targets: l
         if i + 1 < len(targets):
             _time.sleep(1.5)
     return {"ok": ok, "failed": failed, "stopped": stopped, "notes": notes}
+
+
+@router.post("/instant-pages/clone-multi")
+def clone_multi(request: Request, page_id: str = Form(...), from_advertiser_id: str = Form(...),
+                target_ids: str = Form(""), new_url: str = Form(""), new_text: str = Form(""),
+                db: Session = Depends(get_db)):
+    """Clone a page onto the accounts picked in the account pop-up (comma-separated ids),
+    as one verified background job — the same flow as the BC clone."""
+    from .. import jobs, scope as scope_mod
+    if not spark_web_api.load_cookies():
+        return RedirectResponse("/instant-pages?err=" + quote("Cloning uses the TikTok web session — paste your ads.tiktok.com cookies on the TikTok Cookies page first."), status_code=303)
+    sc = scope_mod.for_request(request, db)
+    src = db.query(models.InstantPage).filter_by(page_id=page_id, owner_advertiser_id=from_advertiser_id).first()
+    if src is None or not sc.allows(from_advertiser_id):
+        return RedirectResponse("/instant-pages?err=" + quote("That page is no longer listed — sync and try again."), status_code=303)
+    ids = [x.strip() for x in (target_ids or "").split(",")
+           if x.strip() and sc.allows(x.strip()) and x.strip() != from_advertiser_id]
+    have = {p.owner_advertiser_id for p in db.query(models.InstantPage).filter_by(name=src.name).all()}
+    ids = [i for i in dict.fromkeys(ids) if i not in have]
+    new_url = (new_url or "").strip()
+    if new_url and not new_url.lower().startswith(("http://", "https://")):
+        return RedirectResponse("/instant-pages?err=" + quote("The new button link must start with http:// or https://."), status_code=303)
+    if not ids:
+        return RedirectResponse("/instant-pages?ok=" + quote(f"Every selected account already has “{src.name}” — nothing to clone."), status_code=303)
+    job = jobs.enqueue(db, "instant_page_clone_all", f"Clone “{src.name}” → {len(ids)} account(s)",
+                       {"page_id": page_id, "from_advertiser_id": from_advertiser_id, "name": src.name,
+                        "targets": ids, "new_url": new_url, "new_text": (new_text or "").strip()}, href="/instant-pages")
+    return RedirectResponse("/instant-pages?ok=" + quote(
+        f"Cloning “{src.name}” to {len(ids)} account(s) in the background — you'll get a notification (job #{job.id})."), status_code=303)
 
 
 @router.post("/instant-pages/clone")

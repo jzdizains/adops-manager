@@ -122,11 +122,15 @@ def inspect(request: Request, form_id: str, advertiser_id: str, db: Session = De
         parsed = json.loads(raw) if isinstance(raw, str) and raw else raw
     except (ValueError, TypeError):
         parsed = None
+    title = page.get("title") or page.get("name") or ""
+    from .. import lead_form_builder
+    fields = lead_form_builder.extract_form_fields(parsed if parsed is not None else raw, title=title)
     return JSONResponse({
         "ok": True, "form_id": str(form_id), "read_shape": shape,
         "business_type": page.get("business_type"),
-        "title": page.get("title") or page.get("name") or "",
+        "title": title,
         "template_id": page.get("template_id"),
+        "fields": fields,
         "definition": parsed if parsed is not None else raw,
     })
 
@@ -239,6 +243,29 @@ def clone_bc(request: Request, form_id: str = Form(...), from_advertiser_id: str
                         "targets": [a.advertiser_id for a in targets]}, href="/lead-forms")
     return RedirectResponse("/lead-forms?ok=" + quote(
         f"Cloning “{src.name}” to {len(targets)} account(s) in {bc_name} in the background — you'll get a notification (job #{job.id})."), status_code=303)
+
+
+@router.post("/lead-forms/clone-multi")
+def clone_multi(request: Request, form_id: str = Form(...), from_advertiser_id: str = Form(...),
+                name: str = Form(...), target_ids: str = Form(""), db: Session = Depends(get_db)):
+    """Clone a form onto the accounts picked in the account pop-up (comma-separated ids),
+    as one background job — the same verified, one-at-a-time flow as the BC clone."""
+    from .. import jobs, scope as scope_mod
+    if not spark_web_api.load_cookies():
+        return RedirectResponse("/lead-forms?err=" + quote("Cloning uses the TikTok web session — paste your ads.tiktok.com cookies on the TikTok Cookies page first."), status_code=303)
+    sc = scope_mod.for_request(request, db)
+    if not sc.allows(from_advertiser_id):
+        return RedirectResponse("/lead-forms?err=" + quote("That form is no longer listed — sync and try again."), status_code=303)
+    ids = [x.strip() for x in (target_ids or "").split(",")
+           if x.strip() and sc.allows(x.strip()) and x.strip() != from_advertiser_id]
+    have = {f.owner_advertiser_id for f in db.query(models.LeadForm).filter_by(name=name).all()}
+    ids = [i for i in dict.fromkeys(ids) if i not in have]     # de-dupe, drop accounts that already have it
+    if not ids:
+        return RedirectResponse("/lead-forms?ok=" + quote(f"Every selected account already has “{name}” — nothing to clone."), status_code=303)
+    job = jobs.enqueue(db, "lead_form_clone_all", f"Clone form “{name}” → {len(ids)} account(s)",
+                       {"form_id": form_id, "from_advertiser_id": from_advertiser_id, "name": name, "targets": ids}, href="/lead-forms")
+    return RedirectResponse("/lead-forms?ok=" + quote(
+        f"Cloning “{name}” to {len(ids)} account(s) in the background — you'll get a notification (job #{job.id})."), status_code=303)
 
 
 def clone_to_many(db: Session, form_id: str, from_advertiser_id: str, name: str, targets: list[str],

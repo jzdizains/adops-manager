@@ -309,6 +309,28 @@ def account_picker_context(db: Session, accounts: list) -> dict:
     return {"groups": groups, "info": info, "counts": counts, "bc_status": bc_status}
 
 
+@router.get("/accounts/picker.json")
+def accounts_picker_json(request: Request, db: Session = Depends(get_db)):
+    """Feed for the reusable account-picker pop-up (UI.pickAccounts): every enabled
+    account this user can see, with its Business Center and fresh/used/live/blocked
+    state, plus the BC list and state counts. Read-only."""
+    from .. import queries, scope as scope_mod
+    sc = scope_mod.for_request(request, db)
+    accounts = [a for a in queries.enabled_accounts(db) if sc.allows(a.advertiser_id)]
+    ctx = account_picker_context(db, accounts)
+    info = ctx["info"]
+    bcs = {b.bc_id: b for b in db.query(models.BusinessCenter).all()}
+    out = [{"id": a.advertiser_id, "name": a.advertiser_name or a.advertiser_id,
+            "bc": a.owner_bc_id or "", "bc_name": (bcs[a.owner_bc_id].name if a.owner_bc_id in bcs else "No Business Center"),
+            "state": info.get(a.advertiser_id, {}).get("state", "fresh")} for a in accounts]
+    bc_counts: dict[str, int] = {}
+    for a in accounts:
+        bc_counts[a.owner_bc_id or ""] = bc_counts.get(a.owner_bc_id or "", 0) + 1
+    bclist = sorted(({"id": k, "name": (bcs[k].name if k in bcs else "No Business Center"), "n": v} for k, v in bc_counts.items()),
+                    key=lambda b: b["name"].lower())
+    return JSONResponse({"accounts": out, "bcs": bclist, "counts": ctx["counts"]})
+
+
 def preset_facts(presets) -> dict:
     """Plain-English facts per preset for the launchers' preview panel."""
     out = {}

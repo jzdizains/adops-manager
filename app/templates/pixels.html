@@ -65,10 +65,7 @@
         </td>
         <td class="num" style="white-space:nowrap;">
           {% if r.is_bc %}
-            <form method="post" action="/pixels/{{ p.id }}/link-one" hidden><select name="advertiser_id">
-                {% for a in accounts %}{% if a.owner_bc_id == p.owner_bc_id %}<option value="{{ a.advertiser_id }}">{{ a.advertiser_name or a.advertiser_id }}</option>{% endif %}{% endfor %}
-              </select></form>
-            <button type="button" class="btn sm px-link" title="Link this pixel to one account in the BC">Link to account…</button>
+            <button type="button" class="btn sm px-link" data-rec="{{ p.id }}" data-bc="{{ p.owner_bc_id }}" data-name="{{ p.pixel_name or p.pixel_id }}" title="Link this pixel to accounts in the BC">Link to accounts…</button>
             <form method="post" action="/pixels/{{ p.id }}/link-all" style="display:inline;" data-confirm="Link this pixel to all {{ r.bc_account_count }} account(s) in the BC?" data-ok-label="Link all">
               <button class="btn sm primary" type="submit">⛓ Link all ({{ r.bc_account_count }})</button>
             </form>
@@ -168,10 +165,14 @@
       return;
     }
     var lk = e.target.closest(".px-link");
-    if (lk) {
-      var row2 = lk.closest("tr"), f2 = row2.querySelector('form[action$="/link-one"]'), sel = f2.querySelector("select");
-      var p2 = UI.popover(lk, '<div style="font-weight:700;margin-bottom:6px;">Link to one account</div><div style="display:flex;gap:6px;"><select style="flex:1;">' + sel.innerHTML + '</select><button type="button" class="btn sm primary">Link</button></div><div class="hint" style="margin-top:6px;">Accounts in the same Business Center as the pixel.</div>', { alignRight: true });
-      p2.querySelector(".primary").addEventListener("click", function () { sel.value = p2.querySelector("select").value; f2.submit(); });
+    if (lk && window.UI && UI.pickAccounts) {
+      var rec = lk.dataset.rec, bc = lk.dataset.bc;
+      UI.pickAccounts({ title: "Link “" + lk.dataset.name + "” to…", confirmLabel: "Link to selected", onlyBc: bc }).then(function (r) {
+        var ids = (r && r.ids) ? r.ids : r; if (!ids || !ids.length) return;
+        var f = document.createElement("form"); f.method = "post"; f.action = "/pixels/" + rec + "/link-multi"; f.hidden = true;
+        var i = document.createElement("input"); i.type = "hidden"; i.name = "target_ids"; i.value = ids.join(","); f.appendChild(i);
+        document.body.appendChild(f); f.submit();
+      });
     }
   });
 })();

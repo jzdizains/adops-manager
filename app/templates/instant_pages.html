@@ -25,9 +25,7 @@
       <td class="mono" style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{{ t.url }}">{{ t.url }}</td>
       <td><span class="pill {{ 'ok' if tpl_cov.get(t.id, 0) == accounts|length and accounts else ('warn' if tpl_cov.get(t.id, 0) else 'dim') }}">{{ tpl_cov.get(t.id, 0) }} of {{ accounts|length }}</span></td>
       <td class="num">
-        <form method="post" action="/instant-pages/templates/{{ t.id }}/build" hidden class="tpl-one"><select name="advertiser_id">{% for a in accounts %}<option value="{{ a.advertiser_id }}">{{ a.advertiser_name or a.advertiser_id }}</option>{% endfor %}</select></form>
-        <form method="post" action="/instant-pages/templates/{{ t.id }}/build-bc" hidden class="tpl-bc"><select name="bc_id">{% for b in bcs %}{% set n = tpl_missing.get(t.id, {}).get(b.bc_id, 0) %}<option value="{{ b.bc_id }}" data-n="{{ n }}">{{ b.name }} — {{ n }} of {{ b.n }} without it</option>{% endfor %}</select></form>
-        <button class="btn sm tpl-build" type="button" data-name="{{ t.name }}" {{ 'disabled' if not builder_ready }}>▶ Build on…</button>
+        <button class="btn sm tpl-build" type="button" data-tpl="{{ t.id }}" data-name="{{ t.name }}" {{ 'disabled' if not builder_ready }}>▶ Build on…</button>
       </td>
       <td class="num">
         <button class="btn sm tpl-edit" type="button" data-id="{{ t.id }}" data-name="{{ t.name }}" data-button="{{ t.button_text }}" data-url="{{ t.url }}" data-color="{{ t.button_color }}" data-cursor="{{ 1 if t.hand_cursor else 0 }}" data-bottom="{{ 1 if t.bottom_fixed else 0 }}" data-scheme="{{ t.color_scheme }}">Edit</button>
@@ -121,17 +119,14 @@
   var nb = document.getElementById("tplNew"); if (nb) nb.addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); openForm(); });
   document.addEventListener("click", function (e) {
     var ed = e.target.closest(".tpl-edit"); if (ed) { openForm(ed.dataset); return; }
-    var bb = e.target.closest(".tpl-build"); if (!bb || bb.disabled) return;
-    var cell = bb.parentElement, one = cell.querySelector(".tpl-one"), bc = cell.querySelector(".tpl-bc");
-    var so = one.querySelector("select"), sb = bc.querySelector("select");
-    var bcBlock = sb.options.length ? '<div style="font-weight:700;margin:12px 0 6px;">…or every account in a Business Center</div><div style="display:flex;gap:6px;"><select data-bc style="flex:1;">' + sb.innerHTML + '</select><button type="button" class="btn sm" data-bc-go>Build on all</button></div><div class="hint" style="margin-top:6px;">Only accounts without a page of this name; one browser at a time, about a minute each.</div>' : '';
-    var p = UI.popover(bb, '<div style="font-weight:700;margin-bottom:6px;">Build “' + UI.esc(bb.dataset.name) + '” on</div><div style="display:flex;gap:6px;"><select data-one style="flex:1;">' + so.innerHTML + '</select><button type="button" class="btn sm primary" data-one-go>Build (test)</button></div><div class="hint" style="margin-top:6px;">One account — check the result and the screenshots before building everywhere.</div>' + bcBlock, { alignRight: true });
-    p.querySelector("[data-one-go]").addEventListener("click", function () { so.value = p.querySelector("[data-one]").value; this.disabled = true; this.textContent = "Queuing…"; one.submit(); });
-    var go = p.querySelector("[data-bc-go]"), bsel = p.querySelector("[data-bc]");
-    function refresh() { if (!go) return; var n = parseInt(bsel.selectedOptions[0].dataset.n || "0", 10); go.disabled = !n; go.textContent = n ? "Build on all (" + n + ")" : "All have it"; }
-    if (go) { bsel.addEventListener("change", refresh); refresh();
-      go.addEventListener("click", function () { var n = parseInt(bsel.selectedOptions[0].dataset.n || "0", 10); var name = bsel.selectedOptions[0].textContent.split(" — ")[0];
-        UI.confirm({ title: "Build “" + bb.dataset.name + "” on " + n + " account(s) in " + name + "?", text: "The dashboard drives Ads Manager with your web session, one account at a time (about a minute each). You can stop it from Jobs; you'll get a notification with per-account results and screenshots.", ok: "Build on all" }).then(function (y) { if (!y) return; sb.value = bsel.value; go.disabled = true; go.textContent = "Queuing…"; bc.submit(); }); }); }
+    var bb = e.target.closest(".tpl-build"); if (!bb || bb.disabled || !window.UI || !UI.pickAccounts) return;
+    var tplId = bb.dataset.tpl || "";
+    UI.pickAccounts({ title: "Build “" + bb.dataset.name + "” on…", confirmLabel: "Build on selected" }).then(function (r) {
+      var ids = (r && r.ids) ? r.ids : r; if (!ids || !ids.length) return;
+      var f = document.createElement("form"); f.method = "post"; f.action = "/instant-pages/templates/" + tplId + "/build-multi"; f.hidden = true;
+      var i = document.createElement("input"); i.type = "hidden"; i.name = "target_ids"; i.value = ids.join(","); f.appendChild(i);
+      document.body.appendChild(f); f.submit();
+    });
   });
 
 })();

@@ -154,7 +154,9 @@ check("launch builds only on a 'has no instant page' miss, then uses the verifie
 check("Chromium lives on the data disk and is installed on first use", 'BROWSERS_DIR = config.DATA_DIR / "pw-browsers"' in read("app/instant_page_builder.py") and '"-m", "playwright", "install", "chromium"' in read("app/instant_page_builder.py") and "except BrowserMissing" in read("app/instant_page_builder.py"))
 check("verification is the official API, retried briefly", "ip.sync_account(db, acct)" in read("app/instant_page_builder.py") and "time.sleep(3)" in read("app/instant_page_builder.py"))
 th = read("app/templates/instant_pages.html"); tf = read("app/templates/template_form.html")
-check("Instant Pages: templates card, form pop-up, build popover", 'id="templates"' in th and 'id="tplFormBox"' in th and 'tpl-build" type="button"' in th and "/templates/{{ t.id }}/build-bc" in th)
+check("Instant Pages: templates card, form pop-up, build → reusable account pop-up → build-multi",
+      'id="templates"' in th and 'id="tplFormBox"' in th and 'tpl-build" type="button"' in th
+      and "UI.pickAccounts({" in th and '/build-multi' in th and 'i.name = "target_ids"' in th)
 check("preset form: template picker", 'name="page_template_id"' in tf and "page_templates" in tf)
 
 print()

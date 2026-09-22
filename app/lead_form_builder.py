@@ -111,6 +111,55 @@ def rewrite_form_fields(data_str: str, edits: dict) -> tuple[str | None, list[st
     return json.dumps(doc, ensure_ascii=False), sorted(changed)
 
 
+def extract_form_fields(data_str, title: str = "") -> dict:
+    """The reverse of rewrite_form_fields: read a live form's definition and pull out the
+    handful of human-facing fields, so the same TikTok-style phone preview the builder uses
+    can render an EXISTING form. Returns {title, company_name, privacy_url, question_label,
+    question_options, cta_title, destination_url, thanks_title, thanks_description}. Missing
+    pieces come back empty — the preview falls back to its own placeholders."""
+    out = {"title": title or "", "company_name": "", "privacy_url": "", "question_label": "",
+           "question_options": [], "cta_title": "", "destination_url": "",
+           "thanks_title": "", "thanks_description": ""}
+    try:
+        doc = json.loads(data_str) if isinstance(data_str, str) else data_str
+    except (ValueError, TypeError):
+        return out
+    comps = doc.get("data") if isinstance(doc, dict) else None
+    if not isinstance(comps, dict):
+        return out
+    for c in comps.values():
+        if not isinstance(c, dict):
+            continue
+        name = c.get("name")
+        if name == "LpAgreement":
+            if not out["company_name"] and c.get("companyName"):
+                out["company_name"] = str(c.get("companyName") or "")
+            for ln in (c.get("linkList") or []):
+                if isinstance(ln, dict) and not out["privacy_url"] and isinstance(ln.get("linkUrl"), str):
+                    out["privacy_url"] = ln["linkUrl"]
+        elif name == "LpThanksPage" and not _is_nonlead(c.get("brickIndex")):
+            if not out["thanks_title"] and c.get("title"):
+                out["thanks_title"] = str(c.get("title") or "")
+            if not out["thanks_description"] and c.get("description"):
+                out["thanks_description"] = str(c.get("description") or "")
+        elif name == "LpFormCTA" and not _is_nonlead(c.get("brickIndex")):
+            bi = c.get("buttonsInfo") if isinstance(c.get("buttonsInfo"), dict) else {}
+            web = bi.get("website") if isinstance(bi.get("website"), dict) else None
+            if isinstance(web, dict):
+                if not out["cta_title"] and web.get("title"):
+                    out["cta_title"] = str(web.get("title") or "")
+                link = web.get("link") if isinstance(web.get("link"), dict) else None
+                if isinstance(link, dict) and not out["destination_url"] and link.get("url"):
+                    out["destination_url"] = str(link.get("url") or "")
+        elif name in QUESTION_FIELD_NAMES:
+            if not out["question_label"] and c.get("label"):
+                out["question_label"] = str(c.get("label") or "")
+            if not out["question_options"] and isinstance(c.get("options"), list):
+                out["question_options"] = [str(o.get("label") or "") for o in c["options"]
+                                           if isinstance(o, dict) and o.get("label")]
+    return out
+
+
 def build_form(template_form_id: str, name: str, target: str, edits: dict,
                source_owner: str = "") -> dict:
     """Create a new instant form named `name` on account `target`, copied from

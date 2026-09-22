@@ -192,6 +192,10 @@
   var slCreative = document.getElementById("slCreative"), slItems = document.getElementById("slItems");
   var items = [];      // the board: [{kind: library|spark|profile, id|item_id, name, cover, video, type, sub, …}] in the picked order
   var BCS = {{ bcs_json|safe }};
+  // preload profile-video posts in the background so the picker opens with nothing to wait for
+  if (window.UI && UI.warmProfileVideos && BCS && BCS.length) {
+    (window.requestIdleCallback || function (f) { setTimeout(f, 1200); })(function () { UI.warmProfileVideos(BCS); });
+  }
 
   // ---- steps -------------------------------------------------------------------
   function nAccounts() { return autoBox.checked ? (parseInt(document.getElementById("slAutoCount").value, 10) || 0) : boxes.filter(function (b) { return b.checked; }).length; }

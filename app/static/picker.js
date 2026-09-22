@@ -214,6 +214,38 @@
   /* UI.pickProfileVideos({bcs:[{id,name,accounts}], selected:[{item_id,...}]}) → Promise<[{item_id, identity_id, identity_type, bc_id, handle, text, cover, type, auth_code, url}] | null>
      Every post of every profile the viewer's Business Centers share, loaded BC by BC and shown as it arrives;
      filter by profile (not BC), multi-select, preview plays the post. Data: /super-launcher/profile-videos.json?bc_id= */
+  // Profile-video posts cached per Business Center for the page session, so the picker
+  // opens instantly on what's already loaded. UI.warmProfileVideos() fills it in the
+  // background (up to 5 BCs at once) on page load, so there's nothing to wait for.
+  var PV_STORE = {};                 // bc_id -> { profiles:[…], error:"" }
+  var PV_CONCURRENCY = 5;
+  function pvFetchBc(b, refresh) {
+    return UI.get("/super-launcher/profile-videos.json?bc_id=" + encodeURIComponent(b.id) + (refresh ? "&refresh=1" : ""))
+      .then(function (d) {
+        var e = { profiles: [], error: "" };
+        if (d && d.ok === false) e.error = (d.error || "TikTok didn't answer");
+        ((d && d.profiles) || []).forEach(function (p) { p.bc_name = b.name; e.profiles.push(p); });
+        PV_STORE[b.id] = e; return e;
+      })
+      .catch(function () { PV_STORE[b.id] = { profiles: [], error: "couldn't reach the dashboard" }; return PV_STORE[b.id]; });
+  }
+  function pvPump(bcs, refresh, onEach, onDone) {
+    var i = 0, active = 0;
+    function fin() { active--; step(); }
+    function step() {
+      while (active < PV_CONCURRENCY && i < bcs.length) {
+        var b = bcs[i++]; active++;
+        (function (b) {
+          if (!refresh && PV_STORE[b.id]) { Promise.resolve().then(function () { if (onEach) onEach(b, PV_STORE[b.id]); fin(); }); return; }
+          pvFetchBc(b, refresh).then(function (e) { if (onEach) onEach(b, e); }).then(fin);
+        })(b);
+      }
+      if (i >= bcs.length && active === 0 && onDone) onDone();
+    }
+    if (bcs.length) step(); else if (onDone) onDone();
+  }
+  UI.warmProfileVideos = function (bcs, refresh) { if (bcs && bcs.length) pvPump(bcs, !!refresh, null, null); };
+
   UI.pickProfileVideos = function (o) {
     o = o || {};
     return new Promise(function (resolve) {
@@ -269,18 +301,19 @@
         mark();
       }
       function load(refresh) {
-        profiles = []; errors = []; loading = bcs.length; fillProfiles(); render();
+        errors = []; profiles = [];
+        // instant: show whatever was already warmed in the background on page load
+        if (!refresh) bcs.forEach(function (b) { var e = PV_STORE[b.id]; if (e) { e.profiles.forEach(function (p) { profiles.push(p); }); if (e.error) errors.push(b.name + ": " + e.error); } });
+        var pending = bcs.filter(function (b) { return refresh || !PV_STORE[b.id]; });
+        loading = pending.length; fillProfiles(); render();
         if (!bcs.length) { grid.innerHTML = '<div class="empty pv-empty">No Business Center with a connected account in this view.</div>'; return; }
-        // one Business Center at a time (a few TikTok calls each), shown as each arrives
-        (function next(i) {
-          if (i >= bcs.length) { loading = 0; fillProfiles(); render(); return; }
-          var b = bcs[i];
-          UI.get("/super-launcher/profile-videos.json?bc_id=" + encodeURIComponent(b.id) + (refresh ? "&refresh=1" : "")).then(function (d) {
-            if (d && d.ok === false) errors.push(b.name + ": " + (d.error || "TikTok didn't answer"));
-            ((d && d.profiles) || []).forEach(function (p) { p.bc_name = b.name; profiles.push(p); });
-            loading = bcs.length - i - 1; fillProfiles(); render(); next(i + 1);
-          }).catch(function () { errors.push(b.name + ": couldn't reach the dashboard"); loading = bcs.length - i - 1; render(); next(i + 1); });
-        })(0);
+        if (!pending.length) { loading = 0; render(); return; }
+        // fetch only the Business Centers not already cached (5 at a time), streaming each in
+        pvPump(pending, refresh, function (b, e) {
+          e.profiles.forEach(function (p) { profiles.push(p); });
+          if (e.error) errors.push(b.name + ": " + e.error);
+          loading = Math.max(loading - 1, 0); fillProfiles(); render();
+        }, function () { loading = 0; fillProfiles(); render(); });
       }
       function find(id) { var hit = null; profiles.forEach(function (p) { p.videos.forEach(function (v) { if (v.item_id == id) hit = { p: p, v: v }; }); }); return hit; }
       function entry(p, v) { return { item_id: v.item_id, identity_id: p.identity_id, identity_type: p.identity_type, bc_id: p.bc_id, handle: p.name, text: v.text, cover: v.cover, preview: v.preview || "", type: v.type, auth_code: v.auth_code, url: v.url, duration: v.duration || 0, slides: v.slides || 0 }; }
