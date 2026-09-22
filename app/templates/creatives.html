@@ -4,7 +4,7 @@
 {% macro roas_pill(r, has) -%}{% if has and r %}<span class="roas-pill {{ 'g' if r >= 1.3 else ('w' if r >= 0.9 else 'r') }}">{{ "%.2f"|format(r) }}×</span>{% else %}<span class="roas-pill n">—</span>{% endif %}{%- endmacro %}
 {% macro money0(v) -%}{{ '−' if v < 0 }}${{ "%.0f"|format(v|abs) if v|abs >= 100 else "%.2f"|format(v|abs) }}{%- endmacro %}
 <div class="page-head" style="margin-bottom:10px;">
-  <div><h1>Creatives</h1>
+  <div><h1>Assets</h1>
     <div class="muted" style="font-size:12.5px;">{{ n_fresh }} fresh · {{ n_videos - n_fresh }} launched{% if processing %} · {{ processing }} enhancing…{% endif %} · {{ images|length }} images · {{ carousels|length }} carousels{% if archived_rows %} · {{ archived_rows|length }} archived{% endif %}</div></div>
   <div class="actions">
     <button type="button" class="btn" id="uploadBtn">⬆ Upload</button>

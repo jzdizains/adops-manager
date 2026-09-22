@@ -136,13 +136,13 @@ def fix_for(log) -> dict | None:
             return {"label": "Edit the preset", "href": f"/presets/{template_id}/edit", "why": "The preset's settings need a change."}
         return {"label": "Open Presets", "href": "/presets", "why": "The preset's settings need a change."}
     if code == "ASSET":
-        return {"label": "Open Creatives", "href": "/creatives", "why": "The instant page / lead form / creative wasn't found on this account."}
+        return {"label": "Open Assets", "href": "/creatives", "why": "The instant page / lead form / creative wasn't found on this account."}
     if re.search(r"tiktok account used in this ad|select a new identity|"
                  r"tiktok profile as the ad's identity", low + " " + raw):
         return {"label": "Open Assets", "href": "/bc-assets?show=all",
                 "why": "The profile the ad runs as isn't usable on this ad account — check it is linked there."}
     if re.search(r"image size|video size|resolution", raw + " " + low):
-        return {"label": "Open Creatives", "href": "/creatives", "why": "The video file is below TikTok's minimum size — re-export it at 1080×1920 and upload it again."}
+        return {"label": "Open Assets", "href": "/creatives", "why": "The video file is below TikTok's minimum size — re-export it at 1080×1920 and upload it again."}
     # "permission" must come from TikTok's own wording (raw), never from our 40002 friendly
     # text ("…or this session lacks permission…") — that made every 40002 look like a broken link
     if code in ("40105", "40113", "40102") or "token" in raw or "permission" in raw or "reconnect" in low or (code != "40002" and "permission" in low):

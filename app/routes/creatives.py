@@ -223,7 +223,7 @@ def creatives_page(request: Request, db: Session = Depends(get_db)):
         "lib_videos": lib_videos, "lib_q": lib_q, "lib_state": lib_state, "lib_label": lib_label, "lib_fav": lib_fav,
         "all_labels": sorted(all_labels.items(), key=lambda kv: (-kv[1], kv[0])), "notes": notes,
         "archived_rows": archived_rows, "n_videos": len(videos), "n_fresh": sum(1 for r in videos if r.status == "available"),
-        "title": "Creatives",
+        "title": "Assets",
     })
 
 

@@ -94,7 +94,7 @@ check("inbox knows the alert", '"creative_flaw"' in open(os.path.join(ROOT, "app
 check("ILLEGAL_VIDEO_SIZE stops the launch before the campaign is built, marks the creative, names the minimums",
       'if any("VIDEO_SIZE" in str(f) for f in flaws):' in ca and 'creative.status = "error"' in ca and "540×960" in ca and 'raise tiktok_api.TikTokError("ASSET", why)' in ca)
 em = open(os.path.join(ROOT, "app", "error_messages.py"), encoding="utf-8").read()
-check("'Unsupported image size' explained; the fix button goes to Creatives, not Reconnect", 'unsupported image size' in em and '"label": "Open Creatives", "href": "/creatives", "why": "The video file is below' in em)
+check("'Unsupported image size' explained; the fix button goes to Assets, not Reconnect", 'unsupported image size' in em and '"label": "Open Assets", "href": "/creatives", "why": "The video file is below' in em)
 check("40002's friendly 'lacks permission' text no longer triggers the Reconnect button", '"permission" in raw' in em and '(code != "40002" and "permission" in low)' in em)
 # behavioural: fix_for on a log shaped like the one on the result page
 _mod("app.config", TIKTOK_API_BASE="x", TIKTOK_APP_ID="", TIKTOK_SECRET="", DIAG_MAX=100, APP_NAME="x")
@@ -103,7 +103,7 @@ try:
     log = types.SimpleNamespace(error_code="40002", error_message="TikTok rejected a field value — or this session lacks permission for this ad account.",
                                 error_technical="code=40002 message=Unsupported image size. Please upload another image.", advertiser_id="1", spark_code_id=None, template_id=27)
     fx = emod.fix_for(log)
-    check("fix_for → Open Creatives for this exact failure", fx is not None and fx["label"] == "Open Creatives", str(fx))
+    check("fix_for → Open Assets for this exact failure", fx is not None and fx["label"] == "Open Assets", str(fx))
     log2 = types.SimpleNamespace(error_code="40002", error_message="TikTok rejected a field value — or this session lacks permission for this ad account.",
                                  error_technical="code=40002 message=targeting not valid", advertiser_id="1", spark_code_id=None, template_id=27)
     check("a plain 40002 field error offers no Reconnect button", emod.fix_for(log2) is None, str(emod.fix_for(log2)))

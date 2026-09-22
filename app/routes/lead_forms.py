@@ -49,7 +49,9 @@ def page(request: Request, db: Session = Depends(get_db)):
     sc = scope_mod.for_request(request, db)
     forms = [f for f in db.query(models.LeadForm).order_by(models.LeadForm.name, models.LeadForm.owner_advertiser_id).all() if sc.allows(f.owner_advertiser_id)]
     accounts = [a for a in queries.enabled_accounts(db) if sc.allows(a.advertiser_id)]
-    names = {a.advertiser_id: a.advertiser_name for a in db.query(models.AdAccount).all()}
+    _all = db.query(models.AdAccount).all()
+    names = {a.advertiser_id: a.advertiser_name for a in _all}
+    acct_bc = {a.advertiser_id: (a.owner_bc_id or "") for a in _all}   # each form's owner account → its Business Center (for the BC filter)
     # the same name across accounts = one preset-usable form; who has it, and which BC accounts still lack it
     copies: dict[str, int] = {}
     have: dict[str, set] = {}
@@ -65,7 +67,7 @@ def page(request: Request, db: Session = Depends(get_db)):
     missing = {name: {bc: sum(1 for aid in ids if aid not in have.get(name, set())) for bc, ids in by_bc.items()} for name in have}
     return render(request, "lead_forms.html", {
         "forms": forms, "names": names, "title": "Lead Forms", "accounts": accounts,
-        "copies": copies, "bcs": bcs, "missing": missing,
+        "copies": copies, "bcs": bcs, "missing": missing, "acct_bc": acct_bc, "n_accounts": len(accounts),
         "web_ready": bool(spark_web_api.load_cookies()),
         "ok": request.query_params.get("ok", ""), "err": request.query_params.get("err", ""),
     })

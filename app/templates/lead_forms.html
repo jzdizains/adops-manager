@@ -101,16 +101,23 @@
 
 <div class="card">
   {% if forms %}
-  <table class="data">
-    <thead><tr><th>Name</th><th>Form ID</th><th>Owner account</th><th>Status</th><th>Accounts with this name</th></tr></thead>
+  <div class="filterbar" style="margin-bottom:12px;">
+    <div class="search-wrap"><input type="search" id="lfSearch" placeholder="Search form, account or form ID…" autocomplete="off" title="Press / to search"></div>
+    <select id="lfBc" title="Only forms whose owner account is in this Business Center"><option value="">All Business Centers</option>{% for b in bcs %}<option value="{{ b.bc_id }}">{{ b.name }} ({{ b.n }})</option>{% endfor %}</select>
+    <select id="lfStatus"><option value="">Any status</option><option value="published">Published</option><option value="unpublished">Not published</option></select>
+    <select id="lfCov" title="How many accounts have a form with this name"><option value="">Any coverage</option><option value="full">On every account</option><option value="partial">Missing somewhere</option></select>
+    <span class="muted" id="lfCount" style="margin-left:auto;font-size:12px;white-space:nowrap;"></span>
+  </div>
+  <table class="data" id="lfTable">
+    <thead><tr><th>Name</th><th>Form ID</th><th>Owner account</th><th>Status</th><th>Accounts with this name</th><th></th></tr></thead>
     <tbody>
     {% for f in forms %}
-      <tr>
+      <tr class="lf-row" data-bc="{{ acct_bc.get(f.owner_advertiser_id, '') }}" data-status="{{ (f.status or '')|lower }}" data-cov="{{ 'full' if copies.get(f.name, 0) >= n_accounts else 'partial' }}" data-search="{{ ((f.name or '') ~ ' ' ~ names.get(f.owner_advertiser_id, f.owner_advertiser_id) ~ ' ' ~ f.form_id)|lower }}">
         <td>{{ f.name or f.form_id }}</td>
         <td class="mono">{{ f.form_id }}</td>
         <td class="muted">{{ names.get(f.owner_advertiser_id, f.owner_advertiser_id) }}</td>
         <td>{{ f.status or "—" }}</td>
-        <td class="muted">{{ copies.get(f.name, 0) }} of {{ accounts|length }}</td>
+        <td class="muted">{{ copies.get(f.name, 0) }} of {{ n_accounts }}</td>
         <td class="num">
           <button class="btn sm lf-inspect" type="button" data-form="{{ f.form_id }}" data-adv="{{ f.owner_advertiser_id }}" {{ 'disabled' if not web_ready }} title="{{ 'Read this form’s definition (read-only) — used to map its fields.' if web_ready else 'Needs the ads.tiktok.com cookies from the TikTok Cookies page.' }}">🔍 Inspect</button>
           {% if accounts|length > 1 %}
@@ -135,6 +142,7 @@
     {% endfor %}
     </tbody>
   </table>
+  <div class="empty" id="lfEmpty" hidden style="padding:22px 0;">No forms match — clear the search or a filter above.</div>
   <div class="hint" style="margin-top:10px;">
     “Sync” reads every enabled account's instant forms.
 “Clone to…” copies a form onto other accounts through the page editor's web session — the same recorded duplicate → publish flow as Instant Pages (an instant form is a page of type LEAD_GEN) — and re-reads the account through TikTok's official API before calling it done. Recorded on a normal page, so test it on ONE account first. Presets match forms by name at launch.
@@ -144,6 +152,30 @@
 {% endblock %}
 {% block scripts %}
 <script>
+(function () {
+  // Client-side filters over the forms table: search + Business Center + status + coverage.
+  var rows = Array.prototype.slice.call(document.querySelectorAll(".lf-row"));
+  if (!rows.length) return;
+  var $ = function (id) { return document.getElementById(id); };
+  var q = "", bc = "", st = "", cov = "";
+  var empty = $("lfEmpty"), count = $("lfCount");
+  function apply() {
+    var n = 0;
+    rows.forEach(function (r) {
+      var okStatus = !st || (st === "published" ? r.dataset.status.indexOf("publish") >= 0 : r.dataset.status.indexOf("publish") < 0);
+      var ok = (!q || r.dataset.search.indexOf(q) >= 0) && (!bc || r.dataset.bc === bc) && okStatus && (!cov || r.dataset.cov === cov);
+      r.hidden = !ok; if (ok) n++;
+    });
+    if (empty) empty.hidden = n > 0;
+    if (count) count.textContent = n + " form" + (n === 1 ? "" : "s");
+  }
+  $("lfSearch").addEventListener("input", function () { q = this.value.trim().toLowerCase(); apply(); });
+  $("lfBc").addEventListener("change", function () { bc = this.value; apply(); });
+  $("lfStatus").addEventListener("change", function () { st = this.value; apply(); });
+  $("lfCov").addEventListener("change", function () { cov = this.value; apply(); });
+  document.addEventListener("keydown", function (e) { if (e.key === "/" && e.target === document.body) { e.preventDefault(); $("lfSearch").focus(); } });
+  apply();
+})();
 (function () {
   // "+ New form" opens the builder as a pop-up (UI.modal), with a live TikTok-style
   // phone preview that updates from the fields as they're typed. The form node is

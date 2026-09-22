@@ -18,7 +18,7 @@ SIDEBAR = [
     None,                                                   # gap
     ("/super-launcher", "rocket", "Launch", ("/super-launcher", "/campaigns/launch", "/campaigns/result", "/queue")),
     ("/presets", "presets", "Presets", ("/presets",)),
-    ("/creatives", "creatives", "Creatives", ("/creatives", "/spark-codes", "/ad-texts", "/instant-pages", "/lead-forms", "/display-cards", "/landers")),
+    ("/creatives", "creatives", "Assets", ("/creatives", "/spark-codes", "/ad-texts", "/instant-pages", "/lead-forms", "/display-cards", "/landers")),
 ]
 FOOTER = [
     ("/jobs", "jobs", "Jobs", ("/jobs",)),
@@ -30,7 +30,7 @@ SECTIONS = {
     "health": [("/monitor", "Issues"), ("/monitor?view=balances", "Balances"), ("/monitor?view=automation", "Automation"),
                ("/monitor?view=system", "System"), ("/appeals", "Appeals")],
     "launch": [("/super-launcher", "Super Launcher"), ("/campaigns/launch", "Single campaign"), ("/queue", "Queue")],
-    "creatives": [("/creatives", "Creatives"), ("/spark-codes", "Spark codes"), ("/ad-texts", "Ad texts"),
+    "creatives": [("/creatives", "Assets"), ("/spark-codes", "Spark codes"), ("/ad-texts", "Ad texts"),
                   ("/instant-pages", "Instant pages"), ("/lead-forms", "Lead forms"), ("/landers", "Landers")],
     "settings": [("/settings", "Settings"), ("/accounts", "Ad accounts"), ("/pixels", "Pixels"), ("/creators", "Creators"), ("/partners", "Partners"), ("/bc-assets", "Assets"), ("/locations", "Locations"),
                  ("/cookies", "Cookies")],
@@ -64,7 +64,7 @@ JUMP = [
     ("/queue", "Launch queue", "Launch", "queued scheduled launches"),
     ("/presets", "Presets", "Build", "templates campaign settings"),
     ("/presets/new", "New preset", "Build", "create template"),
-    ("/creatives", "Creatives", "Build", "videos images carousels library upload"),
+    ("/creatives", "Assets", "Build", "creatives videos images carousels library upload"),
     ("/creatives?view=library", "Creative library", "Build", "videos fresh used labels archive"),
     ("/spark-codes", "Spark codes", "Build", "creator posts authorization"),
     ("/ad-texts", "Ad texts", "Build", "copy captions"),
