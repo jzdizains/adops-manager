@@ -113,6 +113,8 @@ DEFAULTS: dict = {
     "appeal_reason": DEFAULT_APPEAL_REASON,  # text sent with each appeal; {ad_name} {campaign_name} {reasons} fill in
     "appeal_skip_keywords": "",    # comma-separated; a rejection whose TikTok reason contains one is NOT auto-appealed
     "appeal_daily_cap": 50,        # max auto-appeals per local day (an account-wide problem must not burn every appeal)
+    "issue_max_age_days": 3,       # rejected-ad issues whose ad was last changed more than this many days ago are
+                                   #   dropped from Health/Inbox so old rejections don't stack up forever (0 = keep all)
 
     # --- audience page refresh ------------------------------------------------
     "audience_hours_every_min": 10,      # today's hour-by-hour delivery (basic report, near real-time): accounts with active campaigns
@@ -126,7 +128,7 @@ AUDIENCE_BREAKDOWN_MIN = 15     # floor: ~8 calls per active account per run
 
 GLOBAL_KEYS = frozenset({
     "sweep_interval_sec", "slow_every_n_sweeps", "queue_per_sweep", "launch_retry_max", "launch_pace_sec",
-    "audience_hours_every_min", "audience_breakdown_every_min", "assistant_model",
+    "audience_hours_every_min", "audience_breakdown_every_min", "assistant_model", "issue_max_age_days",
 })
 USER_KEYS = frozenset(k for k in DEFAULTS if k not in GLOBAL_KEYS)
 

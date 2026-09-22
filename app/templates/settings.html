@@ -355,6 +355,16 @@
   </div>
 </div>
 
+<div class="card" id="health">
+  <div class="card-header"><span class="card-title">Health feed</span>
+    <span class="card-meta">keeps the <a href="/monitor">Health</a> / <a href="/inbox">Inbox</a> rejection list from stacking up</span></div>
+  <div class="form-row">
+    <label class="field"><span class="field-label">Drop rejected-ad errors older than (days)</span>
+      <input type="number" min="0" step="1" name="issue_max_age_days" value="{{ s.issue_max_age_days }}">
+      <span class="hint">A rejected ad last changed more than this many days ago stops showing in the feed on the next scan. 0 = keep every rejection. Appeals are unaffected.</span></label>
+  </div>
+</div>
+
 <div class="card" id="audience">
   <div class="card-header"><span class="card-title">Audience page refresh</span>
     <span class="card-meta">how often the <a href="/audience">Audience</a> store is refreshed from TikTok for accounts with active campaigns</span></div>

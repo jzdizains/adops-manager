@@ -44,6 +44,22 @@ def _status_is_bad(status: str) -> bool:
     return any(tok in s for tok in BAD_STATUS_TOKENS)
 
 
+def _parse_tt_time(s: str):
+    """TikTok sends 'YYYY-MM-DD HH:MM:SS' (UTC). None when absent/unparseable."""
+    s = str(s or "")[:19]
+    if not s:
+        return None
+    try:
+        return datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
+
+
+def _ad_time(ad: dict):
+    """When the ad was last touched (≈ when it was rejected): modify_time, else create_time."""
+    return _parse_tt_time(ad.get("modify_time")) or _parse_tt_time(ad.get("create_time"))
+
+
 def scan(db: Session, should_stop=None, on_progress=None) -> dict:
     """Full issue sweep. Returns {issues, accounts_scanned, ads_read, …, stopped}.
     should_stop() is polled between accounts (a cancelled background job);
@@ -165,6 +181,7 @@ def scan(db: Session, should_stop=None, on_progress=None) -> dict:
                         "campaign_id": ad.get("campaign_id", ""), "campaign_name": ad.get("campaign_name", ""),
                         "adgroup_id": ad.get("adgroup_id", ""),
                         "secondary_status": sec, "operation_status": ad.get("operation_status", ""),
+                        "create_time": ad.get("create_time", ""), "modify_time": ad.get("modify_time", ""),
                         "advertiser_id": _acct.advertiser_id,
                         "advertiser_name": names.get(_acct.advertiser_id, _acct.advertiser_id),
                         "access_token": _acct.access_token})
@@ -193,7 +210,21 @@ def scan(db: Session, should_stop=None, on_progress=None) -> dict:
     except Exception:  # the appeals step must never take the scan down
         import logging
         logging.getLogger("adops.issues").exception("appeals sync failed")
+    # Recency window: drop rejected-ad issues whose ad was last changed more than
+    # issue_max_age_days ago, so weeks-old rejections don't stack up in the feed forever
+    # (0 = keep all). The scan rebuilds issues every run, so an aged-out one just stops
+    # reappearing on the next scan. Appeals are unaffected — only the display is trimmed.
+    from .settings_store import get_settings
+    try:
+        _max_age = int(get_settings(db).get("issue_max_age_days", 3) or 0)
+    except Exception:  # noqa: BLE001
+        _max_age = 3
+    cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=_max_age)) if _max_age > 0 else None
     for ad in rejected_ads:
+        if cutoff is not None:
+            ts = _ad_time(ad)
+            if ts is not None and ts < cutoff:
+                continue      # older than the window — don't surface it
         sec = str(ad.get("secondary_status", "") or "")
         row = appeal_by_ad.get((ad["advertiser_id"], str(ad.get("ad_id", ""))))
         reasons = (row.reasons if row else "") or ""

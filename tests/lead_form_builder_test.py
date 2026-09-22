@@ -139,6 +139,8 @@ check("the drawer posts to /lead-forms/build with template + target account + na
 check("the template option carries its owner account for the hidden from-id", 'data-owner="{{ f.owner_advertiser_id }}"' in t and 'id="lfFromAdv"' in t)
 check("a live TikTok-style phone preview (form + thank-you screens) rides alongside the fields",
       "lfp-phone" in t and "#FE2C55" in t and 'id="lfpQ"' in t and 'id="lfpOpts"' in t and 'data-screen="thanks"' in t)
+check("the builder opens as a pop-up (UI.modal), not an inline panel",
+      'UI.modal({ title: "Build a new instant form"' in t and 'id="lfNewHolder"' in t and 'id="lfNewPanel"' not in t)
 
 print()
 print("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}")
