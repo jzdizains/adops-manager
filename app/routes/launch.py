@@ -26,7 +26,10 @@ OBJECTIVE_MAP: dict[tuple[str, str], tuple[str, str, str]] = {
     # Website engagements with a TikTok Instant Page as the optimisation location: no pixel,
     # TikTok optimises for the page's button (outbound) clicks
     ("WEB_CONVERSIONS", "instant_page"): ("CONVERT", "OCPM", "BID_TYPE_NO_BID"),
-    ("LEAD_GENERATION", "lead_form"): ("CONVERT", "OCPM", "BID_TYPE_NO_BID"),
+    # NATIVE Instant Form: TikTok optimises for the form submission itself — goal LEAD, no
+    # pixel/conversion event (confirmed against TikTok's Lead-optimization-goal help doc, 22 Sep).
+    # CONVERT here is what triggers the vague 40002 "error with the Lead Generation objective".
+    ("LEAD_GENERATION", "lead_form"): ("LEAD", "OCPM", "BID_TYPE_NO_BID"),
     ("LEAD_GENERATION", "instant_page"): ("CONVERT", "OCPM", "BID_TYPE_NO_BID"),
     # TikTok moved lead-type pixel events (Complete Registration, Contact) OUT of
     # Website Conversions — they now require the Lead Generation objective with a

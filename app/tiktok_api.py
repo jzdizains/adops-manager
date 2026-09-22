@@ -8,6 +8,7 @@ plain-English mapping).
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 
 import httpx
@@ -606,17 +607,29 @@ def upload_video_file(access_token: str, advertiser_id: str, file_path: str,
             "video_signature": signature, "file_name": file_name}
     if flaw_detect:
         data.update({"flaw_detect": "true", "auto_fix_enabled": "true", "auto_bind_enabled": "true"})
-    try:
-        with open(file_path, "rb") as fh:
-            resp = _client().post(
-                f"{BASE}/file/video/ad/upload/",
-                headers={"Access-Token": access_token},
-                data=data,
-                files={"video_file": (file_name, fh, "video/mp4")},
-                timeout=httpx.Timeout(180.0, connect=10.0),
-            )
-    except (httpx.HTTPError, OSError) as e:
-        raise TikTokError("HTTP", f"Network error uploading video: {e!r}")
+    # Upload with bounded retries: a stalled write / dropped connection to TikTok's upload
+    # host is usually transient, and failing the whole account on the first hiccup is wrong.
+    # The file is re-streamed from disk each attempt (never held in memory), so a retry is cheap.
+    resp = None
+    for attempt in range(3):
+        try:
+            with open(file_path, "rb") as fh:
+                resp = _client().post(
+                    f"{BASE}/file/video/ad/upload/",
+                    headers={"Access-Token": access_token},
+                    data=data,
+                    files={"video_file": (file_name, fh, "video/mp4")},
+                    timeout=httpx.Timeout(300.0, connect=10.0),
+                )
+            break
+        except (httpx.TimeoutException, httpx.TransportError) as e:   # WriteTimeout, ReadTimeout, ConnectError…
+            if attempt < 2:
+                time.sleep(2 * (attempt + 1))     # 2s, then 4s, with a fresh connection
+                continue
+            raise TikTokError("HTTP", f"Network error uploading video (after 3 tries): {e!r} — "
+                                      "TikTok's upload host was slow/unreachable. Hit Retry failed.")
+        except (httpx.HTTPError, OSError) as e:
+            raise TikTokError("HTTP", f"Network error uploading video: {e!r}")
     parsed = _parse(resp)
     if isinstance(parsed, list):
         parsed = parsed[0] if parsed else {}
@@ -650,17 +663,25 @@ def upload_image_file(access_token: str, advertiser_id: str, file_path: str,
     signature = hashlib.md5(data).hexdigest()
     ext = file_name.rsplit(".", 1)[-1].lower() if "." in file_name else "png"
     mime = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "webp": "image/webp"}.get(ext, "image/png")
-    try:
-        resp = _client().post(
-            f"{BASE}/file/image/ad/upload/",
-            headers={"Access-Token": access_token},
-            data={"advertiser_id": advertiser_id, "upload_type": "UPLOAD_BY_FILE",
-                  "image_signature": signature, "file_name": file_name},
-            files={"image_file": (file_name, data, mime)},
-            timeout=httpx.Timeout(120.0, connect=10.0),
-        )
-    except (httpx.HTTPError, OSError) as e:
-        raise TikTokError("HTTP", f"Network error uploading image: {e!r}")
+    resp = None
+    for attempt in range(3):
+        try:
+            resp = _client().post(
+                f"{BASE}/file/image/ad/upload/",
+                headers={"Access-Token": access_token},
+                data={"advertiser_id": advertiser_id, "upload_type": "UPLOAD_BY_FILE",
+                      "image_signature": signature, "file_name": file_name},
+                files={"image_file": (file_name, data, mime)},
+                timeout=httpx.Timeout(120.0, connect=10.0),
+            )
+            break
+        except (httpx.TimeoutException, httpx.TransportError) as e:
+            if attempt < 2:
+                time.sleep(2 * (attempt + 1))
+                continue
+            raise TikTokError("HTTP", f"Network error uploading image (after 3 tries): {e!r}")
+        except (httpx.HTTPError, OSError) as e:
+            raise TikTokError("HTTP", f"Network error uploading image: {e!r}")
     parsed = _parse(resp)
     if isinstance(parsed, list):
         return parsed[0] if parsed else {}

@@ -57,6 +57,19 @@ check("a landing page URL is only demanded for website/pixel now",
       'if fields["destination_type"] in ("website", "pixel") and not fields.get("landing_page_url"):' in src)
 check("the old 'Website / Pixel destinations only' block is gone", "Library creatives support Website / Pixel destinations only." not in src)
 
+print("-- native Instant Form optimises for LEAD, not CONVERT --")
+lj = open(os.path.join(ROOT, "app", "routes", "launch.py"), encoding="utf-8").read()
+check("lead_form maps to the LEAD optimization goal (OCPM), not CONVERT",
+      '("LEAD_GENERATION", "lead_form"): ("LEAD", "OCPM"' in lj)
+check("the ad group promotes LEAD_GENERATION for a lead form (no pixel/event forced)",
+      'elif dest == "lead_form":' in src and 'payload["promotion_type"] = "LEAD_GENERATION"' in src)
+
+print("-- video/image upload retries transient network timeouts --")
+tk = open(os.path.join(ROOT, "app", "tiktok_api.py"), encoding="utf-8").read()
+check("video upload retries on WriteTimeout/transport errors before failing",
+      "for attempt in range(3):" in tk and "except (httpx.TimeoutException, httpx.TransportError)" in tk and "uploading video (after 3 tries)" in tk)
+check("image upload retries the same way", "uploading image (after 3 tries)" in tk)
+
 print()
 print("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}")
 sys.exit(1 if fails else 0)
