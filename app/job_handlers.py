@@ -176,6 +176,15 @@ def _appeals_refresh(db: Session, p: dict, job: models.Job) -> dict:
     return {"ok": True, "detail": f"{n} appeal(s) answered, {waiting} still waiting", "href": "/appeals"}
 
 
+@jobs.handler("invite_autoaccept")
+def _invite_autoaccept(db: Session, p: dict, job: models.Job) -> dict:
+    from . import invite_autoaccept
+    rec = db.get(models.InviteAccept, int(p.get("record_id") or 0))
+    if not rec:
+        return {"ok": False, "detail": "auto-accept record not found"}
+    return invite_autoaccept.run(db, rec)
+
+
 @jobs.handler("partner_setup")
 def _partner_setup(db: Session, p: dict, job: models.Job) -> dict:
     from . import partners, queries

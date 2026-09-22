@@ -72,7 +72,7 @@ check("JS: add a row, remove a row (never below one), Enter in a code jumps to t
       and 'classList.contains("sp-in-code")' in t and "next = addRow(false)" in t)
 check("JS: Add all submits the rows or the paste box; empty → focus, not a blank post", "var hasRow = " in t and "var hasPaste = " in t and "node.submit();" in t)
 css = open(os.path.join(ROOT, "app", "static", "style.css"), encoding="utf-8").read()
-check("CSS for the rows + STATIC_VERSION bumped", ".sp-row-in" in css and ".sp-in-code" in css and 'STATIC_VERSION = "141"' in open(os.path.join(ROOT, "app", "config.py"), encoding="utf-8").read())
+check("CSS for the rows + STATIC_VERSION bumped", ".sp-row-in" in css and ".sp-in-code" in css and 'STATIC_VERSION = "143"' in open(os.path.join(ROOT, "app", "config.py"), encoding="utf-8").read())
 
 print()
 print("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}")

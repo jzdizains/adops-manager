@@ -174,6 +174,11 @@ def _loop():
                     rules.check_pool_inventory(db, us, u.id)
                 beat("issues.scan"); issues.scan(db)
                 partners.poll(db)               # TikTok-account assignments waiting on accepted invites
+                try:
+                    from . import invite_autoaccept
+                    invite_autoaccept.poll(db)  # auto-accept: watch the mailbox → Join → confirm membership
+                except Exception:               # noqa: BLE001 — never let it break the sweep
+                    log.exception("invite auto-accept sweep failed")
                 jobs.prune(db)
                 bid_bump.prune(db)
                 _prune_logins(db)

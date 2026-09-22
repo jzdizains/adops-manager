@@ -79,7 +79,7 @@ JUMP = [
     ("/accounts", "Ad accounts", "System", "advertisers enable disable"),
     ("/pixels", "Pixels", "System", "tracking pixel events"),
     ("/creators", "Creators", "System", "identity identities spark authorize creator tiktok profile link"),
-    ("/partners", "Partners", "System", "business center partner share assets"),
+    ("/partners", "Partners", "System", "invite email admin access business center member"),
     ("/bc-assets", "Assets", "System", "pixel profile linked ad accounts business center audit"),
     ("/locations", "Locations", "System", "geo targeting countries regions"),
     ("/cookies", "TikTok cookies", "System", "session cookies browser"),

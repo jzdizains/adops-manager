@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
-from .. import models
+from .. import models, queries
 from ..database import get_db
 from ..templating import render
 from . import campaigns as engine
@@ -61,6 +61,18 @@ def block_reason(a, bc, punished: dict[str, str]) -> str:
     return ""
 
 
+def _fav_key(sc) -> str:
+    return f"fav_profiles:{sc.user_id if sc.user_id is not None else 'all'}"
+
+
+def _get_favs(db: Session, sc) -> list[str]:
+    """Per-user list of favorited profile identity ids (the ones the operator actually uses)."""
+    try:
+        return [str(x) for x in json.loads(queries.get_setting(db, _fav_key(sc), "[]") or "[]")]
+    except (ValueError, TypeError):
+        return []
+
+
 @router.get("/super-launcher")
 def page(request: Request, db: Session = Depends(get_db)):
     from .. import scope as scope_mod
@@ -93,8 +105,29 @@ def page(request: Request, db: Session = Depends(get_db)):
         **picker, "preset_info_json": json.dumps(preset_info), "bcs_json": json.dumps(bcs),
         "creatives_available": creatives_available, "carousels_available": carousels_available,
         "dest_labels_json": json.dumps(dest_labels),
+        "fav_profiles_json": json.dumps(_get_favs(db, sc)),
         "title": "Super Launcher",
     })
+
+
+@router.post("/super-launcher/profile-favorite")
+async def profile_favorite(request: Request, db: Session = Depends(get_db)):
+    """Toggle one profile as a favorite for this user. Returns the updated list so the
+    picker stays in sync. Small, per-user, no TikTok call — safe to call on every star tap."""
+    from .. import scope as scope_mod
+    sc = scope_mod.for_request(request, db)
+    form = await request.form()
+    idn = str(form.get("identity_id") or "").strip()
+    on = str(form.get("on") or "").lower() in ("1", "true", "on", "yes")
+    favs = _get_favs(db, sc)
+    if not idn:
+        return JSONResponse({"ok": False, "favorites": favs})
+    if on and idn not in favs:
+        favs.append(idn)
+    elif not on:
+        favs = [x for x in favs if x != idn]
+    queries.set_setting(db, _fav_key(sc), json.dumps(favs))
+    return JSONResponse({"ok": True, "favorites": favs})
 
 
 @router.post("/super-launcher/refresh-accounts")

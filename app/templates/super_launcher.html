@@ -192,6 +192,17 @@
   var slCreative = document.getElementById("slCreative"), slItems = document.getElementById("slItems");
   var items = [];      // the board: [{kind: library|spark|profile, id|item_id, name, cover, video, type, sub, …}] in the picked order
   var BCS = {{ bcs_json|safe }};
+  var FAV_PROFILES = {{ fav_profiles_json|safe }};
+  function saveFav(identityId, on) {
+    var i = FAV_PROFILES.indexOf(String(identityId));
+    if (on && i < 0) FAV_PROFILES.push(String(identityId));
+    if (!on && i >= 0) FAV_PROFILES.splice(i, 1);
+    var fd = new FormData(); fd.append("identity_id", identityId); fd.append("on", on ? "1" : "");
+    fetch("/super-launcher/profile-favorite", { method: "POST", body: fd, credentials: "same-origin" })
+      .then(function (r) { return r.json(); })
+      .then(function (d) { if (d && d.favorites) FAV_PROFILES = d.favorites.map(String); })
+      .catch(function () {});
+  }
   // preload profile-video posts in the background so the picker opens with nothing to wait for
   if (window.UI && UI.warmProfileVideos && BCS && BCS.length) {
     (window.requestIdleCallback || function (f) { setTimeout(f, 1200); })(function () { UI.warmProfileVideos(BCS); });
@@ -350,7 +361,7 @@
       });
     } else if (src === "profile") {
       var prof = items.filter(function (it) { return it.kind === "profile"; });
-      UI.pickProfileVideos({ bcs: BCS, selected: prof }).then(function (res) {
+      UI.pickProfileVideos({ bcs: BCS, selected: prof, favorites: FAV_PROFILES, onToggleFav: saveFav }).then(function (res) {
         if (!res) return;
         var keep = {}; res.forEach(function (v) { keep["profile:" + v.item_id] = 1; });
         items = items.filter(function (it) { return it.kind !== "profile" || keep[itemKey(it)]; });

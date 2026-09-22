@@ -903,6 +903,28 @@ class PartnerSetup(Base):
     updated_at = Column(DateTime, default=utcnow)
 
 
+class InviteAccept(Base):
+    """One auto-accept run: after the Partners page invites an email as Admin into a BC,
+    the dashboard watches the invite mailbox for the one-time link, drives the browser to
+    the Join screen, and confirms membership through the API. Status walks:
+    waiting_email → accepting → joined | error (and 'already_member' when access was
+    already there). Re-checked on the slow sweep while it is still waiting."""
+    __tablename__ = "invite_accepts"
+
+    id = Column(Integer, primary_key=True)
+    bc_id = Column(String, index=True, default="")
+    bc_name = Column(String, default="")
+    email = Column(String, default="")
+    role = Column(String, default="ADMIN")
+    join_name = Column(String, default="")          # name to type on the Join screen
+    status = Column(String, default="waiting_email", index=True)
+    detail = Column(Text, default="")
+    invite_code = Column(String, default="")
+    attempts = Column(Integer, default=0)
+    created_at = Column(DateTime, default=utcnow, index=True)
+    updated_at = Column(DateTime, default=utcnow)
+
+
 class MetricTick(Base):
     """One row per ACTIVE campaign per sync (~every minute on the fast sweep):
     the cumulative today-values TikTok reported at that moment. The Campaigns

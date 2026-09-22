@@ -250,6 +250,9 @@
     o = o || {};
     return new Promise(function (resolve) {
       var bcs = o.bcs || [], q = "", profiles = [], sel = {}, order = [], cur = null, done = false, loading = 0, pf = "", errors = [];
+      var favs = {}; (o.favorites || []).forEach(function (id) { favs[String(id)] = true; });
+      var userPickedFilter = false;                 // once the operator picks a filter, stop auto-defaulting
+      function isFav(p) { return !!favs[String(p.identity_id)]; }
       (o.selected || []).forEach(function (v) { sel[v.item_id] = v; order.push(v.item_id); });
       var body = UI.el('<div class="pk"><div class="pk-top">' +
         '<select class="pv-profile" style="max-width:280px;"><option value="">All profiles</option></select>' +
@@ -262,7 +265,7 @@
       m.el.classList.add("pk-modal");
       var grid = body.querySelector(".pk-grid"), side = body.querySelector(".pk-side"), pfSel = body.querySelector(".pv-profile");
       function key(p) { return p.bc_id + ":" + p.identity_id; }
-      function shownProfiles() { return profiles.filter(function (p) { return !pf || key(p) === pf; }); }
+      function shownProfiles() { return profiles.filter(function (p) { return pf === "__fav__" ? isFav(p) : (!pf || key(p) === pf); }); }
       function shown(p) { var qq = q.toLowerCase(); return p.videos.filter(function (v) { return !qq || (v.text || "").toLowerCase().indexOf(qq) >= 0 || (p.name || "").toLowerCase().indexOf(qq) >= 0; }); }
       function mark() {
         var n = order.filter(function (id) { return sel[id]; }).length;
@@ -271,10 +274,16 @@
         foot.querySelector(".pk-use").disabled = n === 0;
       }
       function fillProfiles() {
-        var keep = pfSel.value;
-        pfSel.innerHTML = '<option value="">All profiles · ' + profiles.reduce(function (a, p) { return a + p.videos.length; }, 0) + ' posts</option>' +
-          profiles.slice().sort(function (a, b) { return a.name.localeCompare(b.name); }).map(function (p) { return '<option value="' + esc(key(p)) + '">@' + esc(p.name) + ' · ' + p.videos.length + (p.bc_name ? ' · ' + esc(p.bc_name) : '') + '</option>'; }).join("");
-        pfSel.value = keep; if (pfSel.value !== keep) { pf = ""; }
+        var total = profiles.reduce(function (a, p) { return a + p.videos.length; }, 0);
+        var favProfs = profiles.filter(isFav), favPosts = favProfs.reduce(function (a, p) { return a + p.videos.length; }, 0);
+        if (!userPickedFilter) pf = favProfs.length ? "__fav__" : "";     // default to favorites once they've loaded
+        pfSel.innerHTML =
+          (favProfs.length ? '<option value="__fav__">★ Favorites · ' + favProfs.length + ' profile' + (favProfs.length === 1 ? '' : 's') + ' · ' + favPosts + ' posts</option>' : '') +
+          '<option value="">All profiles · ' + total + ' posts</option>' +
+          profiles.slice().sort(function (a, b) { return a.name.localeCompare(b.name); }).map(function (p) { return '<option value="' + esc(key(p)) + '">' + (isFav(p) ? '★ ' : '') + '@' + esc(p.name) + ' · ' + p.videos.length + (p.bc_name ? ' · ' + esc(p.bc_name) : '') + '</option>'; }).join("");
+        if (pf === "__fav__" && !favProfs.length) pf = "";
+        pfSel.value = pf;
+        if (pfSel.value !== pf) pf = pfSel.value || "";                    // selected profile scrolled out of the list
       }
       function tile(p, v) {
         var on = !!sel[v.item_id];
@@ -289,14 +298,18 @@
           var vs = shown(p); total += p.videos.length; vis += vs.length;
           if (!vs.length && q) return;
           var picked = p.videos.filter(function (v) { return sel[v.item_id]; }).length;
-          html += '<div class="pv-head">' + (p.avatar ? '<img src="' + esc(p.avatar) + '" alt="">' : '<span class="pv-ph">@</span>') + '<b>@' + esc(p.name) + '</b><span class="muted">' + p.videos.length + ' post' + (p.videos.length === 1 ? '' : 's') + (p.bc_name ? ' · ' + esc(p.bc_name) : '') + (picked ? ' · ' + picked + ' picked' : '') + (p.error ? ' · <span style="color:var(--err);">' + esc(p.error) + '</span>' : '') + '</span>' +
+          html += '<div class="pv-head">' +
+            '<button type="button" class="pv-star' + (isFav(p) ? ' on' : '') + '" data-idn="' + esc(p.identity_id) + '" title="' + (isFav(p) ? 'Remove from favorites' : 'Favorite this profile') + '">' + (isFav(p) ? '★' : '☆') + '</button>' +
+            (p.avatar ? '<img src="' + esc(p.avatar) + '" alt="">' : '<span class="pv-ph">@</span>') + '<b>@' + esc(p.name) + '</b><span class="muted">' + p.videos.length + ' post' + (p.videos.length === 1 ? '' : 's') + (p.bc_name ? ' · ' + esc(p.bc_name) : '') + (picked ? ' · ' + picked + ' picked' : '') + (p.error ? ' · <span style="color:var(--err);">' + esc(p.error) + '</span>' : '') + '</span>' +
             (vs.length ? '<button type="button" class="btn sm pv-all" data-pid="' + esc(key(p)) + '">' + (vs.every(function (v) { return sel[v.item_id]; }) ? "None" : "Select all") + '</button>' : '') + '</div>';
           html += vs.map(function (v) { return tile(p, v); }).join("");
           if (!vs.length) html += '<div class="muted pv-empty" style="padding:4px 6px 10px;font-size:12px;">No ad-usable posts on this profile.</div>';
         });
         if (loading) html += '<div class="muted pv-empty" style="padding:10px 6px;font-size:12px;">Reading ' + loading + ' more Business Center' + (loading === 1 ? "" : "s") + '…</div>';
         if (errors.length) html += '<div class="muted pv-empty" style="padding:4px 6px;font-size:12px;color:var(--err);">' + errors.map(esc).join("<br>") + '</div>';
-        grid.innerHTML = (list.length || loading) ? html : '<div class="empty pv-empty">No profiles shared on your Business Centers' + (q ? " match “" + esc(q) + "”" : "") + '.</div>';
+        grid.innerHTML = (list.length || loading) ? html
+          : (pf === "__fav__" ? '<div class="empty pv-empty">No favorite profiles yet — choose “All profiles” above and tap ☆ on the ones you use, so this window opens on just those next time.</div>'
+             : '<div class="empty pv-empty">No profiles shared on your Business Centers' + (q ? " match “" + esc(q) + "”" : "") + '.</div>');
         body.querySelector(".pk-count").textContent = profiles.length ? (profiles.length + " profile" + (profiles.length === 1 ? "" : "s") + " · " + ((q || pf) ? vis + " of " : "") + profiles.reduce(function (a, p) { return a + p.videos.length; }, 0) + " post" + (total === 1 ? "" : "s")) : "";
         mark();
       }
@@ -332,6 +345,13 @@
         render();
       }
       grid.addEventListener("click", function (e) {
+        var st = e.target.closest(".pv-star");
+        if (st) {
+          var idn = String(st.dataset.idn), on = !favs[idn];
+          if (on) favs[idn] = true; else delete favs[idn];
+          if (o.onToggleFav) { try { o.onToggleFav(idn, on); } catch (_e) {} }
+          fillProfiles(); render(); return;
+        }
         var a = e.target.closest(".pv-all");
         if (a) { var p = profiles.filter(function (x) { return key(x) === a.dataset.pid; })[0]; if (!p) return; var vs = shown(p), every = vs.every(function (v) { return sel[v.item_id]; }); vs.forEach(function (v) { if (every ? sel[v.item_id] : !sel[v.item_id]) { if (sel[v.item_id]) { delete sel[v.item_id]; order = order.filter(function (x) { return x !== v.item_id; }); } else { sel[v.item_id] = entry(p, v); order.push(v.item_id); } } }); render(); return; }
         var t = e.target.closest(".pk-tile"); if (!t) return;
@@ -340,7 +360,7 @@
         preview(hit.p, hit.v);
       });
       grid.addEventListener("mouseover", function (e) { var t = e.target.closest(".pk-tile"); if (!t) return; var hit = find(t.dataset.id); if (hit && (!cur || cur.item_id !== hit.v.item_id) && !(side.querySelector("video") && !side.querySelector("video").paused)) preview(hit.p, hit.v); });
-      pfSel.addEventListener("change", function () { pf = pfSel.value; render(); });
+      pfSel.addEventListener("change", function () { userPickedFilter = true; pf = pfSel.value; render(); });
       body.querySelector(".pv-refresh").addEventListener("click", function () { if (!loading) load(true); });
       var qt = null; body.querySelector(".pk-q").addEventListener("input", function (e) { clearTimeout(qt); q = e.target.value; qt = setTimeout(render, 150); });
       foot.querySelector(".pk-use").addEventListener("click", function () {

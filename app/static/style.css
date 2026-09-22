@@ -1239,6 +1239,9 @@ tr:hover .ctag-add, .ctag-add:focus { opacity: 1; }
 .pv-head img, .pv-head .pv-ph { width: 26px; height: 26px; border-radius: 50%; object-fit: cover; background: var(--panel-hover); display: inline-flex; align-items: center; justify-content: center; font-size: 12px; flex: none; }
 .pv-head b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pv-head .btn { margin-left: auto; }
+.pv-star { flex: none; border: 0; background: transparent; cursor: pointer; font-size: 16px; line-height: 1; padding: 2px 4px; color: var(--muted); border-radius: 6px; }
+.pv-star:hover { background: var(--panel-hover); color: var(--text); }
+.pv-star.on { color: #f5b301; }
 .pk-tile .pv-type { position: absolute; left: 6px; bottom: 6px; font-size: 10px; padding: 1px 6px; border-radius: 999px; background: rgba(0,0,0,.55); color: #fff; }
 .pv-empty { grid-column: 1 / -1; }
 .pv-foot { display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; }
