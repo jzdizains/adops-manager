@@ -10,34 +10,75 @@
 </div>
 
 {% if forms and accounts %}
+<style>
+/* Live TikTok-style instant-form preview (tokens read from a real LEAD_GEN page) */
+.lfp-wrap{display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start;}
+.lfp-fields{flex:1;min-width:300px;}
+.lfp-side{flex:0 0 auto;position:sticky;top:12px;}
+.lfp-tabs{display:flex;gap:4px;justify-content:center;margin-bottom:8px;}
+.lfp-tab{font-size:12px;padding:3px 12px;border-radius:999px;border:1px solid var(--border,#333);background:transparent;color:var(--muted,#999);cursor:pointer;}
+.lfp-tab.on{background:#FE2C55;border-color:#FE2C55;color:#fff;}
+.lfp-phone{width:288px;background:#000;border-radius:30px;padding:9px;box-shadow:0 8px 30px rgba(0,0,0,.35);}
+.lfp-screen{background:#fff;border-radius:22px;overflow:hidden;height:520px;display:flex;flex-direction:column;color:#161823;position:relative;}
+.lfp-brand{height:170px;flex:none;background:linear-gradient(135deg,#3b4a6b,#8a5a7a);position:relative;}
+.lfp-brand::after{content:"";position:absolute;inset:0;background:linear-gradient(to bottom,rgba(0,0,0,0) 55%,rgba(22,24,35,.38));}
+.lfp-body{flex:1;overflow:auto;padding:18px 16px 10px;}
+.lfp-q{font-size:16px;font-weight:700;line-height:1.25;margin:2px 0 16px;color:#161823;}
+.lfp-opt{display:flex;align-items:center;gap:10px;padding:11px 2px;border-bottom:1px solid #eceef1;font-size:14px;color:#161823;}
+.lfp-radio{width:16px;height:16px;border-radius:50%;border:1.5px solid #c7ccd1;flex:none;}
+.lfp-priv{margin-top:16px;font-size:11px;color:#8a8f98;display:flex;gap:7px;align-items:flex-start;line-height:1.4;}
+.lfp-check{width:14px;height:14px;border-radius:3px;border:1.5px solid #c7ccd1;flex:none;margin-top:1px;}
+.lfp-priv a{color:#2d6cdf;text-decoration:none;}
+.lfp-foot{flex:none;padding:12px 16px 18px;border-top:.5px solid #eceef1;}
+.lfp-submit{width:100%;height:44px;border:0;border-radius:3px;background:#FE2C55;color:#fff;font-size:15px;font-weight:700;cursor:default;}
+.lfp-thanks{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:24px 22px;}
+.lfp-thanks .t{font-size:19px;font-weight:700;margin-bottom:8px;}
+.lfp-thanks .d{font-size:13px;color:#6b7078;line-height:1.4;margin-bottom:24px;}
+.lfp-dest{font-size:10px;color:#a2a7ae;margin-top:9px;word-break:break-all;}
+</style>
 <div class="card" id="lfNewPanel" hidden style="margin-bottom:14px;">
-  <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;"><b>Build a new instant form</b><span class="muted" style="font-size:11.5px;">Copies an existing form's layout onto one account, changing only the fields below. It then appears by name in your presets.</span><button type="button" class="btn sm ghost" id="lfNewClose" style="margin-left:auto;">✕</button></div>
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;"><b>Build a new instant form</b><span class="muted" style="font-size:11.5px;">Copies an existing form's layout onto one account, changing only the fields you set. The preview updates as you type; it appears by name in your presets.</span><button type="button" class="btn sm ghost" id="lfNewClose" style="margin-left:auto;">✕</button></div>
   <form method="post" action="/lead-forms/build" id="lfBuildForm">
     <input type="hidden" name="from_advertiser_id" id="lfFromAdv" value="">
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;">
-      <label class="field"><span class="field-label">Start from (template)</span>
-        <select name="template_form_id" id="lfTemplate" required>{% for f in forms %}<option value="{{ f.form_id }}" data-owner="{{ f.owner_advertiser_id }}">{{ f.name or f.form_id }}</option>{% endfor %}</select>
-        <span class="hint">Its questions &amp; layout are copied; only the fields below change.</span></label>
-      <label class="field"><span class="field-label">Create on account</span>
-        <select name="target_advertiser_id" required>{% for a in accounts %}<option value="{{ a.advertiser_id }}">{{ a.advertiser_name or a.advertiser_id }}</option>{% endfor %}</select>
-        <span class="hint">Copy it to other accounts afterward with “Clone to…”.</span></label>
-      <label class="field"><span class="field-label">New form name</span>
-        <input type="text" name="name" required placeholder="e.g. Games – 18+ – Aug"><span class="hint">Presets match forms by this name.</span></label>
-      <label class="field"><span class="field-label">Destination link <span class="muted">(after submit)</span></span>
-        <input type="url" name="destination_url" placeholder="https://…"><span class="hint">Where a lead is sent — keep your tracking macros.</span></label>
-    </div>
-    <details style="margin-top:8px;"><summary class="linkish" style="font-size:12.5px;">More fields (optional)</summary>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin-top:8px;">
-        <label class="field"><span class="field-label">Question</span><input type="text" name="question_label" placeholder="Are you 18+?"></label>
-        <label class="field"><span class="field-label">Answer options <span class="muted">(one per line)</span></span><textarea name="question_options" rows="2" placeholder="Yes&#10;No"></textarea></label>
-        <label class="field"><span class="field-label">Privacy policy URL</span><input type="url" name="privacy_url" placeholder="https://…/privacy"></label>
-        <label class="field"><span class="field-label">Company name</span><input type="text" name="company_name" placeholder="Acme"></label>
-        <label class="field"><span class="field-label">Thank-you title</span><input type="text" name="thanks_title" placeholder="You're in!"></label>
-        <label class="field"><span class="field-label">Thank-you text</span><input type="text" name="thanks_description" placeholder="Tap below to continue"></label>
-        <label class="field"><span class="field-label">Button label</span><input type="text" name="cta_title" placeholder="Start here"></label>
+    <div class="lfp-wrap">
+      <div class="lfp-fields">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;">
+          <label class="field"><span class="field-label">Start from (template)</span>
+            <select name="template_form_id" id="lfTemplate" required>{% for f in forms %}<option value="{{ f.form_id }}" data-owner="{{ f.owner_advertiser_id }}">{{ f.name or f.form_id }}</option>{% endfor %}</select>
+            <span class="hint">Its layout is copied; only the fields here change.</span></label>
+          <label class="field"><span class="field-label">Create on account</span>
+            <select name="target_advertiser_id" required>{% for a in accounts %}<option value="{{ a.advertiser_id }}">{{ a.advertiser_name or a.advertiser_id }}</option>{% endfor %}</select>
+            <span class="hint">Clone to more accounts afterward with “Clone to…”.</span></label>
+          <label class="field"><span class="field-label">New form name</span>
+            <input type="text" name="name" required placeholder="e.g. Games – 18+ – Aug"><span class="hint">Presets match forms by this name.</span></label>
+          <label class="field"><span class="field-label">Destination link <span class="muted">(after submit)</span></span>
+            <input type="url" name="destination_url" id="lfDest" placeholder="https://…"><span class="hint">Where a lead is sent — keep your tracking macros.</span></label>
+          <label class="field"><span class="field-label">Question</span><input type="text" name="question_label" id="lfQ" placeholder="Are you 18+?"></label>
+          <label class="field"><span class="field-label">Answer options <span class="muted">(one per line)</span></span><textarea name="question_options" id="lfOpts" rows="2" placeholder="Yes&#10;No"></textarea></label>
+          <label class="field"><span class="field-label">Company name</span><input type="text" name="company_name" id="lfCo" placeholder="Acme"></label>
+          <label class="field"><span class="field-label">Privacy policy URL</span><input type="url" name="privacy_url" placeholder="https://…/privacy"></label>
+          <label class="field"><span class="field-label">Thank-you title</span><input type="text" name="thanks_title" id="lfTT" placeholder="You're in!"></label>
+          <label class="field"><span class="field-label">Thank-you text</span><input type="text" name="thanks_description" id="lfTD" placeholder="Tap below to continue"></label>
+          <label class="field"><span class="field-label">Button label</span><input type="text" name="cta_title" id="lfCTA" placeholder="Start here"></label>
+        </div>
+        <div style="margin-top:12px;"><button class="btn primary" type="submit" id="lfBuildGo">Build form</button> <span class="hint">Takes a few seconds — TikTok's editor builds and publishes it.</span></div>
       </div>
-    </details>
-    <div style="margin-top:10px;"><button class="btn primary" type="submit" id="lfBuildGo">Build form</button> <span class="hint">Takes a few seconds — TikTok's editor builds and publishes it.</span></div>
+      <div class="lfp-side">
+        <div class="lfp-tabs"><button type="button" class="lfp-tab on" data-screen="form">Form</button><button type="button" class="lfp-tab" data-screen="thanks">Thank-you</button></div>
+        <div class="lfp-phone"><div class="lfp-screen">
+          <div class="lfp-brand"></div>
+          <div class="lfp-view" data-view="form" style="display:contents;">
+            <div class="lfp-body"><div class="lfp-q" id="lfpQ">Are you 18+?</div><div id="lfpOpts"></div>
+              <div class="lfp-priv"><span class="lfp-check"></span><span>I agree. <a>View <span id="lfpCo">your company</span>’s privacy policy.</a></span></div></div>
+            <div class="lfp-foot"><button type="button" class="lfp-submit">Submit</button></div>
+          </div>
+          <div class="lfp-view" data-view="thanks" style="display:none;flex:1;flex-direction:column;">
+            <div class="lfp-thanks"><div class="t" id="lfpTT">Thanks for your response!</div><div class="d" id="lfpTD">Tap the button below to start</div>
+              <button type="button" class="lfp-submit" id="lfpCTA" style="max-width:240px;">Start here</button><div class="lfp-dest" id="lfpDest"></div></div>
+          </div>
+        </div></div>
+      </div>
+    </div>
   </form>
 </div>
 {% endif %}
@@ -88,16 +129,42 @@
 {% block scripts %}
 <script>
 (function () {
-  // "+ New form" builder panel: show/hide, and keep the template's owner account in sync
+  // "+ New form" builder panel: show/hide, keep the template's owner in sync, and drive
+  // a live TikTok-style phone preview from the fields as they're typed.
   var btn = document.getElementById("lfNewBtn"), panel = document.getElementById("lfNewPanel");
+  if (!btn || !panel) return;
   var tmpl = document.getElementById("lfTemplate"), fromAdv = document.getElementById("lfFromAdv");
   function syncOwner() { if (tmpl && fromAdv) { var o = tmpl.selectedOptions[0]; fromAdv.value = o ? (o.dataset.owner || "") : ""; } }
-  if (btn && panel) {
-    btn.addEventListener("click", function () { panel.hidden = !panel.hidden; if (!panel.hidden) { syncOwner(); panel.scrollIntoView({ behavior: "smooth", block: "nearest" }); } });
-    var close = document.getElementById("lfNewClose"); if (close) close.addEventListener("click", function () { panel.hidden = true; });
-    if (tmpl) tmpl.addEventListener("change", syncOwner);
-    var f = document.getElementById("lfBuildForm"); if (f) f.addEventListener("submit", function () { syncOwner(); var go = document.getElementById("lfBuildGo"); if (go) { go.disabled = true; go.textContent = "Building…"; } });
+  var $ = function (id) { return document.getElementById(id); };
+  function val(id, dflt) { var e = $(id); var v = e ? (e.value || "").trim() : ""; return v || dflt; }
+  function render() {
+    $("lfpQ").textContent = val("lfQ", "Are you 18+?");
+    $("lfpCo").textContent = val("lfCo", "your company");
+    $("lfpTT").textContent = val("lfTT", "Thanks for your response!");
+    $("lfpTD").textContent = val("lfTD", "Tap the button below to start");
+    $("lfpCTA").textContent = val("lfCTA", "Start here");
+    var raw = ($("lfOpts") && $("lfOpts").value || "").split("\n").map(function (s) { return s.trim(); }).filter(Boolean);
+    if (!raw.length) raw = ["Yes", "No"];
+    var box = $("lfpOpts"); box.textContent = "";
+    raw.slice(0, 8).forEach(function (label) {
+      var row = document.createElement("div"); row.className = "lfp-opt";
+      var r = document.createElement("span"); r.className = "lfp-radio";
+      var t = document.createElement("span"); t.textContent = label;
+      row.appendChild(r); row.appendChild(t); box.appendChild(row);
+    });
+    var dest = val("lfDest", ""), cap = $("lfpDest");
+    try { cap.textContent = dest ? ("→ " + new URL(dest).hostname) : ""; } catch (e) { cap.textContent = dest ? "→ " + dest.slice(0, 40) : ""; }
   }
+  function showScreen(which) {
+    panel.querySelectorAll(".lfp-tab").forEach(function (b) { b.classList.toggle("on", b.dataset.screen === which); });
+    panel.querySelectorAll(".lfp-view").forEach(function (v) { v.style.display = (v.dataset.view === which) ? (which === "thanks" ? "flex" : "contents") : "none"; });
+  }
+  panel.querySelectorAll(".lfp-tab").forEach(function (b) { b.addEventListener("click", function () { showScreen(b.dataset.screen); }); });
+  panel.addEventListener("input", render);
+  btn.addEventListener("click", function () { panel.hidden = !panel.hidden; if (!panel.hidden) { syncOwner(); render(); panel.scrollIntoView({ behavior: "smooth", block: "nearest" }); } });
+  var close = document.getElementById("lfNewClose"); if (close) close.addEventListener("click", function () { panel.hidden = true; });
+  if (tmpl) tmpl.addEventListener("change", syncOwner);
+  var f = document.getElementById("lfBuildForm"); if (f) f.addEventListener("submit", function () { syncOwner(); var go = $("lfBuildGo"); if (go) { go.disabled = true; go.textContent = "Building…"; } });
 })();
 (function () {
   document.addEventListener("click", function (e) {

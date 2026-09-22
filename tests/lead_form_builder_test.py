@@ -137,6 +137,8 @@ t = read("app/templates/lead_forms.html")
 check("the drawer posts to /lead-forms/build with template + target account + name + destination",
       'action="/lead-forms/build"' in t and 'name="template_form_id"' in t and 'name="target_advertiser_id"' in t and 'name="name"' in t and 'name="destination_url"' in t)
 check("the template option carries its owner account for the hidden from-id", 'data-owner="{{ f.owner_advertiser_id }}"' in t and 'id="lfFromAdv"' in t)
+check("a live TikTok-style phone preview (form + thank-you screens) rides alongside the fields",
+      "lfp-phone" in t and "#FE2C55" in t and 'id="lfpQ"' in t and 'id="lfpOpts"' in t and 'data-screen="thanks"' in t)
 
 print()
 print("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}")
