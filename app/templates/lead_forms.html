@@ -21,6 +21,7 @@
         <td>{{ f.status or "—" }}</td>
         <td class="muted">{{ copies.get(f.name, 0) }} of {{ accounts|length }}</td>
         <td class="num">
+          <button class="btn sm lf-inspect" type="button" data-form="{{ f.form_id }}" data-adv="{{ f.owner_advertiser_id }}" {{ 'disabled' if not web_ready }} title="{{ 'Read this form’s definition (read-only) — used to map its fields.' if web_ready else 'Needs the ads.tiktok.com cookies from the TikTok Cookies page.' }}">🔍 Inspect</button>
           {% if accounts|length > 1 %}
           <form method="post" action="/lead-forms/clone" hidden>
             <input type="hidden" name="form_id" value="{{ f.form_id }}">
@@ -53,6 +54,18 @@
 {% block scripts %}
 <script>
 (function () {
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest(".lf-inspect"); if (!b || b.disabled) return;
+    var fid = b.dataset.form, adv = b.dataset.adv;
+    var p = UI.popover(b, '<div style="font-weight:700;margin-bottom:4px;">Form definition <span class="mono muted" style="font-size:11px;">' + UI.esc(fid) + '</span></div><div class="muted" style="font-size:11px;margin-bottom:6px;">Read-only. Copy this and paste it to Claude to map the fields.</div><pre class="lf-json" style="max-height:340px;overflow:auto;white-space:pre-wrap;word-break:break-all;font-size:11px;line-height:1.4;background:var(--surface-2,#111);padding:8px;border-radius:6px;margin:0 0 8px;">Reading…</pre><button type="button" class="btn sm lf-copy">Copy JSON</button>', { alignRight: true });
+    var pre = p.querySelector(".lf-json");
+    fetch("/lead-forms/inspect?form_id=" + encodeURIComponent(fid) + "&advertiser_id=" + encodeURIComponent(adv), { headers: { "x-requested-with": "fetch" } })
+      .then(function (r) { return r.json(); })
+      .then(function (j) { pre.textContent = j.ok ? JSON.stringify(j, null, 2) : ("Couldn't read it: " + (j.error || "unknown")); })
+      .catch(function () { pre.textContent = "Couldn't reach the server — try again."; });
+    var c = p.querySelector(".lf-copy");
+    if (c) c.addEventListener("click", function () { try { navigator.clipboard.writeText(pre.textContent); this.textContent = "Copied ✓"; } catch (_e) { this.textContent = "Select & copy manually"; } });
+  });
   document.addEventListener("click", function (e) {
     var b = e.target.closest(".lf-clone"); if (!b || b.disabled) return;
     var f = b.parentElement.querySelector('form[action="/lead-forms/clone"]'), sel = f.querySelector("select");

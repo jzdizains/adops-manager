@@ -2,10 +2,11 @@
 cookie-web fallback for reads the API doesn't cover."""
 from __future__ import annotations
 
+import json
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from .. import models, queries, spark_web_api, tiktok_api
@@ -77,6 +78,38 @@ def sync(db: Session = Depends(get_db)):
         synced += sync_account(db, acct)
     db.commit()
     return RedirectResponse(f"/lead-forms?ok=synced+{synced}", status_code=303)
+
+
+@router.get("/lead-forms/inspect")
+def inspect(request: Request, form_id: str, advertiser_id: str, db: Session = Depends(get_db)):
+    """READ-ONLY: dump one instant form's definition JSON, read through the page editor's
+    web session (the same read the clone flow uses). Writes nothing, creates nothing —
+    it exists so a form's field structure can be mapped before a builder edits it."""
+    from .. import instant_page_web, scope as scope_mod
+    sc = scope_mod.for_request(request, db)
+    if not sc.allows(advertiser_id):
+        return JSONResponse({"ok": False, "error": "That account isn't in your workspace."}, status_code=403)
+    if not spark_web_api.load_cookies():
+        return JSONResponse({"ok": False, "error": "Inspecting reads through the TikTok web session — paste your ads.tiktok.com cookies on the TikTok Cookies page first."})
+    try:
+        info, shape, probes = instant_page_web.read_page(str(form_id), str(advertiser_id), source_owner=str(advertiser_id))
+    except spark_web_api.WebAuthError as e:
+        return JSONResponse({"ok": False, "error": f"TikTok session expired — re-paste cookies. ({str(e)[:120]})"})
+    if not instant_page_web._ok(info):
+        return JSONResponse({"ok": False, "error": instant_page_web.explain(info, advertiser_id), "probes": probes})
+    page = ((info.get("data") or {}).get("page_info") or {}) if isinstance(info.get("data"), dict) else {}
+    raw = page.get("data") or ""
+    try:
+        parsed = json.loads(raw) if isinstance(raw, str) and raw else raw
+    except (ValueError, TypeError):
+        parsed = None
+    return JSONResponse({
+        "ok": True, "form_id": str(form_id), "read_shape": shape,
+        "business_type": page.get("business_type"),
+        "title": page.get("title") or page.get("name") or "",
+        "template_id": page.get("template_id"),
+        "definition": parsed if parsed is not None else raw,
+    })
 
 
 def _clone_one(db: Session, form_id: str, from_advertiser_id: str, acct: models.AdAccount, name: str) -> str:
