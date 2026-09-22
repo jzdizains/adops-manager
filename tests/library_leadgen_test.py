@@ -57,10 +57,12 @@ check("a landing page URL is only demanded for website/pixel now",
       'if fields["destination_type"] in ("website", "pixel") and not fields.get("landing_page_url"):' in src)
 check("the old 'Website / Pixel destinations only' block is gone", "Library creatives support Website / Pixel destinations only." not in src)
 
-print("-- native Instant Form optimises for LEAD, not CONVERT --")
+print("-- native Instant Form optimises for LEAD_GENERATION, not CONVERT/LEAD --")
 lj = open(os.path.join(ROOT, "app", "routes", "launch.py"), encoding="utf-8").read()
-check("lead_form maps to the LEAD optimization goal (OCPM), not CONVERT",
-      '("LEAD_GENERATION", "lead_form"): ("LEAD", "OCPM"' in lj)
+check("lead_form maps to the LEAD_GENERATION optimization goal (OCPM), not CONVERT",
+      '("LEAD_GENERATION", "lead_form"): ("LEAD_GENERATION", "OCPM"' in lj)
+check("the rejected short 'LEAD' token is gone",
+      '("LEAD_GENERATION", "lead_form"): ("LEAD",' not in lj)
 check("the ad group promotes LEAD_GENERATION for a lead form (no pixel/event forced)",
       'elif dest == "lead_form":' in src and 'payload["promotion_type"] = "LEAD_GENERATION"' in src)
 
@@ -75,7 +77,7 @@ def _syn(dest, stored_goal):
     T = _t.SimpleNamespace(id=1, name="P", objective_type="LEAD_GENERATION", campaign_budget_mode="ABO",
                            campaign_budget=None, campaign_name_pattern=None, adgroup_settings=_j.dumps(blob))
     return _launch.synthesize(T)
-check("lead_form preset with a stored CONVERT goal is forced to LEAD", _syn("lead_form", "CONVERT")["optimization_goal"] == "LEAD")
+check("lead_form preset with a stored CONVERT goal is forced to LEAD_GENERATION", _syn("lead_form", "CONVERT")["optimization_goal"] == "LEAD_GENERATION")
 check("external web-form lead gen (website) keeps CONVERT — not touched", _syn("website", "CONVERT")["optimization_goal"] == "CONVERT")
 
 print("-- video/image upload retries transient network timeouts --")

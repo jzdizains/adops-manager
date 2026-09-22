@@ -26,10 +26,12 @@ OBJECTIVE_MAP: dict[tuple[str, str], tuple[str, str, str]] = {
     # Website engagements with a TikTok Instant Page as the optimisation location: no pixel,
     # TikTok optimises for the page's button (outbound) clicks
     ("WEB_CONVERSIONS", "instant_page"): ("CONVERT", "OCPM", "BID_TYPE_NO_BID"),
-    # NATIVE Instant Form: TikTok optimises for the form submission itself — goal LEAD, no
-    # pixel/conversion event (confirmed against TikTok's Lead-optimization-goal help doc, 22 Sep).
-    # CONVERT here is what triggers the vague 40002 "error with the Lead Generation objective".
-    ("LEAD_GENERATION", "lead_form"): ("LEAD", "OCPM", "BID_TYPE_NO_BID"),
+    # NATIVE Instant Form: TikTok optimises for the form submission itself — no
+    # pixel/conversion event. The optimization_goal token is LEAD_GENERATION (matching the
+    # ad group's LEAD_GENERATION promotion_type). CONVERT here triggers the vague 40002
+    # "error with the Lead Generation objective"; the short "LEAD" is rejected outright
+    # ("correct is [...LEAD_GENERATION...], error is LEAD" — TikTok, 22 Sep).
+    ("LEAD_GENERATION", "lead_form"): ("LEAD_GENERATION", "OCPM", "BID_TYPE_NO_BID"),
     ("LEAD_GENERATION", "instant_page"): ("CONVERT", "OCPM", "BID_TYPE_NO_BID"),
     # TikTok moved lead-type pixel events (Complete Registration, Contact) OUT of
     # Website Conversions — they now require the Lead Generation objective with a
@@ -210,8 +212,8 @@ def synthesize(template: models.Template, overrides: dict[str, Any] | None = Non
         "smart_creative_videos": int(s.get("smart_creative_videos") or 5),
         "smart_creative_texts": int(s.get("smart_creative_texts") or 5),
         # Traffic: the picked goal decides goal + billing. A native Instant Form is ALWAYS the
-        # LEAD goal, so a preset saved back when the map wrongly stored "CONVERT" must not
-        # override it — force the computed goal for lead_form (a stale stored value never wins).
+        # LEAD_GENERATION goal, so a preset saved back when the map wrongly stored "CONVERT"
+        # (or a stale "LEAD") must not override it — force the computed goal for lead_form.
         "optimization_goal": opt_goal if (traffic_goal or destination == "lead_form") else (s.get("optimization_goal") or opt_goal),
         "billing_event": billing_event if (traffic_goal or destination == "lead_form") else (s.get("billing_event") or billing_event),
         "traffic_goal": traffic_goal,
