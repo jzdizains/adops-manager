@@ -34,7 +34,7 @@ pkg = _mod("app"); pkg.__path__ = [os.path.join(ROOT, "app")]
 _mod("app.config", DATA_DIR=SCRATCH)
 _mod("app.spark_web_api", load_cookies=lambda: {"sessionid_ads": "x", "csrftoken": "c"})
 rss = {"v": 100.0}
-_mod("app.background", rss_mb=lambda: rss["v"])
+_mod("app.background", rss_mb=lambda: rss["v"], mem_limit_mb=lambda: 0)
 import importlib
 ipb = importlib.import_module("app.instant_page_builder")
 

@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
-from .. import bc_assets, invite_autoaccept, invite_mail, models, queries, tiktok_api
+from .. import bc_assets, invite_autoaccept, invite_mail, models, queries, tiktok_api, users
 from ..balances import bc_portal_url
 from ..database import get_db
 from ..templating import render
@@ -32,8 +32,16 @@ def _digits(raw: str) -> str:
     return "".join(ch for ch in (raw or "") if ch.isdigit())
 
 
+def _is_owner(request: Request) -> bool:
+    """Partner access, the shared invite mailbox and BC-admin invites are owner-only — an
+    invited buyer must not send Business-Center-Admin invites or read the shared mailbox."""
+    return users.is_owner(getattr(request.state, "user", None))
+
+
 @router.get("/partners")
 def partners_page(request: Request, db: Session = Depends(get_db)):
+    if not _is_owner(request):
+        return RedirectResponse("/", status_code=303)
     token = queries.any_access_token(db)
     roles = {}
     if token:
@@ -70,8 +78,10 @@ def _accept_row(a: models.InviteAccept) -> dict:
 
 
 @router.get("/partners/autoaccept.json")
-def autoaccept_feed(db: Session = Depends(get_db)):
+def autoaccept_feed(request: Request, db: Session = Depends(get_db)):
     """Live status of the auto-accept rows, so the page updates itself while a Join runs."""
+    if not _is_owner(request):
+        return JSONResponse({"accepts": [], "running": False, "on": False}, status_code=403)
     rows = db.query(models.InviteAccept).order_by(models.InviteAccept.id.desc()).limit(25).all()
     running = any(r.status in (invite_autoaccept.WAITING, invite_autoaccept.ACCEPTING) for r in rows)
     return JSONResponse({"accepts": [_accept_row(r) for r in rows], "running": running,
@@ -79,7 +89,9 @@ def autoaccept_feed(db: Session = Depends(get_db)):
 
 
 @router.post("/partners/autoaccept")
-def autoaccept_toggle(on: str = Form(""), db: Session = Depends(get_db)):
+def autoaccept_toggle(request: Request, on: str = Form(""), db: Session = Depends(get_db)):
+    if not _is_owner(request):
+        return RedirectResponse("/", status_code=303)
     invite_autoaccept.set_enabled(db, str(on).lower() in ("1", "true", "on", "yes"))
     ok = "Auto-accept is on — new invites will be accepted from the mailbox automatically." if invite_autoaccept.enabled(db) \
         else "Auto-accept is off — invites are accepted manually."
@@ -87,10 +99,12 @@ def autoaccept_toggle(on: str = Form(""), db: Session = Depends(get_db)):
 
 
 @router.post("/partners/mailbox")
-def mailbox_save(host: str = Form(""), user: str = Form(""), password: str = Form(""),
+def mailbox_save(request: Request, host: str = Form(""), user: str = Form(""), password: str = Form(""),
                  port: int = Form(993), folder: str = Form("INBOX"), use_ssl: str = Form("on"),
                  join_name: str = Form(""), db: Session = Depends(get_db)):
     """Save the invite mailbox (IMAP) — stored on the data disk, never rendered back."""
+    if not _is_owner(request):
+        return RedirectResponse("/", status_code=303)
     if join_name.strip():
         queries.set_setting(db, "invite_join_name", join_name.strip()[:80])
     res = invite_mail.save_config(host, user, password, port=port, folder=folder,
@@ -101,15 +115,19 @@ def mailbox_save(host: str = Form(""), user: str = Form(""), password: str = For
 
 
 @router.post("/partners/mailbox/test")
-def mailbox_test(db: Session = Depends(get_db)):
+def mailbox_test(request: Request, db: Session = Depends(get_db)):
+    if not _is_owner(request):
+        return RedirectResponse("/", status_code=303)
     res = invite_mail.test_connection()
     return _back(ok=res.get("detail", "Mailbox connected.")) if res.get("ok") else _back(err=res.get("error", "Couldn't connect."))
 
 
 @router.get("/partners/members.json")
-def partners_members(bc_id: str = "", db: Session = Depends(get_db)):
+def partners_members(request: Request, bc_id: str = "", db: Session = Depends(get_db)):
     """Live member list of a BC (Admins, Standard members, pending invites) so the
     page can show who has access and reflect a just-sent invite as pending."""
+    if not _is_owner(request):
+        return JSONResponse({"members": [], "error": "not allowed"}, status_code=403)
     bid = _digits(bc_id)
     if not bid:
         return JSONResponse({"members": [], "error": "no BC"})
@@ -121,6 +139,8 @@ def invite_admin(request: Request, bc_id: str = Form(""), email: str = Form(""),
                  role: str = Form("ADMIN"), db: Session = Depends(get_db)):
     """Invite one email into a BC as Admin (or Standard). Admin = full control of every
     ad account in the BC, no per-account assignment needed."""
+    if not _is_owner(request):
+        return RedirectResponse("/", status_code=303)
     if not queries.any_access_token(db):
         return _back(err="TikTok isn't connected — connect first.")
     bid = _digits(bc_id)

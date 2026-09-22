@@ -81,7 +81,7 @@ def settings_page(request: Request, db: Session = Depends(get_db)):
         "postback_template": postback_template, "pass_script": pass_script,
         "ok": request.query_params.get("ok", ""),
         "tz": config.BUSINESS_TZ,
-        "rss_mb": background.rss_mb(),
+        "rss_mb": background.rss_mb(), "mem_limit_mb": background.mem_limit_mb(),
         "web_events": STANDARD_WEB_EVENTS, "fire_max": FIRE_MAX,
         "classic_font": text_overlay.custom_font_status(),
         "sec": _security_ctx(request, db, own_view=ws["own_view"]), "ws": ws,

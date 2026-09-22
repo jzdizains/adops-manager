@@ -121,6 +121,32 @@ def rss_mb() -> float:
     return 0.0
 
 
+def mem_limit_mb() -> int:
+    """The container's memory ceiling in MB, read from the cgroup so the number tracks the
+    actual Render plan instead of a hard-coded 512. cgroup v2 (memory.max) first, then v1
+    (memory.limit_in_bytes); "max"/an absurd value means unbounded, so fall back to 0."""
+    for path in ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
+        try:
+            raw = open(path).read().strip()
+        except OSError:
+            continue
+        if raw == "max":
+            break
+        try:
+            mb = int(raw) // (1024 * 1024)
+        except ValueError:
+            continue
+        # cgroup reports a huge sentinel (near INT64/PAGE_SIZE) when there is no limit.
+        if 0 < mb < 1_000_000:
+            return mb
+    # cgroup unreadable or unbounded → an explicit MEM_LIMIT_MB env var, else unknown (0)
+    try:
+        env = int(os.environ.get("MEM_LIMIT_MB", "") or 0)
+        return env if env > 0 else 0
+    except ValueError:
+        return 0
+
+
 def _loop():
     import gc
 

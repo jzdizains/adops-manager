@@ -599,7 +599,7 @@
 </div>
 
 </section>
-{% if rss_mb %}<div class="hint" style="margin-top:6px;">Server memory: {{ rss_mb }} MB of 512.</div>{% endif %}
+{% if rss_mb %}<div class="hint" style="margin-top:6px;">Server memory: {{ rss_mb }} MB{% if mem_limit_mb %} of {{ '%.1f'|format(mem_limit_mb / 1024) ~ ' GB' if mem_limit_mb >= 1024 else mem_limit_mb ~ ' MB' }}{% endif %}.</div>{% endif %}
 </div>
 </div>
 <script>

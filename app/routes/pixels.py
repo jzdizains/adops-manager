@@ -332,16 +332,18 @@ def remove(record_id: int, db: Session = Depends(get_db)):
 # ---------------------------------------------------------------------------
 
 @router.post("/pixels/add-existing")
-def add_existing(pixel_ref: str = Form(""), advertiser_id: str = Form(""), db: Session = Depends(get_db)):
+def add_existing(request: Request, pixel_ref: str = Form(""), advertiser_id: str = Form(""), db: Session = Depends(get_db)):
     from urllib.parse import quote
-    from .. import error_messages
+    from .. import error_messages, scope as scope_mod
+    sc = scope_mod.for_request(request, db)
     ref = (pixel_ref or "").strip()
     if not ref or not ref.replace("_", "").replace("-", "").isalnum() or len(ref) > 64:
         return RedirectResponse("/pixels?err=" + quote("Paste the Pixel ID (digits) or the pixel code from Ads Manager → Events."), status_code=303)
     if db.query(models.PixelRecord).filter(
             (models.PixelRecord.pixel_id == ref) | (models.PixelRecord.pixel_code == ref)).first():
         return RedirectResponse("/pixels?ok=" + quote(f"{ref} is already in the list."), status_code=303)
-    accounts = queries.enabled_accounts(db)
+    # Only look on accounts in this user's view — never probe or attach a pixel from another user's account.
+    accounts = [a for a in queries.enabled_accounts(db) if sc.allows(a.advertiser_id)]
     if advertiser_id:
         accounts = [a for a in accounts if a.advertiser_id == advertiser_id]
     if not accounts:
@@ -376,9 +378,13 @@ def add_existing(pixel_ref: str = Form(""), advertiser_id: str = Form(""), db: S
 # ---------------------------------------------------------------------------
 
 @router.post("/pixels/provision")
-def provision(pixel_name: str = Form(...), advertiser_id: str = Form(...),
+def provision(request: Request, pixel_name: str = Form(...), advertiser_id: str = Form(...),
               event_type: str = Form(...), event_name: str = Form(""),
               do_share: str = Form(""), db: Session = Depends(get_db)):
+    from .. import scope as scope_mod
+    sc = scope_mod.for_request(request, db)
+    if not sc.allows(advertiser_id):
+        return RedirectResponse("/pixels?err=That+account+isn%27t+in+your+workspace.", status_code=303)
     token = queries.any_access_token(db)
     acct = db.query(models.AdAccount).filter_by(advertiser_id=advertiser_id).first()
     if not token or not acct:

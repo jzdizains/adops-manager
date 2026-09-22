@@ -81,10 +81,20 @@ def available() -> bool:
     return PLAYWRIGHT_AVAILABLE
 
 
+def memory_ceiling_mb() -> int:
+    """How high RSS may climb before we refuse to open Chromium. Scales with the box so the
+    upgrade to a bigger Render plan actually lets the browser run: on a ≥1 GB box it's the
+    box minus ~500 MB of Chromium headroom; on a small or unknown box it's the conservative
+    512-MB-era default (330)."""
+    from . import background
+    lim = background.mem_limit_mb()
+    return max(MEMORY_CEILING_MB, lim - 500) if lim >= 1024 else MEMORY_CEILING_MB
+
+
 def memory_ok() -> tuple[bool, float]:
     from . import background
     rss = background.rss_mb()
-    return (rss == 0.0 or rss < MEMORY_CEILING_MB), rss
+    return (rss == 0.0 or rss < memory_ceiling_mb()), rss
 
 
 def looks_like_challenge(text: str) -> bool:
@@ -119,7 +129,7 @@ def build(advertiser_id: str, template, base_url: str = "https://ads.tiktok.com"
         return {"ok": False, "error": "No TikTok web cookies stored — paste them on the TikTok Cookies page.", "steps": [], "challenge": False}
     ok_mem, rss = memory_ok()
     if not ok_mem:
-        return {"ok": False, "error": f"Server memory is at {rss:.0f} MB — not opening a browser above {MEMORY_CEILING_MB} MB. Try again in a few minutes.", "steps": [], "challenge": False, "retry": True}
+        return {"ok": False, "error": f"Server memory is at {rss:.0f} MB — not opening a browser above {memory_ceiling_mb()} MB. Try again in a few minutes.", "steps": [], "challenge": False, "retry": True}
     steps: list[dict] = []
     adv = str(advertiser_id)
 

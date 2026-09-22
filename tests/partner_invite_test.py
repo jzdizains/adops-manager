@@ -71,6 +71,11 @@ _mod("app.invite_autoaccept",
 _mod("app.invite_mail", is_configured=lambda: AUTO["on"],
      status=lambda: {"configured": AUTO["on"], "host": "", "user": "", "port": 993, "folder": "INBOX", "use_ssl": True, "saved_at": ""},
      save_config=lambda *a, **k: {"ok": True}, test_connection=lambda: {"ok": True, "detail": "ok"})
+OWNER = {"is": True}
+_mod("app.users", is_owner=lambda me: OWNER["is"])
+class _Req:                                          # a request whose user passes/fails the owner gate
+    state = types.SimpleNamespace(user=object())
+REQ = _Req()
 
 # A DB that answers the small lookups partners_page makes (BC name, accept rows) without a real ORM.
 class _QDB:
@@ -86,14 +91,14 @@ pp = importlib.import_module("app.routes.partners_page")
 
 print("-- invite-admin sends one ADMIN invite through bc_assets.invite --")
 INVITES.clear(); SETTINGS.clear()
-r = pp.invite_admin(request=object(), bc_id="765 88-2 ", email="you@co.com", role="ADMIN", db=_QDB())
+r = pp.invite_admin(request=REQ, bc_id="765 88-2 ", email="you@co.com", role="ADMIN", db=_QDB())
 check("cleans the BC id to digits and invites the email as ADMIN", INVITES == [("765882", "you@co.com", "ADMIN")], INVITES)
 check("remembers the email for next time", SETTINGS.get("partners_last_email") == "you@co.com")
 check("success redirects back with an ok message + BC anchor", r.status_code == 303 and "ok=" in r.url and "#bc-765882" in r.url)
 
 print("-- role is validated; bad role falls back to ADMIN --")
 INVITES.clear()
-pp.invite_admin(request=object(), bc_id="111", email="a@b.com", role="OWNER", db=_QDB())
+pp.invite_admin(request=REQ, bc_id="111", email="a@b.com", role="OWNER", db=_QDB())
 check("an unknown role is coerced to ADMIN (never invents a role)", INVITES == [("111", "a@b.com", "ADMIN")], INVITES)
 
 print("-- guards --")
@@ -101,26 +106,34 @@ INVITES.clear()
 r_noat = None
 import app.queries as _q
 _orig = _q.any_access_token; _q.any_access_token = lambda db: None
-r_noat = pp.invite_admin(request=object(), bc_id="111", email="a@b.com", role="ADMIN", db=_QDB())
+r_noat = pp.invite_admin(request=REQ, bc_id="111", email="a@b.com", role="ADMIN", db=_QDB())
 _q.any_access_token = _orig
 check("no TikTok connection → refused, nothing invited", "err=" in r_noat.url and INVITES == [])
-r_bad = pp.invite_admin(request=object(), bc_id="111", email="not-an-email", role="ADMIN", db=_QDB())
+r_bad = pp.invite_admin(request=REQ, bc_id="111", email="not-an-email", role="ADMIN", db=_QDB())
 check("a bad email is refused before any call", "err=" in r_bad.url and INVITES == [])
-r_none = pp.invite_admin(request=object(), bc_id="", email="a@b.com", role="ADMIN", db=_QDB())
+r_none = pp.invite_admin(request=REQ, bc_id="", email="a@b.com", role="ADMIN", db=_QDB())
 check("no BC is refused", "err=" in r_none.url)
 
 print("-- TikTok refusal surfaces the reason --")
 INVITES.clear()
-r_ref = pp.invite_admin(request=object(), bc_id="111", email="refuse@x.com", role="ADMIN", db=_QDB())
+r_ref = pp.invite_admin(request=REQ, bc_id="111", email="refuse@x.com", role="ADMIN", db=_QDB())
 check("a refused invite comes back as an error, not a false success", "err=" in r_ref.url)
-r_badbc = pp.invite_admin(request=object(), bc_id="BADBC", email="a@b.com", role="ADMIN", db=_QDB())
+r_badbc = pp.invite_admin(request=REQ, bc_id="BADBC", email="a@b.com", role="ADMIN", db=_QDB())
 check("bc_assets.invite's own error (not Admin of the BC) is surfaced", "err=" in r_badbc.url)
 
 print("-- members.json returns the live member list --")
-m = pp.partners_members(bc_id="765 882", db=object())
+m = pp.partners_members(request=REQ, bc_id="765 882", db=object())
 check("cleans the id and returns members incl. pending", m.content.get("members") and m.content["members"][0]["status"] == "PENDING")
-m0 = pp.partners_members(bc_id="", db=object())
+m0 = pp.partners_members(request=REQ, bc_id="", db=object())
 check("no BC id → clean error, no crash", m0.content.get("error") == "no BC")
+
+print("-- owner-gated: a non-owner buyer can't send admin invites or read the mailbox --")
+INVITES.clear(); OWNER["is"] = False
+r_no = pp.invite_admin(request=REQ, bc_id="111", email="a@b.com", role="ADMIN", db=_QDB())
+check("a non-owner is bounced and nothing is invited", r_no.url == "/" and INVITES == [])
+m_no = pp.partners_members(request=REQ, bc_id="111", db=object())
+check("a non-owner can't read the member list (403)", m_no.status_code == 403)
+OWNER["is"] = True
 
 print("-- template: the simple invite flow replaced the partner-sharing setup --")
 def read(p): return open(os.path.join(ROOT, p), encoding="utf-8").read()

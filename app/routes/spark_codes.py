@@ -274,7 +274,7 @@ async def add_bulk(request: Request, db: Session = Depends(get_db)):
             from fastapi.responses import JSONResponse
             return JSONResponse({"ok": False, "error": no, "bad": bad[:5], "items": []})
         return RedirectResponse("/spark-codes?err=" + quote(no), status_code=303)
-    existing = {c.code for c in db.query(models.SparkCode.code).all()}
+    existing = {c.code for c in sc.owned(db.query(models.SparkCode), models.SparkCode).all()}
     wants_json = request.headers.get("x-requested-with") == "fetch"
     touched: list = []             # rows added or already there — the launcher's paste pop-up puts them on the board
     groups: dict[str, models.SparkCodeGroup] = {}

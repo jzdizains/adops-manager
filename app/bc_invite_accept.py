@@ -21,7 +21,7 @@ import time
 from . import spark_web_api
 from .instant_page_builder import (
     PLAYWRIGHT_AVAILABLE, sync_playwright, BrowserMissing, install_browser,
-    memory_ok, MEMORY_CEILING_MB, looks_like_challenge, _shot, _LOCK,
+    memory_ok, memory_ceiling_mb, looks_like_challenge, _shot, _LOCK,
 )
 
 log = logging.getLogger("adops.bc_invite_accept")
@@ -51,7 +51,7 @@ def accept_invite(invite_url: str, name: str, should_stop=None, on_step=None) ->
         return _fail("No TikTok web cookies stored — paste them on the TikTok Cookies page (the accept runs as that account).")
     ok_mem, rss = memory_ok()
     if not ok_mem:
-        return {**_fail(f"Server memory is at {rss:.0f} MB — not opening a browser above {MEMORY_CEILING_MB} MB. It retries by itself."), "retry": True}
+        return {**_fail(f"Server memory is at {rss:.0f} MB — not opening a browser above {memory_ceiling_mb()} MB. It retries by itself."), "retry": True}
 
     with _LOCK:                                  # one browser at a time on the host
         for attempt in (1, 2):

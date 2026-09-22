@@ -109,21 +109,24 @@ def sync(scope: str = Form("all"), db: Session = Depends(get_db)):
 async def authorize(request: Request, db: Session = Depends(get_db)):
     """Authorise a spark code. One account → runs now and answers JSON (the pop-up
     shows the step-by-step result). A BC / every account → a job."""
+    from .. import scope as scope_mod
+    usc = scope_mod.for_request(request, db)               # this user's scope (spark codes are per-user)
     form = await request.form()
     scope = str(form.get("scope") or "all")
     code = str(form.get("code") or "").strip()
     sid = str(form.get("spark_code_id") or "")
     if not code and sid.isdigit():
         sc = db.get(models.SparkCode, int(sid))
-        code = (sc.code if sc else "").strip()
+        code = (sc.code if sc and usc.owns(sc) else "").strip()
     if not code:
         return JSONResponse({"ok": False, "message": "Paste the spark code (or pick one) first."}, status_code=400)
     accounts, label = scope_accounts(db, scope)
     if not accounts:
         return JSONResponse({"ok": False, "message": f"No enabled ad account under {label}."}, status_code=400)
-    # remember the code in the Sparks list so it can be launched with afterwards
-    if not db.query(models.SparkCode).filter_by(code=code).first():
+    # remember the code in THIS user's Sparks list so it can be launched with afterwards
+    if not usc.owned(db.query(models.SparkCode), models.SparkCode).filter_by(code=code).first():
         db.add(models.SparkCode(name=str(form.get("name") or "").strip()[:120] or code[:14], code=code,
+                                owner_user_id=usc.user_id,
                                 media_type="CAROUSEL" if str(form.get("media_type") or "").upper() == "CAROUSEL" else "VIDEO"))
         db.commit()
     if len(accounts) == 1:
@@ -131,7 +134,7 @@ async def authorize(request: Request, db: Session = Depends(get_db)):
         res = await run_in_threadpool(identities.authorize, db, accounts[0], code)
         res["account"] = accounts[0].advertiser_name or accounts[0].advertiser_id
         res["advertiser_id"] = accounts[0].advertiser_id
-        sc = db.query(models.SparkCode).filter_by(code=code).first()
+        sc = usc.owned(db.query(models.SparkCode), models.SparkCode).filter_by(code=code).first()
         res["spark_id"] = sc.id if sc else None
         return JSONResponse(res)
     job, created = jobs.enqueue_once(db, "spark_authorize", f"Authorise spark code — {label}", {"scope": scope, "code": code}, href="/creators")

@@ -21,6 +21,8 @@ services:
         value: "2"              # slowly-climbing RSS in threaded Python services
       - key: DATA_DIR
         value: /data
+      - key: MEM_LIMIT_MB      # display + browser memory gate scale to the plan; cgroup is
+        value: "2048"          # read first, this is the fallback (Standard plan = 2 GB)
       - key: BUSINESS_TZ
         value: America/New_York
       - key: TIKTOK_APP_ID

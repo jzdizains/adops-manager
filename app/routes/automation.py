@@ -99,10 +99,17 @@ def queue_page(request: Request, db: Session = Depends(get_db)):
     })
 
 
+def _queue_visible(sc, item) -> bool:
+    """A user may only touch a queue item they launched, or one on an account in their view."""
+    return bool(sc.everything or item.launched_by == sc.user_id or sc.allows(item.advertiser_id))
+
+
 @router.post("/queue/{item_id}/retry")
-def retry_item(item_id: int, db: Session = Depends(get_db)):
+def retry_item(item_id: int, request: Request, db: Session = Depends(get_db)):
+    from .. import scope as scope_mod
+    sc = scope_mod.for_request(request, db)
     item = db.get(models.LaunchQueueItem, item_id)
-    if item and item.status == "failed":
+    if item and _queue_visible(sc, item) and item.status == "failed":
         item.status = "pending"
         item.attempts = 0
         db.commit()
@@ -110,10 +117,15 @@ def retry_item(item_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/queue/retry-failed")
-def retry_failed(db: Session = Depends(get_db)):
-    """Re-queue every failed item at once (each gets a fresh attempt counter)."""
+def retry_failed(request: Request, db: Session = Depends(get_db)):
+    """Re-queue every failed item at once — but only the ones in THIS user's view (each
+    gets a fresh attempt counter). One buyer's click must never relaunch another's failures."""
+    from .. import scope as scope_mod
+    sc = scope_mod.for_request(request, db)
     n = 0
     for item in db.query(models.LaunchQueueItem).filter_by(status="failed"):
+        if not _queue_visible(sc, item):
+            continue
         item.status = "pending"
         item.attempts = 0
         n += 1
@@ -122,9 +134,11 @@ def retry_failed(db: Session = Depends(get_db)):
 
 
 @router.post("/queue/{item_id}/cancel")
-def cancel_item(item_id: int, db: Session = Depends(get_db)):
+def cancel_item(item_id: int, request: Request, db: Session = Depends(get_db)):
+    from .. import scope as scope_mod
+    sc = scope_mod.for_request(request, db)
     item = db.get(models.LaunchQueueItem, item_id)
-    if item and item.status in ("pending", "failed"):
+    if item and _queue_visible(sc, item) and item.status in ("pending", "failed"):
         db.delete(item)
         db.commit()
     return RedirectResponse("/queue?ok=removed", status_code=303)

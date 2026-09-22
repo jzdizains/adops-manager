@@ -139,11 +139,18 @@ def section_key(path: str) -> str | None:
     return None
 
 
+OWNER_ONLY_TABS = frozenset({"/partners"})
+
+
 def tabs(request) -> list:
-    """[(href, label, on)] for the current page's section, [] when it has none."""
+    """[(href, label, on)] for the current page's section, [] when it has none.
+    Owner-only tabs (partner/BC-admin access) are dropped for non-owners."""
     path = request.url.path
     key = section_key(path)
     if not key:
         return []
+    from . import users
+    owner = users.is_owner(getattr(getattr(request, "state", None), "user", None))
     query = parse_qs(request.url.query)
-    return [(h, l, _tab_on(h, path, query, False)) for h, l in SECTIONS[key]]
+    return [(h, l, _tab_on(h, path, query, False)) for h, l in SECTIONS[key]
+            if owner or h not in OWNER_ONLY_TABS]

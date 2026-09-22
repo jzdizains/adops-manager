@@ -50,9 +50,11 @@ async def upload(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/display-cards/{card_id}/image")
-def image(card_id: int, db: Session = Depends(get_db)):
+def image(card_id: int, request: Request, db: Session = Depends(get_db)):
     card = db.get(models.DisplayCard, card_id)
-    if not card or not card.file_path or not Path(card.file_path).exists():
+    # Only the owner may fetch the file — otherwise any logged-in user could read another's
+    # uploaded card by guessing the id.
+    if not card or not scope_mod.for_request(request, db).owns(card) or not card.file_path or not Path(card.file_path).exists():
         return Response(status_code=404)
     return FileResponse(card.file_path, media_type="image/png")
 
