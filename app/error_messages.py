@@ -41,17 +41,15 @@ _PERMISSION_HINTS = re.compile(r"permission|not authorized|no access|无权限",
 
 # 40002 messages with a KNOWN cause — matched on TikTok's wording, checked in order
 _MESSAGE_HINTS: list[tuple[re.Pattern, str, str]] = [
-    # A one-time legal agreement on the AD ACCOUNT (not a campaign/preset problem, and the
-    # API can't sign it). Surfaces at /ad/create/ the first time an account runs lead gen.
+    # TikTok's words for "an Instant Form ad on a REGULAR campaign" (v155.8): there is nothing to
+    # sign — the same form, post and account went through as Smart+ (23 Sep 2026).
     (re.compile(r"lead generation agreement|agreement has not be(en)? signed|"
                 r"lead[- ]?gen(eration)? terms (of service )?(has|have)? ?not", re.I),
-     "This ad account hasn't accepted TikTok's Lead Generation Terms yet.",
-     "The launcher already retried the ad once with a single fixed button and no ad text (how the reference "
-     "tool builds Instant Form ads) — TikTok refused that too. "
-     "It's a one-time agreement per ad account and the launcher can't sign it. TikTok doesn't document "
-     "where it's accepted: creating an Instant Form by hand does NOT always ask (seen 24 Sep). In Ads Manager, "
-     "switched to THIS advertiser, build one Instant Form lead-gen ad through to Submit and look for a Lead "
-     "Generation Terms checkbox; if none appears, ask TikTok support with the request id below. Then Retry failed."),
+     "TikTok refused the Instant Form ad on a regular campaign (its message says 'agreement not signed').",
+     "There is nothing to sign: TikTok answers this when an Instant Form ad is put on a REGULAR campaign. "
+     "The same form went through as a Smart+ campaign (23 Sep) — since v155.8 Instant Form launches with a "
+     "Spark post go out as Smart+ automatically, so Retry failed. A library video or carousel can't run "
+     "as Smart+ here: use a Spark post for Instant Form presets."),
     (re.compile(r"selected advanced creative is not supported", re.I),
      "TikTok won't run this creative on a Smart+ ad for this objective.",
      "The launch already retried without the display card and with a single button, so what is left is the "
@@ -154,11 +152,10 @@ def fix_for(log) -> dict | None:
     # points to TikTok's own setup steps. Matched on the raw wording (any error code).
     if re.search(r"lead generation agreement|agreement has not be(en)? signed|"
                  r"lead[- ]?gen(eration)? terms", raw + " " + low):
-        return {"label": "How to accept the Lead Gen Terms",
-                "href": "https://ads.tiktok.com/help/article/set-up-lead-generation-with-instant-form",
-                "why": "One-time agreement per ad account, accepted in Ads Manager — TikTok doesn't say exactly "
-                       "where. Try submitting one Instant Form lead ad by hand on this account; if no terms "
-                       "checkbox shows, ask TikTok support with the request id. Then Retry failed."}
+        return {"label": "About Smart+ lead generation",
+                "href": "https://ads.tiktok.com/help/article/about-smart-plus-lead-generation-campaigns",
+                "why": "Nothing to sign — TikTok refuses Instant Form ads on regular campaigns with this message. "
+                       "Instant Form launches with a Spark post now go out as Smart+; Retry failed."}
     if code == "SPARK":
         if "rejected the spark code" in low or "code is incorrect" in low:
             return {"label": "Replace the spark code", "href": f"/spark-codes?edit={spark_id}" if spark_id else "/spark-codes",

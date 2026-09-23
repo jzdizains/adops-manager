@@ -96,6 +96,14 @@ check("the Team list too", _json.loads(str(_js([{"name": "ana", "spend": 1.5}]))
 check("already-JSON text passes through untouched", str(_js('{"a":1}')) == '{"a":1}' and str(_js(None)) == "null")
 check("still safe inside <script>", "</script>" not in str(_js({"x": "</script><b>"})) and _json.loads(str(_js({"x": "</script>"}))) == {"x": "</script>"})
 
+print("-- the connection pool (v155.8: the site stopped answering on 24 Sep) --")
+dbs = read("app/database.py")
+check("more SQLite connections, bounded wait", '"pool_size": 10, "max_overflow": 30, "pool_timeout": 20' in dbs)
+st = read("app/routes/status.py")
+check("the two live TikTok lookups hand their DB connection back before calling TikTok",
+      "db.expunge(acct)   # keep the loaded row usable" in st and st.count("db.rollback()      # ") >= 2
+      and st.index("token = acct.access_token") < st.index("data = tiktok_api.list_campaigns(token"))
+
 print("---")
 print(f"{len(fails)} failed" if fails else "all passed")
 sys.exit(1 if fails else 0)

@@ -869,6 +869,8 @@ def adgroup_settings(advertiser_id: str, campaign_id: str, adgroup_id: str, db: 
     acct = db.query(models.AdAccount).filter_by(advertiser_id=advertiser_id).first()
     if acct is None or not acct.access_token:
         return JSONResponse({"ok": False, "error": "that ad account is not connected"}, status_code=400)
+    db.expunge(acct)   # keep the loaded row usable, then hand the DB connection back while
+    db.rollback()      # TikTok answers (v155.8: the pool ran dry on slow lookups)
     try:
         g = adgroup_copy._source_adgroup(acct, campaign_id, adgroup_id)
     except tiktok_api.TikTokError as e:
@@ -888,8 +890,10 @@ def campaign_settings(advertiser_id: str, campaign_id: str, db: Session = Depend
     acct = db.query(models.AdAccount).filter_by(advertiser_id=advertiser_id).first()
     if acct is None or not acct.access_token:
         return JSONResponse({"ok": False, "error": "that ad account is not connected"}, status_code=400)
+    token = acct.access_token
+    db.rollback()      # hand the DB connection back while TikTok answers (v155.8)
     try:
-        data = tiktok_api.list_campaigns(acct.access_token, advertiser_id, filtering={"campaign_ids": [str(campaign_id)]}) or {}
+        data = tiktok_api.list_campaigns(token, advertiser_id, filtering={"campaign_ids": [str(campaign_id)]}) or {}
     except tiktok_api.TikTokError as e:
         return JSONResponse({"ok": False, "error": f"{e.message} (code {e.code})"})
     c = next((x for x in (data.get("list") or []) if str(x.get("campaign_id")) == str(campaign_id)), None)

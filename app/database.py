@@ -15,9 +15,13 @@ class Base(DeclarativeBase):
     pass
 
 
+# v155.8: 5 + 10 connections ran out on 24 Sep (every page and job waited 30 s for one, the site
+# stopped answering until a restart) — many slow requests each held one while waiting on TikTok.
+# SQLite connections are a file handle each: a bigger pool is cheap; the wait is bounded too.
 engine = create_engine(
     config.DATABASE_URL,
     connect_args={"check_same_thread": False, "timeout": 15} if config.DATABASE_URL.startswith("sqlite") else {},
+    **({"pool_size": 10, "max_overflow": 30, "pool_timeout": 20} if config.DATABASE_URL.startswith("sqlite") else {}),
 )
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 

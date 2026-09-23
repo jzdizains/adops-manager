@@ -102,7 +102,8 @@
         <span class="hint">An account without a page of the picked name gets one built from this template at launch (the dashboard drives TikTok's builder with your web session, ~1 min), verified through TikTok's API before the ad is created. With no page picked above, the template's own name is used. Manage templates on <a href="/instant-pages#templates">Instant pages</a>.</span></label>
       <label class="field" data-dest="lead_form"><span class="field-label">Lead form <span class="muted">(by name)</span></span>
         <select name="lead_form_name"><option value="">— pick —</option>{% for f in lead_forms %}<option value="{{ f.name }}" {{ 'selected' if blob.get('lead_form_name') == f.name }}>{{ f.name }} — on {{ f.count }} account(s)</option>{% endfor %}</select>
-        <span class="hint">Same per-account matching as instant pages. Sync or <a href="/lead-forms">build a new form</a>.</span></label>
+        <span class="hint">Same per-account matching as instant pages. Sync or <a href="/lead-forms">build a new form</a>.
+          With a Spark post this launches as <b>Smart+</b> (optimised for form leads) — TikTok refuses Instant Form ads on regular campaigns.</span></label>
     </div>
     <div class="pb-sub" data-dest="pixel website" data-needs-event="1" data-fix="pixel_event">
       <div class="pb-sub-h">Pixel &amp; optimisation event</div>

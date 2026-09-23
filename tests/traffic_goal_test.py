@@ -345,10 +345,48 @@ csrc = open(os.path.join(ROOT, "app", "routes", "campaigns.py"), encoding="utf-8
 check("the launch retries ONCE on that error and writes the outcome to Diagnostics either way",
       "plain = lead_form_plain(ad_payload, fields) if is_lead_agreement(e.message) else None" in csrc
       and '"lead-form-plain-ok"' in csrc and '"lead-form-plain-refused"' in csrc and "raise e2" in csrc)
+# v155.8: Instant Form launches go out as Smart+, shaped like the ad group TikTok accepted when
+# built by hand in Ads Manager (blue bat_260706030017, ad group 1877159492816945, 23 Sep)
+print("\n-- Instant Form as Smart+ --")
+spark_ref = {"identity_id": "51cc6c65", "identity_type": "BC_AUTH_TT", "identity_authorized_bc_id": "7658285881817202708",
+             "item_id": "7688392808218086669", "item_type": "VIDEO"}
+lf = dict(f_conv, objective_type="LEAD_GENERATION", destination_type="lead_form", lead_form_id="7688798794846077205",
+          lead_form_name="Untitled form 9/22/26, 17:16", template_name="Lead preset", creative_source="spark",
+          click_attribution_window="ONE_DAY", view_attribution_window="ONE_DAY", age_groups=["AGE_13_17", "AGE_25_34"],
+          call_to_action="AUTO", adgroup_budget=30, adgroup_budget_mode="BUDGET_MODE_DAY", schedule_type="SCHEDULE_FROM_NOW",
+          location_ids=["6252001"], gender="GENDER_UNLIMITED", campaign_budget_mode="ABO", ad_text="Have you checked it?")
+check("a Spark Instant Form launch is sent as Smart+", helpers.lead_form_as_smart_plus(lf))
+check("…a library video or carousel stays regular (not supported on the Smart+ path)",
+      not helpers.lead_form_as_smart_plus(dict(lf, creative_source="library")) and not helpers.lead_form_as_smart_plus(dict(lf, creative_source="carousel"))
+      and not helpers.lead_form_as_smart_plus(dict(lf, destination_type="pixel")))
+g = helpers.build_spc_adgroup_payload(lf, "c1", spark_ref, "", None)
+working = {"promotion_type": "LEAD_GENERATION", "promotion_target_type": "INSTANT_PAGE", "optimization_goal": "LEADS",
+           "optimization_event": "FORM", "billing_event": "OCPM", "bid_type": "BID_TYPE_NO_BID"}
+check("ad group = the one TikTok accepted (LEAD_GENERATION · INSTANT_PAGE · LEADS · FORM · OCPM · no bid)",
+      all(g.get(k) == v for k, v in working.items()), str({k: g.get(k) for k in working}))
+check("no pixel and no attribution window sent (TikTok attached its own; its default is what the working one carries)",
+      "pixel_id" not in g and "click_attribution_window" not in g and "view_attribution_window" not in g)
+check("adults only, the form's budget and the post's identity on the ad group",
+      g["targeting_spec"]["age_groups"] == ["AGE_25_34"] and g["budget"] == 30.0 and g["identity_type"] == "BC_AUTH_TT"
+      and g["identity_authorized_bc_id"] == "7658285881817202708" and g["schedule_type"] == "SCHEDULE_FROM_NOW")
+g2 = helpers.build_spc_adgroup_payload(lf, "c1", spark_ref, "", 4.5)
+check("a cost cap goes on conversion_bid_price (oCPM)", g2["bid_type"] == "BID_TYPE_CUSTOM" and g2["conversion_bid_price"] == 4.5 and "bid_price" not in g2)
+a = helpers.build_spc_ad_payload(lf, "ag1", spark_ref, None)
+check("the form is the ad's destination (page_list), never alongside a URL",
+      a.get("page_list") == [{"page_id": "7688798794846077205"}] and "landing_page_url_list" not in a)
+check("'Auto' button = lead buttons, no 'Shop now'", [c["call_to_action"] for c in a["call_to_action_list"]] == ["SIGN_UP", "LEARN_MORE", "APPLY_NOW"])
+check("a website Smart+ ad is unchanged (URL, general buttons)",
+      "page_list" not in helpers.build_spc_ad_payload(dict(lf, destination_type="website", landing_page_url="https://x.test"), "ag", spark_ref, None)
+      and helpers.build_spc_ad_payload(dict(lf, destination_type="website", landing_page_url="https://x.test"), "ag", spark_ref, None)["landing_page_url_list"])
+csrc2 = open(os.path.join(ROOT, "app", "routes", "campaigns.py"), encoding="utf-8").read()
+check("the preset form tells the operator", "With a Spark post this launches as <b>Smart+</b>" in open(os.path.join(ROOT, "app", "templates", "template_form.html"), encoding="utf-8").read())
+check("the launch switches such a preset to Smart+ before anything is created, and Smart+ accepts the Instant Form destination",
+      "if lead_form_as_smart_plus(fields):" in csrc2 and csrc2.count('not in ("pixel", "website", "lead_form")') == 2
+      and csrc2.index("if lead_form_as_smart_plus(fields):") < csrc2.index("trace.inflight(\"Smart+ campaign\")"))
 tf = open(os.path.join(ROOT, "app", "templates", "template_form.html"), encoding="utf-8").read()
 check("the preset form says so under the attribution fields", "Instant Form lead gen always uses TikTok’s default" in tf)
 cfg = open(os.path.join(ROOT, "app", "config.py"), encoding="utf-8").read()
-check("static version bumped", 'STATIC_VERSION = "158"' in cfg)
+check("static version bumped", 'STATIC_VERSION = "159"' in cfg)
 
 print()
 print("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}")

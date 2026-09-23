@@ -49,8 +49,8 @@ cp = read("app/routes/campaigns.py")
 check("launch: the account's timezone is read once per account, before anything is created",
       '"_account_tz": acct_time.account_tz(db, acct)' in cp
       and cp.index('"_account_tz": acct_time.account_tz(db, acct)') < cp.index("# -- config validation FIRST"))
-check("every 'start now' goes through it (manual, Smart+, the end-time retry)",
-      cp.count("acct_time.start_now(") == 3 and 'datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")' not in cp)
+check("every 'start now' goes through it (manual, Smart+, Smart+ Instant Form, the end-time retry)",
+      cp.count("acct_time.start_now(") == 4 and 'datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")' not in cp)
 check("ad-group copies that need a future start use the account's clock too", "acct_time.start_now(tz_name, lead_s=600)" in read("app/adgroup_copy.py")
       and "_future_start(payload, acct_time.account_tz(db, acct))" in read("app/adgroup_copy.py"))
 oa = read("app/routes/oauth.py")

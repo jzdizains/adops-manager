@@ -54,19 +54,19 @@ check("the editor reads ?fix=, opens that step, rings the field and explains it"
 css = rd("app/static/style.css")
 check("the ring + note styles exist and are token-based (both themes)", ".fix-flash" in css and ".fix-note" in css and "var(--warn)" in css)
 
-print("-- the one-time Lead Generation Terms agreement is explained, not left as raw text --")
+print("-- 'Lead Generation agreement not signed' is explained as what it is (v155.8) --")
 AGREE = "Lead Generation agreement has not be signed yet."
 e = em.explain("40002", AGREE)
 check("40002 'agreement not signed' gets a plain-English meaning (not the generic 40002 text)",
-      "Lead Generation Terms" in e["friendly"] and "one-time" in e["action"].lower())
-check("the explanation says the launcher can't sign it and to accept it in Ads Manager",
-      "can't sign" in e["action"].lower() and "ads manager" in e["action"].lower())
+      "regular campaign" in e["friendly"] and "nothing to sign" in e["action"].lower())
+check("…says Instant Form launches now go out as Smart+ and to Retry failed",
+      "smart+" in e["action"].lower() and "retry failed" in e["action"].lower())
 check("it is NOT mistaken for a permission/connection error", e["is_permission"] is False)
 r_ag = em.fix_for(Log(error_code="40002", error_message="TikTok rejected a field value.",
                       error_technical=AGREE, template_id=42, advertiser_id="123",
                       spark_code_id=None))
-check("the fix button points at TikTok's lead-gen setup steps (not a dashboard page)",
-      r_ag and "Lead Gen Terms" in r_ag["label"] and r_ag["href"].startswith("https://ads.tiktok.com"))
+check("the fix button points at TikTok's Smart+ lead generation page",
+      r_ag and "Smart+" in r_ag["label"] and r_ag["href"].startswith("https://ads.tiktok.com") and "smart-plus-lead" in r_ag["href"])
 
 print()
 print("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}")

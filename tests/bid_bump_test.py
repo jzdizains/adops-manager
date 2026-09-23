@@ -158,7 +158,7 @@ check("Jobs: one-button Clear finished (route + button)", '@router.post("/jobs/c
 ap = read("app/routes/appeals_page.py"); at = read("app/templates/appeals.html")
 check("Appeals: Clear all dismisses the open rows in view + filter", '@router.post("/appeals/clear")' in ap and "sc.allows(r.advertiser_id)" in ap.split('@router.post("/appeals/clear")')[1] and 'action="/appeals/clear"' in at and "data-confirm=" in at.split('action="/appeals/clear"')[1][:200])
 check("Appeals: Clear history removes finished rows", '@router.post("/appeals/clear-history")' in ap and 'action="/appeals/clear-history"' in at)
-check("STATIC_VERSION bumped", 'STATIC_VERSION = "158"' in read("app/config.py"))
+check("STATIC_VERSION bumped", 'STATIC_VERSION = "159"' in read("app/config.py"))
 
 print()
 print("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}")

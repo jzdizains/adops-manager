@@ -1101,9 +1101,19 @@ def spc_campaign_variants(fields: dict, camp_payload: dict) -> list[tuple[dict, 
     return [(camp_payload, False), (abo, False), (cbo, True)]
 
 
+def lead_form_as_smart_plus(fields: dict) -> bool:
+    """An Instant Form launch with a Spark post goes out as Smart+ (see launch_to_account). Library
+    videos and carousels aren't supported on the Smart+ path here, so those stay regular. Pure."""
+    return (fields.get("destination_type") == "lead_form"
+            and fields.get("creative_source") not in ("library", "carousel")
+            and not fields.get("smart_creative"))
+
+
 def build_spc_adgroup_payload(fields: dict, campaign_id: str, spark_ref: dict | None,
                               pixel_id: str, bid_price: float | None) -> dict:
     dest = fields["destination_type"]
+    if dest == "lead_form":
+        return _spc_lead_form_adgroup(fields, campaign_id, spark_ref, bid_price)
     convert = dest == "pixel" or fields.get("objective_type") == "WEB_CONVERSIONS"
     lpv = fields.get("objective_type") == "TRAFFIC" and fields.get("traffic_goal") == "LPV"
     engaged = is_engaged(fields)
@@ -1183,7 +1193,63 @@ def build_spc_adgroup_payload(fields: dict, campaign_id: str, spark_ref: dict | 
     return payload
 
 
+def _spc_lead_form_adgroup(fields: dict, campaign_id: str, spark_ref: dict | None, bid_price: float | None) -> dict:
+    """A Smart+ Instant Form ad group, copied from the one TikTok accepted when built by hand in
+    Ads Manager (blue bat_260706030017, ad group 1877159492816945, 23 Sep 2026):
+      promotion_type LEAD_GENERATION · promotion_target_type INSTANT_PAGE · optimization_goal LEADS
+      · optimization_event FORM · billing OCPM. No pixel is sent: none was picked there — TikTok
+    attached the form's own event source itself. No attribution window is sent either (TikTok's
+    default, 7-day click / 1-day view, is what that ad group carries). The form rides on the AD
+    (page_list), not here."""
+    payload: dict = {
+        "campaign_id": campaign_id,
+        "adgroup_name": f"{fields['template_name']} · smart+"[:512],
+        "promotion_type": "LEAD_GENERATION",
+        "promotion_target_type": "INSTANT_PAGE",
+        "optimization_goal": "LEADS",
+        "optimization_event": "FORM",
+        "billing_event": "OCPM",
+    }
+    if fields["schedule_type"] == "SCHEDULE_START_END" and fields.get("schedule_start_time"):
+        payload["schedule_type"] = "SCHEDULE_START_END"
+        payload["schedule_start_time"] = fields["schedule_start_time"]
+        if fields.get("schedule_end_time"):
+            payload["schedule_end_time"] = fields["schedule_end_time"]
+    else:
+        payload["schedule_type"] = "SCHEDULE_FROM_NOW"
+        payload["schedule_start_time"] = acct_time.start_now(fields.get("_account_tz"))
+    if (fields.get("campaign_budget_mode") or "ABO") == "ABO" and not fields.get("_spc_budget_on_campaign"):
+        payload["budget_mode"] = fields.get("adgroup_budget_mode") or "BUDGET_MODE_DAY"
+        payload["budget"] = float(fields["adgroup_budget"])
+    if bid_price is not None:
+        payload["bid_type"] = "BID_TYPE_CUSTOM"
+        payload["conversion_bid_price"] = float(bid_price)
+    else:
+        payload["bid_type"] = "BID_TYPE_NO_BID"
+    if spark_ref:
+        payload["identity_id"] = spark_ref["identity_id"]
+        payload["identity_type"] = spark_ref["identity_type"]
+        if spark_ref.get("identity_authorized_bc_id"):
+            payload["identity_authorized_bc_id"] = spark_ref["identity_authorized_bc_id"]
+    for k in ("comment_disabled", "video_download_disabled", "share_disabled"):
+        if fields.get(k):
+            payload[k] = True
+    spec: dict = {"location_ids": fields["location_ids"], "age_groups": lead_gen_ages(fields.get("age_groups"))}
+    if fields.get("gender") and fields["gender"] != "GENDER_UNLIMITED":
+        spec["gender"] = fields["gender"]
+    for key in ("languages", "interest_category_ids", "audience_ids", "excluded_audience_ids", "network_types"):
+        if fields.get(key):
+            spec[key] = fields[key]
+    if fields.get("spending_power"):
+        spec["spending_power"] = fields["spending_power"]
+    if fields.get("operating_systems"):
+        spec["operating_systems"] = [fields["operating_systems"]]
+    payload["targeting_spec"] = spec
+    return payload
+
+
 SPC_CTA_MAX = 3      # /smart_plus/ad/create/: "call_to_action_list: maximum number of items is 3"
+SPC_LEAD_CTAS = ("SIGN_UP", "LEARN_MORE", "APPLY_NOW")    # "Auto" on an Instant Form ad — lead buttons, no "Shop now"
 
 
 def build_spc_ad_payload(fields: dict, adgroup_id: str, spark_ref: dict,
@@ -1208,13 +1274,17 @@ def build_spc_ad_payload(fields: dict, adgroup_id: str, spark_ref: dict,
         # refuses more ("call_to_action_list: maximum number of items is 3", 18 Sep 2026); the
         # manual flow's CTA portfolio (call_to_action_id) isn't a field of the Smart+ ad create
         "call_to_action_list": ([{"call_to_action": c} for c in
-                                 __import__("app.routes.launch", fromlist=["CTA_AUTO_SET"]).CTA_AUTO_SET[:SPC_CTA_MAX]]
+                                 (SPC_LEAD_CTAS if fields.get("destination_type") == "lead_form" else
+                                  __import__("app.routes.launch", fromlist=["CTA_AUTO_SET"]).CTA_AUTO_SET[:SPC_CTA_MAX])]
                                 if fields.get("call_to_action") == "AUTO"
                                 else [{"call_to_action": fields["call_to_action"]}]),
     }
     if fields.get("ad_text"):
         payload["ad_text_list"] = [{"ad_text": fields["ad_text"]}]
-    if fields.get("landing_page_url"):
+    if fields.get("destination_type") == "lead_form" and str(fields.get("lead_form_id") or "").isdigit():
+        # doc "Create an Upgraded Smart+ Ad": page_list[{page_id}] — the Instant Form is the destination
+        payload["page_list"] = [{"page_id": str(fields["lead_form_id"])}]
+    elif fields.get("landing_page_url"):
         payload["landing_page_url_list"] = [{"landing_page_url": fields["landing_page_url"]}]
     if fields.get("_display_card_portfolio_id"):
         # doc "Create an Upgraded Smart+ Ad": interactive_add_on_list[{card_id}] (0–1 entries)
@@ -1565,9 +1635,9 @@ def _launch_smart_plus(acct: models.AdAccount, fields: dict, spark_ref: dict | N
     `log.campaign_id` is set as soon as the campaign exists so a failure further down
     can still clean the empty shell up."""
     dest = fields["destination_type"]
-    if dest not in ("pixel", "website"):
-        raise ConfigError("Smart+ presets support Website / Pixel destinations only "
-                          "(TikTok's Smart+ web flow). Change the destination or turn Smart+ off.")
+    if dest not in ("pixel", "website", "lead_form"):
+        raise ConfigError("Smart+ presets support Website / Pixel / Instant Form destinations only "
+                          "(TikTok's Smart+ flow). Change the destination or turn Smart+ off.")
     if not spark_ref:
         raise ConfigError("Smart+ launches need a spark creative — pick a spark code "
                           "in the preset or at launch time.")
@@ -1667,6 +1737,12 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
             # UPGRADED_SMART_PLUS; a manual Traffic campaign refuses the goal) — the preset
             # runs as Smart+ whether or not the toggle is on, and every Smart+ rule applies
             fields = {**fields, "smart_plus": True, "_smart_plus_implied": True}
+        if lead_form_as_smart_plus(fields):
+            # v155.8: an Instant Form ad on a REGULAR campaign is refused with a misleading "Lead
+            # Generation agreement has not be signed yet" (blue bat_260706030017, 23 Sep — nothing to
+            # sign anywhere); the same form, post and account went through as Smart+ built by hand in
+            # Ads Manager (campaign 1877159655653634, where Smart+ is now the default)
+            fields = {**fields, "smart_plus": True, "_smart_plus_implied": True, "_smart_plus_lead": True}
         use_library = fields.get("creative_source") == "library"
         use_carousel = fields.get("creative_source") == "carousel"
         if use_carousel:
@@ -1696,9 +1772,9 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                 raise ConfigError("Library creatives aren't supported on Smart+ presets yet "
                                   "— use a spark code for Smart+"
                                   + (" (Engaged session always runs as Smart+)." if fields.get("_smart_plus_implied") else "."))
-            if fields["destination_type"] not in ("pixel", "website"):
-                raise ConfigError("Smart+ presets support Website / Pixel destinations only "
-                                  "(TikTok's Smart+ web flow). Change the destination or turn Smart+ off.")
+            if fields["destination_type"] not in ("pixel", "website", "lead_form"):
+                raise ConfigError("Smart+ presets support Website / Pixel / Instant Form destinations only "
+                                  "(TikTok's Smart+ flow). Change the destination or turn Smart+ off.")
             if not fields.get("spark_code_id"):
                 raise ConfigError("Smart+ launches need a spark creative — pick a spark code "
                                   "in the preset or at launch time.")
