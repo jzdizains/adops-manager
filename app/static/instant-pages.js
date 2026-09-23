@@ -259,6 +259,7 @@
     var row = b.closest("tr"), g = byName[row.dataset.name]; if (!g || !g.source) return;
     UI.pickAccounts({
       title: "Clone “" + g.name + "” to…", confirmLabel: "Clone to selected", exclude: [g.source.adv],
+      has: (g.copies || []).reduce(function (m, c) { m[c.adv] = c.status || "PUBLISHED"; return m; }, {}), hasLabel: "Has this page",
       extra: [{ name: "new_url", label: "Button link (optional) — leave empty to keep the page’s own", type: "url", placeholder: "https://…" },
               { name: "new_text", label: "New button text (optional)", type: "text", placeholder: "" }]
     }).then(function (r) {

@@ -46,7 +46,7 @@ print("-- css for the star, both themes (token-based) --")
 css = read("app/static/style.css")
 check("the star has styles and an 'on' state using tokens (no hard-coded theme colors except the gold star)",
       ".pv-star {" in css and ".pv-star.on {" in css and "var(--text-dim)" in css)
-check("STATIC_VERSION bumped", 'STATIC_VERSION = "156"' in read("app/config.py"))
+check("STATIC_VERSION bumped", 'STATIC_VERSION = "157"' in read("app/config.py"))
 
 print()
 print("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}")

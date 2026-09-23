@@ -14,6 +14,8 @@ for t in tests/*_test.py tests/*_test.js; do
     echo "OK   $name"
   elif echo "$out" | grep -q "No module named 'fastapi'\|No module named 'sqlalchemy'"; then
     echo "SKIP $name  (needs the app's dependencies installed)"; skips=$((skips+1))
+  elif echo "$out" | grep -q "^SKIP-SUITE:"; then
+    echo "SKIP $name  ($(echo "$out" | grep "^SKIP-SUITE:" | head -1 | cut -c13-))"; skips=$((skips+1))
   else
     echo "FAIL $name"; echo "$out" | grep -E "^FAIL|Error|error:" | head -5; fails=$((fails+1))
   fi

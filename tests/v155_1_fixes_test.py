@@ -67,6 +67,13 @@ check("only the finished scan stores as complete; every early exit merges",
       src.count("return _store(db, snap, user_id, complete=True)") == 1 and "if not complete:\n        snap = merge_partial(snapshot(db, user_id), snap)" in src)
 check("the page never reads totals that aren't there", "{% if snap.at and snap.summary %}" in read("app/templates/bc_assets.html"))
 
+print("-- Clone pop-up shows who has it (v155.2) --")
+check("Lead Forms passes each form's accounts (by name, with status) to the pop-up",
+      "have_status = {gname: {f.owner_advertiser_id: (f.status or \"yes\") for f in fl} for gname, fl in by_name.items()}" in read("app/routes/lead_forms.py")
+      and '<script id="lfHave" type="application/json">{{ have_status|js }}</script>' in read("app/templates/lead_forms.html")
+      and 'has: HAVE[b.dataset.name] || {}, hasLabel: "Has this form"' in read("app/templates/lead_forms.html"))
+check("Instant Pages passes the page's copies", 'hasLabel: "Has this page"' in read("app/static/instant-pages.js"))
+
 print("---")
 print(f"{len(fails)} failed" if fails else "all passed")
 sys.exit(1 if fails else 0)

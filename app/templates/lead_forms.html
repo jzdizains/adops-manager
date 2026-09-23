@@ -383,7 +383,9 @@
   // the chosen accounts are cloned to in one verified background job.
   document.addEventListener("click", function (e) {
     var b = e.target.closest(".lf-clone"); if (!b || b.disabled || !UI.pickAccounts) return;
-    UI.pickAccounts({ title: "Clone “" + b.dataset.name + "” to…", confirmLabel: "Clone to selected", exclude: [b.dataset.adv] }).then(function (ids) {
+    var HAVE = {}; try { HAVE = JSON.parse((document.getElementById("lfHave") || {}).textContent || "{}") || {}; } catch (e2) { HAVE = {}; }
+    UI.pickAccounts({ title: "Clone “" + b.dataset.name + "” to…", confirmLabel: "Clone to selected", exclude: [b.dataset.adv],
+                      has: HAVE[b.dataset.name] || {}, hasLabel: "Has this form" }).then(function (ids) {
       if (!ids || !ids.length) return;
       var f = document.createElement("form"); f.method = "post"; f.action = "/lead-forms/clone-multi"; f.style.display = "none";
       [["form_id", b.dataset.form], ["from_advertiser_id", b.dataset.adv], ["name", b.dataset.name], ["target_ids", ids.join(",")]].forEach(function (kv) {
@@ -394,4 +396,5 @@
   });
 })();
 </script>
+<script id="lfHave" type="application/json">{{ have_status|js }}</script>
 {% endblock %}

@@ -95,7 +95,10 @@ def page(request: Request, db: Session = Depends(get_db)):
     acct_ids = {a.advertiser_id for a in accounts}
     ftpl_cov = {t.id: len(have.get(t.name, set()) & acct_ids) for t in ftpls}
     form_names = {f.form_id: f"{f.name} · {names.get(f.owner_advertiser_id, f.owner_advertiser_id)}" for f in forms}
+    # which accounts already hold each form (by name) and in what state — for the Clone pop-up (v155.2)
+    have_status = {gname: {f.owner_advertiser_id: (f.status or "yes") for f in fl} for gname, fl in by_name.items()}
     return render(request, "lead_forms.html", {
+        "have_status": have_status,
         "form_templates": ftpls, "ftpl_cov": ftpl_cov, "form_names": form_names,
         "forms": forms, "groups": groups, "names": names, "title": "Lead Forms", "accounts": accounts,
         "copies": copies, "bcs": bcs, "missing": missing, "acct_bc": acct_bc, "n_accounts": len(accounts),

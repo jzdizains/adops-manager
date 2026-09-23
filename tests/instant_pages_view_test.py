@@ -67,7 +67,7 @@ check("template: one row per group with star, tags, coverage bar, Accounts + Clo
 check("template: search + favourites + BC / status / coverage filters + tag chips", 'id="ipSearch"' in t and 'id="ipFav"' in t and 'id="ipBc"' in t and 'id="ipStatus"' in t and 'id="ipCov"' in t and 'id="ipTags"' in t)
 check("template: JSON blob for the page script; no hidden per-row account <select>s any more", 'id="ipData"' in t and "{{ page_data|tojson }}" in t and 'name="to_advertiser_id"' not in t and "{% for a in accounts %}{% if a.advertiser_id != p.owner_advertiser_id %}" not in t)
 check("template: templates card collapsible, help text in a popover, page JS included", "<details class=\"card tpl-card\"" in t and 'data-expand-title="How Sync and Clone work"' in t and "/static/instant-pages.js?v={{ STATIC_V }}" in t)
-check("CSS for the new pieces + STATIC_VERSION bumped", ".ip-star.on" in css and ".cov-bar" in css and ".ipd-row" in css and 'STATIC_VERSION = "156"' in read("app/config.py"))
+check("CSS for the new pieces + STATIC_VERSION bumped", ".ip-star.on" in css and ".cov-bar" in css and ".ipd-row" in css and 'STATIC_VERSION = "157"' in read("app/config.py"))
 
 print()
 print("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}")
