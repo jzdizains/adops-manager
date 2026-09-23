@@ -74,6 +74,21 @@ check("Lead Forms passes each form's accounts (by name, with status) to the pop-
       and 'has: HAVE[b.dataset.name] || {}, hasLabel: "Has this form"' in read("app/templates/lead_forms.html"))
 check("Instant Pages passes the page's copies", 'hasLabel: "Has this page"' in read("app/static/instant-pages.js"))
 
+print("-- the |js filter encodes raw data (v155.3) --")
+import json as _json
+tsrc = read("app/templating.py")
+_ns = {}
+for node in ast.parse(tsrc).body:
+    if isinstance(node, ast.FunctionDef) and node.name == "_js":
+        exec(compile(ast.Module([node], []), "templating", "exec"), _ns)
+_js = _ns["_js"]
+have = {"Untitled form 9/22/26, 17:16": {"7658283931879653397": "PUBLISHED"}}
+check("a dict from the route becomes JSON the browser can parse (it was Python's repr)",
+      _json.loads(str(_js(have))) == have and "'" not in str(_js(have)))
+check("the Team list too", _json.loads(str(_js([{"name": "ana", "spend": 1.5}]))) == [{"name": "ana", "spend": 1.5}])
+check("already-JSON text passes through untouched", str(_js('{"a":1}')) == '{"a":1}' and str(_js(None)) == "null")
+check("still safe inside <script>", "</script>" not in str(_js({"x": "</script><b>"})) and _json.loads(str(_js({"x": "</script>"}))) == {"x": "</script>"})
+
 print("---")
 print(f"{len(fails)} failed" if fails else "all passed")
 sys.exit(1 if fails else 0)

@@ -83,8 +83,17 @@ def _strip_key(q):
 def _js(json_text):
     """A JSON string made safe inside <script>: "</script>" in user data (a preset's ad text, a
     Business Center name) can't end the block and run as HTML. Unicode escapes are still valid JSON."""
+    import json as _json
     from markupsafe import Markup
-    t = str(json_text if json_text is not None else "null")
+    if json_text is None:
+        t = "null"
+    elif isinstance(json_text, str):
+        t = json_text                     # already JSON text (the *_json values)
+    else:
+        # a dict / list straight from the route — encode it here. Before v155.3 it went out as
+        # Python's repr ({'a': 'b'}), which JSON.parse rejects: the Clone pop-up's "Has it" and
+        # the Team drawer silently read nothing.
+        t = _json.dumps(json_text, default=str, ensure_ascii=False)
     for a, b in (("<", "\\u003c"), (">", "\\u003e"), ("&", "\\u0026"), ("\u2028", "\\u2028"), ("\u2029", "\\u2029")):
         t = t.replace(a, b)
     return Markup(t)
