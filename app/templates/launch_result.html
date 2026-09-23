@@ -120,6 +120,8 @@
         });
       });
     });
+    // arrived from Campaigns › ↗ Expand: open the account picker straight away (v155)
+    if (/[?&]again=1/.test(location.search)) window.addEventListener("load", function () { b.click(); });
   })();
 </script>
 {% endif %}

@@ -60,6 +60,16 @@
   })();
   document.addEventListener("click", function () { $$("[data-fsel].open").forEach(function (o) { o.classList.remove("open"); }); });
   $$("#stateSeg button").forEach(function (b) { b.addEventListener("click", function () { form.querySelector("[name=state]").value = b.dataset.state; submit(); }); });
+  // v155: toggle chips (No offer matched · Hide warm-ups · Hidden)
+  $$("[data-ftog]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var inp = form.querySelector("[name=" + b.dataset.ftog + "]"); if (!inp) return;
+      var on = inp.value !== b.dataset.val;
+      inp.value = on ? b.dataset.val : "";
+      if (b.dataset.ftog === "hidden") form.querySelector("[name=state]").value = on ? "all" : "active";
+      submit();
+    });
+  });
   $$("#groupSeg button").forEach(function (b) { b.addEventListener("click", function () { form.querySelector("[name=group]").value = b.dataset.group; submit(); }); });
   form.addEventListener("keydown", function (e) { if (e.key === "Enter" && e.target.name === "q") { e.preventDefault(); submit(); } });
 
@@ -299,8 +309,37 @@
       if (!todo.length) { adopsToast && adopsToast("ok", "Already " + (k === "pause" ? "paused" : "running")); return; }
       UI.confirm({ title: (k === "pause" ? "Pause " : "Resume ") + todo.length + " campaign" + (todo.length > 1 ? "s" : "") + "?", text: todo.slice(0, 6).map(function (r) { return r.dataset.name; }).join(", ") + (todo.length > 6 ? " +" + (todo.length - 6) + " more" : "") + ". You can undo for 10 s after.", ok: (k === "pause" ? "Pause " : "Resume ") + todo.length })
         .then(function (yes) { if (yes) toggleRows(todo, op); });
-    } else if (k === "budget") budgetPop(b, rows);
+    } else if (k === "hide") hideRows(rows, b.textContent.trim() !== "Unhide");
+    else if (k === "budget") budgetPop(b, rows);
     else if (k === "bid") bidPop(b, rows);
+  });
+
+  // ---- hide from MY board (v155) — nothing changes on TikTok ----------------------
+  function hideRows(rows, hide) {
+    var ids = rows.map(function (r) { return r.dataset.cid; });
+    UI.post("/campaigns/hide", { cids: ids.join(","), hide: hide ? "1" : "0" }).then(function (d) {
+      if (!d || !d.ok) { adopsToast && adopsToast("err", "Couldn't update the hidden list."); return; }
+      rows.forEach(function (r) { r.remove(); });
+      $$(".rowchk, .grpchk, #selAll").forEach(function (c) { c.checked = false; }); syncBar();
+      adopsToast && adopsToast("ok", (hide ? "Hidden: " : "Back on the board: ") + d.n + " campaign" + (d.n === 1 ? "" : "s") + (hide ? " — “Hidden” shows them" : ""));
+      refreshInPlace();
+    });
+  }
+
+  // ---- team leaderboard (owner) -------------------------------------------------------
+  var teamBtn = $("#teamBtn");
+  if (teamBtn) teamBtn.addEventListener("click", function () {
+    var el = $("#teamData"), t = [];
+    try { t = JSON.parse(el ? el.textContent : "[]") || []; } catch (e) { t = []; }
+    var tot = t.reduce(function (a, x) { a.s += x.spend; a.r += x.revenue; return a; }, { s: 0, r: 0 });
+    var h = '<table class="data dense" style="width:100%;"><thead><tr><th>#</th><th>Buyer</th><th class="num">Spend</th><th class="num">Revenue</th><th class="num">Profit</th><th class="num">ROAS</th><th class="num">Campaigns</th></tr></thead><tbody>' +
+      t.map(function (x, i) {
+        return "<tr><td class=\"muted\">" + (i + 1) + "</td><td style=\"font-weight:600;\">" + esc(x.name || "—") + "</td><td class=\"num\">" + money(x.spend) + "</td><td class=\"num\">" + money(x.revenue) +
+          '</td><td class="num"><span class="profit-cell ' + (x.profit >= 0 ? "pos" : "neg") + '">' + (x.profit < 0 ? "−" : x.profit > 0 ? "+" : "") + money(Math.abs(x.profit)) + "</span></td>" +
+          '<td class="num">' + (x.spend ? '<span class="roas-pill ' + (x.roas >= 1.3 ? "g" : x.roas >= 0.9 ? "w" : "r") + '">' + x.roas.toFixed(2) + "×</span>" : "—") + '</td><td class="num">' + x.active + " / " + x.n + "</td></tr>";
+      }).join("") + "</tbody></table>" +
+      '<div class="muted" style="font-size:11.5px;margin-top:10px;">Same range and filters as the board · buyer = the ad account\'s owner · total ' + money(tot.s) + " spent, " + money(tot.r) + " revenue.</div>";
+    UI.drawer({ title: "Team", sub: "Who's making money — " + (($(".page-head .muted") || {}).textContent || "").split("·")[0].trim(), body: h });
   });
 
   // ---- row menu (···) --------------------------------------------------------------
@@ -314,12 +353,14 @@
       '<button type="button" class="btn sm ghost" data-act="bid" style="justify-content:flex-start;">Set cost cap…</button>' +
       '<button type="button" class="btn sm ghost" data-act="toggle" style="justify-content:flex-start;">' + (row.dataset.status === "ENABLE" ? "Pause" : "Resume") + '</button>' +
       '<a class="btn sm ghost" href="https://ads.tiktok.com/i18n/dashboard?aadvid=' + esc(row.dataset.adv) + '" target="_blank" rel="noopener" style="justify-content:flex-start;">Open in Ads Manager ↗</a>' +
-      '<button type="button" class="btn sm ghost" data-act="rename" style="justify-content:flex-start;">Rename…</button></div>';
+      '<button type="button" class="btn sm ghost" data-act="rename" style="justify-content:flex-start;">Rename…</button>' +
+      '<button type="button" class="btn sm ghost" data-act="hide" style="justify-content:flex-start;" title="Only from your board — nothing changes on TikTok">' + (row.dataset.hidden === "1" ? "Show on my board" : "Hide from my board") + '</button></div>';
     var p = UI.popover(b, html, { alignRight: true });
     p.addEventListener("click", function (ev) {
       var a = ev.target.closest("[data-act]"); if (!a) return; p.close();
       if (a.dataset.act === "open") openDrawer(row);
       else if (a.dataset.act === "rename") renamePop(b, row);
+      else if (a.dataset.act === "hide") hideRows([row], row.dataset.hidden !== "1");
       else if (a.dataset.act === "budget") budgetPop(b, [row]);
       else if (a.dataset.act === "bid") bidPop(b, [row]);
       else if (a.dataset.act === "toggle") toggleRows([row], row.dataset.status === "ENABLE" ? "DISABLE" : "ENABLE");
@@ -669,11 +710,53 @@
     ["pendingFlash", "campKpis", "campCard"].forEach(function (id) { var cur = document.getElementById(id), nxt = doc.getElementById(id); if (cur && nxt) cur.replaceWith(nxt); });
     var sa = doc.getElementById("syncedAgo"), sc = $("#syncedAgo"); if (sa && sc) sc.textContent = sa.textContent;
     var sd = doc.getElementById("sparkData"); if (sd) { try { spark = JSON.parse(sd.textContent || "{}"); } catch (e) {} }
-    drawSparks(); applyCols(); applyGroups();
+    var td = doc.getElementById("teamData"), ct = $("#teamData"); if (td && ct) ct.textContent = td.textContent;
+    $$("[data-ftog]").forEach(function (b) {      // the chips' counts (Hidden n, No offer n) — the form itself stays
+      var nb = doc.querySelector('[data-ftog="' + b.dataset.ftog + '"] .n'), cb = b.querySelector(".n");
+      if (nb && cb) cb.textContent = nb.textContent;
+    });
+    drawSparks(); applyCols(); applyGroups(); applyRecOnly();
     $$(".camp-row").forEach(function (r) { if (sel[r.dataset.cid]) r.querySelector(".rowchk").checked = true; });
     syncBar();
     if (fcid) setFocus($$(".camp-row").filter(function (r) { return r.dataset.cid === fcid; })[0] || null);
   }
+  // ---- scaling (v155): ▲ Scale → copies now / once approved; ⏳ chip → cancel the wait; ▲ Ready filter ----
+  var recOnly = false;
+  function applyRecOnly() {
+    var b = $("#recOnly"); if (b) b.classList.toggle("on", recOnly);
+    $$(".camp-row").forEach(function (r) { if (recOnly) r.dataset.recHide = r.querySelector(".rec-chip.scale, .rec-chip.wait") ? "" : "1"; else delete r.dataset.recHide; r.style.display = r.dataset.recHide ? "none" : ""; });
+  }
+  document.addEventListener("click", function (e) {
+    var ro = e.target.closest && e.target.closest("#recOnly");
+    if (ro) { e.preventDefault(); recOnly = !recOnly; applyRecOnly(); return; }
+    var sb = e.target.closest && e.target.closest(".rec-chip.scale");
+    if (sb) {
+      e.preventDefault(); e.stopImmediatePropagation();
+      var row = sb.closest(".camp-row"), adv = row.dataset.adv, cid = row.dataset.cid;
+      var p = UI.popover(sb, '<div style="font-weight:700;margin-bottom:4px;">Scale “' + esc(row.dataset.name) + '”</div>' +
+        '<div class="muted" style="font-size:11.5px;margin-bottom:8px;max-width:300px;">' + esc(sb.title) + '</div>' +
+        '<label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">Add <input type="number" class="sc-n" min="1" max="20" value="' + (state.scale_copies || 5) + '" style="width:64px;"> ad groups</label>' +
+        '<div style="display:flex;gap:6px;flex-wrap:wrap;"><button type="button" class="btn sm primary sc-now">Copy now</button><button type="button" class="btn sm sc-wait" title="Made only when TikTok says the ad group delivers — only what passed review is multiplied">Once approved</button></div>');
+      function go(when) {
+        var n = parseInt(p.querySelector(".sc-n").value, 10) || 1;
+        p.querySelectorAll("button").forEach(function (b) { b.disabled = true; });
+        UI.post("/campaigns/" + adv + "/" + cid + "/scale", { copies: n, when: when }).then(function (r) {
+          p.close(); adopsToast && adopsToast(r.ok ? "ok" : "err", r.ok ? r.msg : (r.error || "That didn't work"));
+          if (r.ok) refreshInPlace();
+        }).catch(function () { p.close(); });
+      }
+      p.querySelector(".sc-now").addEventListener("click", function () { go("now"); });
+      p.querySelector(".sc-wait").addEventListener("click", function () { go("approved"); });
+      return;
+    }
+    var wc = e.target.closest && e.target.closest(".rec-chip.wait");
+    if (wc) {
+      e.preventDefault(); e.stopImmediatePropagation();
+      UI.confirm({ title: "Cancel this Scale?", text: "Nothing has been copied yet; no copies will be made.", ok: "Cancel it" }).then(function (y) {
+        if (y) UI.post("/scale/watch/" + wc.dataset.watch + "/cancel").then(function () { refreshInPlace(); });
+      });
+    }
+  }, true);
   function refreshInPlace(which) {
     if (busy) return Promise.resolve();
     if (which === "sync") {

@@ -48,6 +48,60 @@ SORT_KEYS = {
 }
 GROUPS = ("", "creative", "account", "bc", "source")
 
+OBJECTIVE_LABELS = {"WEB_CONVERSIONS": "Website conversions", "CONVERSIONS": "Website conversions", "TRAFFIC": "Traffic",
+                    "LEAD_GENERATION": "Lead generation", "APP_PROMOTION": "App promotion", "REACH": "Reach",
+                    "VIDEO_VIEWS": "Video views", "ENGAGEMENT": "Community interaction", "PRODUCT_SALES": "Product sales"}
+
+
+def objective_label(o: str) -> str:
+    return OBJECTIVE_LABELS.get(o or "", (o or "Unknown").replace("_", " ").title())
+
+
+def _hidden_key(sc) -> str:
+    """Campaigns a user hid from their board (v155) — per workspace, like hidden profiles."""
+    return f"hidden_campaigns:{sc.user_id if sc.user_id is not None else 'all'}"
+
+
+def hidden_campaigns(db, sc) -> set:
+    import json as _j
+    try:
+        return {str(x) for x in _j.loads(queries.get_setting(db, _hidden_key(sc), "[]") or "[]")}
+    except (ValueError, TypeError):
+        return set()
+
+
+def board_filter(r, *, hidden: set, show_hidden: bool, obj: str, offer: str, sources: dict, warm: set) -> bool:
+    """The v155 board filters for one campaign record. Pure."""
+    if (r.campaign_id in hidden) != show_hidden:
+        return False
+    if obj and (r.objective_type or "") != obj:
+        return False
+    if offer == "none" and sources.get(r.campaign_id):
+        return False
+    if r.campaign_id in warm:
+        return False
+    return True
+
+
+def leaderboard(rows: list, owner_by_adv: dict, names: dict) -> list:
+    """Per buyer (the ad account's owner): spend, revenue, profit, ROAS, campaigns. Pure."""
+    agg: dict = {}
+    for row in rows:
+        uid = owner_by_adv.get(row["r"].advertiser_id)
+        a = agg.setdefault(uid, {"user_id": uid, "name": names.get(uid, "Unassigned accounts"), "spend": 0.0,
+                                 "revenue": 0.0, "n": 0, "active": 0})
+        a["spend"] += float(row["m"]["spend"] or 0)
+        a["revenue"] += float(row["revenue"] or 0)
+        a["n"] += 1
+        a["active"] += 1 if row["r"].operation_status == "ENABLE" else 0
+    out = []
+    for a in agg.values():
+        a["profit"] = round(a["revenue"] - a["spend"], 2)
+        a["roas"] = round(a["revenue"] / a["spend"], 2) if a["spend"] else 0.0
+        a["spend"], a["revenue"] = round(a["spend"], 2), round(a["revenue"], 2)
+        out.append(a)
+    return sorted(out, key=lambda a: (-a["profit"], -a["spend"]))
+
 
 # Campaign secondary statuses that mean "switched on but CANNOT deliver"
 # (Enumeration – Campaign Status – Secondary Status): the ad account is
@@ -141,6 +195,11 @@ def status_page(request: Request, db: Session = Depends(get_db)):
     group = request.query_params.get("group", "")
     if group not in GROUPS:
         group = ""
+    show_hidden = request.query_params.get("hidden") == "1"      # v155: the campaigns you hid, only
+    obj_f = request.query_params.get("obj", "").strip()             # objective
+    offer_f = request.query_params.get("offer", "")                 # "none" = no offer (source) matched
+    nowarm = request.query_params.get("nowarm") == "1"              # hide warm-up (test) launches
+    hidden_set = hidden_campaigns(db, sc)
 
     records = db.query(models.CampaignRecord).all()
     # campaigns this tool launched (successful launches carry the campaign id)
@@ -178,6 +237,9 @@ def status_page(request: Request, db: Session = Depends(get_db)):
     older = request.query_params.get("older") == "1"      # Blocked: also errors from before the range
     issue_at = board_numbers.issue_dates(db, models)       # when each problem was first seen (errors-since)
     sources = pnl_data.campaign_source_map(db)
+    warm_ids = ({c for (c,) in db.query(models.LaunchLog.campaign_id).filter(models.LaunchLog.warmup == True)}   # noqa: E712
+                if nowarm else set())
+    _bf = dict(hidden=hidden_set, show_hidden=show_hidden, obj=obj_f, offer=offer_f, sources=sources, warm=warm_ids)
     ag_states = adgroup_stats.states_for(db, [r.campaign_id for r in records if sc.allows(r.advertiser_id)])
     healths = {r.campaign_id: campaign_health(r, accounts.get(r.advertiser_id), ag_states.get(r.campaign_id, []))
                for r in records if sc.allows(r.advertiser_id)}
@@ -282,6 +344,8 @@ def status_page(request: Request, db: Session = Depends(get_db)):
             continue
         if source_f and sources.get(r.campaign_id, "") != source_f:
             continue
+        if not board_filter(r, **_bf):
+            continue
 
         m = metrics_cache[r.campaign_id]
         src = sources.get(r.campaign_id, "")
@@ -332,8 +396,15 @@ def status_page(request: Request, db: Session = Depends(get_db)):
 
     # lifetime spend / revenue / ROAS on each row (range-independent)
     life = board_numbers.lifetime(db, models, [row["r"].campaign_id for row in rows], sources)
+    # scaling (v155): what earned more (lifetime numbers), and any "×N once approved" still waiting
+    from .. import scaling
+    from ..settings_store import get_settings as _gs
+    scale_th = scaling.thresholds(_gs(db, sc.owner_for_new))
+    watches = scaling.open_watches(db, models, [row["r"].campaign_id for row in rows])
     for row in rows:
         row["life"] = life.get(row["r"].campaign_id)
+        row["rec"] = scaling.advise(row["life"], row["tab"], row["r"].operation_status, scale_th)
+        row["watch"] = watches.get(row["r"].campaign_id)
 
     # totals across the FILTERED rows; rate metrics recomputed from the sums so
     # they're properly weighted (never an average of averages)
@@ -373,6 +444,8 @@ def status_page(request: Request, db: Session = Depends(get_db)):
         nm = ((acct_.advertiser_name if acct_ else r.advertiser_id) or r.advertiser_id).lower()
         if q and q not in (r.campaign_name or "").lower() and q not in nm:
             continue
+        if not board_filter(r, **_bf):
+            continue
         state_counts["all"] += 1
         tab_, _blk = bucket_of(r, acct_, healths.get(r.campaign_id))
         if tab_ == "blocked" and not older:
@@ -385,6 +458,16 @@ def status_page(request: Request, db: Session = Depends(get_db)):
 
     # account dropdown: only accounts that actually have campaigns cached
     adv_ids_with_campaigns = {r.advertiser_id for r in records if sc.allows(r.advertiser_id)}
+    in_view_recs = [r for r in records if sc.allows(r.advertiser_id)]
+    hidden_n = sum(1 for r in in_view_recs if r.campaign_id in hidden_set)
+    objective_options = sorted({(r.objective_type or "") for r in in_view_recs if r.objective_type}, key=objective_label)
+    no_offer_n = sum(1 for r in in_view_recs if not sources.get(r.campaign_id) and r.campaign_id not in hidden_set)
+    # team leaderboard (owner, on "Everyone"): the board's own rows by buyer — same range, same filters
+    team = []
+    if sc.everything and guard.is_owner(request):
+        _owner_by_adv = {aid: a.owner_user_id for aid, a in accounts.items()}
+        _unames = {u.id: (u.email or "").split("@")[0] for u in db.query(models.User).all()}
+        team = leaderboard(rows, _owner_by_adv, _unames)
     account_options = sorted(
         ((aid, (accounts[aid].advertiser_name or aid) if aid in accounts else aid)
          for aid in adv_ids_with_campaigns),
@@ -540,8 +623,26 @@ def status_page(request: Request, db: Session = Depends(get_db)):
         recon["outside"], recon["outside_items"] = board_numbers.outside_spend(
             db, models, not_ours, range_key, timeutil.local_date_str(start_utc), timeutil.local_date_str(end_utc - _td(seconds=1)), _names)
 
+    recon["hidden"], recon["hidden_n"] = 0.0, 0
+    if hidden_set and not show_hidden:
+        # what the campaigns you hid spent in the range — left out of the totals above
+        _hid = [r for r in records if r.campaign_id in hidden_set and sc.allows(r.advertiser_id)
+                and (not account or r.advertiser_id == account)]
+        recon["hidden"], _items = board_numbers.outside_spend(
+            db, models, _hid, range_key, timeutil.local_date_str(start_utc), timeutil.local_date_str(end_utc - _td(seconds=1)), {})
+        recon["hidden_n"] = len(_hid)
+
+    batch_by_cid = {}
+    _shown = [row["r"].campaign_id for row in rows if row.get("rec")]
+    if _shown:
+        for lg in db.query(models.LaunchLog.campaign_id, models.LaunchLog.batch_ref).filter(models.LaunchLog.campaign_id.in_(_shown)):
+            batch_by_cid.setdefault(lg.campaign_id, lg.batch_ref)
     return render(request, "status.html", {
-        "recon": recon, "older": older,
+        "recon": recon, "older": older, "scale_th": scale_th, "batch_by_cid": batch_by_cid,
+        "rec_count": sum(1 for row in rows if row.get("rec")),
+        "show_hidden": show_hidden, "hidden_n": hidden_n, "hidden_set": hidden_set, "obj_f": obj_f, "offer_f": offer_f,
+        "nowarm": nowarm, "objective_options": [(o, objective_label(o)) for o in objective_options],
+        "no_offer_n": no_offer_n, "team": team,
         "rejections": appeals_mod.by_campaign(db),
         "view": sc,
         "ag_flags": ag_flags,
@@ -869,6 +970,63 @@ def appeal_state(row_id: int, db: Session = Depends(get_db)):
     from fastapi.responses import JSONResponse
     row = db.get(models.Appeal, row_id)
     return JSONResponse({"ok": row is not None, "appeal": appeals_mod.row_state(row)})
+
+
+@router.post("/campaigns/{advertiser_id}/{campaign_id}/scale")
+def campaign_scale(request: Request, advertiser_id: str, campaign_id: str, copies: int = Form(0), when: str = Form("now"),
+                   db: Session = Depends(get_db), _view: scope_mod.Scope = Depends(guard.account_in_view)):
+    """Scale ×N (v155): copy the campaign's best delivering ad group now, or once TikTok approves
+    one (`when=approved`). Never automatic — this is the operator's click."""
+    from fastapi.responses import JSONResponse
+    from .. import adgroup_copy, scaling
+    from ..settings_store import get_settings as _gs
+    sc = scope_mod.for_request(request, db)
+    acct = db.query(models.AdAccount).filter_by(advertiser_id=advertiser_id).first()
+    if acct is None or not acct.access_token:
+        return JSONResponse({"ok": False, "error": "that ad account is not connected"})
+    n = copies or scaling.thresholds(_gs(db, sc.owner_for_new))["copies"]
+    n = max(1, min(int(n), adgroup_copy.MAX_COPIES))
+    if when == "approved":
+        src = scaling.pick_source(db, models, campaign_id, delivering_only=False)
+        if src is None:
+            return JSONResponse({"ok": False, "error": "no ad group of this campaign is known yet — wait for the next sync"})
+        w = scaling.watch(db, models, sc.owner_for_new, advertiser_id, campaign_id, src.adgroup_id, n)
+        fired = scaling.tick(db, models) if "DELIVERY_OK" in (src.secondary_status or "").upper() else 0
+        return JSONResponse({"ok": True, "watch_id": w.id, "msg": (f"It's already delivering — {n} copies queued." if fired else
+                                                                 f"Waiting for TikTok's approval — then {n} copies are made. Cancel it on the row any time.")})
+    src = scaling.pick_source(db, models, campaign_id, delivering_only=True)
+    if src is None:
+        return JSONResponse({"ok": False, "error": "nothing in this campaign is delivering yet — use “once approved” instead"})
+    ok, msg = scaling.queue_copies(db, advertiser_id, campaign_id, src.adgroup_id, n)
+    return JSONResponse({"ok": ok, "msg": msg, "error": "" if ok else msg})
+
+
+@router.post("/campaigns/hide")
+def campaigns_hide(request: Request, cids: str = Form(""), hide: str = Form("1"), db: Session = Depends(get_db)):
+    """Hide campaigns from YOUR board (v155) — nothing changes on TikTok; "Hidden (n)" shows them."""
+    import json as _j
+    from fastapi.responses import JSONResponse
+    sc = scope_mod.for_request(request, db)
+    want = [c.strip() for c in cids.split(",") if c.strip().isdigit()][:500]
+    ok_ids = {c for (c, a) in db.query(models.CampaignRecord.campaign_id, models.CampaignRecord.advertiser_id)
+              .filter(models.CampaignRecord.campaign_id.in_(want)) if sc.allows(a)} if want else set()
+    cur = hidden_campaigns(db, sc)
+    cur = (cur | ok_ids) if hide == "1" else (cur - ok_ids)
+    queries.set_setting(db, _hidden_key(sc), _j.dumps(sorted(cur)[-5000:]))
+    return JSONResponse({"ok": True, "n": len(ok_ids), "hidden": len(cur)})
+
+
+@router.post("/scale/watch/{watch_id}/cancel")
+def scale_watch_cancel(request: Request, watch_id: int, db: Session = Depends(get_db)):
+    from fastapi.responses import JSONResponse
+    sc = scope_mod.for_request(request, db)
+    w = db.get(models.ScaleWatch, watch_id)
+    if w is None or not sc.allows(w.advertiser_id):
+        return JSONResponse({"ok": False, "error": "not found"}, status_code=404)
+    if w.status == "waiting":
+        w.status, w.detail = "cancelled", "cancelled from the Campaigns page"
+        db.commit()
+    return JSONResponse({"ok": True})
 
 
 @router.post("/campaigns/{advertiser_id}/{campaign_id}/adgroups/{adgroup_id}/duplicate")

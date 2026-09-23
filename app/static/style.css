@@ -1480,3 +1480,23 @@ td .life.g { color: var(--ok); } td .life.r { color: var(--err); }
 
 /* TikTok test mode banner (v153) */
 .mock-banner { background: repeating-linear-gradient(45deg, var(--warn-bg), var(--warn-bg) 12px, transparent 12px, transparent 24px); border: 1px dashed var(--warn); color: var(--text); border-radius: 10px; padding: 6px 12px; margin: 0 0 10px; font-size: 12.5px; font-weight: 600; }
+
+/* scaling chips on Campaigns rows (v155) */
+.rec-chip { display: inline-flex; align-items: center; gap: 3px; margin-left: 4px; padding: 1px 7px; border-radius: 999px; font-size: 10.5px; font-weight: 700; line-height: 16px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer; text-decoration: none; vertical-align: middle; }
+.rec-chip.scale { border-color: var(--ok); color: var(--ok); }
+.rec-chip.expand { border-color: var(--accent); color: var(--accent); }
+.rec-chip.wait { border-style: dashed; color: var(--text-dim); }
+.rec-chip:hover { background: var(--panel-hover); }
+#recOnly.on { background: var(--ok); color: #fff; border-color: var(--ok); }
+
+/* v155 board: toggle chips, and on a phone the status tabs swipe sideways instead of wrapping */
+.filterbar .ftog .n { font-family: var(--font-mono); font-size: 10.5px; opacity: .75; margin-left: 3px; }
+.filterbar .ftog.on { background: var(--seg-on-bg); color: var(--seg-on-fg); border-color: transparent; }
+@media (max-width: 700px) {
+  .filterbar #stateSeg, .filterbar #groupSeg { max-width: 100%; overflow-x: auto; flex-wrap: nowrap; -webkit-overflow-scrolling: touch;
+    scroll-snap-type: x proximity; scrollbar-width: none; }
+  .filterbar #stateSeg::-webkit-scrollbar, .filterbar #groupSeg::-webkit-scrollbar { display: none; }
+  .filterbar #stateSeg { order: -1; flex: 1 1 100%; }
+  .filterbar #stateSeg button, .filterbar #groupSeg button { flex: none; scroll-snap-align: start; white-space: nowrap; }
+  .filterbar .search-wrap { max-width: none !important; flex: 1 1 100%; }
+}

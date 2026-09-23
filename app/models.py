@@ -855,6 +855,24 @@ class AdgroupState(Base):
     seen_at = Column(DateTime, default=utcnow, index=True)
 
 
+class ScaleWatch(Base):
+    """Scale ×N (v155): copy an ad group N times — now, or once TikTok says it delivers (so only
+    what passed review is multiplied). Also the log of auto-promoted winners (reason 'auto')."""
+    __tablename__ = "scale_watches"
+
+    id = Column(Integer, primary_key=True)
+    owner_user_id = Column(Integer, nullable=True, index=True, default=ctx.owner_default)
+    advertiser_id = Column(String, index=True, nullable=False)
+    campaign_id = Column(String, index=True, nullable=False)
+    adgroup_id = Column(String, index=True, default="")
+    copies = Column(Integer, default=1)
+    reason = Column(String, default="manual")               # manual | auto
+    status = Column(String, default="waiting", index=True)  # waiting | queued | rejected | expired | cancelled
+    detail = Column(Text, default="")
+    created_at = Column(DateTime, default=utcnow, index=True)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+
 class AdgroupBidWatch(Base):
     """One row per ad group the sweep currently sees on a hot account — what the
     "idle bid bump" rule needs: today's spend as last seen and WHEN it last moved,

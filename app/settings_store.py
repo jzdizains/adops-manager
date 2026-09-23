@@ -52,6 +52,13 @@ DEFAULTS: dict = {
     "rules_hourly_cap": 10,        # at most this many rule pauses per hour (the rest are held and reported)
     "profit_lookback": "today",    # the window profit rules judge: today | yesterday | 3d | 7d
     "profit_roas_min": 0.0,        # also pause a source whose ROAS over that window is below this (0 = off)
+    # --- scaling (v155) -----------------------------------------------------------
+    "scale_min_spend": 50.0,       # a campaign is recommended for Scale / Expand only past this LIFETIME spend…
+    "scale_min_roas": 1.5,         # …at or above this lifetime ROAS
+    "scale_copies": 5,             # default ad groups added by one Scale
+    "autoscale_enabled": False,    # auto-promote winners — OFF until the operator opts in
+    "autoscale_copies": 3,         # ad groups added when a winner is auto-promoted (once per campaign)
+    "autoscale_daily_max": 12,     # at most this many ad groups added by auto-promote per local day
     # --- idle bid bump ---------------------------------------------------------
     "bid_bump_enabled": False,     # raise the bid of a delivering ad group that hasn't spent for a while
     "bid_bump_step": 0.05,         # $ added per bump

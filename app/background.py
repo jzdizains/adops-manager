@@ -249,6 +249,15 @@ def _loop():
                 db.rollback()
                 _sched.fail(None, _e)
                 log.exception("stocking pass failed")
+            try:                                     # v155 scaling: "×N once approved" waits; opt-in auto-promote (slow sweep)
+                from . import models as _m, scaling
+                beat("scale_watch"); scaling.tick(db, _m)
+                if slow:
+                    beat("auto_promote"); scaling.auto_promote(db, _m)
+            except Exception as _e:  # noqa: BLE001
+                db.rollback()
+                _sched.fail("scaling", _e)
+                log.exception("scaling pass failed")
             try:
                 from . import notify
                 beat("notify"); notify.dispatch(db)          # new error alerts → Telegram / email (per user, opt-in)
@@ -340,6 +349,7 @@ def _prune_logins(db) -> None:
                  lambda: audit.prune(db, models),
                  lambda: __import__("app.asset_builds", fromlist=["prune"]).prune(db, models),
                  lambda: __import__("app.asset_builds", fromlist=["ensure_running"]).ensure_running(db, models),
+                 lambda: __import__("app.scaling", fromlist=["prune"]).prune(db, models),
                  lambda: (db.query(models.AppLog).filter(models.AppLog.created_at < datetime.utcnow() - timedelta(days=APP_LOG_KEEP_DAYS))
                           .delete(synchronize_session=False), db.commit())):
         try:

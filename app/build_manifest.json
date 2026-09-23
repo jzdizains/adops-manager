@@ -117,6 +117,7 @@
 "routes/tracking.py",
 "routes/warmup_page.py",
 "rules.py",
+"scaling.py",
 "sched.py",
 "scope.py",
 "secrets_box.py",

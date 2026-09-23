@@ -122,6 +122,31 @@
   </div>
 </div>
 
+
+<div class="card" id="scaling">
+  <div class="card-header"><span class="card-title">Scaling</span>
+    <span class="card-meta">when Campaigns suggests ▲ Scale / ↗ Expand — judged on lifetime numbers, never the date picker's</span></div>
+  <div class="form-row-3">
+    <label class="field"><span class="field-label">Recommend after lifetime spend of ($)</span>
+      <input type="number" step="1" min="0" name="scale_min_spend" value="{{ s.scale_min_spend }}">
+      <span class="hint">The floor that matters: ROAS on $2 is one lucky conversion.</span></label>
+    <label class="field"><span class="field-label">…at lifetime ROAS of at least (×)</span>
+      <input type="number" step="0.05" min="0" name="scale_min_roas" value="{{ s.scale_min_roas }}"></label>
+    <label class="field"><span class="field-label">Ad groups added by one ▲ Scale</span>
+      <input type="number" step="1" min="1" max="20" name="scale_copies" value="{{ s.scale_copies }}"></label>
+  </div>
+  <label style="display:flex;align-items:center;gap:8px;margin:12px 0 8px;font-weight:700;">
+    <input type="checkbox" name="autoscale_enabled" {{ 'checked' if s.autoscale_enabled }} style="width:auto;">
+    Auto-promote winners <span class="muted" style="font-weight:400;">— off unless you tick it</span>
+  </label>
+  <div class="form-row">
+    <label class="field"><span class="field-label">Ad groups added per winner (once per campaign)</span>
+      <input type="number" step="1" min="1" max="20" name="autoscale_copies" value="{{ s.autoscale_copies }}"></label>
+    <label class="field"><span class="field-label">At most this many new ad groups a day</span>
+      <input type="number" step="1" min="0" name="autoscale_daily_max" value="{{ s.autoscale_daily_max }}">
+      <span class="hint">A campaign that clears the bar above gets its best delivering ad group copied once — every one is posted to your Inbox.</span></label>
+  </div>
+</div>
 </section>
 <section class="stab" data-tab="launch">
 <div class="card" id="lifecycle">

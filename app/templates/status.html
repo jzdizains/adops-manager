@@ -3,7 +3,7 @@
 {% set range_labels = {'today': 'Today', 'yesterday': 'Yesterday', '7d': 'Last 7 days', '30d': 'Last 30 days', 'mtd': 'This month', 'custom': 'Custom'} %}
 {% set origin_labels = {'tool': 'Launched here', 'all': 'All on TikTok'} %}
 {% set group_labels = {'creative': 'Creative', 'account': 'Account', 'bc': 'BC', 'source': 'Source', '': 'None'} %}
-{% set qs_base = 'q=' ~ (q|urlencode) ~ '&account=' ~ account ~ '&source=' ~ (source_f|urlencode) ~ '&origin=' ~ origin ~ '&range=' ~ range_key ~ '&start=' ~ start ~ '&end=' ~ end ~ '&group=' ~ group %}
+{% set qs_base = 'q=' ~ (q|urlencode) ~ '&account=' ~ account ~ '&source=' ~ (source_f|urlencode) ~ '&origin=' ~ origin ~ '&range=' ~ range_key ~ '&start=' ~ start ~ '&end=' ~ end ~ '&group=' ~ group ~ '&obj=' ~ (obj_f|urlencode) ~ '&offer=' ~ offer_f ~ ('&nowarm=1' if nowarm else '') ~ ('&hidden=1' if show_hidden else '') %}
 {% macro sort_link(key, label, title='') -%}
   <a class="th-sort {{ 'on' if sort == key else '' }}" href="?{{ qs_base }}&state={{ state }}&sort={{ key }}" title="{{ title }}">{{ label }}{% if sort == key %} ▾{% endif %}</a>
 {%- endmacro %}
@@ -29,14 +29,14 @@
 {# ---- one campaign row (also used as a group child) ---- #}
 {% macro camp_row(row, child=false, gkey='') -%}
   {% set r = row.r %}{% set p = pace.get(r.campaign_id) %}
-  <tr class="camp-row {{ 'grp-child' if child }}" data-cid="{{ r.campaign_id }}" data-adv="{{ r.advertiser_id }}" data-name="{{ r.campaign_name }}" data-status="{{ r.operation_status }}" data-budget="{{ r.budget or '' }}" {% if child %}data-grp="{{ gkey }}" hidden{% endif %}>
+  <tr class="camp-row {{ 'grp-child' if child }}" data-cid="{{ r.campaign_id }}" data-adv="{{ r.advertiser_id }}" data-name="{{ r.campaign_name }}" data-status="{{ r.operation_status }}" data-budget="{{ r.budget or '' }}" data-hidden="{{ '1' if r.campaign_id in hidden_set }}" {% if child %}data-grp="{{ gkey }}" hidden{% endif %}>
     <td class="c-sel"><input type="checkbox" class="rowchk" aria-label="select"></td>
     <td class="c-name">
       <div style="display:flex;align-items:center;gap:8px;min-width:0;">
         {% set cr_ = creative_by_cid.get(r.campaign_id) %}
         {% if cr_ and not child %}<span class="thumb previewBtn" style="width:24px;height:32px;border-radius:5px;flex:none;background:var(--accent-soft);display:grid;place-items:center;color:var(--accent-ink);font-size:10px;cursor:pointer;" data-src="/creatives/{{ cr_.id }}/file" data-name="{{ cr_.name }}" title="Play {{ cr_.name }}">▶</span>{% endif %}
         <div style="min-width:0;">
-          <div class="cname"><a href="#" class="open-drawer" style="color:inherit;text-decoration:none;font-weight:600;">{{ r.campaign_name[:52] }}</a>{% if r.is_smart_plus %} <span class="pill dim" title="Smart+">S+</span>{% endif %}<span class="ctags" data-cid="{{ r.campaign_id }}">{% for t in tags_by_cid.get(r.campaign_id, []) %}<span class="ctag ctag-{{ t.color }}" data-tag="{{ t.id }}">{{ t.name }}<span class="ctag-x" title="Remove tag">×</span></span>{% endfor %}</span><span class="ctag-add" title="Add a tag" tabindex="0">+</span>{% set rj = rejections.get(r.campaign_id) %}{% if rj %}{% if rj.open %} <a href="#" class="pill err open-drawer" style="text-decoration:none;" title="TikTok rejected {{ rj.open }} ad group(s) — open the campaign to see why and appeal in one click">✕ {{ rj.open }} rejected</a>{% endif %}{% if rj.failed %} <a href="#" class="pill err open-drawer" style="text-decoration:none;" title="TikTok turned down the appeal for {{ rj.failed }} ad group(s)">appeal rejected{% if rj.failed > 1 %} ×{{ rj.failed }}{% endif %}</a>{% endif %}{% if rj.appealing %} <a href="#" class="pill warn open-drawer" style="text-decoration:none;" title="Appeal filed for {{ rj.appealing }} ad group(s) — waiting for TikTok">appeal filed{% if rj.appealing > 1 %} ×{{ rj.appealing }}{% endif %}</a>{% endif %}{% endif %}{% if notes.get(r.campaign_id) %} <span title="{{ notes.get(r.campaign_id)[:200] }}" style="font-size:11px;">📝</span>{% endif %}</div>
+          <div class="cname"><a href="#" class="open-drawer" style="color:inherit;text-decoration:none;font-weight:600;">{{ r.campaign_name[:52] }}</a>{% if r.is_smart_plus %} <span class="pill dim" title="Smart+">S+</span>{% endif %}{% if row.watch %} <span class="rec-chip wait" data-watch="{{ row.watch.id }}" title="{{ row.watch.detail }} — click to cancel">⏳ ×{{ row.watch.copies }} once approved{% if row.watch.reason == 'auto' %} · auto{% endif %}</span>{% elif row.rec %} <button type="button" class="rec-chip scale" data-rec="scale" title="{{ 'Since launch: $%.0f spent at %.2f× ROAS — add ad groups (copies of the best delivering one)'|format(row.life.spend, row.life.roas) }}">▲ Scale</button>{% if batch_by_cid.get(r.campaign_id) %} <a class="rec-chip expand" href="/campaigns/result/{{ batch_by_cid[r.campaign_id] }}?again=1" title="Launch the same creative fresh on accounts that aren't running it">↗ Expand</a>{% endif %}{% endif %}<span class="ctags" data-cid="{{ r.campaign_id }}">{% for t in tags_by_cid.get(r.campaign_id, []) %}<span class="ctag ctag-{{ t.color }}" data-tag="{{ t.id }}">{{ t.name }}<span class="ctag-x" title="Remove tag">×</span></span>{% endfor %}</span><span class="ctag-add" title="Add a tag" tabindex="0">+</span>{% set rj = rejections.get(r.campaign_id) %}{% if rj %}{% if rj.open %} <a href="#" class="pill err open-drawer" style="text-decoration:none;" title="TikTok rejected {{ rj.open }} ad group(s) — open the campaign to see why and appeal in one click">✕ {{ rj.open }} rejected</a>{% endif %}{% if rj.failed %} <a href="#" class="pill err open-drawer" style="text-decoration:none;" title="TikTok turned down the appeal for {{ rj.failed }} ad group(s)">appeal rejected{% if rj.failed > 1 %} ×{{ rj.failed }}{% endif %}</a>{% endif %}{% if rj.appealing %} <a href="#" class="pill warn open-drawer" style="text-decoration:none;" title="Appeal filed for {{ rj.appealing }} ad group(s) — waiting for TikTok">appeal filed{% if rj.appealing > 1 %} ×{{ rj.appealing }}{% endif %}</a>{% endif %}{% endif %}{% if notes.get(r.campaign_id) %} <span title="{{ notes.get(r.campaign_id)[:200] }}" style="font-size:11px;">📝</span>{% endif %}</div>
           <div class="muted" style="font-size:10.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:320px;">
             {{ acct_link(r.advertiser_id, row.account_name[:22]) }}{% if bc_by_aid.get(r.advertiser_id) %} · {{ bc_by_aid.get(r.advertiser_id)[:18] }}{% endif %}{% if r.launched_at %} · {{ r.launched_at|ago }}{% endif %}
             {% set h = row.health %}{% if row.blocked %} · <span style="color:var(--err);">blocked: {{ row.blocked }}</span>{% elif r.operation_status == 'DISABLE' %} · <span style="color:var(--warn);">paused</span>{% elif h and h.state not in ('ACTIVE', 'UNKNOWN') %} · <span class="pill {{ h.pill }}" title="{{ h.meaning }} {{ h.fix }}{% if h.raw %} — TikTok: {{ h.raw }}{% endif %}">{{ h.title }}{% if h.since %} · {{ h.since|ago }}{% endif %}</span>{% endif %}{% if h and h.mix and r.operation_status == 'ENABLE' %} · <span title="Ad groups by state">{{ h.mix }}</span>{% endif %}
@@ -75,6 +75,7 @@
     <div class="muted" style="font-size:12.5px;">{{ range_labels[range_key] }} · {{ 'launched here' if origin == 'tool' else 'all campaigns on TikTok' }}{% if group %} · grouped by {{ group_labels[group]|lower }}{% endif %} · synced <span id="syncedAgo">{{ synced_ago }}</span></div>
   </div>
   <div class="actions">
+    {% if team %}<button type="button" class="btn" id="teamBtn" title="Spend, profit and ROAS per buyer — same range and filters as the board">👥 Team</button>{% endif %}
     <button type="button" class="btn" id="colsBtn" title="Choose columns">▥ Columns</button>
     <button type="button" class="btn" id="refreshBtn" title="Reload in place — filters, sort and scroll stay">↻ Refresh</button>
     <form method="post" action="/status/sync" id="syncForm"><button class="btn" type="submit" id="syncBtn" title="Pull fresh data from every TikTok account">⟳ Sync</button></form>
@@ -112,6 +113,7 @@
     {% for k, lbl in [('active', 'Active'), ('pending', 'Pending'), ('blocked', 'Blocked'), ('paused', 'Paused'), ('all', 'All')] %}<button type="button" class="{{ 'on' if state == k }}" data-state="{{ k }}">{{ lbl }} <span class="n">{{ state_counts[k] }}</span></button>{% endfor %}
   </div>
   <input type="hidden" name="state" value="{{ state }}">
+  {% if rec_count %}<button type="button" class="btn sm ghost" id="recOnly" title="Campaigns whose lifetime numbers clear the Scale bar (${{ '%.0f'|format(scale_th.min_spend) }} spent at {{ '%.2f'|format(scale_th.min_roas) }}×+ — Settings › Scaling)">▲ Ready to scale <span class="n">{{ rec_count }}</span></button>{% endif %}
   {% if older %}<input type="hidden" name="older" value="1">{% endif %}
   {% if state == 'blocked' and state_counts.blocked_older and not older %}<a class="btn sm ghost" href="{{ request.url.include_query_params(older='1') }}" title="Blocked campaigns whose problem started before {{ range_labels[range_key]|lower }}">+{{ state_counts.blocked_older }} older errors</a>{% elif state == 'blocked' and older %}<a class="btn sm ghost" href="{{ request.url.remove_query_params('older') }}">Only errors from {{ range_labels[range_key]|lower }}</a>{% endif %}
   <div class="fsel" data-fsel>
@@ -137,12 +139,25 @@
     <input type="hidden" name="source" value="{{ source_f }}">
   </div>
   {% endif %}
+  {% if objective_options|length > 1 or obj_f %}
+  <div class="fsel" data-fsel>
+    <button type="button"><span class="k">Objective</span> <span class="v">{% if obj_f %}{% for o, lbl in objective_options %}{% if o == obj_f %}{{ lbl }}{% endif %}{% endfor %}{% else %}All{% endif %}</span> <span class="chev">▾</span></button>
+    <div class="fmenu"><a data-val="" class="{{ 'sel' if not obj_f }}">All objectives</a>{% for o, lbl in objective_options %}<a data-val="{{ o }}" class="{{ 'sel' if obj_f == o }}">{{ lbl }}</a>{% endfor %}</div>
+    <input type="hidden" name="obj" value="{{ obj_f }}">
+  </div>
+  {% endif %}
+  {% if no_offer_n or offer_f %}<button type="button" class="btn sm ghost ftog {{ 'on' if offer_f == 'none' }}" data-ftog="offer" data-val="none" title="Campaigns with no source — their revenue can't be matched to an offer, so profit and ROAS read “—”">No offer matched <span class="n">{{ no_offer_n }}</span></button>{% endif %}
+  <input type="hidden" name="offer" value="{{ offer_f }}">
+  <button type="button" class="btn sm ghost ftog {{ 'on' if nowarm }}" data-ftog="nowarm" data-val="1" title="Leave out warm-up (test) launches">Hide warm-ups</button>
+  <input type="hidden" name="nowarm" value="{{ '1' if nowarm }}">
+  {% if hidden_n or show_hidden %}<button type="button" class="btn sm ghost ftog {{ 'on' if show_hidden }}" data-ftog="hidden" data-val="1" title="Campaigns you hid from this board (only for you — nothing changes on TikTok)">{{ '← Back to the board' if show_hidden else 'Hidden' }} <span class="n">{{ hidden_n }}</span></button>{% endif %}
+  <input type="hidden" name="hidden" value="{{ '1' if show_hidden }}">
   <span style="margin-left:auto;display:inline-flex;align-items:center;gap:8px;"><span class="muted" style="font-size:12px;">Group by</span>
     <div class="seg" id="groupSeg">{% for k in ['creative', 'account', 'bc', 'source', ''] %}<button type="button" class="{{ 'on' if group == k }}" data-group="{{ k }}">{{ group_labels[k] }}</button>{% endfor %}</div>
   </span>
   <input type="hidden" name="group" value="{{ group }}">
   <input type="hidden" name="sort" value="{{ sort }}">
-  {% if q or state != 'active' or account or source_f or origin != 'tool' or range_key != 'today' %}<a class="btn sm" href="/status">✕ Clear</a>{% endif %}
+  {% if q or state != 'active' or account or source_f or origin != 'tool' or range_key != 'today' or obj_f or offer_f or nowarm or show_hidden %}<a class="btn sm" href="/status">✕ Clear</a>{% endif %}
   {% if range_errors %}<span class="hint" style="color:var(--warn);">{{ range_errors }} account(s) failed to load range metrics</span>{% endif %}
   {% if range_from_db %}<span class="hint" title="Summed from the day rows the sweep saves — no TikTok calls. Add &live=1 to the address to ask TikTok instead.">from saved history</span>{% endif %}
 </form>
@@ -154,6 +169,7 @@
     <button type="button" class="btn sm" data-bulk="resume">Resume</button>
     <button type="button" class="btn sm" data-bulk="budget">Budget…</button>
     <button type="button" class="btn sm" data-bulk="bid">Bid…</button>
+    <button type="button" class="btn sm" data-bulk="hide" title="Only from your board — nothing changes on TikTok">{{ 'Unhide' if show_hidden else 'Hide' }}</button>
     <button type="button" class="btn sm ghost" data-bulk="clear">Clear</button>
     <span class="hint-k">J/K move · Enter open · P pause · B budget · X select · ? help</span>
   </div>
@@ -234,14 +250,15 @@
     </tfoot>
   </table>
   </div>
-  {% if recon.unmatched or recon.outside %}
+  {% if recon.unmatched or recon.outside or recon.hidden %}
   <div class="recon">
+    {% if recon.hidden %}<div><span class="muted">Spend on campaigns you hid</span> <b>${{ "%.2f"|format(recon.hidden) }}</b> <span class="muted">— {{ recon.hidden_n }} hidden from this board, not in the totals above</span></div>{% endif %}
     {% if recon.outside %}<div title="{% for it in recon.outside_items %}{{ it.account }} · {{ it.name }}: ${{ '%.2f'|format(it.spend) }}&#10;{% endfor %}"><span class="muted">Spend outside this board</span> <b>${{ "%.2f"|format(recon.outside) }}</b> <span class="muted">— campaigns on these accounts that weren't launched here</span> <a href="{{ request.url.include_query_params(origin='all') }}">show them</a></div>{% endif %}
     {% if recon.unmatched %}<div title="{% for s, v in recon.unmatched_items %}{{ s }}: ${{ '%.2f'|format(v) }}&#10;{% endfor %}"><span class="muted">Revenue not matched to any campaign</span> <b>${{ "%.2f"|format(recon.unmatched) }}</b> <span class="muted">— postbacks on {{ recon.unmatched_items|length }}{{ '+' if recon.unmatched_items|length >= 6 }} source{{ '' if recon.unmatched_items|length == 1 else 's' }} no campaign carries ({{ recon.unmatched_items[0][0][:30] }}{% if recon.unmatched_items|length > 1 %}, …{% endif %})</span> <a href="/pnl">P&amp;L</a></div>{% endif %}
   </div>
   {% endif %}
   {% else %}
-  <div class="empty">{% if origin == 'tool' %}<div class="empty-title">Nothing launched from here yet</div>Everything you launch appears here. Switch “Show” to “All on TikTok” for campaigns created elsewhere.<br><a class="btn primary" href="/super-launcher">🚀 Launch</a>{% else %}<div class="empty-title">No campaigns cached yet</div>Hit “Sync” to pull them from every account.{% endif %}</div>
+  <div class="empty">{% if show_hidden %}<div class="empty-title">Nothing hidden here</div>Campaigns you hide (··· › Hide from my board) wait here. <a href="/status">Back to the board</a>{% elif origin == 'tool' %}<div class="empty-title">Nothing launched from here yet</div>Everything you launch appears here. Switch “Show” to “All on TikTok” for campaigns created elsewhere.<br><a class="btn primary" href="/super-launcher">🚀 Launch</a>{% else %}<div class="empty-title">No campaigns cached yet</div>Hit “Sync” to pull them from every account.{% endif %}</div>
   {% endif %}
 </div>
 
@@ -251,7 +268,8 @@
     <video id="vidPlayer" controls playsinline preload="metadata" style="width:100%;max-height:78vh;border-radius:10px;background:#000;display:block;"></video>
   </div>
 </div>
+{% if team %}<script id="teamData" type="application/json">{{ team|js }}</script>{% endif %}
 <script id="sparkData" type="application/json">{{ spark_json|js }}</script>
-<script id="pageState" type="application/json">{{ {'range': range_key, 'group': group, 'state': state} | tojson }}</script>
+<script id="pageState" type="application/json">{{ {'range': range_key, 'group': group, 'state': state, 'scale_copies': scale_th.copies} | tojson }}</script>
 <script src="/static/campaigns.js?v={{ STATIC_V }}"></script>
 {% endblock %}
