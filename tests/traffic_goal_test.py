@@ -366,6 +366,9 @@ check("ad group = the one TikTok accepted (LEAD_GENERATION · INSTANT_PAGE · LE
       all(g.get(k) == v for k, v in working.items()), str({k: g.get(k) for k in working}))
 check("no pixel and no attribution window sent (TikTok attached its own; its default is what the working one carries)",
       "pixel_id" not in g and "click_attribution_window" not in g and "view_attribution_window" not in g)
+check("Smart+'s own daily budget type (BUDGET_MODE_DAY was 'Invalid budget type', 24 Sep) — as on the working ad group",
+      g["budget_mode"] == "BUDGET_MODE_DYNAMIC_DAILY_BUDGET"
+      and helpers.build_spc_adgroup_payload(dict(lf, adgroup_budget_mode="BUDGET_MODE_TOTAL"), "c1", spark_ref, "", None)["budget_mode"] == "BUDGET_MODE_TOTAL")
 check("adults only, the form's budget and the post's identity on the ad group",
       g["targeting_spec"]["age_groups"] == ["AGE_25_34"] and g["budget"] == 30.0 and g["identity_type"] == "BC_AUTH_TT"
       and g["identity_authorized_bc_id"] == "7658285881817202708" and g["schedule_type"] == "SCHEDULE_FROM_NOW")
@@ -386,7 +389,7 @@ check("the launch switches such a preset to Smart+ before anything is created, a
 tf = open(os.path.join(ROOT, "app", "templates", "template_form.html"), encoding="utf-8").read()
 check("the preset form says so under the attribution fields", "Instant Form lead gen always uses TikTok’s default" in tf)
 cfg = open(os.path.join(ROOT, "app", "config.py"), encoding="utf-8").read()
-check("static version bumped", 'STATIC_VERSION = "159"' in cfg)
+check("static version bumped", 'STATIC_VERSION = "160"' in cfg)
 
 print()
 print("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}")

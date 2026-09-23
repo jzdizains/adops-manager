@@ -1219,7 +1219,10 @@ def _spc_lead_form_adgroup(fields: dict, campaign_id: str, spark_ref: dict | Non
         payload["schedule_type"] = "SCHEDULE_FROM_NOW"
         payload["schedule_start_time"] = acct_time.start_now(fields.get("_account_tz"))
     if (fields.get("campaign_budget_mode") or "ABO") == "ABO" and not fields.get("_spc_budget_on_campaign"):
-        payload["budget_mode"] = fields.get("adgroup_budget_mode") or "BUDGET_MODE_DAY"
+        # Smart+'s own budget enum: the preset's BUDGET_MODE_DAY is "Invalid budget type" here
+        # (24 Sep, /smart_plus/adgroup/create/); the working ad group carries DYNAMIC_DAILY_BUDGET
+        mode = fields.get("adgroup_budget_mode") or "BUDGET_MODE_DAY"
+        payload["budget_mode"] = SPC_BUDGET_MODE.get(mode, mode)
         payload["budget"] = float(fields["adgroup_budget"])
     if bid_price is not None:
         payload["bid_type"] = "BID_TYPE_CUSTOM"
@@ -2950,6 +2953,26 @@ async def launch_review_identities(request: Request, db: Session = Depends(get_d
         accts = db.query(models.AdAccount).filter(models.AdAccount.advertiser_id.in_(ids or [""])).all()
         return JSONResponse({"ok": True, "cells": {a.advertiser_id: launch_review.identities(db, a) for a in accts}})
     return await run_in_threadpool(work)
+
+
+@router.get("/campaigns/result/{batch_ref}/share/{log_id}")
+def launch_result_share(request: Request, batch_ref: str, log_id: int, db: Session = Depends(get_db)):
+    """Share (v155.9): one failed account of a launch as paste-ready text — the dashboard's
+    message, TikTok's answer, the steps and the exact request TikTok refused (from Diagnostics,
+    stored redacted). Read-only, scoped to the viewer's accounts."""
+    from fastapi.responses import JSONResponse
+    from .. import launch_trace as _lt, share
+    sc = scope_mod.for_request(request, db)
+    log = db.get(models.LaunchLog, log_id)
+    if log is None or log.batch_ref != batch_ref or not sc.allows(log.advertiser_id):
+        return JSONResponse({"ok": False, "error": "not found"}, status_code=404)
+    tr = _lt.for_batch(db, models, batch_ref).get(log.advertiser_id)
+    steps = (_lt.view(tr) or {}).get("steps") if tr is not None else None
+    text = share.launch_report(preset=log.template_name or "", account=log.advertiser_name or "", advertiser_id=log.advertiser_id,
+                               campaign_id=log.campaign_id or "", batch_ref=batch_ref, friendly=log.error_message or "",
+                               technical=log.error_technical or "", steps=steps, request=share.find_request(db, models, log),
+                               when=log.created_at.strftime("%Y-%m-%d %H:%M UTC") if log.created_at else "")
+    return JSONResponse({"ok": True, "text": text})
 
 
 @router.get("/campaigns/result/{batch_ref}")

@@ -124,6 +124,7 @@
 "security_gate.py",
 "sessions.py",
 "settings_store.py",
+"share.py",
 "source_check.py",
 "spark_check.py",
 "spark_web_api.py",

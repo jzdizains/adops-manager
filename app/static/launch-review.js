@@ -26,6 +26,22 @@
         var rows = data ? data.rows : [], blocked = rows.filter(function (r) { return r.blocked; });
         return { rows: rows.length, blocked: blocked.length, ready: rows.length - blocked.length, leaveOut: leaveOut, excluded: leaveOut ? blocked.map(function (r) { return r.id; }) : [] };
       }
+      // Share (v155.9): the blocked accounts as paste-ready text — preset, account, every check
+      function presetName() {
+        var el2 = o.form.querySelector('select[name="template_id"]');
+        if (el2 && el2.selectedIndex >= 0 && el2.options[el2.selectedIndex]) return el2.options[el2.selectedIndex].text.trim();
+        var h = o.form.querySelector('[name="template_name"]'); return h ? h.value : "";
+      }
+      function rowText(r) {
+        var cells = Object.keys(r.cells || {}).map(function (k) { var c = r.cells[k]; return "  " + k + ": " + c.state + " — " + c.text + (c.hint ? " (" + c.hint + ")" : ""); });
+        return r.name + " (" + r.id + ")" + (r.blocked ? "\n  BLOCKED: " + r.blocked : "") + (r.warnings && r.warnings.length ? "\n  notes: " + r.warnings.join(" · ") : "") +
+          "\n" + cells.join("\n") + "\n  starts: " + (r.starts || "") + " " + (r.tz || "");
+      }
+      function shareRows(list) {
+        var p = presetName();
+        UI.share((p ? "Preset: " + p + "\n" : "") + list.map(rowText).join("\n\n"),
+                 "LAUNCH CHECK — " + list.length + " blocked account" + (list.length === 1 ? "" : "s"));
+      }
       function sync() { var st = state(); hidden.value = st.excluded.join(","); if (o.onChange) o.onChange(st); }
 
       function draw() {
@@ -37,6 +53,7 @@
         var missing = rows.some(function (r) { return ["page", "form"].some(function (k) { return r.cells[k] && r.cells[k].text === "missing"; }); });
         var head = '<div class="lr-top"><b>' + st.ready + " ready</b>" + (st.blocked ? ' · <span class="lr-bad">' + st.blocked + " blocked</span>" : "") + (warned ? ' · <span class="muted">' + warned + " with notes</span>" : "") +
           (missing ? '<button type="button" class="btn sm ghost lr-live" title="Ask TikTok again for the pages / forms the last sync didn\'t see">Re-check on TikTok</button>' : "") +
+          (st.blocked > 1 ? '<button type="button" class="btn sm ghost lr-share-all" title="Copy every blocked account and why, ready to paste">⧉ Share all ' + st.blocked + "</button>" : "") +
           (st.blocked ? '<label class="lr-leave"><input type="checkbox" class="lr-leave-cb"' + (leaveOut ? " checked" : "") + "> Leave out the " + st.blocked + " blocked account" + (st.blocked === 1 ? "" : "s") + "</label>" : "") + "</div>";
         var th = "<tr><th>Account</th>" + cols.map(function (c) { return "<th>" + c[1] + "</th>"; }).join("") + '<th title="&quot;Start now&quot; in the ad account\'s own timezone — TikTok reads the start time there">Starts</th></tr>';
         var tb = rows.map(function (r) {
@@ -45,7 +62,7 @@
             if (!x) return '<td class="muted">—</td>';
             return '<td><span class="pill ' + PILL[x.state] + '" title="' + esc(x.hint || "") + '">' + esc(x.text) + "</span></td>";
           }).join("");
-          var sub = r.blocked ? '<div class="lr-why">⛔ ' + esc(r.blocked) + "</div>" : (r.warnings.length ? '<div class="lr-note">' + esc(r.warnings.join(" · ")) + "</div>" : "");
+          var sub = r.blocked ? '<div class="lr-why">⛔ ' + esc(r.blocked) + ' <button type="button" class="btn sm ghost lr-share" data-id="' + esc(r.id) + '" title="Copy this account\'s check, ready to paste">⧉ Share</button></div>' : (r.warnings.length ? '<div class="lr-note">' + esc(r.warnings.join(" · ")) + "</div>" : "");
           return '<tr class="' + (r.blocked ? "lr-blocked" + (leaveOut ? " lr-out" : "") : "") + '"><td><b>' + esc(r.name) + '</b> <span class="mono muted lr-id">' + esc(r.id) + "</span>" + sub + "</td>" + tds +
             '<td class="muted lr-tz">' + (r.starts ? esc(r.starts) + " " : "") + esc(r.tz) + "</td></tr>";
         }).join("");
@@ -93,6 +110,9 @@
 
       el.addEventListener("click", function (e) {
         if (e.target.closest(".lr-live")) { e.target.closest(".lr-live").disabled = true; load(true); }
+        var sb = e.target.closest(".lr-share");
+        if (sb && data) { e.preventDefault(); shareRows(data.rows.filter(function (r) { return String(r.id) === sb.dataset.id; })); }
+        if (e.target.closest(".lr-share-all") && data) { e.preventDefault(); shareRows(data.rows.filter(function (r) { return r.blocked; })); }
       });
       el.addEventListener("change", function (e) {
         if (e.target.classList.contains("lr-leave-cb")) { leaveOut = e.target.checked; draw(); }

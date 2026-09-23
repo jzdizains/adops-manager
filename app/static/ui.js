@@ -20,6 +20,49 @@
       .then(function (r) { return r.json().catch(function () { return {}; }).then(function (d) { d._status = r.status; return d; }); });
   };
 
+  // ---- Share (v155.9): one click copies a paste-ready error report --------------------------
+  // UI.share(text, title) — clipboard first; where the browser refuses, the text opens selected
+  // in a pop-up to copy by hand. Any element with data-share="…" (the text) or data-share-url="…"
+  // (a JSON {ok, text} endpoint) becomes a Share button through the one delegated handler below.
+  function shareHeader(title) {
+    var v = "";
+    try { var sc = document.querySelector('script[src*="ui.js?v="]'); v = sc ? sc.src.split("v=")[1] : ""; } catch (e) {}
+    return (title ? title + "\n" : "") + location.origin + location.pathname + " · " + new Date().toISOString().slice(0, 19).replace("T", " ") + " UTC" + (v ? " · v" + v : "");
+  }
+  UI.shareText = function (text, title) { return shareHeader(title) + "\n\n" + String(text || "").trim() + "\n"; };
+  UI.share = function (text, title) {
+    var full = UI.shareText(text, title);
+    function manual() {
+      var ta = document.createElement("textarea");
+      ta.value = full; ta.readOnly = true; ta.style.cssText = "width:100%;min-height:260px;font-family:var(--font-mono,monospace);font-size:11.5px;";
+      UI.modal({ title: "Copy this and paste it where you need it", body: ta, wide: true });
+      setTimeout(function () { ta.focus(); ta.select(); }, 30);
+    }
+    function done() { if (window.adopsToast) adopsToast("ok", "Copied — paste it into the chat (or to support)."); }
+    try {
+      if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(full).then(done, manual);
+    } catch (e) {}
+    try {
+      var t = document.createElement("textarea"); t.value = full; t.style.cssText = "position:fixed;left:-9999px;top:0;";
+      document.body.appendChild(t); t.select(); var ok = document.execCommand("copy"); t.remove();
+      if (ok) { done(); return Promise.resolve(); }
+    } catch (e) {}
+    manual();
+    return Promise.resolve();
+  };
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest && e.target.closest("[data-share], [data-share-url]");
+    if (!b) return;
+    e.preventDefault(); e.stopPropagation();
+    if (b.hasAttribute("data-share")) { UI.share(b.getAttribute("data-share"), b.getAttribute("data-share-title") || ""); return; }
+    var label = b.textContent; b.disabled = true; b.textContent = "Collecting…";
+    UI.get(b.getAttribute("data-share-url")).then(function (d) {
+      b.disabled = false; b.textContent = label;
+      if (d && d.ok) UI.share(d.text, d.title || "");
+      else if (window.adopsToast) adopsToast("err", (d && d.error) || "Couldn't collect the details.");
+    }, function () { b.disabled = false; b.textContent = label; if (window.adopsToast) adopsToast("err", "Couldn't collect the details."); });
+  });
+
   // ---- layers: one stack, Escape closes the top one --------------------------
   var stack = [];
   function open(node, opts) {

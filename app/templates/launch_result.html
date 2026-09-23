@@ -67,7 +67,8 @@
       {% if l.ok %}<span class="pill ok">✓ launched</span>{% else %}<span class="pill err">✕ failed</span>{% endif %}
       {{ acct_link(l.advertiser_id, l.advertiser_name) }}
     </span>
-    <span class="card-meta mono">{{ l.advertiser_id }}{% if l.campaign_id %} · campaign {{ l.campaign_id }}{% endif %}</span>
+    <span class="card-meta mono">{{ l.advertiser_id }}{% if l.campaign_id %} · campaign {{ l.campaign_id }}{% endif %}{% if not l.ok %}
+      <button type="button" class="btn sm ghost share-btn" data-share-url="/campaigns/result/{{ l.batch_ref }}/share/{{ l.id }}" title="Copy everything about this failure — the message, TikTok's answer, the steps and the exact request TikTok refused — ready to paste">⧉ Share</button>{% endif %}</span>
   </div>
   {% if not l.ok %}
     <p style="margin:0 0 8px;font-weight:600;">{{ l.error_message }}</p>

@@ -1500,3 +1500,7 @@ td .life.g { color: var(--ok); } td .life.r { color: var(--err); }
   .filterbar #stateSeg button, .filterbar #groupSeg button { flex: none; scroll-snap-align: start; white-space: nowrap; }
   .filterbar .search-wrap { max-width: none !important; flex: 1 1 100%; }
 }
+
+/* v155.9 Share buttons — small, next to the error they copy */
+.share-btn, .lr-share, .lr-share-all { padding: 1px 8px; font-size: 11px; margin-left: 6px; vertical-align: middle; }
+.lr-why .lr-share { margin-left: 8px; }
