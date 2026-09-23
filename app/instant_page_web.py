@@ -123,10 +123,12 @@ def no_access(body: dict) -> bool:
 
 
 NO_ACCESS_MARK = "has no access to ad account"
-NO_ACCESS_FIX = ("Fix: in that Business Center (Members), give the TikTok login whose cookies are stored access to these ad "
-                 "accounts — or paste cookies from a login that already has it on the TikTok Cookies page — then run it again; "
-                 "accounts that already have it are skipped. (The API connection that launches ads doesn't count here: "
-                 "copying goes through the Ads Manager editor, which only sees what the logged-in person can see.)")
+NO_ACCESS_FIX = ("Fix: in that Business Center › Members, give the TikTok login whose cookies are stored access to "
+                 "these ad accounts (or paste cookies from a login that has it on the TikTok Cookies page), then run it "
+                 "again — accounts that already have it are skipped.")
+# why the API connection doesn't help — said once, where there's room (single copies, builds)
+NO_ACCESS_WHY = ("Copying goes through the Ads Manager editor, which only sees what the logged-in person can see — "
+                 "the API connection that launches ads doesn't count here.")
 
 
 def is_no_access(text: str) -> bool:
@@ -140,13 +142,14 @@ def no_access_summary(labels: list[str], bcs: list[str] | None = None, show: int
     names = ", ".join(labels[:show]) + (f" +{n - show} more" if n > show else "")
     where = (" in " + ", ".join(sorted({b for b in (bcs or []) if b}))[:80]) if bcs and any(bcs) else ""
     return (f"{n} account{'s' if n != 1 else ''}{where} — the TikTok login in your stored cookies "
-            f"{NO_ACCESS_MARK}{'s' if n != 1 else ''} {names}. " + NO_ACCESS_FIX)
+            f"{NO_ACCESS_MARK}{'s' if n != 1 else ''} {names}. "
+            + (NO_ACCESS_FIX if n != 1 else NO_ACCESS_FIX.replace("these ad accounts", "this ad account")))
 
 
 def explain(body: dict, account_id: str) -> str:
     if no_access(body):
         return (f"the TikTok login behind the stored cookies {NO_ACCESS_MARK} {account_id} "
-                "(TikTok: “not any access permission”). " + NO_ACCESS_FIX)
+                "(TikTok: “not any access permission”). " + NO_ACCESS_FIX + " " + NO_ACCESS_WHY)
     return f"{body.get('code')} {_msg(body)}" + (f" ({_err_msg(body)[:160]})" if _err_msg(body) else "")
 
 

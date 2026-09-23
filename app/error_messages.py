@@ -46,11 +46,10 @@ _MESSAGE_HINTS: list[tuple[re.Pattern, str, str]] = [
     (re.compile(r"lead generation agreement|agreement has not be(en)? signed|"
                 r"lead[- ]?gen(eration)? terms (of service )?(has|have)? ?not", re.I),
      "This ad account hasn't accepted TikTok's Lead Generation Terms yet.",
-     "This is a one-time agreement per ad account — the launcher can't sign it for you. In TikTok "
-     "Ads Manager, switch to THIS advertiser, start creating any Lead Generation campaign (or open "
-     "Tools › Instant Forms / Lead generation): a 'Lead Generation Terms of Service' box pops up for "
-     "an account admin to accept. Accept it once, then Retry failed here — the ad will build. Each "
-     "ad account you launch lead-gen from needs this done once."),
+     "It's a one-time agreement per ad account and the launcher can't sign it. TikTok doesn't document "
+     "where it's accepted: creating an Instant Form by hand does NOT always ask (seen 24 Sep). In Ads Manager, "
+     "switched to THIS advertiser, build one Instant Form lead-gen ad through to Submit and look for a Lead "
+     "Generation Terms checkbox; if none appears, ask TikTok support with the request id below. Then Retry failed."),
     (re.compile(r"selected advanced creative is not supported", re.I),
      "TikTok won't run this creative on a Smart+ ad for this objective.",
      "The launch already retried without the display card and with a single button, so what is left is the "
@@ -155,9 +154,9 @@ def fix_for(log) -> dict | None:
                  r"lead[- ]?gen(eration)? terms", raw + " " + low):
         return {"label": "How to accept the Lead Gen Terms",
                 "href": "https://ads.tiktok.com/help/article/set-up-lead-generation-with-instant-form",
-                "why": "This ad account must accept TikTok's Lead Generation Terms once, in Ads Manager "
-                       "(an admin ticks the box the first time you build a lead-gen campaign or Instant "
-                       "Form for it). The launcher can't sign it — do it once, then Retry failed."}
+                "why": "One-time agreement per ad account, accepted in Ads Manager — TikTok doesn't say exactly "
+                       "where. Try submitting one Instant Form lead ad by hand on this account; if no terms "
+                       "checkbox shows, ask TikTok support with the request id. Then Retry failed."}
     if code == "SPARK":
         if "rejected the spark code" in low or "code is incorrect" in low:
             return {"label": "Replace the spark code", "href": f"/spark-codes?edit={spark_id}" if spark_id else "/spark-codes",

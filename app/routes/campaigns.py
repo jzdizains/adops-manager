@@ -839,6 +839,12 @@ def build_adgroup_payload(fields: dict, acct: models.AdAccount, campaign_id: str
         # the form itself on the ad group as well as on the ad
         payload["promotion_type"] = "LEAD_GENERATION"
         payload["promotion_target_type"] = "INSTANT_PAGE"
+        # the form is filled IN TikTok — TikTok sets the attribution itself and refuses any
+        # window we send: 40002 "Attribution window combination is invalid in this ad scenario"
+        # (live 23 Sep, 1-day click + 1-day view, AFTER the campaign existed). The same preset
+        # with "TikTok default" went through, so the windows are left out here.
+        payload.pop("click_attribution_window", None)
+        payload.pop("view_attribution_window", None)
         if str(fields.get("lead_form_id") or "").isdigit():
             payload["page_id"] = str(fields["lead_form_id"])
     elif dest == "none":

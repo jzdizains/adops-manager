@@ -73,7 +73,7 @@ check("a folded row shows a × count chip and carries data-count", 'data-count="
 check("a '+N more' line when the cap folds extra kinds", "{% if g.hidden %}" in t and "more kind" in t)
 check("JS: unfiltered → true total; filtering → sum of visible folded counts",
       "el.dataset.total" in t and 'parseInt(r.dataset.count' in t and "reduce(function" in t)
-check("STATIC_VERSION bumped", 'STATIC_VERSION = "157"' in read("app/config.py"))
+check("STATIC_VERSION bumped", 'STATIC_VERSION = "158"' in read("app/config.py"))
 
 print()
 print("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}")

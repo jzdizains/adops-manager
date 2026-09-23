@@ -90,7 +90,7 @@ play = os.path.join(lander, "play", "index.html")
 if os.path.exists(play):
     ph = open(play, encoding="utf-8").read()
     check("tikmobileplay v9 beacon: ttclid value, referrer, url, _ttp cookie", 'url: String(location.href || "").slice(0, 900), ttp: (function () {' in ph and '_ttp=([^;]+)' in ph)
-check("STATIC_VERSION bumped", 'STATIC_VERSION = "157"' in read("app/config.py"))
+check("STATIC_VERSION bumped", 'STATIC_VERSION = "158"' in read("app/config.py"))
 
 print()
 print("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}")

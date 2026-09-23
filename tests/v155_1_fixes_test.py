@@ -21,6 +21,13 @@ check("one line: how many, which BC, the first names, +N more", line.startswith(
       and "BLUE BAT CAFE LLC_bucmdv, BLUE BAT CAFE LLC_o1n6g2, blue bat07 +65 more" in line, line[:160])
 check("…and the fix is in it (not cut off after 400 characters of repeats)", "Fix:" in line and len(line) < 900 and web.is_no_access(line))
 check("one account reads in the singular", web.no_access_summary(["A"]).startswith("1 account — "))
+one = "form “Untitled form 9/22/26, 17:16” now on 0 more account(s), 1 failed — " + web.no_access_summary(["blue bat_260706030021"], ["Blue Bat 15/9 JN_3"])
+check("…'this ad account', and the whole notice fits the 600-character job result (it was cut mid-sentence)",
+      "this ad account" in one and len(one) < 600 and one.rstrip().endswith("skipped."), str(len(one)))
+many = "form “x” now on 0 more account(s), 68 failed — " + line
+check("68 accounts over 3 Business Centers fits too", len("form “Untitled form 9/22/26, 17:16” now on 0 more account(s), 68 failed — "
+      + web.no_access_summary(labels, ["BC 60 JA_10", "Blue Bat 3/9 JN_3", "Chenchij FR 23/9 JN_1"] * 23)) < 600)
+check("the job result cap is what the notice is measured against", "job.detail = str(res.get(\"detail\") or \"\")[:600]" in read("app/jobs.py"))
 denied = {"code": 100000, "msg": "Internal system error", "data": {"err_msg": "RPCError{Method:[GetLoginAdvInfoByUid] BizStatusMessage:[not any access permission]}"}}
 check("a single failure explains it with the fix too", web.is_no_access(web.explain(denied, "7658")) and "Fix:" in web.explain(denied, "7658"))
 

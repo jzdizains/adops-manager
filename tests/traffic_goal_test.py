@@ -309,8 +309,21 @@ check("presets list shows the goal", "'Landing page view' if blob.get('traffic_g
 check("creative-type filter removed (all-carousel made it dead weight); search box stays",
       'id="prCreative"' not in lst and 'data-c="spark"' not in lst and '#prCreative button' not in lst
       and "r.dataset.creative === c" not in lst and 'id="prQ"' in lst and "r.dataset.search.indexOf(q)" in lst)
+# v155.5: Instant Form lead gen — TikTok refuses custom attribution windows there (live 23 Sep:
+# 40002 "Attribution window combination is invalid in this ad scenario" on 1-day click + 1-day view)
+print("\n-- attribution windows by scenario --")
+base = dict(f_conv, click_attribution_window="ONE_DAY", view_attribution_window="ONE_DAY")
+p_form = ag(dict(base, objective_type="LEAD_GENERATION", destination_type="lead_form", lead_form_id="7688798794846077205",
+                 optimization_goal="LEAD_GENERATION"), pixel="")
+check("Instant Form: no click/view window is sent (TikTok's own default applies)",
+      p_form.get("promotion_target_type") == "INSTANT_PAGE" and "click_attribution_window" not in p_form and "view_attribution_window" not in p_form, str(p_form))
+p_web = ag(dict(base, objective_type="LEAD_GENERATION", destination_type="pixel"), pixel="123")
+check("website lead gen keeps the preset's windows (TikTok accepts 1/1 and 7/7 there — seen on live ad groups)",
+      p_web.get("promotion_target_type") == "EXTERNAL_WEBSITE" and p_web.get("click_attribution_window") == "ONE_DAY" and p_web.get("view_attribution_window") == "ONE_DAY", str(p_web))
+tf = open(os.path.join(ROOT, "app", "templates", "template_form.html"), encoding="utf-8").read()
+check("the preset form says so under the attribution fields", "Instant Form lead gen always uses TikTok’s default" in tf)
 cfg = open(os.path.join(ROOT, "app", "config.py"), encoding="utf-8").read()
-check("static version bumped", 'STATIC_VERSION = "157"' in cfg)
+check("static version bumped", 'STATIC_VERSION = "158"' in cfg)
 
 print()
 print("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}")
