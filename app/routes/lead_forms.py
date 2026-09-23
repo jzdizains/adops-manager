@@ -99,6 +99,7 @@ def page(request: Request, db: Session = Depends(get_db)):
     have_status = {gname: {f.owner_advertiser_id: (f.status or "yes") for f in fl} for gname, fl in by_name.items()}
     return render(request, "lead_forms.html", {
         "have_status": have_status,
+        "acct_names": [[a.advertiser_id, a.advertiser_name or a.advertiser_id] for a in accounts],
         "form_templates": ftpls, "ftpl_cov": ftpl_cov, "form_names": form_names,
         "forms": forms, "groups": groups, "names": names, "title": "Lead Forms", "accounts": accounts,
         "copies": copies, "bcs": bcs, "missing": missing, "acct_bc": acct_bc, "n_accounts": len(accounts),
@@ -159,7 +160,7 @@ def inspect(request: Request, form_id: str, advertiser_id: str, db: Session = De
 @router.post("/lead-forms/build")
 def build(request: Request,
           template_form_id: str = Form(...), from_advertiser_id: str = Form(...),
-          target_advertiser_id: str = Form(...), name: str = Form(...),
+          target_advertiser_id: str = Form(""), name: str = Form(...), target_ids: str = Form(""),
           destination_url: str = Form(""), privacy_url: str = Form(""), company_name: str = Form(""),
           thanks_title: str = Form(""), thanks_description: str = Form(""), cta_title: str = Form(""),
           question_label: str = Form(""), question_options: str = Form(""),
@@ -171,7 +172,11 @@ def build(request: Request,
     if not spark_web_api.load_cookies():
         return RedirectResponse("/lead-forms?err=" + quote("Building uses the TikTok web session — paste your ads.tiktok.com cookies on the TikTok Cookies page first."), status_code=303)
     sc = scope_mod.for_request(request, db)
-    if not (sc.allows(from_advertiser_id) and sc.allows(target_advertiser_id)):
+    ids = [x.strip() for x in (target_ids or target_advertiser_id or "").split(",") if x.strip()]
+    ids = list(dict.fromkeys(ids))
+    if not ids:
+        return RedirectResponse("/lead-forms?err=" + quote("Choose at least one account to build the form on."), status_code=303)
+    if not sc.allows(from_advertiser_id) or not all(sc.allows(i) for i in ids):
         return RedirectResponse("/lead-forms?err=" + quote("That template form or account isn't in your workspace."), status_code=303)
     name = (name or "").strip()
     if not name:
@@ -181,6 +186,20 @@ def build(request: Request,
              "company_name": company_name.strip(), "thanks_title": thanks_title.strip(),
              "thanks_description": thanks_description.strip(), "cta_title": cta_title.strip(),
              "question_label": question_label.strip(), "question_options": opts}
+    if len(ids) > 1:
+        # v155.10: several accounts → one background job, one account after another
+        from .. import jobs
+        have = {f.owner_advertiser_id for f in db.query(models.LeadForm).filter_by(name=name).all()}
+        todo = [i for i in ids if i not in have]
+        if not todo:
+            return RedirectResponse("/lead-forms?ok=" + quote(f"Every picked account already has “{name}” — nothing to build."), status_code=303)
+        job = jobs.enqueue(db, "lead_form_build_many", f"Build form “{name}” → {len(todo)} account(s)",
+                           {"template_form_id": template_form_id, "from_advertiser_id": from_advertiser_id, "name": name,
+                            "edits": edits, "targets": todo}, href="/lead-forms")
+        skipped = len(ids) - len(todo)
+        return RedirectResponse("/lead-forms?ok=" + quote(f"Building “{name}” on {len(todo)} account(s) in the background (job #{job.id})"
+                                                         + (f" — {skipped} already had it" if skipped else "") + "."), status_code=303)
+    target_advertiser_id = ids[0]
     target = db.query(models.AdAccount).filter_by(advertiser_id=target_advertiser_id).first()
     label = (target.advertiser_name if target else "") or target_advertiser_id
     try:
@@ -289,6 +308,56 @@ def clone_multi(request: Request, form_id: str = Form(...), from_advertiser_id: 
                        {"form_id": form_id, "from_advertiser_id": from_advertiser_id, "name": name, "targets": ids}, href="/lead-forms")
     return RedirectResponse("/lead-forms?ok=" + quote(
         f"Cloning “{name}” to {len(ids)} account(s) in the background — you'll get a notification (job #{job.id})."), status_code=303)
+
+
+def build_on_many(db: Session, template_form_id: str, from_advertiser_id: str, name: str, edits: dict, targets: list[str],
+                  should_stop=None, on_progress=None) -> dict:
+    """The job body for "New form" on several accounts (v155.10): the same verified build as a
+    single account, one account after another; a refused account never stops the rest, dead
+    cookies stop the run, no-access accounts are reported as ONE line with the fix."""
+    import time as _time
+    from .. import instant_page_web, lead_form_builder
+    ok, failed, stopped, no_access = [], [], False, []
+    accts = {a.advertiser_id: a for a in db.query(models.AdAccount).filter(models.AdAccount.advertiser_id.in_(targets or [""])).all()}
+    bc_names = {b.bc_id: (b.name or b.bc_id) for b in db.query(models.BusinessCenter).all()}
+    for i, adv in enumerate(targets):
+        if should_stop and should_stop():
+            stopped = True
+            break
+        acct = accts.get(adv)
+        label = (acct.advertiser_name if acct else "") or adv
+        if on_progress:
+            on_progress(f"{i + 1} of {len(targets)} — {label}")
+        if acct is None:
+            failed.append(f"{label}: account no longer listed")
+            continue
+        if db.query(models.LeadForm).filter_by(owner_advertiser_id=adv, name=name).first() is not None:
+            ok.append(adv)                       # a re-run never duplicates
+            continue
+        try:
+            res = lead_form_builder.build_form(template_form_id, name, adv, edits, source_owner=from_advertiser_id)
+        except spark_web_api.WebAuthError as e:
+            failed.append(f"{label}: {str(e)[:120]} — stopped here, the remaining accounts were not attempted")
+            stopped = True
+            break
+        if res.get("ok"):
+            ok.append(adv)
+            try:
+                sync_account(db, acct)
+                db.commit()
+            except Exception:  # noqa: BLE001 — built; a failed re-read just means Sync later
+                db.rollback()
+        elif instant_page_web.is_no_access(res.get("error", "")):
+            no_access.append((label, bc_names.get(acct.owner_bc_id or "", "")))
+            _time.sleep(0.3)
+            continue
+        else:
+            failed.append(f"{label}: {str(res.get('error') or 'failed')[:160]}")
+        if i + 1 < len(targets):
+            _time.sleep(1.5)
+    if no_access:
+        failed.insert(0, instant_page_web.no_access_summary([x[0] for x in no_access], [x[1] for x in no_access]))
+    return {"ok": ok, "failed": failed, "stopped": stopped, "no_access": len(no_access)}
 
 
 def clone_to_many(db: Session, form_id: str, from_advertiser_id: str, name: str, targets: list[str],

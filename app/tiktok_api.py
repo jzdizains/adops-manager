@@ -408,6 +408,12 @@ def bc_asset_assign(access_token: str, bc_id: str, user_id: str, asset_type: str
     return api_post("/bc/asset/assign/", access_token, payload)
 
 
+def user_info(access_token: str) -> dict:
+    """GET /user/info/ — the TikTok for Business login this token belongs to (display_name,
+    email, core_user_id). Read-only; what the "Who connected TikTok" card shows (v155.12)."""
+    return api_get("/user/info/", access_token) or {}
+
+
 def get_advertiser_info(access_token: str, advertiser_ids: list[str]) -> list[dict]:
     data = api_get_retry("/advertiser/info/", access_token, {"advertiser_ids": advertiser_ids})
     return data.get("list", [])

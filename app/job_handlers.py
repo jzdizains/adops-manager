@@ -123,6 +123,20 @@ def _lead_form_clone_all(db: Session, p: dict, job: models.Job) -> dict:
     return {"ok": not r["failed"] and not r["stopped"], "detail": d, "href": "/lead-forms"}
 
 
+@jobs.handler("lead_form_build_many")
+def _lead_form_build_many(db: Session, p: dict, job: models.Job) -> dict:
+    from .routes import lead_forms
+    r = lead_forms.build_on_many(db, str(p["template_form_id"]), str(p["from_advertiser_id"]), str(p.get("name") or ""),
+                                 dict(p.get("edits") or {}), [str(t) for t in (p.get("targets") or [])],
+                                 should_stop=lambda: jobs.should_stop(db, job), on_progress=lambda t: jobs.progress(db, job, t))
+    d = f"form “{p.get('name', '')}” built on {len(r['ok'])} account(s)"
+    if r["failed"]:
+        d += f", {_n_failed(r)} failed — " + " · ".join(r["failed"])[:900]
+    if r["stopped"]:
+        d += " (stopped)"
+    return {"ok": not r["failed"] and not r["stopped"], "detail": d, "href": "/lead-forms"}
+
+
 @jobs.handler("instant_page_build")
 def _instant_page_build(db: Session, p: dict, job: models.Job) -> dict:
     from .routes import instant_pages

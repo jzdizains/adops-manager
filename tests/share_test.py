@@ -66,6 +66,54 @@ ui = read("app/static/ui.js")
 check("one helper: clipboard, then the old copy command, then a pop-up with the text selected",
       "UI.share = function" in ui and "navigator.clipboard" in ui and 'execCommand("copy")' in ui and "Copy this and paste it" in ui)
 check("never sends anything anywhere — it only copies", "fetch(" not in ui.split("UI.share = function")[1].split("document.addEventListener")[0])
+print("-- New form on several accounts (v155.10) --")
+lf = read("app/routes/lead_forms.py")
+check("one account builds right away (as before); several → one background job, accounts that already have it skipped",
+      "if len(ids) > 1:" in lf and '"lead_form_build_many"' in lf and "todo = [i for i in ids if i not in have]" in lf and "target_advertiser_id = ids[0]" in lf)
+check("every picked account must be in the viewer's workspace", "not all(sc.allows(i) for i in ids)" in lf)
+check("the job: same verified build per account, no-access grouped into one line, dead cookies stop it",
+      "def build_on_many(" in lf and "lead_form_builder.build_form(template_form_id, name, adv, edits" in lf.split("def build_on_many(")[1][:2500]
+      and "no_access_summary" in lf.split("def build_on_many(")[1][:4000] and "except spark_web_api.WebAuthError" in lf.split("def build_on_many(")[1][:2500])
+jh = read("app/job_handlers.py")
+check("job handler registered, on the slow lane", '@jobs.handler("lead_form_build_many")' in jh and '"lead_form_build_many"' in read("app/jobs.py").split("SLOW_KINDS")[1][:400])
+print("-- presets can pick a Form template (v155.11) --")
+import types as _t
+from jinja2 import Environment, FileSystemLoader, ChoiceLoader, DictLoader, ChainableUndefined
+_env = Environment(loader=ChoiceLoader([DictLoader({"base.html": "{% block content %}{% endblock %}{% block scripts %}{% endblock %}"}),
+                                        FileSystemLoader(os.path.join(ROOT, "app/templates"))]), undefined=ChainableUndefined, autoescape=True)
+_env.filters.update(local=lambda *a, **k: "", ago=lambda *a, **k: "", money=str, strip_key=str, js=lambda v: json.dumps(v, default=lambda o: None))
+_env.policies["json.dumps_kwargs"] = {"default": lambda o: None}
+_h = _env.get_template("template_form.html").render(
+    blob={"lead_form_name": "Games 18+"}, lead_forms=[{"name": "Games 18+", "count": 3}, {"name": "Freecash", "count": 40}],
+    form_templates=[_t.SimpleNamespace(id=1, name="Games 18+"), _t.SimpleNamespace(id=2, name="Sweeps US")], request=None)
+_sel = _h.split('name="lead_form_name"')[1].split("</select>")[0]
+check("templates listed first, marked, with how many accounts already have it", "Form templates — built at launch" in _sel
+      and "Games 18+ — template · already on 3 account(s)" in _sel and "Sweeps US — template<" in _sel.replace("\n", ""))
+check("an existing form that is also a template isn't listed twice; other forms stay", _sel.count(">Games 18+ —") == 1 and "Freecash — on 40 account(s)" in _sel)
+check("the stored choice stays selected", 'value="Games 18+" selected' in _sel)
+check("the preset page gets this workspace's templates (with a master form)",
+      '"form_templates": sc.owned(db.query(models.FormTemplate), models.FormTemplate)' in read("app/routes/templates_routes.py"))
+check("the launch builds a missing form from the template of that name (already in place since v150)",
+      "models.FormTemplate.name == name" in read("app/routes/campaigns.py") and "_ab.build_form(" in read("app/routes/campaigns.py"))
+print("-- Who connected TikTok (v155.12) --")
+import ast as _ast
+_dsrc = read("app/routes/diagnostics.py")
+_ns = {}
+for _n in _ast.parse(_dsrc).body:
+    if isinstance(_n, _ast.FunctionDef) and _n.name == "group_connections":
+        exec(compile(_ast.Module([_n], []), "diag", "exec"), _ns)
+_A = lambda i, n, t: types.SimpleNamespace(advertiser_id=i, advertiser_name=n, access_token=t)
+_g = _ns["group_connections"]([_A("1", "blue bat 014", "tokA"), _A("2", "blue bat 017", "tokA"), _A("3", "A1 Prime", "tokB"), _A("4", "no token", "")])
+check("accounts grouped by the connection they use, biggest first, accounts without a token left out",
+      [len(g["accounts"]) for g in _g] == [2, 1] and _g[0]["accounts"] == ["blue bat 014", "blue bat 017"])
+check("…only a short fingerprint identifies a connection (never the token)", len(_g[0]["key"]) == 16 and "tokA" not in _g[0]["key"])
+_route = _dsrc.split('def connections_json(')[1].split("\n@router")[0]
+check("the JSON the page gets never carries the token", '"token"' not in _route.split("out.append(")[1] and "g[\"token\"]" not in _route.split("out.append(")[1])
+check("owner only, DB connection released before calling TikTok, answers cached", "if not guard.is_owner(request):" in _route
+      and _route.index("db.rollback()") < _route.index("tiktok_api.user_info(") and "_WHO[g[\"key\"]] = (" in _route)
+check("the TikTok call is the read-only /user/info/", 'return api_get("/user/info/", access_token) or {}' in read("app/tiktok_api.py"))
+_dt = read("app/templates/diagnostics.html")
+check("Diagnostics card, loaded only when opened (the page stays fast)", 'id="connections"' in _dt and 'card.addEventListener("toggle"' in _dt and "/diagnostics/connections.json" in _dt)
 print("---")
 print(f"{len(fails)} failed" if fails else "all passed")
 sys.exit(1 if fails else 0)

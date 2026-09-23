@@ -45,9 +45,9 @@ lf, ip, jh = read("app/routes/lead_forms.py"), read("app/routes/instant_pages.py
 check("form copy: a no-access account skips the re-read sync and the 1.5 s pause",
       'if r.get("no_access"):\n        return r.get("error", "")' in lf and "no_access.append((label, bc_names.get(acct.owner_bc_id" in lf
       and "_time.sleep(0.3)\n            continue" in lf)
-check("both copy jobs put the summary line FIRST", lf.count("failed.insert(0, instant_page_web.no_access_summary(") == 1
+check("every copy/build job puts the summary line FIRST", lf.count("failed.insert(0, instant_page_web.no_access_summary(") == 2
       and ip.count("failed.insert(0, instant_page_web.no_access_summary(") == 1)
-check("job notice counts every failed account and keeps room for the fix", "def _n_failed(r: dict)" in jh and jh.count('" · ".join(r["failed"])[:900]') == 2)
+check("job notice counts every failed account and keeps room for the fix", "def _n_failed(r: dict)" in jh and jh.count('" · ".join(r["failed"])[:900]') == 3)
 ns = {}
 for node in ast.parse(jh).body:
     if isinstance(node, ast.FunctionDef) and node.name == "_n_failed":

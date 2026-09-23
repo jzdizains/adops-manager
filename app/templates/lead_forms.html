@@ -90,7 +90,7 @@
 <div id="lfNewHolder" hidden>
   <form method="post" action="/lead-forms/build" id="lfBuildForm">
     <input type="hidden" name="from_advertiser_id" id="lfFromAdv" value="">
-    <div class="muted" style="font-size:11.5px;margin-bottom:14px;">Copies an existing form's layout onto one account, changing only the fields you set — the preview updates as you type, and it appears by name in your presets.</div>
+    <div class="muted" style="font-size:11.5px;margin-bottom:14px;">Copies an existing form's layout onto the accounts you pick, changing only the fields you set — the preview updates as you type, and it appears by name in your presets.</div>
     <div class="lfp-wrap">
       <div class="lfp-fields">
         <div class="lfp-grp">
@@ -98,8 +98,10 @@
           <div class="lfp-2">
             <label class="field"><span class="field-label">Start from (template)</span>
               <select name="template_form_id" id="lfTemplate" required>{% for f in forms %}<option value="{{ f.form_id }}" data-owner="{{ f.owner_advertiser_id }}">{{ f.name or f.form_id }}</option>{% endfor %}</select></label>
-            <label class="field"><span class="field-label">Create on account</span>
-              <select name="target_advertiser_id" required>{% for a in accounts %}<option value="{{ a.advertiser_id }}">{{ a.advertiser_name or a.advertiser_id }}</option>{% endfor %}</select></label>
+            <div class="field lf-targets"><span class="field-label">Create on accounts</span>
+              <button type="button" class="btn lf-targets-btn" id="lfTargetsBtn" title="Search, filter by Business Center or status, pick one or many">Choose accounts…</button>
+              <span class="hint" id="lfTargetsSum">One account builds right away; several build one after another in the background.</span>
+              <input type="hidden" name="target_ids" id="lfTargets" value=""></div>
             <label class="field full"><span class="field-label">New form name</span>
               <input type="text" name="name" required placeholder="e.g. Games – 18+ – Aug"><span class="hint">Presets match forms by this name. Copies the template's layout; only the fields below change.</span></label>
           </div>
@@ -123,7 +125,7 @@
             <label class="field full"><span class="field-label">Thank-you text</span><input type="text" name="thanks_description" id="lfTD" placeholder="Tap below to continue"></label>
           </div>
         </div>
-        <div><button class="btn primary" type="submit" id="lfBuildGo">Build form</button> <span class="hint">Takes a few seconds — TikTok's editor builds and publishes it. Clone to more accounts afterward with “Clone to…”.</span></div>
+        <div><button class="btn primary" type="submit" id="lfBuildGo">Build form</button> <span class="hint">One account takes a few seconds — TikTok's editor builds and publishes it. Several accounts are built one after another in the background (see Jobs).</span></div>
       </div>
       <div class="lfp-side">
         <div class="lfp-tabs"><button type="button" class="lfp-tab on" data-screen="form">Form</button><button type="button" class="lfp-tab" data-screen="thanks">Thank-you</button></div>
@@ -309,7 +311,37 @@
   form.addEventListener("input", render);
   form.querySelectorAll(".lfp-tab").forEach(function (b) { b.addEventListener("click", function () { showScreen(b.dataset.screen); }); });
   if (tmpl) tmpl.addEventListener("change", syncOwner);
-  form.addEventListener("submit", function () { syncOwner(); var go = $("lfBuildGo"); if (go) { go.disabled = true; go.textContent = "Building…"; } });
+  // v155.10: the accounts come from the same pop-up as "Clone to…" (search, Business Center, status,
+  // multi-select); accounts already holding a form with the typed name are marked and can't be picked
+  var tIn = $("lfTargets"), tBtn = $("lfTargetsBtn"), tSum = $("lfTargetsSum"), picked = [];
+  var NAMES = null;
+  function nameOf(id) {           // read when needed: the names block sits below this script
+    if (!NAMES) { NAMES = {}; try { (JSON.parse(($("lfAcctNames") || {}).textContent || "[]") || []).forEach(function (a) { NAMES[String(a[0])] = a[1]; }); } catch (e) {} }
+    return NAMES[String(id)] || id;
+  }
+  function haveFor(name) {
+    try { return (JSON.parse((document.getElementById("lfHave") || {}).textContent || "{}") || {})[name] || {}; } catch (e) { return {}; }
+  }
+  function showPicked() {
+    tIn.value = picked.join(",");
+    if (!picked.length) { tBtn.textContent = "Choose accounts…"; tSum.textContent = "One account builds right away; several build one after another in the background."; return; }
+    tBtn.textContent = picked.length === 1 ? nameOf(picked[0]) : picked.length + " accounts";
+    tSum.textContent = picked.slice(0, 4).map(nameOf).join(", ") + (picked.length > 4 ? " +" + (picked.length - 4) + " more" : "")
+      + (picked.length > 1 ? " — built one after another in the background" : "");
+  }
+  function pickTargets() {
+    if (!UI.pickAccounts) return Promise.resolve(null);
+    var nm = ((form.querySelector('[name="name"]') || {}).value || "").trim();
+    return UI.pickAccounts({ title: nm ? "Build “" + nm + "” on…" : "Build the new form on…", confirmLabel: "Use these accounts",
+                             preselect: picked, has: nm ? haveFor(nm) : {}, hasLabel: "Has this form" })
+      .then(function (ids) { if (ids && ids.length) { picked = ids.map(String); showPicked(); } return ids; });
+  }
+  if (tBtn) tBtn.addEventListener("click", function () { pickTargets(); });
+  form.addEventListener("submit", function (e) {
+    syncOwner();
+    if (!picked.length) { e.preventDefault(); pickTargets(); return; }
+    var go = $("lfBuildGo"); if (go) { go.disabled = true; go.textContent = picked.length > 1 ? "Queuing…" : "Building…"; }
+  });
   var modal = null;
   btn.addEventListener("click", function () {
     if (modal) return;
@@ -396,5 +428,6 @@
   });
 })();
 </script>
+<script id="lfAcctNames" type="application/json">{{ acct_names|js }}</script>
 <script id="lfHave" type="application/json">{{ have_status|js }}</script>
 {% endblock %}

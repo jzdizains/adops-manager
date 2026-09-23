@@ -241,7 +241,7 @@ check("launch engine: every 'next unused' creative / text pick is owner-scoped",
       and "db.query(models.AdText)\n                             .filter_by(status=\"available\")" not in seg)
 sl = read("app/routes/super_launcher.py")
 check("super launcher never launches to an account outside the view", 'advertiser_ids = [a for a in form.getlist("advertiser_ids") if sc.allows(a) and a not in skip]' in sl)
-check("STATIC_VERSION bumped", "STATIC_VERSION = \"160\"" in read("app/config.py"))
+check("STATIC_VERSION bumped", "STATIC_VERSION = \"163\"" in read("app/config.py"))
 
 print()
 print("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}")

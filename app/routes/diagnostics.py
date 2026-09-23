@@ -55,6 +55,51 @@ def diagnostics_page(request: Request, db: Session = Depends(get_db)):
     })
 
 
+_WHO: dict = {}          # sha256(token)[:16] → (expires, info) — who a connection belongs to
+_WHO_TTL = 600
+
+
+def group_connections(accounts) -> list[dict]:
+    """Ad accounts grouped by the TikTok connection (access token) they use. Pure; the token itself
+    never leaves this function — only a short fingerprint does."""
+    import hashlib
+    out: dict = {}
+    for a in accounts:
+        tok = a.access_token or ""
+        if not tok:
+            continue
+        key = hashlib.sha256(tok.encode()).hexdigest()[:16]
+        g = out.setdefault(key, {"key": key, "token": tok, "accounts": []})
+        g["accounts"].append(a.advertiser_name or a.advertiser_id)
+    return sorted(out.values(), key=lambda g: -len(g["accounts"]))
+
+
+@router.get("/diagnostics/connections.json")
+def connections_json(request: Request, db: Session = Depends(get_db)):
+    """Who connected TikTok (v155.12): per connection, the TikTok for Business login it belongs to
+    and the ad accounts using it. Owner only; one read-only /user/info/ call per connection, cached."""
+    import time as _time
+    if not guard.is_owner(request):
+        return JSONResponse({"ok": False, "error": guard.OWNER_ONLY_MSG}, status_code=403)
+    from .. import tiktok_api
+    groups = group_connections(db.query(models.AdAccount).filter(models.AdAccount.enabled == True).all())   # noqa: E712
+    db.rollback()                      # no DB connection held while TikTok answers
+    out = []
+    for g in groups[:25]:
+        hit = _WHO.get(g["key"])
+        if hit and hit[0] > _time.time():
+            info, err = hit[1], ""
+        else:
+            try:
+                d = tiktok_api.user_info(g["token"])
+                info, err = {"name": d.get("display_name") or "", "email": d.get("email") or "", "id": str(d.get("core_user_id") or "")}, ""
+                _WHO[g["key"]] = (_time.time() + _WHO_TTL, info)
+            except tiktok_api.TikTokError as e:
+                info, err = {}, f"{e.message} (code {e.code})"
+        out.append({"key": g["key"], "n": len(g["accounts"]), "accounts": sorted(g["accounts"])[:400], **info, "error": err})
+    return JSONResponse({"ok": True, "connections": out, "more": max(0, len(groups) - 25)})
+
+
 @router.post("/diagnostics/mock/{action}")
 def mock_control(action: str, request: Request):
     """TikTok test mode: switch the simulated outage, or forget every simulated campaign.

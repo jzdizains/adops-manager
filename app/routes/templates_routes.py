@@ -158,6 +158,10 @@ def _form_ctx(db: Session, sc=None) -> dict:
         "instant_pages": _assets_by_name([r for r in db.query(models.InstantPage).all() if sc.allows(r.owner_advertiser_id)]),
         "page_templates": sc.owned(db.query(models.PageTemplate), models.PageTemplate).order_by(models.PageTemplate.name).all(),
         "lead_forms": _assets_by_name([r for r in db.query(models.LeadForm).all() if sc.allows(r.owner_advertiser_id)]),
+        # v155.11: Form templates can be picked too — a launch builds the form from its template on
+        # any account that doesn't have a form of that name yet (campaigns.py, "has no lead form")
+        "form_templates": sc.owned(db.query(models.FormTemplate), models.FormTemplate)
+                            .filter(models.FormTemplate.master_form_id != "").order_by(models.FormTemplate.name).all(),
         "display_cards": sc.owned(db.query(models.DisplayCard), models.DisplayCard).order_by(models.DisplayCard.name).all(),
     }
 

@@ -131,11 +131,11 @@ print("-- route + drawer wiring --")
 def read(p): return open(os.path.join(ROOT, p), encoding="utf-8").read()
 r = read("app/routes/lead_forms.py")
 check("a POST /lead-forms/build route calls the builder with the picked account", '@router.post("/lead-forms/build")' in r and "lead_form_builder.build_form(" in r)
-check("build guards cookies + workspace scope like clone", "load_cookies()" in r and "sc.allows(from_advertiser_id) and sc.allows(target_advertiser_id)" in r)
+check("build guards cookies + workspace scope like clone (every picked account, v155.10)", "load_cookies()" in r and "not sc.allows(from_advertiser_id) or not all(sc.allows(i) for i in ids)" in r)
 check("build re-reads the account so the form shows up, tolerating a failed re-read", "sync_account(db, target)" in r and "db.rollback()" in r.split("def build(")[1].split("\ndef ")[0])
 t = read("app/templates/lead_forms.html")
-check("the drawer posts to /lead-forms/build with template + target account + name + destination",
-      'action="/lead-forms/build"' in t and 'name="template_form_id"' in t and 'name="target_advertiser_id"' in t and 'name="name"' in t and 'name="destination_url"' in t)
+check("the drawer posts to /lead-forms/build with template + target accounts (from the account pop-up) + name + destination",
+      'action="/lead-forms/build"' in t and 'name="template_form_id"' in t and 'name="target_ids"' in t and 'id="lfTargetsBtn"' in t and 'name="name"' in t and 'name="destination_url"' in t)
 check("the template option carries its owner account for the hidden from-id", 'data-owner="{{ f.owner_advertiser_id }}"' in t and 'id="lfFromAdv"' in t)
 check("a live TikTok-style phone preview (form + thank-you screens) rides alongside the fields",
       "lfp-phone" in t and "#FE2C55" in t and 'id="lfpQ"' in t and 'id="lfpOpts"' in t and 'data-screen="thanks"' in t)

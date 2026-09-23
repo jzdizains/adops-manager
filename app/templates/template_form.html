@@ -101,8 +101,12 @@
         <select name="page_template_id"><option value="">— don't build; fail with a clear message —</option>{% for t in page_templates %}<option value="{{ t.id }}" {{ 'selected' if blob.get('page_template_id') == t.id }}>{{ t.name }} — “{{ t.button_text }}” → {{ t.url[:40] }}</option>{% endfor %}</select>
         <span class="hint">An account without a page of the picked name gets one built from this template at launch (the dashboard drives TikTok's builder with your web session, ~1 min), verified through TikTok's API before the ad is created. With no page picked above, the template's own name is used. Manage templates on <a href="/instant-pages#templates">Instant pages</a>.</span></label>
       <label class="field" data-dest="lead_form"><span class="field-label">Lead form <span class="muted">(by name)</span></span>
-        <select name="lead_form_name"><option value="">— pick —</option>{% for f in lead_forms %}<option value="{{ f.name }}" {{ 'selected' if blob.get('lead_form_name') == f.name }}>{{ f.name }} — on {{ f.count }} account(s)</option>{% endfor %}</select>
-        <span class="hint">Same per-account matching as instant pages. Sync or <a href="/lead-forms">build a new form</a>.
+        {% set tpl_names = form_templates|map(attribute='name')|list %}
+        <select name="lead_form_name"><option value="">— pick —</option>
+          {% if form_templates %}<optgroup label="Form templates — built at launch on accounts that don't have it">{% for t in form_templates %}{% set have_n = (lead_forms|selectattr('name', 'equalto', t.name)|map(attribute='count')|first) or 0 %}<option value="{{ t.name }}" {{ 'selected' if blob.get('lead_form_name') == t.name }}>{{ t.name }} — template{% if have_n %} · already on {{ have_n }} account(s){% endif %}</option>{% endfor %}</optgroup>{% endif %}
+          <optgroup label="Existing forms (by name)">{% for f in lead_forms if f.name not in tpl_names %}<option value="{{ f.name }}" {{ 'selected' if blob.get('lead_form_name') == f.name }}>{{ f.name }} — on {{ f.count }} account(s)</option>{% endfor %}</optgroup>
+        </select>
+        <span class="hint">Same per-account matching as instant pages. Pick a <b>form template</b> and each account without that form gets it built at launch (from the template, then the ad). Sync or <a href="/lead-forms">build a new form</a>.
           With a Spark post this launches as <b>Smart+</b> (optimised for form leads) — TikTok refuses Instant Form ads on regular campaigns.</span></label>
     </div>
     <div class="pb-sub" data-dest="pixel website" data-needs-event="1" data-fix="pixel_event">

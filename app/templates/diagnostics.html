@@ -27,6 +27,12 @@
 </script>
 {% endif %}
 
+<details class="card" id="connections" style="margin-bottom:12px;">
+  <summary class="card-header"><span class="card-title">Who connected TikTok</span>
+    <span class="card-meta">the TikTok login behind each connection — the dashboard creates ads AS that login</span></summary>
+  <div id="whoBox" class="muted" style="font-size:12.5px;">Open to check (one read-only TikTok call per connection).</div>
+</details>
+
 <details class="card" id="migrations" style="margin-bottom:12px;">
   <summary class="card-header"><span class="card-title">Database migrations</span>
     <span class="card-meta">{{ migrations|length }} of {{ migrations_total }} applied{% if migrations|length < migrations_total %} · <span style="color:var(--warn);">{{ migrations_total - migrations|length }} pending — see the log</span>{% endif %}</span></summary>
@@ -94,4 +100,24 @@
   </table>
 </div>
 {% endif %}
+<script>
+(function () {
+  var box = document.getElementById("whoBox"), card = document.getElementById("connections"), done = false;
+  if (!box || !card) return;
+  var esc = UI.esc;
+  card.addEventListener("toggle", function () {
+    if (!card.open || done) return; done = true;
+    box.textContent = "Asking TikTok…";
+    UI.get("/diagnostics/connections.json").then(function (d) {
+      if (!d || !d.ok) { box.textContent = (d && d.error) || "Couldn't check."; done = false; return; }
+      if (!d.connections.length) { box.textContent = "No connected ad accounts."; return; }
+      box.innerHTML = '<table class="data dense" style="font-size:12px;"><thead><tr><th>TikTok login</th><th class="num">Ad accounts</th><th>Which</th></tr></thead><tbody>' +
+        d.connections.map(function (c) {
+          var who = c.error ? '<span style="color:var(--err);">' + esc(c.error) + "</span>" : "<b>" + esc(c.name || "(no name)") + "</b>" + (c.email ? ' <span class="muted">' + esc(c.email) + "</span>" : "") + (c.id ? '<div class="mono muted" style="font-size:10.5px;">user ' + esc(c.id) + "</div>" : "");
+          return "<tr><td>" + who + '</td><td class="num">' + c.n + '</td><td><span class="clip" style="max-width:520px;" title="' + esc(c.accounts.join(", ")) + '">' + esc(c.accounts.slice(0, 6).join(", ")) + (c.n > 6 ? " +" + (c.n - 6) + " more" : "") + "</span></td></tr>";
+        }).join("") + "</tbody></table>" + (d.more ? '<div class="muted">+' + d.more + " more connections not checked</div>" : "");
+    }, function () { box.textContent = "Couldn't check."; done = false; });
+  });
+})();
+</script>
 {% endblock %}
