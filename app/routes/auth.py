@@ -108,11 +108,15 @@ def login_submit(request: Request, email: str = Form(""), password: str = Form("
 
 
 def _finish_login(request: Request, db: Session, user: models.User, ip: str, how: str) -> None:
+    from .. import audit, sessions
     request.session.clear()
     request.session["authed"] = True
     request.session["uid"] = user.id
     request.session["fp"] = users.fingerprint(user)
     request.session["at"] = time.time()
+    # a server-side session row: this device can later be signed out on its own
+    request.session["sid"] = sessions.create(db, models, user, ip, request.headers.get("user-agent", ""))
+    audit.record(db, models, "login", user=user, ip=ip, detail=how)
     users.touch_login(db, user)
     sec.record_attempt(db, ip, True, how, user.email, ua=request.headers.get("user-agent", ""))
     sec.touch_seen(db, user, ip, request.headers.get("user-agent", ""))
@@ -159,7 +163,7 @@ def twofa_submit(request: Request, code: str = Form(""), trust: str = Form("")):
             request.session.clear()
             return RedirectResponse(f"{LP}?err=locked", status_code=303)
         code = (code or "").strip()
-        ok_code = sec.totp_ok(user.totp_secret, code)
+        ok_code = sec.totp_accept(db, user, code)          # each code works once (replay guard)
         ok_recovery = (not ok_code) and len(code.replace("-", "").replace(" ", "")) == 8 and sec.recovery_ok(db, user, code)
         if not (ok_code or ok_recovery):
             sec.record_attempt(db, ip, False, "wrong 2fa code", user.email, kind="2fa", ua=request.headers.get("user-agent", ""))
@@ -211,7 +215,10 @@ def twofa_setup_submit(request: Request, code: str = Form("")):
             return RedirectResponse(f"{LP}/2fa/setup", status_code=303)
         if not sec.totp_ok(secret, code):
             return RedirectResponse(f"{LP}/2fa/setup?err=1", status_code=303)
+        step = sec.totp_step(secret, code)
         codes = sec.enable_totp(db, me, secret)
+        me.totp_last_step = step or 0
+        db.commit()
         request.session.pop("totp_setup", None)
         request.session["totp_new_codes"] = codes
         return RedirectResponse(f"{LP}/2fa/setup", status_code=303)
@@ -219,10 +226,30 @@ def twofa_setup_submit(request: Request, code: str = Form("")):
         db.close()
 
 
-@router.get("/logout")
+@router.post("/logout")
 def logout(request: Request):
-    request.session.clear()
+    """POST only (a link on another site can't sign anyone out). Ends this device's session row."""
+    from .. import audit, sessions
+    sid = request.session.get("sid") or ""
+    try:
+        if sid:
+            db = _db()
+            try:
+                sessions.revoke(db, models, sid, by="logout")
+                audit.from_request(db, models, request, "logout")
+            except Exception:      # noqa: BLE001 — a busy database never keeps anyone signed in
+                db.rollback()
+            finally:
+                db.close()
+    finally:
+        request.session.clear()
     return RedirectResponse(LP, status_code=303)
+
+
+@router.get("/logout")
+def logout_page(request: Request):
+    """A bookmarked / old /logout link lands on a one-button page instead of logging out."""
+    return render(request, "logout.html", {"title": "Log out", "login_path": LP})
 
 
 @router.get("/health")

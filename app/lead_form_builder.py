@@ -160,8 +160,35 @@ def extract_form_fields(data_str, title: str = "") -> dict:
     return out
 
 
+VERIFY_FIELDS = (("destination_url", "the offer link"), ("cta_title", "the button"), ("privacy_url", "the privacy link"),
+                 ("company_name", "the company name"), ("thanks_title", "the thank-you title"),
+                 ("thanks_description", "the thank-you text"), ("question_label", "the question"))
+
+
+def form_differences(edits: dict, got: dict) -> list[str]:
+    """Every field that was asked for and isn't what TikTok now holds — empty when they all
+    match (v150: the whole form is read back, not just the link). Pure."""
+    out = []
+    for key, label in VERIFY_FIELDS:
+        want = str(edits.get(key) or "").strip()
+        if want and want != str(got.get(key) or "").strip():
+            out.append(f"{label} is “{str(got.get(key) or '')[:80]}”, not “{want[:80]}”")
+    want_opts = [str(o).strip() for o in (edits.get("question_options") or []) if str(o).strip()]
+    got_opts = [str(o).strip() for o in (got.get("question_options") or [])]
+    if want_opts and want_opts != got_opts:
+        out.append(f"the answers are “{' / '.join(got_opts)[:80]}”, not “{' / '.join(want_opts)[:80]}”")
+    return out
+
+
+def _read_fields(web, form_id: str, target: str, source_owner: str, shape: str, published: bool = False) -> dict | None:
+    back, _s, _p = web.read_page(form_id, target, source_owner, shape=shape)
+    pi = ((back.get("data") or {}).get("page_info") or {}) if isinstance(back.get("data"), dict) else {}
+    raw = (pi.get("publish_data") if published else None) or pi.get("data")
+    return extract_form_fields(raw) if raw else None
+
+
 def build_form(template_form_id: str, name: str, target: str, edits: dict,
-               source_owner: str = "") -> dict:
+               source_owner: str = "", on_step=None) -> dict:
     """Create a new instant form named `name` on account `target`, copied from
     `template_form_id` with `edits` applied, then verified and published. Returns
     {ok, form_id, steps, changed, error}. Reuses the proven page-editor web flow;
@@ -169,6 +196,14 @@ def build_form(template_form_id: str, name: str, target: str, edits: dict,
     from . import instant_page_web as web
     steps: list[str] = []
     template_form_id, target, source_owner = str(template_form_id), str(target), str(source_owner or "")
+
+    def step(text: str) -> None:
+        if on_step:
+            try:
+                on_step(text)
+            except Exception:  # noqa: BLE001 — progress reporting never breaks a build
+                pass
+    step("1/5 Reading the master form")
 
     info, shape, probes = web.read_page(template_form_id, target, source_owner)
     if not web._ok(info):
@@ -182,8 +217,16 @@ def build_form(template_form_id: str, name: str, target: str, edits: dict,
     new_data, changed = rewrite_form_fields(str(page["data"]), edits)
     if new_data is None:
         return {"ok": False, "form_id": "", "steps": steps, "changed": [], "error": "couldn't parse the template's definition"}
+    # answers are RELABELLED, never added or removed — a different count can never verify
+    want_opts = [str(o).strip() for o in (edits.get("question_options") or []) if str(o).strip()]
+    have_opts = extract_form_fields(page["data"]).get("question_options") or []
+    if want_opts and len(want_opts) != len(have_opts):
+        return {"ok": False, "form_id": "", "steps": steps, "changed": [],
+                "error": f"the master form's question has {len(have_opts)} answers and the template has {len(want_opts)} — "
+                         "give the template the same number of answers (nothing was created)"}
 
     thumb = web.thumb_uri(page)
+    step("2/5 Creating the copy on the account")
     created = web._post("/v1/create/", {
         "business_type": page.get("business_type", 1), "data": page["data"], "duplicate_id": template_form_id,
         "template_id": page.get("template_id"), "title": name, "thumbnail_uri": thumb, "account_id": target,
@@ -198,6 +241,7 @@ def build_form(template_form_id: str, name: str, target: str, edits: dict,
     # duplicate_id copies the source verbatim and ignores the data we sent, so the edits
     # go in as a follow-up update — after the new form is readable.
     if changed:
+        step("3/5 Writing your wording into it")
         for _ in range(web.POLL_TRIES):
             seen, _s, _p = web.read_page(form_id, target, source_owner, shape=shape)
             if web._ok(seen) and ((seen.get("data") or {}).get("page_info") or {}).get("data"):
@@ -210,19 +254,44 @@ def build_form(template_form_id: str, name: str, target: str, edits: dict,
         if not web._ok(updated):
             return {"ok": False, "form_id": form_id, "steps": steps, "changed": changed,
                     "error": f"created {form_id} but applying the fields failed: " + web.explain(updated, target)}
-        # verify at least the destination link actually landed before publishing
-        if edits.get("destination_url"):
-            back, _s, _p = web.read_page(form_id, target, source_owner, shape=shape)
-            pi = ((back.get("data") or {}).get("page_info") or {}) if isinstance(back.get("data"), dict) else {}
-            blob = str(pi.get("publish_data") or "") + str(pi.get("data") or "")
-            if edits["destination_url"] not in blob:
-                return {"ok": False, "form_id": form_id, "steps": steps, "changed": changed,
-                        "error": f"created {form_id} and TikTok accepted the update, but the destination link didn't read back — not publishing it"}
+        # read the WHOLE form back and compare every field asked for — a form that quietly
+        # kept the master's offer link would send paid traffic to the wrong place
+        step("4/5 Reading it back field by field")
+        got = _read_fields(web, form_id, target, source_owner, shape)
+        diffs = form_differences(edits, got) if got is not None else ["the form couldn't be read back"]
+        if diffs:
+            note = _quarantine(web, form_id, name, new_data, page.get("template_id"), thumb, target)
+            return {"ok": False, "form_id": form_id, "steps": steps, "changed": changed,
+                    "error": f"created {form_id} but it didn't take — " + "; ".join(diffs) + ". Not published" + note + "."}
         steps.append("fields applied and verified")
 
+    step("5/5 Publishing")
     published = web._post(f"/v1/publish/{form_id}/", {"account_id": target}, target)
     if not web._ok(published):
         return {"ok": False, "form_id": form_id, "steps": steps, "changed": changed,
                 "error": f"created {form_id} but publish failed: " + web.explain(published, target)}
     steps.append("published")
+    if changed:
+        live = _read_fields(web, form_id, target, source_owner, shape, published=True)
+        diffs = form_differences(edits, live) if live is not None else []
+        if diffs:
+            note = _quarantine(web, form_id, name, new_data, page.get("template_id"), thumb, target)
+            return {"ok": False, "form_id": form_id, "steps": steps, "changed": changed,
+                    "error": f"published {form_id}, but the live form differs — " + "; ".join(diffs) + note + ". Delete it in Ads Manager."}
     return {"ok": True, "form_id": form_id, "steps": steps, "changed": changed, "error": ""}
+
+
+FAILED_PREFIX = "FAILED – "
+
+
+def _quarantine(web, form_id: str, name: str, data: str, template_id, thumb, target: str) -> str:
+    """A form that failed its read-back keeps the template's exact NAME — and launches match
+    forms by name. Rename it so no launch (or "has it" check) ever picks it. Best effort."""
+    try:
+        r = web._post("/v1/update/", {"data": data, "page_id": form_id, "title": (FAILED_PREFIX + name)[:100],
+                                      "template_id": template_id, "thumbnail_uri": thumb, "account_id": target}, target)
+        if web._ok(r):
+            return f" (renamed “{FAILED_PREFIX}{name}” so no launch picks it)"
+    except Exception:      # noqa: BLE001
+        pass
+    return " — rename or delete it in Ads Manager: it still carries the template's name"

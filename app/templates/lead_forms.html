@@ -9,6 +9,52 @@
   </div>
 </div>
 
+<details class="card" id="formTemplates" style="margin-bottom:12px;" {% if form_templates %}open{% endif %}>
+  <summary class="card-header"><span class="card-title">Form templates{% if form_templates %} <span class="n">{{ form_templates|length }}</span>{% endif %}</span>
+    <span class="card-meta">a saved form offer — its wording, answers and offer link — built the same on every account you pick by copying a real published form; presets match it by name</span>
+    <button class="btn sm primary" type="button" id="ftNew" style="margin-left:auto;" {{ 'disabled' if not forms }}>+ New template</button></summary>
+  {% if form_templates %}
+  <div class="table-scroll"><table class="data dense">
+    <thead><tr><th>Template · form name</th><th>Asks</th><th>Then</th><th>Copies</th><th>Built on</th><th class="num"></th></tr></thead><tbody>
+    {% for t in form_templates %}
+    <tr>
+      <td><b>{{ t.name }}</b>{% if t.company_name %}<div class="muted" style="font-size:11px;">{{ t.company_name }}</div>{% endif %}</td>
+      <td style="font-size:12px;">{{ t.question_label or '—' }}{% if t.question_options %}<div class="muted" style="font-size:11px;">{{ t.question_options.replace('\n', ' / ') }}</div>{% endif %}</td>
+      <td style="font-size:12px;">{{ t.thanks_title or '—' }}{% if t.cta_title or t.destination_url %}<div class="muted mono" style="font-size:10.5px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{{ t.destination_url }}">{{ t.cta_title }} → {{ t.destination_url }}</div>{% endif %}</td>
+      <td style="font-size:11.5px;">{% if t.master_form_id %}{{ form_names.get(t.master_form_id) or t.master_form_id }}{% else %}<span class="pill err">pick one</span>{% endif %}</td>
+      <td><span class="pill {{ 'ok' if ftpl_cov.get(t.id, 0) == n_accounts and n_accounts else ('warn' if ftpl_cov.get(t.id, 0) else 'dim') }}">{{ ftpl_cov.get(t.id, 0) }} of {{ n_accounts }}</span></td>
+      <td class="num" style="white-space:nowrap;">
+        <button class="btn sm ft-build" type="button" data-id="{{ t.id }}" data-name="{{ t.name }}" {{ 'disabled' if not web_ready or not t.master_form_id }}>▶ Build on…</button>
+        <button class="btn sm ft-edit" type="button" data-t='{{ {"id": t.id, "name": t.name, "master_form_id": t.master_form_id, "question_label": t.question_label, "question_options": t.question_options, "company_name": t.company_name, "privacy_url": t.privacy_url, "thanks_title": t.thanks_title, "thanks_description": t.thanks_description, "cta_title": t.cta_title, "destination_url": t.destination_url}|tojson|forceescape }}'>Edit</button>
+        <button class="btn sm ghost ft-del" type="button" data-id="{{ t.id }}" data-name="{{ t.name }}">Remove</button>
+      </td>
+    </tr>
+    {% endfor %}</tbody></table></div>
+  {% else %}<div class="muted" style="font-size:12.5px;">{% if forms %}No templates yet. Save the wording of a form once — question, answers, thank-you screen, offer link — and build it on 30 new accounts in two clicks.{% else %}Sync first: a template copies one of your published forms.{% endif %}</div>{% endif %}
+  <div class="hint" style="margin-top:8px;">How a build works: the master form is copied onto the account through the page editor's web session, your wording written in, then the <b>whole form is read back field by field</b> — anything that didn't take stops the build before it's published. The number of answers comes from the master. Editing a template never changes forms already built.</div>
+</details>
+
+<details class="card" id="builds" style="margin-bottom:12px;" open>
+  <summary class="card-header"><span class="card-title">Builds</span><span class="card-meta">the real step each build is on · red after 90 s without progress · retry, cancel, TikTok's preview</span></summary>
+  <div id="abForms"><div class="muted" style="font-size:12.5px;">Loading…</div></div>
+</details>
+
+<div id="ftHolder" hidden><div class="ft-form" style="display:grid;gap:8px;">
+  <input type="hidden" name="id">
+  <label class="field"><span class="field-label">Template name · the form's name on every account</span><input type="text" name="name" maxlength="100" placeholder="FreeCash form"></label>
+  <label class="field"><span class="field-label">Copy from (master form)</span><select name="master_form_id"><option value="">— pick a published form —</option>{% for f in forms %}{% if 'PUBLISH' in (f.status or '')|upper %}<option value="{{ f.form_id }}">{{ f.name or f.form_id }} · {{ (names.get(f.owner_advertiser_id) or f.owner_advertiser_id)[:30] }}</option>{% endif %}{% endfor %}</select>
+    <span class="hint ft-master-hint">Its layout is kept; the fields below are written in. <button type="button" class="linklike ft-read">Fill from this form</button></span></label>
+  <div class="form-row"><label class="field"><span class="field-label">Question</span><input type="text" name="question_label" maxlength="300" placeholder="What device are you using?"></label>
+    <label class="field"><span class="field-label">Answers <span class="muted">(one per line)</span></span><textarea name="question_options" rows="2" placeholder="iPhone&#10;Android"></textarea></label></div>
+  <div class="form-row"><label class="field"><span class="field-label">Company name</span><input type="text" name="company_name" maxlength="120" placeholder="Acme Media LLC"></label>
+    <label class="field"><span class="field-label">Privacy policy link</span><input type="url" name="privacy_url" placeholder="https://your-site.com/privacy"></label></div>
+  <div class="form-row"><label class="field"><span class="field-label">Thank-you title</span><input type="text" name="thanks_title" maxlength="120" placeholder="You Qualify"></label>
+    <label class="field"><span class="field-label">Thank-you text</span><input type="text" name="thanks_description" maxlength="500" placeholder="Tap the button below to continue"></label></div>
+  <div class="form-row"><label class="field"><span class="field-label">Button text</span><input type="text" name="cta_title" maxlength="40" placeholder="CONTINUE"></label>
+    <label class="field"><span class="field-label">Offer link — where the button goes</span><input type="url" name="destination_url" placeholder="https://your-lander.com/fc"></label></div>
+  <div class="hint">Empty fields keep what the master form says.</div>
+</div></div>
+
 {% if forms and accounts %}
 <style>
 /* Live TikTok-style instant-form preview (tokens read from a real LEAD_GEN page) */
@@ -16,12 +62,12 @@
 .lfp-fields{flex:1 1 480px;max-width:600px;min-width:280px;}
 .lfp-side{flex:0 0 auto;position:sticky;top:12px;}
 .lfp-grp{margin-bottom:16px;}
-.lfp-grp-t{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted,#8a8f98);margin:0 0 9px;}
+.lfp-grp-t{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text-dim);margin:0 0 9px;}
 .lfp-2{display:grid;grid-template-columns:1fr 1fr;gap:10px 12px;}
 .lfp-2 .full{grid-column:1 / -1;}
 @media (max-width:640px){.lfp-2{grid-template-columns:1fr;}}
 .lfp-tabs{display:flex;gap:4px;justify-content:center;margin-bottom:8px;}
-.lfp-tab{font-size:12px;padding:3px 12px;border-radius:999px;border:1px solid var(--border,#333);background:transparent;color:var(--muted,#999);cursor:pointer;}
+.lfp-tab{font-size:12px;padding:3px 12px;border-radius:999px;border:1px solid var(--border,#333);background:transparent;color:var(--text-dim);cursor:pointer;}
 .lfp-tab.on{background:#FE2C55;border-color:#FE2C55;color:#fff;}
 .lfp-phone{width:288px;background:#000;border-radius:30px;padding:9px;box-shadow:0 8px 30px rgba(0,0,0,.35);}
 .lfp-screen{background:#fff;border-radius:22px;overflow:hidden;height:520px;display:flex;flex-direction:column;color:#161823;position:relative;}
@@ -146,6 +192,52 @@
 </div>
 {% endblock %}
 {% block scripts %}
+<script>
+(function () {
+  // ---- form templates: editor pop-up, build picker, live build queue (v150) ----
+  var holder = document.getElementById("ftHolder");
+  // in place (v151): re-read the page and swap the templates card — no reload
+  function softRefresh() {
+    return fetch(location.href, { credentials: "same-origin" }).then(function (r) { return r.text(); }).then(function (html) {
+      var doc = new DOMParser().parseFromString(html, "text/html"), n = doc.getElementById("formTemplates"), o = document.getElementById("formTemplates");
+      if (n && o) { o.innerHTML = n.innerHTML; o.open = true; }
+    }).catch(function () {});
+  }
+  function editor(t) {
+    t = t || {};
+    var node = holder.firstElementChild; holder.hidden = false;
+    node.querySelectorAll("[name]").forEach(function (el) { el.value = t[el.name] == null ? "" : t[el.name]; });
+    var foot = UI.el('<div style="display:flex;gap:8px;width:100%;align-items:center;"><span class="muted ft-msg" style="font-size:12px;"></span><button type="button" class="btn" data-close style="margin-left:auto;">Cancel</button><button type="button" class="btn primary ft-save">Save template</button></div>');
+    var m = UI.modal({ title: t.id ? "Edit form template" : "New form template", body: node, footer: foot, wide: true, onClose: function () { holder.appendChild(node); holder.hidden = true; } });
+    foot.querySelector(".ft-save").addEventListener("click", function () {
+      var btn = this; if (btn.disabled) return; btn.disabled = true;              // one click = one template
+      var f = {}; node.querySelectorAll("[name]").forEach(function (el) { f[el.name] = el.value; });
+      UI.post("/lead-forms/templates/save", f).then(function (r) {
+        if (r.ok) { m.close(); softRefresh(); adopsToast && adopsToast("ok", "Form template saved."); }
+        else { btn.disabled = false; foot.querySelector(".ft-msg").textContent = r.error || "Couldn't save."; }
+      }).catch(function () { btn.disabled = false; });
+    });
+    node.querySelector(".ft-read").onclick = function () {
+      var id = node.querySelector('[name="master_form_id"]').value; if (!id) { foot.querySelector(".ft-msg").textContent = "Pick the master form first."; return; }
+      foot.querySelector(".ft-msg").textContent = "Reading the form…";
+      UI.get("/lead-forms/master.json?form_id=" + encodeURIComponent(id)).then(function (r) {
+        if (!r.ok) { foot.querySelector(".ft-msg").textContent = r.error || "Couldn't read it."; return; }
+        var f = r.fields; ["question_label", "company_name", "privacy_url", "thanks_title", "thanks_description", "cta_title", "destination_url"].forEach(function (k) { var el = node.querySelector('[name="' + k + '"]'); if (el && !el.value) el.value = f[k] || ""; });
+        var o = node.querySelector('[name="question_options"]'); if (o && !o.value) o.value = (f.question_options || []).join("\n");
+        foot.querySelector(".ft-msg").textContent = "Filled from the master — it has " + (f.question_options || []).length + " answer(s); a template keeps that number.";
+      });
+    };
+  }
+  document.addEventListener("click", function (e) {
+    if (e.target.closest("#ftNew")) { e.preventDefault(); e.stopPropagation(); editor(); return; }
+    var ed = e.target.closest(".ft-edit"); if (ed) { editor(JSON.parse(ed.dataset.t)); return; }
+    var dl = e.target.closest(".ft-del");
+    if (dl) { UI.confirm({ title: "Remove template “" + dl.dataset.name + "”?", text: "Forms already built from it stay on their accounts.", ok: "Remove", danger: true }).then(function (y) { if (y) UI.post("/lead-forms/templates/" + dl.dataset.id + "/delete").then(function () { softRefresh(); }); }); return; }
+    var bb = e.target.closest(".ft-build"); if (bb && !bb.disabled && window.AB) AB.pickNeeding({ kind: "form", templateId: bb.dataset.id, name: bb.dataset.name });
+  });
+  document.addEventListener("DOMContentLoaded", function () { if (window.AB) AB.mount(document.getElementById("abForms"), "form"); });
+})();
+</script>
 <script>
 (function () {
   // One row per form NAME; filters (search + Business Center + status + coverage) and an

@@ -38,7 +38,7 @@
       <label class="field"><input type="text" name="code" class="code" inputmode="numeric" autocomplete="one-time-code" autofocus required maxlength="7" placeholder="000000"></label>
       <button class="btn primary" type="submit" style="width:100%;justify-content:center;">Turn on and continue</button>
     </form>
-    <p class="hint" style="margin-top:12px;"><a href="/logout">Log out instead</a></p>
+    <p class="hint" style="margin-top:12px;"><form method="post" action="/logout" style="display:inline;"><button type="submit" class="linklike">Log out instead</button></form></p>
     {% endif %}
   </div>
 </div>

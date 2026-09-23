@@ -115,7 +115,7 @@ check("one posts read per profile, under the BC (paging is tiktok_api's job)", [
 p1 = r["profiles"][0]
 check("every post listed, most-posts profile first, blank identities dropped", len(r["profiles"]) == 2 and p1["name"] == "creator.one" and len(p1["videos"]) == 60 and r["total"] == 61)
 v = p1["videos"][1]
-check("a video post: cover + playable preview + duration from video_info, url from the handle, created", v == {"item_id": "7001", "text": "post 1", "cover": "https://cov/1", "preview": "https://play/1", "slides": 0, "type": "video", "auth_code": "", "url": "https://www.tiktok.com/@creator.one/video/7001", "created": "2026-09-02 10:00:00", "duration": 12}, str(v))
+check("a video post: cover + playable preview + duration from video_info, url from the handle, created", v == {"item_id": "7001", "text": "post 1", "cover": "https://cov/1", "preview": "https://play/1", "slides": 0, "type": "video", "auth_code": "", "url": "https://www.tiktok.com/@creator.one/video/7001", "created": "2026-09-02 10:00:00", "duration": 12, "via": "bc"}, str(v))
 check("a photo post: cover = its first image, slide count; share_url and flat poster_url still understood", p1["videos"][0]["type"] == "carousel" and p1["videos"][0]["cover"] == "https://img/0/1" and p1["videos"][0]["slides"] == 2 and r["profiles"][1]["videos"][0]["url"] == "https://www.tiktok.com/@creator.two/video/8001" and r["profiles"][1]["videos"][0]["cover"] == "https://cov/x")
 check("a BC with no usable account says so", pv.fetch_bc(db, sc, "BC9")["ok"] is False and "No enabled, connected ad account" in pv.fetch_bc(db, sc, "BC9")["error"])
 

@@ -544,13 +544,20 @@
       if (!drawer) return;
       if (d.error) { drawer.body.innerHTML = '<div class="flash err">' + esc(d.error) + "</div>"; return; }
       var c = d.campaign, m = d.metrics, y = d.yesterday;
-      var st = c.blocked ? '<span class="pill err">blocked · ' + esc(c.blocked) + "</span>" : (c.status === "ENABLE" ? '<span class="pill ok">live</span>' : '<span class="pill warn">paused</span>');
+      var hh = c.health || null, hOff = !hh || hh.state === "ACTIVE" || hh.state === "UNKNOWN" || c.status !== "ENABLE";
+      var st = c.blocked ? '<span class="pill err">blocked · ' + esc(c.blocked) + "</span>"
+        : (c.status !== "ENABLE" ? '<span class="pill warn">paused</span>'
+        : (!hOff ? '<span class="pill ' + esc(hh.pill) + '">' + esc(hh.title) + (hh.since_ago ? " · " + esc(hh.since_ago) : "") + "</span>" : '<span class="pill ok">live</span>'));
+      // what the state means and what to do — TikTok's own status kept alongside, never replaced
+      var hExplain = (!hOff && !c.blocked) ? '<div class="flash ' + (hh.pill === "err" ? "err" : "") + '" style="margin:0 0 10px;font-size:12.5px;"><b>' + esc(hh.title) + ".</b> " + esc(hh.meaning) + " " + esc(hh.fix)
+        + (hh.mix ? '<div class="muted" style="font-size:11.5px;margin-top:4px;">Ad groups: ' + esc(hh.mix) + "</div>" : "")
+        + (hh.raw ? '<div class="muted" style="font-size:11px;margin-top:2px;">TikTok reports: ' + esc(hh.raw) + "</div>" : "") + "</div>" : "";
       drawer.setTitle(c.name, esc(c.account) + (c.bc ? " · " + esc(c.bc) : "") + " · " + st + (c.launched_ago ? " · launched " + esc(c.launched_ago) : "") + (c.smart_plus ? ' · <span class="pill dim">S+</span>' : ""));
       function kpi(l, v, cls) { return '<div class="kpi"><div class="lab">' + l + '</div><div class="val ' + (cls || "") + '">' + v + "</div></div>"; }
       var has = !!c.source;
       var profitTxt = has ? ((m.profit > 0 ? "+" : "") + money(m.profit, Math.abs(m.profit) >= 100 ? 0 : 2)) : "—";
       var yTxt = has && (y.spend || y.revenue) ? ("yesterday " + (y.profit >= 0 ? "+" : "") + money(y.profit, 0) + " · " + y.roas.toFixed(2) + "×") : "";
-      var html =
+      var html = hExplain +
         '<div class="kpis kpis-4" style="margin:0;gap:8px;">' + kpi("Profit", profitTxt, has ? (m.profit >= 0 ? "good" : "bad") : "") + kpi("ROAS", has && m.spend ? m.roas.toFixed(2) + "×" : "—") + kpi("Spend", money(m.spend)) + kpi("EPC", has && m.clicks ? money(m.epc) : "—") + "</div>" +
         (yTxt ? '<div class="muted" style="font-size:11.5px;margin-top:-6px;">' + yTxt + "</div>" : "") +
         '<div><div class="drawer-sec">Today by hour · yesterday dashed</div><div id="dwChart"></div><div style="display:flex;justify-content:space-between;font-size:10.5px;color:var(--faint);"><span>0h</span><span>6h</span><span>12h</span><span>18h</span><span>23h</span></div>' +
@@ -677,7 +684,7 @@
     return fetch(location.pathname + location.search, { credentials: "same-origin", headers: { "X-Requested-With": "fetch" } })
       .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.text(); })
       .then(function (html) { swapFrom(new DOMParser().parseFromString(html, "text/html")); })
-      .catch(function () { location.reload(); })
+      .catch(function () { adopsToast && adopsToast("err", "Couldn't refresh the list — it tries again on its own."); })   // a blip never reloads the page
       .then(function () { setBusy(false); });
   }
   document.addEventListener("adops:job", function (e) {

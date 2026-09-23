@@ -73,6 +73,18 @@ def _get_favs(db: Session, sc) -> list[str]:
         return []
 
 
+def profile_bcs(db: Session, accounts: list) -> list[dict]:
+    """The Business Centers behind these accounts, for the profile-video picker
+    ({id, name, accounts}). Shared by the Super Launcher and the Warm-up page."""
+    bcs_by_id = {b.bc_id: b for b in db.query(models.BusinessCenter).all()}
+    bc_counts: dict[str, int] = {}
+    for a in accounts:
+        if a.owner_bc_id:
+            bc_counts[a.owner_bc_id] = bc_counts.get(a.owner_bc_id, 0) + 1
+    return sorted(({"id": bid, "name": (bcs_by_id[bid].name if bid in bcs_by_id else bid), "accounts": n}
+                   for bid, n in bc_counts.items()), key=lambda b: b["name"].lower())
+
+
 @router.get("/super-launcher")
 def page(request: Request, db: Session = Depends(get_db)):
     from .. import scope as scope_mod
@@ -93,13 +105,7 @@ def page(request: Request, db: Session = Depends(get_db)):
         dest_labels[p.id] = launch_mod.destination_label(fields)
     picker = account_picker_context(db, accounts)
     preset_info = preset_facts(presets)
-    bcs_by_id = {b.bc_id: b for b in db.query(models.BusinessCenter).all()}
-    bc_counts: dict[str, int] = {}
-    for a in accounts:
-        if a.owner_bc_id:
-            bc_counts[a.owner_bc_id] = bc_counts.get(a.owner_bc_id, 0) + 1
-    bcs = sorted(({"id": bid, "name": (bcs_by_id[bid].name if bid in bcs_by_id else bid), "accounts": n}
-                  for bid, n in bc_counts.items()), key=lambda b: b["name"].lower())
+    bcs = profile_bcs(db, accounts)
     return render(request, "super_launcher.html", {
         "accounts": accounts, "presets": presets, "sparks": sparks,
         **picker, "preset_info_json": json.dumps(preset_info), "bcs_json": json.dumps(bcs),
@@ -182,7 +188,41 @@ def profile_videos_json(request: Request, db: Session = Depends(get_db)):
     if not any(a.owner_bc_id == bc_id and sc.allows(a.advertiser_id)
                for a in db.query(models.AdAccount).filter(models.AdAccount.owner_bc_id == bc_id)):
         return JSONResponse({"ok": False, "error": "That Business Center has no account in this view.", "profiles": []})
-    return JSONResponse(profile_videos.list_for_bc(db, sc, bc_id, refresh=request.query_params.get("refresh") == "1"))
+    out = profile_videos.list_for_bc(db, sc, bc_id, refresh=request.query_params.get("refresh") == "1")
+    # TikTok's verdict on earlier launches of each post — read fresh from the DB (the post
+    # list itself is cached; this is not)
+    from .. import review
+    ids = [v.get("item_id") for p in out.get("profiles") or [] for v in p.get("videos") or []]
+    return JSONResponse({**out, "reviews": review.for_items(db, models, sc, ids)})
+
+
+@router.get("/super-launcher/post-history.json")
+def post_history_json(request: Request, db: Session = Depends(get_db)):
+    """Every launch of one TikTok post in this workspace (the profile picker's big player):
+    when, which account, how it went, TikTok's verdict, spend since. ?item_id=…"""
+    from sqlalchemy import func
+    from .. import review, scope as scope_mod
+    sc = scope_mod.for_request(request, db)
+    item_id = (request.query_params.get("item_id") or "").strip()
+    if not item_id.isdigit():
+        return JSONResponse({"ok": False, "error": "no post", "launches": []})
+    sids = [s for (s,) in sc.owned(db.query(models.SparkCode.id), models.SparkCode).filter(models.SparkCode.tiktok_item_id == item_id)]
+    logs = (db.query(models.LaunchLog).filter(models.LaunchLog.spark_code_id.in_(sids or [0]))
+            .order_by(models.LaunchLog.id.desc()).limit(40).all())
+    logs = [lg for lg in logs if sc.allows(lg.advertiser_id)]
+    cids = [lg.campaign_id for lg in logs if lg.campaign_id]
+    spend = {c: float(s or 0) for c, s in db.query(models.SpendSnapshot.campaign_id, func.sum(models.SpendSnapshot.spend))
+             .filter(models.SpendSnapshot.campaign_id.in_(cids or [""])).group_by(models.SpendSnapshot.campaign_id)}
+    names = {a.advertiser_id: (a.advertiser_name or a.advertiser_id)
+             for a in db.query(models.AdAccount).filter(models.AdAccount.advertiser_id.in_([lg.advertiser_id for lg in logs] or [""]))}
+    from datetime import datetime as _dt
+    now = _dt.utcnow()
+    out = [{"at": lg.created_at.strftime("%Y-%m-%d %H:%M") if lg.created_at else "", "account": names.get(lg.advertiser_id, lg.advertiser_id),
+            "ok": bool(lg.ok), "campaign_id": lg.campaign_id or "", "preset": lg.template_name or "",
+            "verdict": review._verdict_of(lg, now) if (lg.ok or lg.campaign_id) else "",
+            "error": ("" if lg.ok else (lg.error_message or lg.error_code or "")[:140]),
+            "spend": round(spend.get(lg.campaign_id or "", 0.0), 2), "batch": lg.batch_ref or ""} for lg in logs]
+    return JSONResponse({"ok": True, "launches": out, "summary": review.summary(logs)})
 
 
 # ---------------------------------------------------------------------------
@@ -394,7 +434,28 @@ def preset_facts(presets) -> dict:
     return out
 
 
-def eligible_accounts(db: Session, policy: str, limit: int, owner_user_id: int | None = None) -> list[models.AdAccount]:
+def geo_ok_fn(db: Session, fields: dict | None, accounts: list | None = None):
+    """advertiser → (ok, reason) under each account's geo policy for this preset's countries
+    (weekly cache, read in one go for `accounts` — auto-pick looks at many). Presets on 'each
+    account's own country' target nothing up front, so everything passes."""
+    from .. import geo_fit
+    locs = [] if not fields or fields.get("account_default_geo") else list(fields.get("location_ids") or [])
+    wanted = geo_fit.wanted_countries(db, models, locs) if locs else []
+    need = [a.advertiser_id for a in (accounts or []) if (getattr(a, "geo_policy", "") or "any") != "any"] if wanted else []
+    known = geo_fit.targetable_map(db, models, need) if need else {}
+
+    def ok(a) -> tuple[bool, str]:
+        pol = getattr(a, "geo_policy", "") or "any"
+        if not wanted or pol == "any":
+            return True, ""
+        t = known[a.advertiser_id] if a.advertiser_id in known else geo_fit.cached_targetable(db, a.advertiser_id)
+        good, _kind, why = geo_fit.policy_fit(pol, t, wanted)
+        return good, why
+    return ok
+
+
+def eligible_accounts(db: Session, policy: str, limit: int, owner_user_id: int | None = None,
+                      fields: dict | None = None, exclude: set | None = None) -> list[models.AdAccount]:
     """Auto-pick: which accounts qualify under the preset's account policy.
 
     new_only — never had ANY campaign (no CampaignRecord, no successful launch)
@@ -416,8 +477,11 @@ def eligible_accounts(db: Session, policy: str, limit: int, owner_user_id: int |
     from .. import rules as rules_mod
     bcs = {b.bc_id: b for b in db.query(models.BusinessCenter).all()}
     punished = account_level_blocks(db)
+    geo_ok = geo_ok_fn(db, fields, accounts)
     picked = []
     for a in accounts:
+        if exclude and a.advertiser_id in exclude:
+            continue  # left out on the Review step
         if block_reason(a, bcs.get(a.owner_bc_id or ""), punished):
             continue  # suspended account / punished BC / account-level campaign block: never auto-picked
         if rules_mod.in_cooldown(a):
@@ -428,10 +492,17 @@ def eligible_accounts(db: Session, policy: str, limit: int, owner_user_id: int |
         else:  # reuse
             if a.advertiser_id in with_active:
                 continue
+        if not geo_ok(a)[0]:
+            continue  # its geo policy keeps it for other countries (v151)
         picked.append(a)
         if len(picked) >= limit:
             break
     return picked
+
+
+def _exclude_ids(form) -> list[str]:
+    """Accounts the Review step found blocked and the user chose to leave out."""
+    return [x for x in str(form.get("exclude_ids") or "").replace(" ", "").split(",") if x.isdigit()][:500]
 
 
 @router.post("/super-launcher/launch")
@@ -527,14 +598,16 @@ async def launch(request: Request, db: Session = Depends(get_db)):
         if queue_ok:
             from .. import queue_worker
             queue_worker.enqueue(db, template.id, spark_id, auto_count=count,
-                                 use_library=use_library, launched_by=sc.owner_for_new)
+                                 use_library=use_library, launched_by=sc.owner_for_new, exclude=_exclude_ids(form))
             clear_draft(db, sc)
             return RedirectResponse("/queue?ok=queued", status_code=303)
-        accounts = eligible_accounts(db, fields.get("account_policy", "new_only"), count, owner_user_id=sc.user_id)
+        accounts = eligible_accounts(db, fields.get("account_policy", "new_only"), count, owner_user_id=sc.user_id,
+                                     fields=fields, exclude=set(_exclude_ids(form)))
         if not accounts:
             return RedirectResponse("/super-launcher?err=noeligible", status_code=303)
     else:
-        advertiser_ids = [a for a in form.getlist("advertiser_ids") if sc.allows(a)]   # only the view's accounts
+        skip = set(_exclude_ids(form))       # blocked on the Review step and left out (v151)
+        advertiser_ids = [a for a in form.getlist("advertiser_ids") if sc.allows(a) and a not in skip]   # only the view's accounts
         if not advertiser_ids:
             return RedirectResponse("/super-launcher?err=pick", status_code=303)
         if queue_ok:

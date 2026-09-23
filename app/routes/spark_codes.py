@@ -50,6 +50,8 @@ def spark_list(request: Request, db: Session = Depends(get_db)):
     src_map = pnl_data.campaign_source_map(db)
     pb = pnl_data.revenue_by_source(db, timeutil.local_midnight_utc(-365), timeutil.local_midnight_utc(1))
     camp_names = {c.campaign_id: c for c in db.query(models.CampaignRecord).filter(models.CampaignRecord.campaign_id.in_(cids)).all()} if cids else {}
+    from .. import review
+    rvs = review.for_sparks(db, models, [c.id for c in codes])
     rows = []
     creators: dict[str, int] = {}
     for c in codes:
@@ -63,7 +65,8 @@ def spark_list(request: Request, db: Session = Depends(get_db)):
         revenue = sum(float(pb.get(sx, {}).get("revenue", 0.0)) for sx in srcs)
         live = sum(1 for lg in lgs if lg.campaign_id in camp_names and camp_names[lg.campaign_id].operation_status == "ENABLE")
         rows.append({"c": c, "creator": cname, "mine": cname in my_creators, "tests": len(lgs), "live": live, "spend": spend, "revenue": revenue,
-                     "profit": revenue - spend, "roas": (revenue / spend) if spend else 0.0, "has": bool(srcs)})
+                     "profit": revenue - spend, "roas": (revenue / spend) if spend else 0.0, "has": bool(srcs),
+                     "review": rvs.get(c.id) or {}})
     def _ok(r):
         c = r["c"]
         if mine_only and my_creators and r["creator"] not in my_creators:
@@ -91,14 +94,16 @@ def spark_list(request: Request, db: Session = Depends(get_db)):
     })
 
 
-def pick_item(s) -> dict:
-    """One spark code the way the pickers (Super Launcher board, Single campaign) show it."""
+def pick_item(s, rv: dict | None = None) -> dict:
+    """One spark code the way the pickers (Super Launcher board, Single campaign) show it.
+    `rv` = its review history (review.for_sparks) — TikTok's verdict on its earlier launches."""
     from ..templating import _ago
     creator = s.group.name if s.group else ""
     return {"id": s.id, "name": s.name or s.code[:16], "code": s.code, "creator": creator, "type": (s.media_type or "VIDEO").lower(),
             "state": "fresh" if s.status == "active" else (s.status or "used"), "thumb": s.thumbnail_url or "",
             "post_url": s.tiktok_post_url or "", "source": s.source or "", "uses": int(s.use_count or 0),
-            "last_used": _ago(s.last_used_at) if s.last_used_at else "", "added": _ago(s.created_at) if s.created_at else ""}
+            "last_used": _ago(s.last_used_at) if s.last_used_at else "", "added": _ago(s.created_at) if s.created_at else "",
+            "review": rv or {}, "check": {"state": s.check_state or "", "error": s.check_error or ""}}
 
 
 @router.get("/spark-codes/pick.json")
@@ -119,16 +124,49 @@ def pick_json(request: Request, db: Session = Depends(get_db)):
         query = query.filter(models.SparkCode.status == "active")
     elif state == "used":
         query = query.filter(models.SparkCode.status != "active")
-    items = []
+    from .. import review
+    rows = []
     for s in query.limit(500):
         creator = s.group.name if s.group else ""
         hay = f"{s.name} {s.code} {creator} {s.source}".lower()
         if q and q not in hay:
             continue
-        items.append(pick_item(s))
+        rows.append(s)
+    rvs = review.for_sparks(db, models, [s.id for s in rows])
+    items = [pick_item(s, rvs.get(s.id)) for s in rows]
     counts = {"fresh": sc.owned(db.query(models.SparkCode), models.SparkCode).filter_by(status="active").count(),
               "used": sc.owned(db.query(models.SparkCode), models.SparkCode).filter(models.SparkCode.status != "active").count()}
     return JSONResponse({"items": items, "counts": counts})
+
+
+@router.get("/thumbs/{kind}/{key}.jpg")
+def owned_thumb(kind: str, key: str, request: Request, db: Session = Depends(get_db)):
+    """A cover we copied (thumbs.py). Spark covers are the workspace's own; profile-post covers
+    are public posts of a Business Center profile. A week of browser cache — they never change."""
+    from fastapi.responses import FileResponse, Response
+    from .. import thumbs
+    p = thumbs.path_for(kind, key)
+    if p is None or not p.exists():
+        return Response(status_code=404)
+    if kind == "sp":
+        row = db.get(models.SparkCode, int(key)) if key.isdigit() else None
+        if row is None or not scope_mod.for_request(request, db).owns(row):
+            return Response(status_code=404)
+    return FileResponse(str(p), media_type="image/jpeg", headers={"Cache-Control": "private, max-age=604800"})
+
+
+@router.post("/spark-codes/{code_id}/recheck")
+def recheck(code_id: int, request: Request, db: Session = Depends(get_db)):
+    """Check one code on TikTok again (the ✕ / ⚠ chip's action)."""
+    from fastapi.responses import JSONResponse
+    from .. import spark_check
+    row = db.get(models.SparkCode, code_id)
+    if row is None or not scope_mod.for_request(request, db).owns(row):
+        return JSONResponse({"ok": False, "error": "That spark code is gone."}, status_code=404)
+    row.check_state, row.check_attempts, row.check_next_at, row.check_error = "checking", 0, None, ""
+    db.commit()
+    spark_check.kick(db, [row.id])
+    return JSONResponse({"ok": True, "check": spark_check.view(row)})
 
 
 @router.post("/spark-codes/add")
@@ -138,10 +176,13 @@ def add_code(name: str = Form(""), code: str = Form(...), media_type: str = Form
     group = None
     if group_name.strip():
         group = _group_in_view(db, sc, group_name.strip())
-    db.add(models.SparkCode(name=name.strip(), code=code.strip(), media_type=media_type, owner_user_id=sc.owner_for_new,
-                            tiktok_post_url=tiktok_post_url.strip(), source=source.strip(),
-                            group_id=group.id if group else None))
+    row = models.SparkCode(name=name.strip(), code=code.strip(), media_type=media_type, owner_user_id=sc.owner_for_new,
+                           tiktok_post_url=tiktok_post_url.strip(), source=source.strip(),
+                           group_id=group.id if group else None, check_state="checking")
+    db.add(row)
     db.commit()
+    from .. import spark_check
+    spark_check.kick(db, [row.id])              # checked on TikTok now, in the background
     return RedirectResponse("/spark-codes?ok=added", status_code=303)
 
 
@@ -302,11 +343,13 @@ async def add_bulk(request: Request, db: Session = Depends(get_db)):
         g = group_for(r["group_name"] or default_group)
         row = models.SparkCode(name=r["name"] or r["code"][:12], code=r["code"], media_type=r["media_type"],
                                tiktok_post_url=r["tiktok_post_url"], source=r["source"] or default_source,
-                               group_id=g.id if g else None, owner_user_id=sc.owner_for_new)
+                               group_id=g.id if g else None, owner_user_id=sc.owner_for_new, check_state="checking")
         db.add(row)
         touched.append(row)
         added += 1
     db.commit()
+    from .. import spark_check
+    spark_check.kick(db, [r.id for r in touched if (r.check_state or "") == "checking"])
     msg = f"added {added} spark code(s)"
     if dupes:
         msg += f", {dupes} already existed"
@@ -423,6 +466,7 @@ def auto_grab(request: Request, db: Session = Depends(get_db)):
                     thumbnail_url=(info.get("video_cover_url") or info.get("poster_url") or ""),
                     tiktok_item_id=item_id,
                     group_id=group.id,
+                    check_state="ok",              # listed by the identity itself — nothing to check
                 ))
                 grabbed += 1
     db.commit()

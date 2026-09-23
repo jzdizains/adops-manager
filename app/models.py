@@ -15,6 +15,7 @@ from . import ctx
 from sqlalchemy.orm import relationship
 
 from .database import Base
+from .secrets_box import EncryptedText
 
 
 def utcnow():
@@ -43,7 +44,7 @@ class BusinessCenter(Base):
     created_at = Column(DateTime, default=utcnow)
     # v116 — several TikTok logins: the token of the login that lists this BC, and
     # whose workspace it shows in (a BC seen by two logins keeps its first owner)
-    access_token = Column(Text, default="")
+    access_token = Column(EncryptedText, default="")       # sealed at rest (secrets_box.py)
     owner_user_id = Column(Integer, nullable=True, index=True)
 
 
@@ -59,6 +60,7 @@ class Alert(Base):
     level = Column(String, default="warn")         # info | warn | err
     message = Column(Text, default="")
     acknowledged = Column(Boolean, default=False)
+    href = Column(String, default="")              # optional: where the notice opens (e.g. the campaign)
     created_at = Column(DateTime, default=utcnow, index=True)
 
 
@@ -68,15 +70,18 @@ class AdAccount(Base):
     id = Column(Integer, primary_key=True)
     advertiser_id = Column(String, unique=True, index=True, nullable=False)
     advertiser_name = Column(String, default="")
-    access_token = Column(Text, default="")          # shared across advertisers
-    refresh_token = Column(Text, default="")
+    access_token = Column(EncryptedText, default="")          # shared across advertisers · sealed at rest
+    refresh_token = Column(EncryptedText, default="")
     token_expires_at = Column(DateTime, nullable=True)
     refresh_expires_at = Column(DateTime, nullable=True)
     status = Column(String, default="")              # TikTok advertiser status
+    status_changed_at = Column(DateTime, nullable=True)   # when `status` last changed (set by the listener below)
     owner_bc_id = Column(String, default="")
     currency = Column(String, default="USD")
     timezone = Column(String, default="")
     region_codes = Column(Text, default="")          # cached /tool/region result (JSON)
+    # what geos this account is FOR (v151, geo_fit.POLICIES): any | auto | us_only | non_us
+    geo_policy = Column(String, default="any")
     balance = Column(Float, default=0.0)
     enabled = Column(Boolean, default=True)          # operator can hide accounts
     owner_user_id = Column(Integer, nullable=True, index=True, default=ctx.owner_default)   # whose workspace this account is in (v116)
@@ -89,6 +94,21 @@ class AdAccount(Base):
 # ---------------------------------------------------------------------------
 # Presets ("templates")
 # ---------------------------------------------------------------------------
+
+from sqlalchemy import event as _event  # noqa: E402
+
+
+@_event.listens_for(AdAccount.status, "set", active_history=True)
+def _account_status_changed(target, value, oldvalue, initiator):
+    """Every writer of AdAccount.status (issue scan, sync, launcher refresh…) dates the
+    change, so a week-old suspension reads "7 days", not "3 min ago" after a rescan.
+    A first value (new row / never known) isn't a change."""
+    from sqlalchemy.orm.base import NO_VALUE
+    if oldvalue is NO_VALUE or oldvalue is None or oldvalue == "":
+        return
+    if (value or "") != (oldvalue or ""):
+        target.status_changed_at = utcnow().replace(tzinfo=None)     # naive UTC, like every stored time
+
 
 class Template(Base):
     __tablename__ = "templates"
@@ -199,7 +219,8 @@ class User(Base):
     active = Column(Boolean, default=True)
     must_change_password = Column(Boolean, default=False)
     session_version = Column(Integer, default=0)
-    totp_secret = Column(String, default="")
+    totp_secret = Column(EncryptedText, default="")        # sealed at rest
+    totp_last_step = Column(Integer, default=0)            # replay guard: the last 30-s step a code was accepted for
     totp_recovery = Column(Text, default="[]")
     totp_enabled_at = Column(String, default="")
     created_at = Column(DateTime, default=utcnow)
@@ -288,6 +309,9 @@ class DisplayCardUpload(Base):
     image_id = Column(String, default="")
     portfolio_id = Column(String, default="")
     upload_md5 = Column(String, default="")
+    status = Column(String, default="")                    # "" (made at launch) | ok | failed  (v147 push)
+    error = Column(Text, default="")
+    updated_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=utcnow)
 
 
@@ -328,7 +352,7 @@ class SparkCode(Base):
     media_type = Column(String, default="VIDEO")           # VIDEO | CAROUSEL
     tiktok_post_url = Column(String, default="")
     thumbnail_url = Column(Text, default="")
-    tiktok_item_id = Column(String, default="")            # set for auto-grabbed sparks; null/"" for hand-entered
+    tiktok_item_id = Column(String, default="", index=True)   # set for auto-grabbed sparks; null/"" for hand-entered
     # a post picked from a Business-Center profile (Super Launcher › Profile videos): the
     # profile it belongs to, so the launch runs it under THAT identity on every account of
     # the BC instead of guessing from whichever identity happens to list the item
@@ -338,6 +362,12 @@ class SparkCode(Base):
     status = Column(String, default="active")              # active | used | expired
     use_count = Column(Integer, default=0)
     last_used_at = Column(DateTime, nullable=True)
+    # checked on paste (spark_check.py): "" never (pre-v147) | checking | ok | bad | error
+    check_state = Column(String, default="", index=True)
+    check_error = Column(Text, default="")
+    check_attempts = Column(Integer, default=0)
+    check_next_at = Column(DateTime, nullable=True)
+    checked_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=utcnow)
 
     group = relationship("SparkCodeGroup", back_populates="codes")
@@ -389,6 +419,10 @@ class PageTemplate(Base):
     hand_cursor = Column(Boolean, default=True)
     bottom_fixed = Column(Boolean, default=True)
     color_scheme = Column(String, default="light")         # light | dark
+    # v150: the published page it's COPIED from (web API, no browser) — the button re-pointed
+    # to `url` / `button_text`; empty = a published page of this name, else the browser builder
+    master_page_id = Column(String, default="")
+    master_advertiser_id = Column(String, default="")
     created_at = Column(DateTime, default=utcnow)
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
@@ -476,8 +510,9 @@ class LaunchLog(Base):
     advertiser_name = Column(String, default="")
     template_id = Column(Integer, nullable=True)
     template_name = Column(String, default="")
-    campaign_id = Column(String, default="")
-    spark_code_id = Column(Integer, nullable=True)
+    campaign_id = Column(String, default="", index=True)
+    spark_code_id = Column(Integer, nullable=True, index=True)
+    creative_id = Column(Integer, nullable=True, index=True)   # library video / carousel it launched (v146)
     source = Column(String, default="", index=True)        # source active on this launch
     landing_url = Column(Text, default="")                 # the exact landing URL sent to TikTok (carries ?source=)
     optimization_event = Column(String, default="")        # pixel event the ad group optimises for (ON_WEB_REGISTER, SHOPPING…)
@@ -485,6 +520,14 @@ class LaunchLog(Base):
     error_code = Column(String, default="")
     error_message = Column(Text, default="")               # plain-English
     error_technical = Column(Text, default="")             # raw TikTok detail (copyable)
+    # warm-up launches (Reach, small budget): paused automatically once TikTok approves the ad
+    warmup = Column(Boolean, default=False, index=True)
+    warmup_state = Column(String, default="")              # "" | waiting | paused | rejected | stopped | expired
+    warmup_done_at = Column(DateTime, nullable=True)       # when it was paused / resolved
+    warmup_spend = Column(Float, default=0.0)              # what it spent before the pause
+    # TikTok's review verdict, kept after the campaign is paused or gone (review.py)
+    review = Column(String, default="", index=True)        # "" | approved | rejected
+    review_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=utcnow, index=True)
 
 
@@ -646,6 +689,172 @@ class AdgroupSnapshot(Base):
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
 
+class ProfileFetch(Base):
+    """One Business Center's profile listing, last read from TikTok (profile_videos.py):
+    the profiles in order with their avatar / error. The posts are ProfilePost rows."""
+    __tablename__ = "profile_fetches"
+
+    id = Column(Integer, primary_key=True)
+    bc_id = Column(String, unique=True, index=True, nullable=False)
+    via = Column(String, default="")                       # the ad account TikTok was asked through
+    profiles = Column(Text, default="[]")                  # [{identity_id, identity_type, name, avatar, error}]
+    error = Column(Text, default="")
+    fetched_at = Column(DateTime, default=utcnow)
+
+
+class ProfilePost(Base):
+    """A post of a Business-Center profile, kept between reads so the picker opens on the
+    database instead of re-reading every profile (and survives a restart)."""
+    __tablename__ = "profile_posts"
+    __table_args__ = (UniqueConstraint("bc_id", "identity_id", "item_id", name="uq_profile_post"),)
+
+    id = Column(Integer, primary_key=True)
+    bc_id = Column(String, index=True, nullable=False)
+    identity_id = Column(String, index=True, nullable=False)
+    item_id = Column(String, index=True, nullable=False)
+    pos = Column(Integer, default=0)                       # TikTok's order within the profile
+    text = Column(Text, default="")
+    type = Column(String, default="video")
+    slides = Column(Integer, default=0)
+    duration = Column(Float, default=0.0)
+    created = Column(String, default="")
+    url = Column(Text, default="")
+    auth_code = Column(Text, default="")
+    cover = Column(Text, default="")                       # TikTok's signed URL (expires ~1 h) — thumbs.py owns a copy
+    preview = Column(Text, default="")
+    # v152: a post merged in from the profile's spark-code (AUTH_CODE) identity — launched
+    # through that identity (and its code), not the Business Center one
+    via = Column(String, default="")                       # "" / "bc" | "code"
+    via_identity = Column(String, default="")
+    seen_at = Column(DateTime, default=utcnow)
+
+
+class LabBoard(Base):
+    """A testing board (lab.py): one offer / question, the experiments run for it."""
+    __tablename__ = "lab_boards"
+
+    id = Column(Integer, primary_key=True)
+    owner_user_id = Column(Integer, nullable=True, index=True, default=ctx.owner_default)
+    title = Column(String, default="")
+    offer = Column(String, default="")
+    description = Column(Text, default="")
+    archived = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow)
+
+
+class LabTest(Base):
+    """One experiment: what it changes, why, which launches ran it, how it came out. Its
+    numbers are read live from the linked launches — nothing is copied."""
+    __tablename__ = "lab_tests"
+
+    id = Column(Integer, primary_key=True)
+    board_id = Column(Integer, ForeignKey("lab_boards.id"), index=True)
+    parent_id = Column(Integer, nullable=True)               # an iteration of another test
+    title = Column(String, default="")
+    hypothesis = Column(Text, default="")
+    variable = Column(String, default="")                   # what this test changes (hook, CTA, geo, bid…)
+    status = Column(String, default="planned")              # planned | running | winner | failed | inconclusive
+    batch_refs = Column(Text, default="")                   # launch batch refs, comma-separated
+    learning = Column(Text, default="")
+    position = Column(Integer, default=0)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow)
+
+
+class FormTemplate(Base):
+    """A saved Instant Form "offer" (v150): the wording of a lead form, built the same on every
+    account by copying a real published master form and rewriting it (lead_form_builder).
+    Editing it never touches forms already built. The form's name on TikTok = `name`, which is
+    what presets match."""
+    __tablename__ = "form_templates"
+
+    id = Column(Integer, primary_key=True)
+    owner_user_id = Column(Integer, nullable=True, index=True, default=ctx.owner_default)
+    name = Column(String, nullable=False)
+    master_form_id = Column(String, default="")
+    master_advertiser_id = Column(String, default="")
+    question_label = Column(Text, default="")
+    question_options = Column(Text, default="")            # one per line
+    company_name = Column(String, default="")
+    privacy_url = Column(Text, default="")
+    thanks_title = Column(String, default="")
+    thanks_description = Column(Text, default="")
+    cta_title = Column(String, default="")                 # the thank-you button
+    destination_url = Column(Text, default="")             # where the thank-you button goes (the offer)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow)
+
+
+class AssetBuild(Base):
+    """One page / form being built on one account (asset_builds.py): the queue the Instant
+    Pages and Lead Forms screens show live — its real step, how long it has been on it, and
+    the result (page id + TikTok's preview) or TikTok's words."""
+    __tablename__ = "asset_builds"
+
+    id = Column(Integer, primary_key=True)
+    owner_user_id = Column(Integer, nullable=True, index=True, default=ctx.owner_default)
+    kind = Column(String, default="page", index=True)       # page | form
+    template_id = Column(Integer, index=True)
+    name = Column(String, default="")                       # the page / form name built
+    advertiser_id = Column(String, index=True, default="")
+    batch = Column(String, index=True, default="")          # one "Build on…" = one batch
+    status = Column(String, default="pending", index=True)  # pending | running | success | failed | cancelled
+    step = Column(String, default="")
+    step_at = Column(DateTime, nullable=True)
+    method = Column(String, default="")                     # web copy | browser | form copy
+    result_id = Column(String, default="")
+    preview_url = Column(Text, default="")
+    error = Column(Text, default="")
+    attempts = Column(Integer, default=0)
+    created_at = Column(DateTime, default=utcnow, index=True)
+    started_at = Column(DateTime, nullable=True)
+    finished_at = Column(DateTime, nullable=True)
+
+
+class LaunchTrace(Base):
+    """One account's launch, written before the first TikTok create and after every step
+    (launch_trace.py) — so a restart mid-launch is recoverable and a half-built account can
+    be finished inside its own campaign instead of relaunched."""
+    __tablename__ = "launch_traces"
+
+    id = Column(Integer, primary_key=True)
+    batch_ref = Column(String, index=True, default="")
+    advertiser_id = Column(String, index=True, default="")
+    status = Column(String, default="running", index=True)   # running | ok | partial | failed | interrupted
+    campaign_id = Column(String, default="")
+    campaign_name = Column(String, default="")             # the name TikTok got (the ?source= join key)
+    inflight = Column(String, default="")                  # the create call sent but not answered yet
+    adgroups = Column(Text, default="[]")                  # [{"i", "id", "ads", "ad_ids"?, "kept"?}]
+    steps = Column(Text, default="[]")                     # [{"t", "s"}] bounded
+    creative_id = Column(Integer, nullable=True)
+    spark_code_id = Column(Integer, nullable=True)
+    smart_plus = Column(Boolean, default=False)
+    resumed = Column(Boolean, default=False)
+    error = Column(Text, default="")
+    log_id = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=utcnow, index=True)
+    updated_at = Column(DateTime, default=utcnow)
+
+
+class AdgroupState(Base):
+    """Each ad group's CURRENT TikTok status, one row per ad group (not per day), and when it
+    last changed. Kept by the sweep from the /adgroup/get/ call it already makes; the Campaigns
+    page derives one health per campaign from these (app/health.py), and a status leaving
+    review is what fires the "now delivering" / "rejected" notice."""
+    __tablename__ = "adgroup_states"
+
+    id = Column(Integer, primary_key=True)
+    adgroup_id = Column(String, unique=True, index=True, nullable=False)
+    advertiser_id = Column(String, index=True, nullable=False)
+    campaign_id = Column(String, index=True, nullable=False)
+    adgroup_name = Column(String, default="")
+    operation_status = Column(String, default="")
+    secondary_status = Column(String, default="")
+    status_since = Column(DateTime, default=utcnow)        # when secondary_status last changed
+    seen_at = Column(DateTime, default=utcnow, index=True)
+
+
 class AdgroupBidWatch(Base):
     """One row per ad group the sweep currently sees on a hot account — what the
     "idle bid bump" rule needs: today's spend as last seen and WHEN it last moved,
@@ -780,6 +989,38 @@ class Setting(Base):
     key = Column(String, unique=True, nullable=False)
     value = Column(Text, default="")
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class UserSession(Base):
+    """A signed-in browser (sessions.py). The cookie carries only its random id; this row says
+    whose it is and whether it still counts — so one device can be signed out on its own."""
+    __tablename__ = "user_sessions"
+
+    id = Column(Integer, primary_key=True)
+    sid = Column(String, unique=True, index=True, nullable=False)
+    user_id = Column(Integer, index=True, nullable=False)
+    ip = Column(String, default="")
+    ua = Column(Text, default="")
+    created_at = Column(DateTime, default=utcnow)
+    last_seen_at = Column(DateTime, default=utcnow)
+    revoked_at = Column(DateTime, nullable=True, index=True)
+    revoked_by = Column(String, default="")
+
+
+class AuditLog(Base):
+    """Who changed what (audit.py): every state-changing request by a signed-in user, plus
+    named entries for the sensitive ones (2FA, passwords, users, sessions, cookies, OAuth)."""
+    __tablename__ = "audit_logs"
+
+    id = Column(Integer, primary_key=True)
+    at = Column(DateTime, default=utcnow, index=True)
+    user_id = Column(Integer, nullable=True, index=True)
+    user_email = Column(String, default="")
+    ip = Column(String, default="")
+    action = Column(String, default="", index=True)        # e.g. "POST /status/pause" or "2fa.disabled"
+    target = Column(String, default="")
+    status = Column(Integer, default=0)
+    detail = Column(Text, default="")
 
 
 class AppLog(Base):
@@ -961,6 +1202,9 @@ class Job(Base):
     seen = Column(Boolean, default=False, index=True)
     quiet = Column(Boolean, default=False)                  # scheduled by the sweep, not a person: no notification unless it fails
     cancel_requested = Column(Boolean, default=False)       # operator asked a running job to stop
+    # whose job it is: the workspace in view when it was queued (ctx.OWNER, set per request);
+    # None = the system (sweep-scheduled) or a job queued before this column existed
+    owner_user_id = Column(Integer, nullable=True, index=True, default=ctx.owner_default)
     created_at = Column(DateTime, default=utcnow, index=True)
     started_at = Column(DateTime, nullable=True)
     finished_at = Column(DateTime, nullable=True)

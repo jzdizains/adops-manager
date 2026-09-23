@@ -19,7 +19,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
-from . import models, tiktok_api
+from . import acct_time, models, tiktok_api
 
 log = logging.getLogger("adops.adgroup_copy")
 
@@ -155,12 +155,13 @@ def _source_ads(acct: models.AdAccount, adgroup_id: str) -> list[dict]:
     return out
 
 
-def _future_start(payload: dict) -> dict:
+def _future_start(payload: dict, tz_name: str = "") -> dict:
     """A schedule that started in the past is fine for the original and refused for a new
-    ad group. Only touched when TikTok actually complains about it."""
+    ad group. Only touched when TikTok actually complains about it. The time is written in
+    the ACCOUNT's timezone — TikTok reads it there (v151)."""
+    from . import acct_time
     p = dict(payload)
-    start = datetime.now(timezone.utc) + timedelta(minutes=10)
-    p["schedule_start_time"] = start.strftime("%Y-%m-%d %H:%M:%S")
+    p["schedule_start_time"] = acct_time.start_now(tz_name, lead_s=600)
     return p
 
 
@@ -219,7 +220,7 @@ def duplicate(db: Session, acct: models.AdAccount, campaign_id: str, adgroup_id:
                     raise
                 made["note"] = "its start time had passed — the copy starts in 10 minutes"
                 res = tiktok_api.create_adgroup(acct.access_token, acct.advertiser_id,
-                                                _future_start(payload))
+                                                _future_start(payload, acct_time.account_tz(db, acct)))
         except tiktok_api.TikTokError as e:
             made["error"] = f"{e.message} (code {e.code})"
             report["made"].append(made)

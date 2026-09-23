@@ -80,12 +80,15 @@ async def dismiss(request: Request, db: Session = Depends(get_db)):
     form = await request.form()
     item_id = (form.get("id") or "").strip()
     nxt = form.get("next") or "/inbox"
-    if item_id == "all":
-        db.query(models.Alert).filter_by(acknowledged=False).update({"acknowledged": True})
+    from .. import inbox as inbox_mod, scope as scope_mod
+    sc = scope_mod.for_request(request, db)
+    if item_id == "all":                         # everything THIS person sees — never other workspaces'
+        for a in inbox_mod.visible_unacked(db, sc):
+            a.acknowledged = True
         db.commit()
-    elif item_id.startswith("alert:"):
+    elif item_id.startswith("alert:") and item_id.split(":", 1)[1].isdigit():
         a = db.get(models.Alert, int(item_id.split(":", 1)[1]))
-        if a:
+        if a and inbox_mod.alert_visible(a, sc):
             a.acknowledged = True
             db.commit()
     from .alerts import bell_cache_clear

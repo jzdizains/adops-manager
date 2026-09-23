@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
-from .. import error_messages, live_log, models, queries, tiktok_api
+from .. import acct_time, error_messages, live_log, models, queries, tiktok_api
 from ..database import get_db
 from ..settings_store import get_settings
 from ..templating import render
@@ -548,10 +548,12 @@ def copy_page_from_sibling(db: Session, acct: models.AdAccount, name: str) -> di
     rows = (db.query(models.InstantPage)
             .filter(models.InstantPage.name == name, models.InstantPage.status == "PUBLISHED",
                     models.InstantPage.owner_advertiser_id != acct.advertiser_id).all())
+    by_adv = {a.advertiser_id: a for a in db.query(models.AdAccount)
+              .filter(models.AdAccount.advertiser_id.in_([r.owner_advertiser_id for r in rows] or [""])).all()}
+    # only from accounts of the same workspace — never another buyer's page (and offer link)
+    rows = [r for r in rows if r.owner_advertiser_id in by_adv and by_adv[r.owner_advertiser_id].owner_user_id == acct.owner_user_id]
     if not rows:
         return {"page_id": "", "error": ""}
-    by_adv = {a.advertiser_id: a for a in db.query(models.AdAccount)
-              .filter(models.AdAccount.advertiser_id.in_([r.owner_advertiser_id for r in rows])).all()}
     rows.sort(key=lambda r: (0 if (by_adv.get(r.owner_advertiser_id) and by_adv[r.owner_advertiser_id].owner_bc_id == acct.owner_bc_id) else 1, r.page_id))
     src = rows[0]
     try:
@@ -713,6 +715,16 @@ def build_campaign_payload(fields: dict, acct: models.AdAccount) -> dict:
     return payload
 
 
+ADULT_AGE_GROUPS = ["AGE_18_24", "AGE_25_34", "AGE_35_44", "AGE_45_54", "AGE_55_100"]
+
+
+def lead_gen_ages(ages) -> list[str]:
+    """Age brackets a Lead Generation ad group may target: the preset's, minus 13-17;
+    nothing picked (or only 13-17) = every adult bracket."""
+    adults = [a for a in (ages or []) if a != "AGE_13_17"]
+    return adults or list(ADULT_AGE_GROUPS)
+
+
 def build_adgroup_payload(fields: dict, acct: models.AdAccount, campaign_id: str,
                           index: int, bid_price: float | None, pixel_id: str) -> dict:
     suffix = f" #{index + 1}" if fields["duplicates"] > 1 or fields["cost_cap_ladder"] else ""
@@ -737,6 +749,11 @@ def build_adgroup_payload(fields: dict, acct: models.AdAccount, campaign_id: str
     # targeting extras — only sent when set (omit = TikTok defaults)
     if fields.get("age_groups"):
         payload["age_groups"] = fields["age_groups"]
+    if fields.get("objective_type") == "LEAD_GENERATION":
+        # Lead Generation may not reach under-18s: TikTok refuses the whole ad group (40002 "…
+        # subject to age targeting restrictions") AFTER the campaign exists. A preset copied from
+        # a Sales one can carry 13-17, and "no ages picked" means all ages — minors included.
+        payload["age_groups"] = lead_gen_ages(fields.get("age_groups"))
     if fields.get("languages"):
         payload["languages"] = fields["languages"]
     if fields.get("spending_power"):
@@ -761,7 +778,8 @@ def build_adgroup_payload(fields: dict, acct: models.AdAccount, campaign_id: str
         if fields.get("schedule_end_time"):
             payload["schedule_end_time"] = fields["schedule_end_time"]
     elif fields["schedule_type"] == "SCHEDULE_FROM_NOW":
-        payload["schedule_start_time"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        # read by TikTok in the ACCOUNT's timezone: its own clock + 60 s (v151)
+        payload["schedule_start_time"] = acct_time.start_now(fields.get("_account_tz") or getattr(acct, "timezone", ""))
 
     # budget: ABO = per-ad-group; CBO = campaign carries it (BUDGET_MODE_INFINITE here)
     if (fields.get("campaign_budget_mode") or "ABO") == "ABO":
@@ -780,6 +798,14 @@ def build_adgroup_payload(fields: dict, acct: models.AdAccount, campaign_id: str
             payload["bid_price"] = float(bid_price)
     else:
         payload["bid_type"] = fields["bid_type"]
+    # accelerated delivery is refused with No-Bid ("Accelerated delivery under No-Bid strategy
+    # is not supported") — smooth pacing is the only shape TikTok takes there
+    if payload.get("bid_type") == "BID_TYPE_NO_BID":
+        payload["pacing"] = "PACING_MODE_SMOOTH"
+    # Reach is capped per person: 3 impressions per 7 days (TikTok's own default for Reach)
+    if fields.get("optimization_goal") == "REACH":
+        payload["frequency"] = int(fields.get("frequency") or 3)
+        payload["frequency_schedule"] = int(fields.get("frequency_schedule") or 7)
 
     # advanced settings (ad-group level flags — §Advanced)
     if fields.get("comment_disabled"):
@@ -808,7 +834,15 @@ def build_adgroup_payload(fields: dict, acct: models.AdAccount, campaign_id: str
         payload["pixel_id"] = pixel_id
         payload["optimization_event"] = fields["optimization_event"]
     elif dest == "lead_form":
+        # the shape every hand-built Instant-Form ad group carries (Ads Manager, 123 of them in
+        # the reference tool's data): LEAD_GENERATION promotion aimed at an INSTANT_PAGE, with
+        # the form itself on the ad group as well as on the ad
         payload["promotion_type"] = "LEAD_GENERATION"
+        payload["promotion_target_type"] = "INSTANT_PAGE"
+        if str(fields.get("lead_form_id") or "").isdigit():
+            payload["page_id"] = str(fields["lead_form_id"])
+    elif dest == "none":
+        pass     # awareness (Reach / warm-up): no promotion type, no pixel, no page — nothing to promote
     elif dest == "instant_page" and fields.get("optimization_goal") == "CONVERT":
         # Website engagements → TikTok Instant Page as the optimisation location: no pixel,
         # the page's button click is the optimisation event (Ads Manager: "We will optimize
@@ -899,6 +933,8 @@ def _walkable(e: "tiktok_api.TikTokError", engaged: bool = False) -> bool:
     """A TikTok complaint about the objective/goal/event — worth trying the next variant.
     Engaged-session probing also walks on complaints about the fields it varies
     (pixel_id, "not supported") and generic enum complaints (invalid / param)."""
+    if str(e.code) == "HTTP":      # a network failure is never "try another payload" — the last one may have landed
+        return False
     msg = (e.message or "").lower()
     words = ("objective", "promotion", "optimization", "optimisation", "event")
     if engaged:
@@ -945,6 +981,11 @@ def apply_destination(creative: dict, fields: dict) -> None:
     Works the same for spark, library-video and Smart-Creative ads (TikTok accepts an
     uploaded video with an Instant Form on a Lead-Gen campaign, not just spark posts)."""
     dest = fields.get("destination_type")
+    if dest == "none":
+        # awareness ad (Reach / warm-up): nothing to click through to — no URL, no page, no button
+        creative.pop("call_to_action", None)
+        creative.pop("call_to_action_id", None)
+        return
     if dest == "instant_page" and fields.get("instant_page_id"):
         creative["page_id"] = fields["instant_page_id"]
     elif dest == "lead_form" and fields.get("lead_form_id"):
@@ -1061,7 +1102,7 @@ def build_spc_adgroup_payload(fields: dict, campaign_id: str, spark_ref: dict | 
             payload["schedule_end_time"] = fields["schedule_end_time"]
     else:
         payload["schedule_type"] = "SCHEDULE_FROM_NOW"
-        payload["schedule_start_time"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        payload["schedule_start_time"] = acct_time.start_now(fields.get("_account_tz"))   # the account's clock + 60 s
     # budget: ABO carries it on the ad group; CBO (or a campaign budget TikTok insisted
     # on — fields["_spc_budget_on_campaign"]) was set at campaign level
     if (fields.get("campaign_budget_mode") or "ABO") == "ABO" and not fields.get("_spc_budget_on_campaign"):
@@ -1435,6 +1476,8 @@ def build_library_ad_payload(fields: dict, adgroup_id: str, identity: dict,
         creative["identity_authorized_bc_id"] = identity["identity_authorized_bc_id"]
     if cover_image_id:
         creative["image_ids"] = [cover_image_id]
+    if fields.get("_display_card_portfolio_id"):
+        creative["card_id"] = fields["_display_card_portfolio_id"]    # the card resolved for this account
     return {"adgroup_id": adgroup_id, "creatives": [creative]}
 
 
@@ -1558,7 +1601,8 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
         batch_ref=batch_ref, advertiser_id=acct.advertiser_id,
         advertiser_name=acct.advertiser_name,
         template_id=fields.get("template_id"), template_name=fields.get("template_name", ""),
-        optimization_event=str(fields.get("optimization_event") or ""))
+        optimization_event=str(fields.get("optimization_event") or ""),
+        warmup=bool(fields.get("_warmup")), warmup_state="waiting" if fields.get("_warmup") else "")
     creative: models.Creative | None = None      # library creative (reserved below)
     carousel: models.Creative | None = None      # carousel creative (reserved below)
     carousel_image_ids: list[str] = []            # per-account uploaded slide ids
@@ -1569,7 +1613,21 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
     sc_creatives: list = []                       # Smart Creative: all reserved videos
     sc_texts: list = []                           # Smart Creative: all reserved pool texts
     sc_materials: list = []                       # Smart Creative: (video_id, cover, text)
+    # resume (Retry failed on a half-built account): continue inside its campaign with the
+    # same creative / post, skipping the ad groups the earlier attempt finished
+    resume = (fields.get("_resume_by_account") or {}).get(str(acct.advertiser_id)) or None
+    if resume:
+        fields = dict(fields)
+        if resume.get("creative_id") and fields.get("creative_source") in ("library", "carousel"):
+            fields["creative_id"] = int(resume["creative_id"])
+            fields["allow_creative_reuse"] = True
+        elif resume.get("spark_code_id") and fields.get("creative_source") not in ("library", "carousel"):
+            fields["spark_code_id"] = int(resume["spark_code_id"])
+    from .. import launch_trace as _lt
+    trace = _lt.Trace(db, models, batch_ref, acct.advertiser_id, fields)
     try:
+        # schedule times are read by TikTok in the account's own timezone (v151)
+        fields = {**fields, "_account_tz": acct_time.account_tz(db, acct)}
         # -- config validation FIRST (free, local — before any API calls) ------
         if is_engaged(fields) and not fields.get("smart_plus"):
             # Engaged session only exists on Smart+ campaigns (Ads Manager stores them as
@@ -1653,6 +1711,47 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
             fields = dict(fields)
             fields["cost_cap_ladder"] = []      # explicit max delivery ignores caps
 
+        # "each account's own country" (warm-ups): the country TikTok has this account
+        # registered in — a French account can't target the US, and that's the point of
+        # a warm-up. Resolved per account, cached, before anything is created.
+        if fields.get("account_default_geo"):
+            from .. import warmup as warmup_mod
+            try:
+                loc = warmup_mod.own_country_location(db, acct)
+            except tiktok_api.TikTokError:
+                loc = ""
+            if loc:
+                fields = {**fields, "location_ids": [loc]}
+            else:
+                # TikTok didn't say where the account is registered: send the ad group with NO
+                # location (the account keeps its own default); if TikTok insists on one, the
+                # country is looked up again and the ad group retried once (below)
+                fields = {**fields, "location_ids": [], "_geo_unresolved": True}
+        elif fields.get("location_ids"):
+            # geo fit: countries TikTok hasn't unlocked for this account are refused here,
+            # before a campaign exists — not at ad-group creation after it does
+            from .. import geo_fit
+            try:
+                ok_geo, missing = geo_fit.fit(geo_fit.targetable(db, models, acct, fields.get("objective_type") or ""),
+                                              [str(x) for x in fields.get("location_ids") or []],
+                                              geo_fit.country_resolver(db, models))
+            except Exception:      # noqa: BLE001 — unknown never blocks a launch
+                ok_geo, missing = True, []
+            if not ok_geo:
+                raise ConfigError(f"This ad account can't target {geo_fit.names(db, models, missing)} — TikTok hasn't "
+                                  "unlocked that country for it. Nothing was created. Launch it on an account that can, "
+                                  "or pick countries this one supports.")
+            # geo policy (v151): what this account is FOR — set on Accounts › the account
+            if (getattr(acct, "geo_policy", "") or "any") != "any":
+                try:
+                    ok_pol, _kind, why = geo_fit.policy_fit(acct.geo_policy, geo_fit.cached_targetable(db, acct.advertiser_id),
+                                                            geo_fit.wanted_countries(db, models, fields.get("location_ids")))
+                except Exception:      # noqa: BLE001 — unknown never blocks a launch
+                    ok_pol, why = True, ""
+                if not ok_pol:
+                    raise ConfigError(f"This account's geo policy says no: {why}. Nothing was created. Launch it on another "
+                                      "account, or change its geo policy on the Accounts page.")
+
         # spark + pixel resolution BEFORE creating anything (fail early, create nothing)
         spark = None
         spark_ref = None
@@ -1681,6 +1780,7 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                 log.landing_url = fields["landing_page_url"]
         if spark:
             log.spark_code_id = spark.id
+            trace.assets(spark_code_id=spark.id)
         if spark and source_mode == "static":
             # legacy: the spark's own source rides the URL. A spark without one
             # gets a stable auto source — a sourceless launch is invisible to Glitchy.
@@ -1730,6 +1830,8 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                             .order_by(models.Creative.id).first())
                 if not carousel:
                     raise ConfigError("No available carousels — build one on the Creatives page (Carousels tab).")
+            trace.assets(creative_id=carousel.id)
+            log.creative_id = carousel.id
             slides = carousel_slides(db, carousel)
             if len(slides) < 2:
                 raise ConfigError(f"Carousel “{carousel.name}” has fewer than 2 slides.")
@@ -1791,6 +1893,8 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                                   "more on the Creatives page (each creative is used once).")
             # reserve immediately so a concurrent launch can't take the same one
             now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+            trace.assets(creative_id=creative.id)
+            log.creative_id = creative.id
             creative.status = "used"
             if not creative.used_advertiser_id:
                 creative.used_advertiser_id = acct.advertiser_id
@@ -1905,7 +2009,23 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                 # account that has it (the page editor's web API, published + verified);
                 # otherwise build it from the preset's template in a browser.
                 from .. import live_log as _ll
-                copied = copy_page_from_sibling(db, acct, name)
+                if tpl is not None and tpl.name == name:
+                    # v150: the template's own route — copy its master page with the button
+                    # re-pointed (web API, seconds), the browser builder only as a fallback
+                    import types as _types
+                    from .. import asset_builds as _ab
+                    if _ab.active_for(db, models, "page", acct.advertiser_id, name) is not None:
+                        raise AssetResolveError(f"Instant Page “{name}” is being built on this account right now (Instant Pages › Builds) "
+                                                "— nothing was created. Retry this account once the build is done.")
+                    _ll.push("info", f"building Instant Page “{name}” on {acct.advertiser_name or acct.advertiser_id} from the preset's template",
+                             advertiser_id=str(acct.advertiser_id))
+                    r = _ab.build_page(db, models, _types.SimpleNamespace(template_id=tpl.id), acct, lambda _s: None)
+                    if not r.get("ok"):
+                        raise AssetResolveError(f"This account has no Instant Page “{name}” and building it from the template failed: {r.get('error', 'unknown')}")
+                    fields["instant_page_id"] = r["id"]
+                    copied = {"page_id": r["id"]}
+                else:
+                    copied = copy_page_from_sibling(db, acct, name)
                 if copied.get("page_id"):
                     fields["instant_page_id"] = copied["page_id"]
                 else:
@@ -1932,7 +2052,28 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
             if not name:
                 raise ConfigError("Preset destination is Lead Form but no form is selected.")
             fields = dict(fields)
-            fields["lead_form_id"] = resolve_page_asset(db, acct, "lead_form", name)
+            try:
+                fields["lead_form_id"] = resolve_page_asset(db, acct, "lead_form", name)
+            except AssetResolveError as miss:
+                # v150: no form of that name on this account, but a form template of that name
+                # exists → build it now (copy the master, write the wording, read it all back)
+                # only a template of THIS workspace (another buyer's template carries their offer link)
+                _owner = fields.get("_launched_by") if fields.get("_launched_by") is not None else acct.owner_user_id
+                ft = (db.query(models.FormTemplate).filter(models.FormTemplate.name == name,
+                                                          models.FormTemplate.master_form_id != "",
+                                                          models.FormTemplate.owner_user_id == _owner).first()
+                      if "has no lead form" in str(miss).lower() else None)
+                if ft is None:
+                    raise
+                import types as _types
+                from .. import asset_builds as _ab
+                if _ab.active_for(db, models, "form", acct.advertiser_id, name) is not None:
+                    raise AssetResolveError(f"Lead form “{name}” is being built on this account right now (Lead Forms › Builds) "
+                                            "— nothing was created. Retry this account once the build is done.")
+                r = _ab.build_form(db, models, _types.SimpleNamespace(template_id=ft.id), acct, lambda _s: None)
+                if not r.get("ok"):
+                    raise AssetResolveError(f"This account has no lead form “{name}” and building it from the template failed: {r.get('error', 'unknown')}")
+                fields["lead_form_id"] = r["id"]
 
         pixel_id = str(fields.get("pixel_id") or "").strip()
         if pixel_id and not pixel_id.isdigit():
@@ -1950,8 +2091,12 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
 
         created_name = ""
         if fields.get("smart_plus"):          # (set above for Engaged session too)
+            trace.inflight("Smart+ campaign")
             log.campaign_id, created_name = _launch_smart_plus(acct, fields, spark_ref, spark, pixel_id, log)
             new_campaign_id = log.campaign_id
+            trace.campaign(log.campaign_id, name=created_name)
+            trace.adgroup(0, "")
+            trace.ad(0)
             ad_created = True                 # the chain only returns once the ad exists
             if is_engaged(fields) and not log.optimization_event:
                 log.optimization_event = "ENGAGEMENT_SESSION · Smart+" + ("" if pixel_id else " · no pixel")
@@ -1965,8 +2110,28 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
             camp_payload = build_campaign_payload(fields, acct)
             camp = None
             camp_candidates = campaign_goal_candidates(fields, camp_payload)
+            if resume and resume.get("campaign_id"):
+                # finishing a half-built launch: its campaign already exists — never make another
+                camp = {"campaign_id": str(resume["campaign_id"])}
+                camp_candidates = []
+                done_groups = {int(x) for x in resume.get("done") or []}
+                rec = (db.query(models.CampaignRecord).filter_by(advertiser_id=acct.advertiser_id,
+                                                                 campaign_id=camp["campaign_id"]).first())
+                name = (rec.campaign_name if rec else "") or resume.get("campaign_name") or ""
+                if name:        # the name TikTok has — log.source must match it exactly
+                    camp_payload = {**camp_payload, "campaign_name": name}
+                empties = [str(x) for x in resume.get("empty_adgroups") or [] if str(x)]
+                if empties:
+                    try:        # the earlier attempt's ad groups that never got an ad — rebuilt below
+                        tiktok_api.update_adgroup_status(acct.access_token, acct.advertiser_id, empties, "DELETE")
+                        trace.note(f"removed {len(empties)} empty ad group(s) from the earlier attempt")
+                    except tiktok_api.TikTokError:
+                        trace.note("couldn't remove the earlier attempt's empty ad group(s) — they serve nothing")
+            else:
+                done_groups = set()
             for c_i, cp in enumerate(camp_candidates):
                 try:
+                    trace.inflight("campaign")
                     camp = tiktok_api.create_campaign(acct.access_token, acct.advertiser_id, cp)
                     camp_payload = cp
                     break
@@ -1982,7 +2147,13 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                 fields = {**fields, "_engaged_goal": camp_payload["optimization_goal"], "_engaged_goal_locked": True}
             campaign_id = str(camp.get("campaign_id"))
             log.campaign_id = campaign_id
-            new_campaign_id = campaign_id     # remember for orphan cleanup on failure
+            if resume and resume.get("campaign_id"):
+                trace.campaign(campaign_id, reused=True, name=camp_payload.get("campaign_name", "") or resume.get("campaign_name", ""))
+                ad_created = bool(done_groups)   # its earlier ads are live — never delete this campaign
+                creative_committed = creative_committed or bool(done_groups)
+            else:
+                trace.campaign(campaign_id, name=camp_payload.get("campaign_name", ""))
+                new_campaign_id = campaign_id     # remember for orphan cleanup on failure
             created_name = camp_payload["campaign_name"]
             if source_mode == "campaign":
                 log.source = created_name     # exactly what TikTok will put in ?source=
@@ -1997,13 +2168,19 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
             else:
                 plan = [None] * n
             for i, bid in enumerate(plan):
+                if i in done_groups:
+                    trace.skipped(i)
+                    continue
                 base_payload = build_adgroup_payload(fields, acct, campaign_id, i, bid, pixel_id)
+                if not base_payload.get("location_ids"):
+                    base_payload.pop("location_ids", None)      # account-default geo: TikTok uses the account's own
                 # lead-gen web accounts differ in which promotion combination they
                 # accept — try the documented one first, then graceful variants
                 variants: list[dict] = traffic_variants(db, fields, base_payload)
                 if base_payload.get("promotion_type") == "LEAD_GENERATION":
                     no_target = {k: v for k, v in base_payload.items()
-                                 if k != "promotion_target_type"}
+                                 if k != "promotion_target_type"
+                                 and not (k == "page_id" and base_payload.get("promotion_target_type") == "INSTANT_PAGE")}
                     variants.append(no_target)
                     variants.append({**no_target, "promotion_type": "WEBSITE"})
                 if base_payload.get("promotion_website_type") == "TIKTOK_NATIVE_PAGE":
@@ -2015,16 +2192,31 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                 last_err: tiktok_api.TikTokError | None = None
                 for v_i, ag_payload in enumerate(variants):
                     try:
+                        trace.inflight(f"ad group {i + 1}")
                         try:
                             ag = tiktok_api.create_adgroup(
                                 acct.access_token, acct.advertiser_id, ag_payload)
                         except tiktok_api.TikTokError as e:
                             # some accounts now REQUIRE an end time even for daily
                             # budgets — retry once with an explicit 1-year window
-                            if "end_time" in (e.message or "") and "schedule_end_time" not in ag_payload:
+                            if (fields.get("_geo_unresolved") and "location_ids" not in ag_payload
+                                    and "location" in (e.message or "").lower()):
+                                # TikTok wants a location after all: look the account's country up
+                                # again (the first lookup may have been a blip) and retry once
+                                from .. import warmup as warmup_mod
+                                try:
+                                    loc = warmup_mod.own_country_location(db, acct)
+                                except tiktok_api.TikTokError:
+                                    loc = ""
+                                if not loc:
+                                    raise
+                                trace.note(f"retried with the account's own country ({loc})")
+                                ag_payload = {**ag_payload, "location_ids": [loc]}
+                                ag = tiktok_api.create_adgroup(acct.access_token, acct.advertiser_id, ag_payload)
+                            elif "end_time" in (e.message or "") and "schedule_end_time" not in ag_payload:
                                 from datetime import timedelta
                                 start = ag_payload.get("schedule_start_time") or \
-                                    datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+                                    acct_time.start_now(fields.get("_account_tz"))
                                 end = (datetime.strptime(start, "%Y-%m-%d %H:%M:%S")
                                        + timedelta(days=365)).strftime("%Y-%m-%d %H:%M:%S")
                                 ag_payload = {**ag_payload, "schedule_type": "SCHEDULE_START_END",
@@ -2046,6 +2238,7 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                 if ag is None:   # defensive — loop always breaks or raises
                     raise last_err or tiktok_api.TikTokError("APP", "ad group not created")
                 adgroup_id = str(ag.get("adgroup_id"))
+                trace.adgroup(i, adgroup_id)
                 if is_engaged(fields) and i == 0:
                     remember_traffic_goal(db, fields, ag_payload)      # the payload TikTok took
                     log.optimization_event = (str(ag_payload.get("optimization_goal", ""))
@@ -2060,7 +2253,9 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                 if fields.get("smart_creative") and sc_materials:
                     ad_payload = build_smart_creative_ad_payload(
                         fields, adgroup_id, creative_identity, sc_materials)
-                    tiktok_api.create_ad(acct.access_token, acct.advertiser_id, ad_payload)
+                    trace.inflight(_lt.ad_inflight(i))
+                    resp = tiktok_api.create_ad(acct.access_token, acct.advertiser_id, ad_payload)
+                    trace.ad(i, _ad_ids(resp))
                     creative_committed = True
                     ad_created = True
                     for c in sc_creatives:
@@ -2087,8 +2282,10 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                                 {**c, "ad_name": f"{c.get('ad_name', 'ad')}{suffix}"[:512]}
                                 for c in p["creatives"]]
                         return p
+                    trace.inflight(_lt.ad_inflight(i))
+                    resp = None
                     if carousel is not None:
-                        _, creative_identity = create_ad_trying_identities(
+                        resp, creative_identity = create_ad_trying_identities(
                             acct,
                             lambda ident: _uniq(build_carousel_ad_payload(
                                 fields, adgroup_id, ident,
@@ -2101,7 +2298,7 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                         if pool_text is not None and not pool_text.used_campaign_id:
                             pool_text.used_campaign_id = campaign_id
                     elif creative is not None:
-                        _, creative_identity = create_ad_trying_identities(
+                        resp, creative_identity = create_ad_trying_identities(
                             acct,
                             lambda ident: _uniq(build_library_ad_payload(
                                 fields, adgroup_id, ident,
@@ -2118,7 +2315,7 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                         ad_payload = _uniq(build_ad_payload(fields, adgroup_id, spark_ref, spark))
                         if spark_ref:
                             try:
-                                tiktok_api.create_spark_ad(acct.access_token, acct.advertiser_id, ad_payload)
+                                resp = tiktok_api.create_spark_ad(acct.access_token, acct.advertiser_id, ad_payload)
                             except tiktok_api.TikTokError as e:
                                 flipped = format_flip_for(e, ad_payload["creatives"][0].get("ad_format", ""))
                                 if not flipped:
@@ -2128,10 +2325,12 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                                 spark_ref["item_type"] = "CAROUSEL" if flipped == "CAROUSEL_ADS" else "VIDEO"
                                 reconcile_media_type(db, spark, spark_ref)
                                 ad_payload = {**ad_payload, "creatives": [{**ad_payload["creatives"][0], "ad_format": flipped}]}
-                                tiktok_api.create_spark_ad(acct.access_token, acct.advertiser_id, ad_payload)
+                                resp = tiktok_api.create_spark_ad(acct.access_token, acct.advertiser_id, ad_payload)
                         else:
-                            tiktok_api.create_ad(acct.access_token, acct.advertiser_id, ad_payload)
+                            resp = tiktok_api.create_ad(acct.access_token, acct.advertiser_id, ad_payload)
                         ad_created = True
+                    if resp is not None:
+                        trace.ad(i, _ad_ids(resp))
 
         if spark:
             spark.use_count = (spark.use_count or 0) + 1
@@ -2186,6 +2385,13 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
         log.error_code = "APP"
         log.error_message = "Unexpected app error during launch."
         log.error_technical = repr(e)
+    # Part of the launch went live before it failed (e.g. ad group #2 refused after #1's ads
+    # were created): the campaign and those ads are running on the account. Say so, and keep
+    # the campaign id — relaunch_safe() reads it so no retry makes a SECOND campaign here.
+    if not log.ok and ad_created and log.campaign_id and "went live" not in (log.error_message or ""):
+        log.error_message = ((log.error_message or "").rstrip() + " Part of this launch went live — the campaign "
+                             "and the ads created before the error are running on this account, so it won't be "
+                             "relaunched automatically.").strip()
     # reserved pool assets go back when NO ad was created (per-account upload &
     # identity caches are kept, so a retry is instant and duplicate-free).
     # A creative shared across a group (allow_creative_reuse) is NOT freed on one
@@ -2216,9 +2422,36 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
             log.campaign_id = ""      # it no longer exists — don't show it as tool-launched
         except tiktok_api.TikTokError:
             pass                      # best-effort; a leftover shell is harmless
+    trace.finish(log)
     db.add(log)
     db.commit()
+    trace.link(log)
     return log
+
+
+def _ad_ids(resp) -> list[str]:
+    """The ad ids an /ad/create/ answer carries (shape varies: ad_ids list or one ad_id)."""
+    if not isinstance(resp, dict):
+        return []
+    ids = resp.get("ad_ids") or ([resp["ad_id"]] if resp.get("ad_id") else [])
+    return [str(x) for x in ids if x][:20]
+
+
+MAYBE_CREATED_MARK = "may or may not have been created"
+
+
+def relaunch_safe(log) -> bool:
+    """May this failed account be launched again automatically (queue retry / Retry failed)?
+    Not when the failed launch still left a campaign behind — its ads are live (an empty
+    shell is deleted and its id cleared above) — and not when a create call's connection
+    dropped after sending, where TikTok may have made the campaign we can't see. Relaunching
+    either way puts a second campaign on the same account."""
+    if getattr(log, "ok", False):
+        return False
+    if (getattr(log, "campaign_id", "") or "").strip():
+        return False
+    blob = f"{getattr(log, 'error_message', '')} {getattr(log, 'error_technical', '')}".lower()
+    return MAYBE_CREATED_MARK not in blob
 
 
 def _launch_pace(db: Session) -> float:
@@ -2236,7 +2469,7 @@ def _remember_batch(db: Session, batch_ref: str, fields: dict) -> None:
     try:
         queries.set_setting(db, f"batch_fields:{batch_ref}",
                             _json.dumps({k: v for k, v in fields.items()
-                                         if k not in ("creative_id", "allow_creative_reuse")}))
+                                         if k not in ("creative_id", "allow_creative_reuse", "_resume_by_account")}))
     except (TypeError, ValueError):
         pass
 
@@ -2449,9 +2682,10 @@ async def launch_submit(request: Request, db: Session = Depends(get_db)):
     # one select per account row (the ＋ button adds rows) — dedupe, keep order
     seen: set[str] = set()
     advertiser_ids: list[str] = []
+    skip = {x for x in str(form.get("exclude_ids") or "").replace(" ", "").split(",") if x}   # left out on Review (v151)
     for v in form.getlist("advertiser_ids"):
         v = str(v)
-        if v and v not in seen:
+        if v and v not in seen and v not in skip:
             seen.add(v)
             advertiser_ids.append(v)
     sc = scope_mod.for_request(request, db)
@@ -2470,6 +2704,15 @@ async def launch_submit(request: Request, db: Session = Depends(get_db)):
         return RedirectResponse(
             "/campaigns/launch?err=Pick+a+spark+code+OR+a+library+creative+—+not+both.",
             status_code=303)
+    # the picked spark / creative must be this workspace's (ids are sequential — never trust them)
+    if spark_code_id:
+        sp = db.get(models.SparkCode, int(spark_code_id)) if spark_code_id.isdigit() else None
+        if sp is None or not sc.owns(sp):
+            return RedirectResponse("/campaigns/launch?err=missing", status_code=303)
+    if creative_id:
+        cr = db.get(models.Creative, int(creative_id)) if creative_id.isdigit() else None
+        if cr is None or not sc.owns(cr):
+            return RedirectResponse("/campaigns/launch?err=missing", status_code=303)
     if creative_id and len(accts) > 1:
         return RedirectResponse(
             "/campaigns/launch?err=A+specific+creative+launches+ONCE+—+pick+a+single+"
@@ -2501,6 +2744,84 @@ async def launch_submit(request: Request, db: Session = Depends(get_db)):
     return RedirectResponse(f"/campaigns/result/{batch_ref}", status_code=303)
 
 
+# ---------------------------------------------------------------------------
+# Review step (v151): per-account page / form / card / identity / geo — and why
+# an account is blocked — before anything is created
+# ---------------------------------------------------------------------------
+
+def _review_accounts(db: Session, sc, form, fields: dict) -> list:
+    if str(form.get("mode") or "") == "auto":
+        from .super_launcher import eligible_accounts
+        try:
+            count = max(min(int(form.get("auto_count") or 0), 200), 0)
+        except ValueError:
+            count = 0
+        return eligible_accounts(db, fields.get("account_policy", "new_only"), count, owner_user_id=sc.user_id, fields=fields) if count else []
+    ids = []
+    for v in str(form.get("advertiser_ids") or "").replace(" ", "").split(","):
+        if v and v not in ids and sc.allows(v):
+            ids.append(v)
+    ids = ids[:200]
+    by_id = {a.advertiser_id: a for a in db.query(models.AdAccount).filter(models.AdAccount.advertiser_id.in_(ids or [""]))}
+    return [by_id[i] for i in ids if i in by_id]
+
+
+@router.post("/campaigns/review.json")
+async def launch_review_json(request: Request, db: Session = Depends(get_db)):
+    from starlette.concurrency import run_in_threadpool
+    form = await request.form()
+    # DB reads (and, with live=1, TikTok) run off the event loop — never stall other users
+    return await run_in_threadpool(_launch_review, request, db, form)
+
+
+def _launch_review(request: Request, db: Session, form):
+    from .. import launch_review, scope as scope_mod
+    sc = scope_mod.for_request(request, db)
+    tid = str(form.get("template_id") or "")
+    template = db.get(models.Template, int(tid)) if tid.isdigit() else None
+    if template is None or not sc.owns(template):
+        return JSONResponse({"ok": False, "error": "Pick a preset first."})
+    overrides: dict = {}
+    spark = None
+    sid = str(form.get("spark_code_id") or "")
+    mode = str(form.get("creative_mode") or "")
+    if sid.isdigit():
+        spark = db.get(models.SparkCode, int(sid))
+        if spark is None or not sc.owns(spark):
+            spark = None
+        else:
+            overrides.update(spark_code_id=spark.id, creative_source="spark")
+    elif mode in ("library", "carousel", "pick"):
+        overrides["creative_source"] = "carousel" if mode == "carousel" else "library"
+    fields = launch_mod.synthesize(template, overrides)
+    fields["_launched_by"] = sc.owner_for_new
+    if spark is None and fields.get("creative_source") not in ("library", "carousel") and str(fields.get("spark_code_id") or "").isdigit():
+        spark = db.get(models.SparkCode, int(fields["spark_code_id"]))       # the preset's own spark
+    if mode in ("profile", "items") and spark is None:
+        identity = "post" if (mode == "profile" or form.get("all_sparks") == "1") else "account"
+    else:
+        identity = "spark" if (spark is not None and fields.get("creative_source") not in ("library", "carousel")) else "account"
+    accounts = _review_accounts(db, sc, form, fields)
+    out = launch_review.review(db, models, fields, accounts, spark=spark, identity=identity, live=form.get("live") == "1")
+    return JSONResponse({"ok": True, **out})
+
+
+@router.post("/campaigns/review/identities.json")
+async def launch_review_identities(request: Request, db: Session = Depends(get_db)):
+    """The identity a library ad would use, for a few accounts at a time (TikTok is asked —
+    in the threadpool, never on the event loop)."""
+    from starlette.concurrency import run_in_threadpool
+    from .. import launch_review, scope as scope_mod
+    form = await request.form()
+
+    def work():
+        sc = scope_mod.for_request(request, db)
+        ids = [v for v in str(form.get("advertiser_ids") or "").replace(" ", "").split(",") if v and sc.allows(v)][:5]
+        accts = db.query(models.AdAccount).filter(models.AdAccount.advertiser_id.in_(ids or [""])).all()
+        return JSONResponse({"ok": True, "cells": {a.advertiser_id: launch_review.identities(db, a) for a in accts}})
+    return await run_in_threadpool(work)
+
+
 @router.get("/campaigns/result/{batch_ref}")
 def launch_result(request: Request, batch_ref: str, db: Session = Depends(get_db)):
     sc = scope_mod.for_request(request, db)
@@ -2518,6 +2839,21 @@ def launch_result(request: Request, batch_ref: str, db: Session = Depends(get_db
             total = len(_json.loads(job.payload or "{}").get("advertiser_ids") or [])
         except ValueError:
             total = 0
+    from .. import launch_trace as _lt
+    traces = {a: t for a, t in _lt.for_batch(db, models, batch_ref).items() if sc.allows(a)}
+    steps = {a: _lt.view(t) for a, t in traces.items()}
+    logged = {l.advertiser_id for l in logs}
+    in_flight = [dict(steps[a], advertiser_id=a) for a, t in traces.items() if a not in logged and t.status == "running"]
+    retry = {"fresh": [], "resume": {}, "unstarted": []}
+    if has_recipe and not job:
+        try:
+            retry = retry_plan(db, batch_ref, _json.loads(queries.get_setting(db, f"batch_fields:{batch_ref}", "") or "{}"))
+        except (ValueError, TypeError):
+            pass
+    retry = {"fresh": [a for a in retry["fresh"] if sc.allows(a)],
+             "resume": [a for a in retry["resume"] if sc.allows(a)],
+             "unstarted": [a for a in retry["unstarted"] if sc.allows(a)]}
+    retry_n = len(set(retry["fresh"]) | set(retry["resume"]) | set(retry["unstarted"]))
     if request.headers.get("x-requested-with") == "fetch":     # Queue's result drawer
         camp_names = {c.campaign_id: c.campaign_name for c in db.query(models.CampaignRecord).filter(
             models.CampaignRecord.campaign_id.in_([l.campaign_id for l in logs if l.campaign_id]))} if logs else {}
@@ -2525,13 +2861,165 @@ def launch_result(request: Request, batch_ref: str, db: Session = Depends(get_db
                              "template": logs[0].template_name if logs else "",
                              "rows": [{"advertiser_id": l.advertiser_id, "account": l.advertiser_name or l.advertiser_id, "ok": bool(l.ok),
                                        "campaign_id": l.campaign_id or "", "campaign": camp_names.get(l.campaign_id, "") or l.campaign_id or "",
-                                       "error": l.error_message or l.error_code or ""} for l in logs]})
+                                       "error": l.error_message or l.error_code or "",
+                                       "trace": steps.get(l.advertiser_id)} for l in logs],
+                             "in_flight": in_flight, "retry_n": retry_n})
     return render(request, "launch_result.html", {
         "logs": logs, "batch_ref": batch_ref, "ok_count": ok,
         "fail_count": len(logs) - ok, "can_retry": has_recipe and not job,
+        "traces": steps, "in_flight": in_flight, "retry": retry, "retry_n": retry_n,
         "job": job, "job_total": total,
         "title": f"Launch result · {batch_ref}",
     })
+
+
+def retry_plan(db: Session, batch_ref: str, fields: dict) -> dict:
+    """Which accounts of a batch "Retry failed" may touch, and how.
+      fresh     — failed with nothing created: launch again from scratch
+      resume    — {adv: plan}: a campaign exists (part went live, or a restart cut it short):
+                  continue INSIDE it (launch_trace.resume_plan) — never a second campaign
+      unstarted — a restart stopped the batch before it reached these accounts
+    An account something later already fixed (a later ok launch of the same preset, or a
+    later attempt inside the same campaign) is left alone."""
+    from .. import launch_trace as _lt
+    logs = (db.query(models.LaunchLog).filter_by(batch_ref=batch_ref).order_by(models.LaunchLog.id).all())
+    failed = [l for l in logs if not l.ok]
+    traces = _lt.for_batch(db, models, batch_ref)
+    resumable = not fields.get("smart_plus") and not is_engaged(fields)
+    fresh: list[str] = []
+    resume: dict = {}
+    first_id = min((l.id for l in failed), default=0)
+    later = (db.query(models.LaunchLog).filter(models.LaunchLog.id > first_id,
+                                               models.LaunchLog.batch_ref != batch_ref,
+                                               models.LaunchLog.advertiser_id.in_([l.advertiser_id for l in failed]))
+             .all()) if failed else []
+    for l in failed:
+        after = [x for x in later if x.advertiser_id == l.advertiser_id and x.id > l.id]
+        if any(x.ok and (x.template_name or "") == (l.template_name or "") for x in after):
+            continue                                     # relaunched fine since
+        if l.campaign_id and any((x.campaign_id or "") == l.campaign_id for x in after):
+            continue                                     # a later attempt already continued this campaign
+        if relaunch_safe(l):
+            fresh.append(l.advertiser_id)
+            continue
+        if resumable:
+            p = _lt.resume_plan(traces.get(l.advertiser_id))
+            if p and (not l.campaign_id or p["campaign_id"] == l.campaign_id):
+                resume[l.advertiser_id] = p
+    unstarted: list[str] = []
+    done = {l.advertiser_id for l in logs}
+    job = (db.query(models.Job).filter(models.Job.href == f"/campaigns/result/{batch_ref}")
+           .order_by(models.Job.id.desc()).first())
+    if job is not None and job.status in ("error", "failed"):     # (not cancelled — the user stopped those)
+        import json as _json
+        try:
+            p = _json.loads(job.payload or "{}")
+        except ValueError:
+            p = {}
+        ids = [str(x) for x in p.get("advertiser_ids") or []]
+        ids += [str(a) for a, _ in (p.get("pairs") or [])] + [str(a) for a, _ in (p.get("spark_pairs") or [])]
+        unstarted = [i for i in dict.fromkeys(ids) if i not in done and i not in traces]
+    # accounts an earlier "Retry failed" of THIS batch already took (done, or still running) are
+    # never offered again — the newer attempt's page is where they're retried (v151 audit)
+    covered, busy = retry_covered(db, batch_ref)
+    fresh = [a for a in fresh if a not in covered]
+    resume = {a: p for a, p in resume.items() if a not in covered}
+    unstarted = [a for a in unstarted if a not in covered]
+    return {"fresh": list(dict.fromkeys(fresh)), "resume": resume, "unstarted": unstarted, "busy": busy}
+
+
+def _retry_refs(db: Session, batch_ref: str) -> list[str]:
+    try:
+        return [str(x) for x in json.loads(queries.get_setting(db, f"batch_retry:{batch_ref}", "") or "[]")]
+    except (ValueError, TypeError):
+        return []
+
+
+def retry_covered(db: Session, batch_ref: str) -> tuple[set, bool]:
+    """(accounts a retry of this batch already launched or is launching, is a retry still running)."""
+    refs = _retry_refs(db, batch_ref)
+    if not refs:
+        return set(), False
+    covered = {a for (a,) in db.query(models.LaunchLog.advertiser_id).filter(models.LaunchLog.batch_ref.in_(refs))}
+    busy = False
+    for j in db.query(models.Job).filter(models.Job.href.in_([f"/campaigns/result/{r}" for r in refs]),
+                                         models.Job.status.in_(("queued", "claimed", "running"))):
+        busy = True
+        try:
+            p = json.loads(j.payload or "{}")
+        except ValueError:
+            p = {}
+        covered |= {str(x) for x in p.get("advertiser_ids") or []}
+        covered |= {str(a) for a, _ in (p.get("pairs") or [])} | {str(a) for a, _ in (p.get("spark_pairs") or [])}
+    return covered, busy
+
+
+def _note_retry(db: Session, batch_ref: str, new_ref: str) -> None:
+    refs = _retry_refs(db, batch_ref)
+    queries.set_setting(db, f"batch_retry:{batch_ref}", json.dumps((refs + [new_ref])[-50:]))
+
+
+def spread(items: list, accounts: list) -> list[list]:
+    """[[account, item]] — the items taken in turn over the accounts (pure)."""
+    if not items:
+        return []
+    return [[a, items[i % len(items)]] for i, a in enumerate(accounts)]
+
+
+@router.post("/campaigns/result/{batch_ref}/duplicate")
+async def duplicate_batch(request: Request, batch_ref: str, db: Session = Depends(get_db)):
+    """Launch this batch's exact recipe again on other accounts (the result page's
+    "Launch again on…"). The batch's posts / picked creatives are spread over the new
+    accounts in turn (a picked creative may run on several accounts, as on the board);
+    an automatic-library batch takes the next fresh creative per account, as before."""
+    import json as _json
+    from fastapi.responses import JSONResponse
+    form = await request.form()
+    raw = queries.get_setting(db, f"batch_fields:{batch_ref}", "")
+    if not raw:
+        return JSONResponse({"ok": False, "error": "This batch's settings weren't recorded (older launch) — launch it from the Super Launcher instead."})
+    try:
+        fields = _json.loads(raw)
+    except (ValueError, TypeError):
+        return JSONResponse({"ok": False, "error": "This batch's settings couldn't be read."})
+    sc = scope_mod.for_request(request, db)
+    # only a batch this view launched (or can see a launch of) — never replay someone else's recipe
+    mine = (fields.get("_launched_by") is not None and fields.get("_launched_by") == sc.user_id) or any(
+        sc.allows(a) for (a,) in db.query(models.LaunchLog.advertiser_id).filter(models.LaunchLog.batch_ref == batch_ref).limit(500))
+    if not mine:
+        return JSONResponse({"ok": False, "error": "That batch isn't in your workspace."}, status_code=404)
+    want = [str(x) for x in (form.getlist("advertiser_ids") or []) if str(x).strip()]
+    if len(want) == 1 and "," in want[0]:
+        want = [x.strip() for x in want[0].split(",") if x.strip()]
+    accounts = [a for a in db.query(models.AdAccount).filter(models.AdAccount.advertiser_id.in_(want or [""])).all()
+                if sc.allows(a.advertiser_id) and a.enabled]
+    if not accounts:
+        return JSONResponse({"ok": False, "error": "Pick at least one account in this workspace."})
+    ids = [a.advertiser_id for a in accounts]
+    fields["_launched_by"] = sc.owner_for_new
+    fields.pop("_resume_by_account", None)
+    by_spark = fields.pop("_spark_by_account", None) or {}
+    by_creative = fields.pop("_creative_by_account", None) or {}
+    title = f"Again: {fields.get('template_name') or batch_ref} on {len(ids)} account(s)"
+    if by_spark or by_creative:
+        # the batch's posts and picked creatives, in turn over the new accounts
+        own_sp = {r.id for r in sc.owned(db.query(models.SparkCode), models.SparkCode)
+                  .filter(models.SparkCode.id.in_([int(v) for v in by_spark.values()] or [0]))}
+        own_cr = {r.id for r in sc.owned(db.query(models.Creative), models.Creative)
+                  .filter(models.Creative.id.in_([int(v) for v in by_creative.values()] or [0]))}
+        items = ([("spark", int(v)) for v in dict.fromkeys(by_spark.values()) if int(v) in own_sp]
+                 + [("lib", int(v)) for v in dict.fromkeys(by_creative.values()) if int(v) in own_cr])
+        if not items:
+            return JSONResponse({"ok": False, "error": "None of this batch's posts or creatives are in your workspace any more."})
+        spread_ = spread(items, ids)
+        spark_pairs = [[a, it[1]] for a, it in spread_ if it[0] == "spark"]
+        lib_pairs = [[a, it[1]] for a, it in spread_ if it[0] == "lib"]
+        new_ref = queue_launch(db, title, ids, fields, pairs=lib_pairs or None, spark_pairs=spark_pairs or None)
+    else:
+        new_ref = queue_launch(db, title, ids, fields)
+    from .. import audit
+    audit.from_request(db, models, request, "launch.duplicated", target=batch_ref, detail=f"{len(ids)} account(s) → {new_ref}")
+    return JSONResponse({"ok": True, "href": f"/campaigns/result/{new_ref}"})
 
 
 @router.post("/campaigns/result/{batch_ref}/retry")
@@ -2547,10 +3035,14 @@ def retry_failed(request: Request, batch_ref: str, db: Session = Depends(get_db)
         fields = _json.loads(raw)
     except (ValueError, TypeError):
         return RedirectResponse(f"/campaigns/result/{batch_ref}?note=norecipe", status_code=303)
-    failed_ids = [l.advertiser_id for l in
-                  db.query(models.LaunchLog).filter_by(batch_ref=batch_ref)
-                  .filter(models.LaunchLog.ok == False)]                 # noqa: E712
-    failed_ids = list(dict.fromkeys(failed_ids))                          # dedupe, keep order
+    plan = retry_plan(db, batch_ref, fields)
+    if plan.get("busy") and not (plan["fresh"] or plan["resume"] or plan["unstarted"]):
+        return RedirectResponse(f"/campaigns/result/{batch_ref}?note=nofail", status_code=303)
+    # fresh relaunches (nothing was created), half-built accounts finished inside their own
+    # campaign, and accounts a restart stopped the batch before reaching
+    failed_ids = list(dict.fromkeys(plan["fresh"] + list(plan["resume"]) + plan["unstarted"]))
+    if plan["resume"]:
+        fields["_resume_by_account"] = plan["resume"]
     if not failed_ids:
         return RedirectResponse(f"/campaigns/result/{batch_ref}?note=nofail", status_code=303)
     sc = scope_mod.for_request(request, db)
@@ -2570,9 +3062,11 @@ def retry_failed(request: Request, batch_ref: str, db: Session = Depends(get_db)
         if ids:
             new_ref = queue_launch(db, f"Retry {len(ids)} failed account(s) of {batch_ref}", ids, fields,
                                    pairs=lib_pairs or None, spark_pairs=pairs or None)
+            _note_retry(db, batch_ref, new_ref)
             return RedirectResponse(f"/campaigns/result/{new_ref}", status_code=303)
     new_ref = queue_launch(db, f"Retry {len(accounts)} failed account(s) of {batch_ref}",
                            [a.advertiser_id for a in accounts], fields)
+    _note_retry(db, batch_ref, new_ref)
     return RedirectResponse(f"/campaigns/result/{new_ref}", status_code=303)
 
 

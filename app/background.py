@@ -18,6 +18,7 @@ import time
 
 log = logging.getLogger("adops.background")
 
+ISSUE_SCAN_EVERY_S = 15 * 60   # the issue scan pages through every ad of every account — not on every slow cycle
 MEM_TRAIL_MB = 300     # once a sweep step starts above this RSS, log a "mem trail" breadcrumb naming it (512 MB box)
 MEM_PROBE_MB = 330     # the always-on sampler logs a "mem" line only once RSS climbs past this
 MEM_SAMPLE_SEC = 6     # how often the sampler reads process RSS (no DB write unless RSS is high)
@@ -174,8 +175,11 @@ def _loop():
             # silent. Whatever step the last "mem trail" line on Diagnostics names is the
             # step the instance died in.
             peak = {"mb": 0.0, "step": "start"}
+            from . import sched as _sched
+            _sched.begin_sweep(sweep_n, slow, interval)
             def beat(step):
                 set_activity("sweep:" + step)
+                _sched.step(step)                    # timed per step (Diagnostics › Scheduler)
                 mb = rss_mb()
                 if mb > peak["mb"]:
                     peak["mb"], peak["step"] = mb, step
@@ -198,7 +202,8 @@ def _loop():
                     rules.evaluate_topups(db, us, ids)
                     rules.check_fresh_inventory(db, us, u.id)
                     rules.check_pool_inventory(db, us, u.id)
-                beat("issues.scan"); issues.scan(db)
+                if _sched.due("issues.scan", ISSUE_SCAN_EVERY_S):   # it reads every ad of every account: every 15 min, not every slow cycle
+                    beat("issues.scan"); issues.scan(db)
                 partners.poll(db)               # TikTok-account assignments waiting on accepted invites
                 try:
                     from . import invite_autoaccept
@@ -221,6 +226,36 @@ def _loop():
                 rules.evaluate_profit_rules(db, us, ids)
                 bid_bump.schedule(db, us, ids, u.id)                  # idle ad groups → bid +step (runs as a job)
             beat("queue_worker"); queue_worker.process(db, settings)
+            try:
+                from . import warmup
+                beat("warmup"); warmup.poll(db)              # approved warm-ups → paused (self-throttled to 2 min)
+            except Exception as _e:  # noqa: BLE001 — never let it break the sweep
+                _sched.fail("warmup", _e)
+                log.exception("warm-up poll failed")
+            try:
+                from . import launch_trace, models
+                from .routes.campaigns import MAYBE_CREATED_MARK
+                launch_trace.recover(db, models, MAYBE_CREATED_MARK, stale=True)   # a launch thread that went silent
+            except Exception:  # noqa: BLE001
+                db.rollback()                        # a failed commit must not poison the steps after it
+                log.exception("launch-trace sweep failed")
+            try:                                     # v147 stocking: code-check retries, covers, pages
+                from . import models, page_stock, spark_check, thumbs, tiktok_api
+                beat("spark_check"); spark_check.run(db, models, tiktok_api, ids=None, limit=10)
+                beat("thumbs"); thumbs.process_pending(db, models, limit=10)
+                if slow:
+                    beat("page_stock"); page_stock.schedule(db, models)
+            except Exception as _e:  # noqa: BLE001
+                db.rollback()
+                _sched.fail(None, _e)
+                log.exception("stocking pass failed")
+            try:
+                from . import notify
+                beat("notify"); notify.dispatch(db)          # new error alerts → Telegram / email (per user, opt-in)
+            except Exception as _e:  # noqa: BLE001
+                db.rollback()
+                _sched.fail("notify", _e)
+                log.exception("alert notifications failed")
             beat("tensorpix"); tensorpix_worker.process_pending(db, limit=6)   # advance variant jobs
             try:
                 from .routes.creatives import recover_stuck_ai
@@ -229,7 +264,14 @@ def _loop():
                 pass
             beat("posters"); _posters_pass(db)                # pre-make a few missing video posters, one at a time
             log.info("sweep %s done (slow=%s) rss=%.0fMB peak=%.0fMB@%s", sweep_n, slow, rss_mb(), peak["mb"], peak["step"])
-        except Exception:  # one bad sweep must never kill the worker
+            _sched.end_sweep()
+        except Exception as _e:  # one bad sweep must never kill the worker
+            try:
+                from . import sched as _sched2
+                _sched2.fail(None, _e)
+                _sched2.end_sweep(f"{type(_e).__name__}: {_e}")
+            except Exception:  # noqa: BLE001
+                pass
             log.exception("background sweep failed")
         finally:
             db.close()
@@ -285,12 +327,25 @@ def _audience_quick(db, settings: dict) -> None:
     jobs.enqueue_once(db, "audience_sync", title, {"days": days, "hot_only": True}, href="/audience", quiet=True)
 
 
+APP_LOG_KEEP_DAYS = 30
+
+
 def _prune_logins(db) -> None:
-    from . import auth_security
-    try:
-        auth_security.prune_attempts(db)
-    except Exception:  # noqa: BLE001
-        db.rollback()
+    """Housekeeping on the slow cycle: login attempts (30 d), dead sessions (30 d), the audit
+    trail (180 d) and the app log (30 d — it used to grow forever)."""
+    from datetime import datetime, timedelta
+    from . import audit, auth_security, models, sessions
+    for step in (lambda: auth_security.prune_attempts(db),
+                 lambda: sessions.prune(db, models),
+                 lambda: audit.prune(db, models),
+                 lambda: __import__("app.asset_builds", fromlist=["prune"]).prune(db, models),
+                 lambda: __import__("app.asset_builds", fromlist=["ensure_running"]).ensure_running(db, models),
+                 lambda: (db.query(models.AppLog).filter(models.AppLog.created_at < datetime.utcnow() - timedelta(days=APP_LOG_KEEP_DAYS))
+                          .delete(synchronize_session=False), db.commit())):
+        try:
+            step()
+        except Exception:  # noqa: BLE001
+            db.rollback()
 
 
 def _music_monthly(db) -> None:

@@ -16,7 +16,7 @@ SIDEBAR = [
     ("/audience", "audience", "Audience", ("/audience",)),
     ("/inbox", "inbox", "Inbox", ("/inbox",)),
     None,                                                   # gap
-    ("/super-launcher", "rocket", "Launch", ("/super-launcher", "/campaigns/launch", "/campaigns/result", "/queue")),
+    ("/super-launcher", "rocket", "Launch", ("/super-launcher", "/campaigns/launch", "/campaigns/result", "/queue", "/warmup", "/lab")),
     ("/presets", "presets", "Presets", ("/presets",)),
     ("/creatives", "creatives", "Assets", ("/creatives", "/spark-codes", "/ad-texts", "/instant-pages", "/lead-forms", "/display-cards", "/landers")),
 ]
@@ -29,7 +29,7 @@ FOOTER = [
 SECTIONS = {
     "health": [("/monitor", "Issues"), ("/monitor?view=balances", "Balances"), ("/monitor?view=automation", "Automation"),
                ("/monitor?view=system", "System"), ("/appeals", "Appeals")],
-    "launch": [("/super-launcher", "Super Launcher"), ("/campaigns/launch", "Single campaign"), ("/queue", "Queue")],
+    "launch": [("/super-launcher", "Super Launcher"), ("/campaigns/launch", "Single campaign"), ("/warmup", "Warm up"), ("/lab", "Lab"), ("/queue", "Queue")],
     "creatives": [("/creatives", "Assets"), ("/spark-codes", "Spark codes"), ("/ad-texts", "Ad texts"),
                   ("/instant-pages", "Instant pages"), ("/lead-forms", "Lead forms"), ("/landers", "Landers")],
     "settings": [("/settings", "Settings"), ("/accounts", "Ad accounts"), ("/pixels", "Pixels"), ("/creators", "Creators"), ("/partners", "Partners"), ("/bc-assets", "Assets"), ("/locations", "Locations"),
@@ -38,7 +38,7 @@ SECTIONS = {
 }
 _SECTION_OF = {
     "/monitor": "health", "/issues": "health", "/appeals": "health", "/automation": "health",
-    "/super-launcher": "launch", "/campaigns/launch": "launch", "/queue": "launch", "/campaigns/result": "launch",
+    "/super-launcher": "launch", "/campaigns/launch": "launch", "/queue": "launch", "/campaigns/result": "launch", "/warmup": "launch", "/lab": "launch",
     "/creatives": "creatives", "/spark-codes": "creatives", "/ad-texts": "creatives", "/instant-pages": "creatives", "/lead-forms": "creatives", "/landers": "creatives",
     "/settings": "settings", "/accounts": "settings", "/pixels": "settings", "/creators": "settings", "/partners": "settings", "/bc-assets": "settings", "/locations": "settings",
     "/cookies": "settings", "/oauth": "settings",
@@ -62,6 +62,8 @@ JUMP = [
     ("/super-launcher", "Super Launcher", "Launch", "launch many accounts preset"),
     ("/campaigns/launch", "Create campaign", "Launch", "single campaign launch one account"),
     ("/queue", "Launch queue", "Launch", "queued scheduled launches"),
+    ("/warmup", "Warm up accounts", "Launch", "warm up new ad accounts reach approve pause"),
+    ("/lab", "Lab — experiments", "Launch", "lab test experiment hypothesis board winner learning"),
     ("/presets", "Presets", "Build", "templates campaign settings"),
     ("/presets/new", "New preset", "Build", "create template"),
     ("/creatives", "Assets", "Build", "creatives videos images carousels library upload"),
@@ -139,7 +141,7 @@ def section_key(path: str) -> str | None:
     return None
 
 
-OWNER_ONLY_TABS = frozenset({"/partners"})
+OWNER_ONLY_TABS = frozenset({"/partners", "/cookies"})
 
 
 def tabs(request) -> list:

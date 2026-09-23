@@ -54,9 +54,10 @@ def alerts_data(request: Request, db: Session = Depends(get_db)):
 
 
 @router.post("/alerts/{alert_id}/ack")
-def acknowledge(alert_id: int, db: Session = Depends(get_db)):
+def acknowledge(request: Request, alert_id: int, db: Session = Depends(get_db)):
+    from .. import inbox as inbox_mod, scope as scope_mod
     a = db.get(models.Alert, alert_id)
-    if a:
+    if a and inbox_mod.alert_visible(a, scope_mod.for_request(request, db)):
         a.acknowledged = True
         db.commit()
     bell_cache_clear()
@@ -64,8 +65,11 @@ def acknowledge(alert_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/alerts/ack-all")
-def acknowledge_all(db: Session = Depends(get_db)):
-    db.query(models.Alert).filter_by(acknowledged=False).update({"acknowledged": True})
+def acknowledge_all(request: Request, db: Session = Depends(get_db)):
+    """Acknowledge what THIS person sees — not every workspace's alerts."""
+    from .. import inbox as inbox_mod, scope as scope_mod
+    for a in inbox_mod.visible_unacked(db, scope_mod.for_request(request, db)):
+        a.acknowledged = True
     db.commit()
     bell_cache_clear()
     return {"ok": True}

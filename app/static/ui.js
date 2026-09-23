@@ -118,6 +118,16 @@
       .then(function (y) { if (!y) return; f.dataset.ok = "1"; var b = f.querySelector("button[type=submit], button:not([type])"); if (b) b.disabled = true; f.submit(); });
   }, true);
 
+  // ---- "new results" pill (v151): a background job changed this page's data — offer the fresh
+  // list instead of yanking the page away mid-typing
+  UI.staleBanner = function (text, href) {
+    var b = document.getElementById("uiStale");
+    if (!b) { b = el('<button type="button" id="uiStale" class="ui-stale"></button>'); document.body.appendChild(b); }
+    b.textContent = "↻ " + (text || "New results") + " — show them";
+    b.onclick = function () { location.href = href || location.href; };
+    return b;
+  };
+
   // ---- undo toast: "Paused 3 campaigns  [Undo · 8s]" -------------------------
   var undoCur = null;
   UI.undo = function (text, onUndo, secs) {

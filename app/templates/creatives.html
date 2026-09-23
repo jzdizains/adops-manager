@@ -280,7 +280,7 @@
     <div class="cr-thumb"><img loading="lazy" src="/creatives/{{ r.id }}/poster" alt=""><span class="pill {{ 'ok' if r.status == 'available' else ('dim' if r.status == 'processing' else ('err' if r.status == 'error' else 'mute')) }} cr-badge">{{ 'fresh' if r.status == 'available' else ('rendering' if r.status == 'processing' else r.status) }}</span><label class="cr-chk"><input type="checkbox" class="libchk"></label>{% if r.kind == 'carousel' %}<span class="cr-dur">carousel</span>{% elif r.kind == 'image' %}<span class="cr-dur">image</span>{% endif %}{% if r.favorite %}<span class="cr-fav">★</span>{% endif %}{% if r.file_path and r.kind == 'video' %}<button type="button" class="cr-play previewBtn" data-src="/creatives/{{ r.id }}/file" data-name="{{ r.name }}" title="Play">▶</button>{% endif %}</div>
     <div class="cr-meta">
       <div class="cr-name" title="{{ r.name }}">{{ r.name }}{% if r.freshen %} ✨{% endif %}</div>
-      <div class="muted" style="font-size:10.5px;margin-top:2px;">{{ r.uploaded_at|ago if r.uploaded_at else '—' }}{% if r.source %} · {{ r.source[:18] }}{% endif %}{% if notes.get(r.id|string) %} · 📝{% endif %}{% if r.used_campaign_id %} · <a href="/status?q={{ (camp_by_id.get(r.used_campaign_id).campaign_name if camp_by_id.get(r.used_campaign_id) else r.used_campaign_id)|urlencode }}" style="color:inherit;">in {{ accounts.get(r.used_advertiser_id, r.used_advertiser_id)[:16] }}</a>{% endif %}</div>
+      <div class="muted" style="font-size:10.5px;margin-top:2px;">{{ r.uploaded_at|ago if r.uploaded_at else '—' }}{% if r.source %} · {{ r.source[:18] }}{% endif %}{% if notes.get(r.id|string) %} · 📝{% endif %}{% if r.used_campaign_id %} · <a href="/status?q={{ (camp_by_id.get(r.used_campaign_id).campaign_name if camp_by_id.get(r.used_campaign_id) else r.used_campaign_id)|urlencode }}" style="color:inherit;">in {{ accounts.get(r.used_advertiser_id, r.used_advertiser_id)[:16] }}</a>{% endif %}{% set rv = reviews.get(r.id) if reviews else none %}{% if rv and (rv.approved or rv.rejected or rv.pending) %} <span class="rv-chips">{% if rv.approved %}<span class="rv ok" title="TikTok approved {{ rv.approved }} launch(es)">✓{{ rv.approved }}</span>{% endif %}{% if rv.rejected %}<span class="rv err" title="TikTok rejected {{ rv.rejected }} launch(es)">✕{{ rv.rejected }}</span>{% endif %}{% if rv.pending %}<span class="rv warn" title="{{ rv.pending }} launch(es) in review">…{{ rv.pending }}</span>{% endif %}</span>{% endif %}</div>
       {% if r.labels %}<div class="cr-labels">{% for l in r.labels.split(',') if l %}<span>{{ l }}</span>{% endfor %}</div>{% endif %}
     </div>
   </div>
@@ -789,8 +789,8 @@
   {% endif %}
 
   // ---- AI forms: resolution options + live cost estimate --------------------
-  var PRICES = {{ nb_models_json | safe }};
-  var HF = {{ hf_models_json | safe }};
+  var PRICES = {{ nb_models_json|js }};
+  var HF = {{ hf_models_json|js }};
   function wireAi(form) {
     var model = form.querySelector(".ai-model"), size = form.querySelector(".ai-size"), sizeWrap = form.querySelector(".ai-size-wrap"),
         n = form.querySelector(".ai-variants"), cost = form.querySelector(".ai-cost"), costNote = form.querySelector(".ai-cost-note"),
@@ -1039,7 +1039,8 @@
       m.el.querySelector("#czDelGo").addEventListener("click", function () {
         UI.post("/creatives/" + d.id + "/delete", { with_images: body.querySelector("#czDelImgs").checked ? "1" : "" }).then(function (r) {
           m.close(); if (!r.ok) { adopsToast && adopsToast("err", r.error || "Could not delete."); return; }
-          adopsToast && adopsToast("ok", "Deleted" + (r.removed_images ? " with " + r.removed_images + " slide(s)" : "")); setTimeout(function () { location.reload(); }, 400);
+          adopsToast && adopsToast("ok", "Deleted" + (r.removed_images ? " with " + r.removed_images + " slide(s)" : ""));
+          var row = b.closest("tr"); if (row) row.remove();          // gone in place, no reload
         });
       });
     });

@@ -11,6 +11,7 @@
   <a href="#rules" data-tab="rules">Rules</a>
   <a href="#launch" data-tab="launch">Launch &amp; accounts</a>
   <a href="#appeals" data-tab="appeals">Appeals</a>
+  <a href="#alerts" data-tab="alerts">Alerts</a>
   <div class="sn-grp">Tracking</div>
   <a href="#tracking" data-tab="tracking">Tracking &amp; postback</a>
   <a href="#events" data-tab="events">Events API</a>
@@ -23,7 +24,7 @@
   <a href="#assistant" data-tab="assistant">Assistant</a>
   <a href="#font" data-tab="font">Caption font</a>{% endif %}
   <div class="sn-grp">Also</div>
-  <a href="/accounts">Ad accounts →</a><a href="/pixels">Pixels →</a><a href="/partners">Partners →</a><a href="/locations">Locations →</a><a href="/cookies">TikTok cookies →</a><a href="/bc-assets">Assets →</a><a href="/diagnostics">Diagnostics →</a><a href="/oauth/connect">Connect TikTok →</a>
+  <a href="/accounts">Ad accounts →</a><a href="/pixels">Pixels →</a>{% if sec.is_owner %}<a href="/partners">Partners →</a>{% endif %}<a href="/locations">Locations →</a>{% if sec.is_owner %}<a href="/cookies">TikTok cookies →</a>{% endif %}<a href="/bc-assets">Assets →</a>{% if sec.is_owner %}<a href="/diagnostics">Diagnostics →</a>{% endif %}<a href="/oauth/connect">Connect TikTok →</a>
 </nav>
 <div class="settings-main">
 <form method="post" action="/settings/save" id="settingsForm">
@@ -49,6 +50,19 @@
       <input type="number" step="0.01" name="rule_min_spend" value="{{ s.rule_min_spend }}">
       <span class="hint">Protects fresh campaigns — below this spend, no rule fires.</span></label>
   </div>
+  <div class="form-row-3" style="margin-top:4px;">
+    <label class="field"><span class="field-label">When a rule fires (both rule cards)</span>
+      <select name="rules_mode">
+        <option value="pause" {{ 'selected' if s.rules_mode == 'pause' }}>Pause the campaign</option>
+        <option value="flag" {{ 'selected' if s.rules_mode == 'flag' }}>Flag only — tell me, don't pause</option>
+        <option value="dry_run" {{ 'selected' if s.rules_mode == 'dry_run' }}>Dry run — log what it would do, silently</option>
+      </select>
+      <span class="hint">Try new thresholds on Dry run first: Health › Automation lists every campaign they would have paused.</span></label>
+    <label class="field"><span class="field-label">At most this many rule pauses per hour</span>
+      <input type="number" step="1" min="0" name="rules_hourly_cap" value="{{ s.rules_hourly_cap }}">
+      <span class="hint">Past it, breaches are held and you get one notice — a bad threshold can't pause everything at once. 0 = no cap.</span></label>
+    <div class="field"><span class="field-label">Each campaign</span><span class="hint" style="margin-top:6px;">is acted on at most once a day, never within 6 h of the operator resuming it, and every pause has a Resume on Health › Automation.</span></div>
+  </div>
 </div>
 
 <div class="card" id="profit">
@@ -62,13 +76,23 @@
     <label class="field"><span class="field-label">Pause a source losing more than ($ today)</span>
       <input type="number" step="0.01" name="profit_loss_limit" value="{{ s.profit_loss_limit }}">
       <span class="hint">Pauses EVERY campaign on that source.</span></label>
-    <label class="field"><span class="field-label">Only judge sources past ($ spend today)</span>
+    <label class="field"><span class="field-label">Only judge sources past ($ spend in the window)</span>
       <input type="number" step="0.01" name="profit_min_spend" value="{{ s.profit_min_spend }}"></label>
     <label class="field" style="display:flex;align-items:flex-end;">
       <label style="display:flex;align-items:center;gap:8px;font-weight:600;cursor:pointer;">
         <input type="checkbox" name="protect_profitable" {{ 'checked' if s.protect_profitable }} style="width:auto;">
         Metric rules skip profitable sources
       </label></label>
+  </div>
+  <div class="form-row-3" style="margin-top:4px;">
+    <label class="field"><span class="field-label">Judge over</span>
+      <select name="profit_lookback">
+        {% for v, l in [('today', 'Today'), ('yesterday', 'Yesterday'), ('3d', 'Last 3 days (incl. today)'), ('7d', 'Last 7 days (incl. today)')] %}<option value="{{ v }}" {{ 'selected' if s.profit_lookback == v }}>{{ l }}</option>{% endfor %}
+      </select>
+      <span class="hint">A longer window stops a source that loses slowly, day after day.</span></label>
+    <label class="field"><span class="field-label">…or pause when ROAS is under</span>
+      <input type="number" step="0.01" min="0" name="profit_roas_min" value="{{ s.profit_roas_min }}">
+      <span class="hint">Revenue ÷ spend over the window, e.g. 0.8. 0 = off.</span></label>
   </div>
 </div>
 
@@ -290,8 +314,8 @@
     <input type="text" name="events_page_url" value="{{ s.events_page_url }}" placeholder="https://your-lander.com/">
     <span class="hint">TikTok requires a page URL on every web event. Postbacks for a source this tool launched use that campaign's landing URL automatically; this is the fallback for anything else (and for the tool below).</span></label>
   <label class="field"><span class="field-label">Events API access token</span>
-    <input type="text" name="events_access_token" value="{{ s.events_access_token }}"
-           placeholder="from Events Manager → your pixel → Settings → Generate Access Token"
+    <input type="password" name="events_access_token" value="" autocomplete="off"
+           placeholder="{{ ('saved (…' ~ s.events_access_token[-4:] ~ ') — leave empty to keep it') if s.events_access_token else 'from Events Manager → your pixel → Settings → Generate Access Token' }}"
            style="font-family:var(--font-mono);font-size:12px;">
     <span class="hint">Fixes “No permission to operate event source id” (code 40001): the regular
       Marketing token usually can't send events. Generate this token on the pixel itself and paste it here.</span></label>
@@ -325,6 +349,38 @@
       <span class="hint">Max automatic appeals per day, so an account-wide problem doesn't fire hundreds at once. The rest wait for you.</span></label>
   </div>
 </div>
+
+</section>
+<section class="stab" data-tab="alerts">
+<div class="card" id="alerts">
+  <div class="card-header"><span class="card-title">Alerts to Telegram / email</span>
+    <span class="card-meta">new alerts from your Inbox, pushed out once a minute — one message per batch, never the same alert twice</span></div>
+  <div class="form-row-3">
+    <label class="field"><span class="field-label">Telegram bot token</span>
+      <input type="password" name="notify_telegram_token" value="" autocomplete="off" placeholder="{{ ('saved (…' ~ s.notify_telegram_token[-4:] ~ ') — leave empty to keep it') if s.notify_telegram_token else '123456:ABC-…' }}">
+      <span class="hint">Make a bot with @BotFather, paste its token. Stored encrypted, never shown again.{% if s.notify_telegram_token %} <label style="display:inline-flex;gap:4px;align-items:center;"><input type="checkbox" name="clear_notify_telegram_token"> remove it</label>{% endif %}</span></label>
+    <label class="field"><span class="field-label">Telegram chat id</span>
+      <input type="text" name="notify_telegram_chat" value="{{ s.notify_telegram_chat }}" placeholder="e.g. 123456789 or -100…">
+      <span class="hint">Message the bot once (or add it to a group), then use your chat / group id.</span></label>
+    <label class="field"><span class="field-label">Email to</span>
+      <input type="email" name="notify_email_to" value="{{ s.notify_email_to }}" placeholder="you@company.com" {{ 'disabled' if not smtp_ok }}>
+      <span class="hint">{% if smtp_ok %}Sent through the server's mail account.{% else %}Not configured on the server — set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD and SMTP_FROM on Render to use email.{% endif %}</span></label>
+  </div>
+  <div class="form-row" style="align-items:flex-end;">
+    <label class="field" style="max-width:280px;"><span class="field-label">Send</span>
+      <select name="notify_level"><option value="err" {{ 'selected' if s.notify_level != 'warn' }}>Errors only</option><option value="warn" {{ 'selected' if s.notify_level == 'warn' }}>Errors and warnings</option></select></label>
+    <div class="field"><button class="btn" type="button" id="notifyTest">Send a test</button> <span class="hint" id="notifyMsg" style="margin:0;">Save first — the test uses the saved settings.</span></div>
+  </div>
+</div>
+<script>
+  (function () {
+    var b = document.getElementById("notifyTest"); if (!b) return;
+    b.addEventListener("click", function () {
+      b.disabled = true;
+      UI.post("/settings/notify/test").then(function (d) { b.disabled = false; document.getElementById("notifyMsg").textContent = d.ok ? d.message : (d.error || "Failed."); });
+    });
+  })();
+</script>
 
 </section>
 {% if sec.own_view %}
@@ -401,6 +457,20 @@
 <div class="card" id="security">
   <div class="card-header"><span class="card-title">🔒 Your account &amp; login security</span>
     <span class="card-meta">{{ sec.me.email if sec.me }}{% if sec.is_owner %} · owner{% endif %} · lockout after 5 wrong tries · sessions expire after {{ sec.session_hours }} h</span></div>
+  {% if sec.devices %}
+  <div style="margin-bottom:14px;">
+    <div class="field-label" style="display:flex;align-items:center;gap:8px;">Signed-in devices <span class="muted">({{ sec.devices|length }})</span>
+      {% if sec.devices|length > 1 %}<form method="post" action="/settings/sessions/revoke-others" style="margin-left:auto;" data-confirm="Sign out every other device?" data-confirm-text="This browser stays signed in." data-ok-label="Sign them out"><button class="btn sm" type="submit">Sign out all others</button></form>{% endif %}</div>
+    <table class="data dense" style="margin-top:6px;font-size:12px;"><thead><tr><th>Device</th><th>IP</th><th>Last active (UTC)</th><th>Signed in</th><th></th></tr></thead><tbody>
+    {% for d in sec.devices %}<tr>
+      <td><b>{{ d.label }}</b>{% if d.current %} <span class="pill ok">this browser</span>{% endif %}</td>
+      <td class="mono">{{ d.ip or '—' }}</td>
+      <td class="mono">{{ d.last.strftime('%b %d %H:%M') if d.last else '—' }}</td>
+      <td class="mono muted">{{ d.since.strftime('%b %d') if d.since else '—' }}</td>
+      <td style="text-align:right;">{% if not d.current %}<form method="post" action="/settings/sessions/{{ d.id }}/revoke"><button class="btn sm ghost" type="submit">Sign out</button></form>{% endif %}</td>
+    </tr>{% endfor %}</tbody></table>
+  </div>
+  {% endif %}
   {% if sec.insecure %}<div class="flash err">APP_PASSWORD / SESSION_SECRET are still the placeholders — set both as environment variables on the server.</div>{% endif %}
   {% if sec.me and sec.me.must_change_password %}<div class="flash err">Your password was set by an admin — choose your own now.</div>{% endif %}
   <div class="form-row-3" style="gap:16px;">
@@ -448,7 +518,7 @@
       </form>
       <div class="hint">Off = the authenticator code is asked at every login, for everyone. This switch is owner-only.</div>
       {% endif %}
-      <div class="hint" style="margin-top:12px;">Also active: wrong logins are slowed down, and an IP or an email is locked out after 5 failures (15 min, longer if it keeps trying); pages are never cached by the browser.{% if sec.allowed_ips %} Logins are restricted to <code>{{ sec.allowed_ips }}</code> (ALLOWED_IPS).{% else %} To restrict logins to your own network, set <code>ALLOWED_IPS</code> — your current IP is <code>{{ sec.this_ip }}</code>.{% endif %}</div>
+      <div class="hint" style="margin-top:12px;">Also active: wrong logins are slowed down; an IP, or an email from one IP, is locked out after 5 failures (15 min, longer if it keeps trying) and an email tried from many IPs after 20; each authenticator code works once; requests from other sites are refused; pages are never cached by the browser.{% if sec.allowed_ips %} Logins are restricted to <code>{{ sec.allowed_ips }}</code> (ALLOWED_IPS).{% else %} To restrict logins to your own network, set <code>ALLOWED_IPS</code> — your current IP is <code>{{ sec.this_ip }}</code>.{% endif %}</div>
     </div>
     <div>
       <div class="field-label">Recent login attempts <span class="muted">(you are {{ sec.this_ip }}{% if sec.this_where %} · {{ sec.this_where }}{% endif %})</span></div>
@@ -534,6 +604,21 @@
   {% else %}<div class="muted" style="font-size:12px;">Nothing recorded yet.</div>{% endif %}
   <div class="hint" style="margin-top:8px;">A <b>probe</b> is a request for a dashboard page by someone not logged in (one row per IP per 10 minutes, with a hit count). Location comes from the IP and is approximate — mobile networks often resolve to the carrier's city. Entries are kept for 30 days.</div>
 </div>
+<details class="card" id="audit">
+  <summary class="card-header"><span class="card-title">🧾 Audit trail <span class="n">{{ sec.audit|length }}</span></span>
+    <span class="card-meta">who changed what, from where — every change made by a signed-in user, newest first (kept 180 days; never any form values)</span></summary>
+  {% if sec.audit %}
+  <div style="overflow-x:auto;"><table class="data dense" style="font-size:11.5px;">
+    <thead><tr><th>When (UTC)</th><th>Who</th><th>IP</th><th>What</th><th class="num">Result</th></tr></thead><tbody>
+    {% for e in sec.audit %}<tr>
+      <td class="mono" style="white-space:nowrap;">{{ e.at.strftime('%b %d %H:%M:%S') }}</td>
+      <td>{{ e.user_email or '—' }}</td>
+      <td class="mono">{{ e.ip }}</td>
+      <td><span class="mono">{{ e.action }}</span>{% if e.target %} · {{ e.target }}{% endif %}{% if e.detail %} <span class="muted">{{ e.detail }}</span>{% endif %}</td>
+      <td class="num">{% if e.status %}<span class="pill {{ 'ok' if e.status < 400 else 'err' }}">{{ e.status }}</span>{% endif %}</td>
+    </tr>{% endfor %}</tbody></table></div>
+  {% else %}<div class="muted" style="font-size:12px;padding:8px 0;">Nothing recorded yet.</div>{% endif %}
+</details>
 <script>
   (function () {
     var btns = document.querySelectorAll("#accFilter button"), rows = document.querySelectorAll("#accTable tbody tr");

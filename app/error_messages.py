@@ -29,6 +29,9 @@ FRIENDLY: dict[str, tuple[str, str]] = {
     "50000": ("TikTok internal error.", "Not your fault. Retry once; if it persists, try later."),
     "51009": ("Budget below TikTok's minimum.",
               "Raise the ad group (or CBO campaign) budget — TikTok's minimum is usually $20/day per ad group."),
+    "HTTP": ("Couldn't get a clean answer from TikTok (network error).",
+             "Usually a blip — retry. If the detail says the request may already have been created, open the "
+             "account in Ads Manager first: relaunching blind can put a duplicate campaign there."),
     "200000": ("TikTok web session expired — genuine cookie expiry.",
                "Paste fresh cookies on the TikTok Cookies page (or push them with the Chrome extension)."),
 }
@@ -38,6 +41,16 @@ _PERMISSION_HINTS = re.compile(r"permission|not authorized|no access|无权限",
 
 # 40002 messages with a KNOWN cause — matched on TikTok's wording, checked in order
 _MESSAGE_HINTS: list[tuple[re.Pattern, str, str]] = [
+    # A one-time legal agreement on the AD ACCOUNT (not a campaign/preset problem, and the
+    # API can't sign it). Surfaces at /ad/create/ the first time an account runs lead gen.
+    (re.compile(r"lead generation agreement|agreement has not be(en)? signed|"
+                r"lead[- ]?gen(eration)? terms (of service )?(has|have)? ?not", re.I),
+     "This ad account hasn't accepted TikTok's Lead Generation Terms yet.",
+     "This is a one-time agreement per ad account — the launcher can't sign it for you. In TikTok "
+     "Ads Manager, switch to THIS advertiser, start creating any Lead Generation campaign (or open "
+     "Tools › Instant Forms / Lead generation): a 'Lead Generation Terms of Service' box pops up for "
+     "an account admin to accept. Accept it once, then Retry failed here — the ad will build. Each "
+     "ad account you launch lead-gen from needs this done once."),
     (re.compile(r"selected advanced creative is not supported", re.I),
      "TikTok won't run this creative on a Smart+ ad for this objective.",
      "The launch already retried without the display card and with a single button, so what is left is the "
@@ -136,6 +149,15 @@ def fix_for(log) -> dict | None:
     adv = getattr(log, "advertiser_id", "") or ""
     spark_id = getattr(log, "spark_code_id", None)
     template_id = getattr(log, "template_id", None)
+    # One-time Lead Generation Terms on the ad account — not a dashboard page, so the button
+    # points to TikTok's own setup steps. Matched on the raw wording (any error code).
+    if re.search(r"lead generation agreement|agreement has not be(en)? signed|"
+                 r"lead[- ]?gen(eration)? terms", raw + " " + low):
+        return {"label": "How to accept the Lead Gen Terms",
+                "href": "https://ads.tiktok.com/help/article/set-up-lead-generation-with-instant-form",
+                "why": "This ad account must accept TikTok's Lead Generation Terms once, in Ads Manager "
+                       "(an admin ticks the box the first time you build a lead-gen campaign or Instant "
+                       "Form for it). The launcher can't sign it — do it once, then Retry failed."}
     if code == "SPARK":
         if "rejected the spark code" in low or "code is incorrect" in low:
             return {"label": "Replace the spark code", "href": f"/spark-codes?edit={spark_id}" if spark_id else "/spark-codes",

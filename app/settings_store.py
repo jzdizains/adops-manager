@@ -47,6 +47,11 @@ DEFAULTS: dict = {
     "profit_loss_limit": 20.0,     # pause a source losing more than this today
     "profit_min_spend": 15.0,      # only judge sources past this spend today
     "protect_profitable": True,    # metric rules skip sources in profit today
+    # --- rule rails (v148) --------------------------------------------------------
+    "rules_mode": "pause",         # pause = act · flag = tell me, don't touch · dry_run = log what it WOULD do, silently
+    "rules_hourly_cap": 10,        # at most this many rule pauses per hour (the rest are held and reported)
+    "profit_lookback": "today",    # the window profit rules judge: today | yesterday | 3d | 7d
+    "profit_roas_min": 0.0,        # also pause a source whose ROAS over that window is below this (0 = off)
     # --- idle bid bump ---------------------------------------------------------
     "bid_bump_enabled": False,     # raise the bid of a delivering ad group that hasn't spent for a while
     "bid_bump_step": 0.05,         # $ added per bump
@@ -116,6 +121,12 @@ DEFAULTS: dict = {
     "issue_max_age_days": 3,       # rejected-ad issues whose ad was last changed more than this many days ago are
                                    #   dropped from Health/Inbox so old rejections don't stack up forever (0 = keep all)
 
+    # --- alerts pushed out (notify.py, v149) ------------------------------------
+    "notify_telegram_token": "",   # bot token from @BotFather — sealed at rest
+    "notify_telegram_chat": "",    # the chat / group id the bot posts to
+    "notify_email_to": "",         # needs SMTP_* on the server
+    "notify_level": "err",         # err = errors only · warn = errors + warnings
+
     # --- audience page refresh ------------------------------------------------
     "audience_hours_every_min": 10,      # today's hour-by-hour delivery (basic report, near real-time): accounts with active campaigns
     "audience_breakdown_every_min": 60,  # today+yesterday audience breakdowns (TikTok publishes them 10–12 h late): active accounts
@@ -133,6 +144,11 @@ GLOBAL_KEYS = frozenset({
 USER_KEYS = frozenset(k for k in DEFAULTS if k not in GLOBAL_KEYS)
 
 
+def _sealed(d: dict) -> dict:
+    from . import secrets_box
+    return secrets_box.settings_seal(d)
+
+
 def user_key(user_id: int) -> str:
     return f"{USER_PREFIX}{int(user_id)}"
 
@@ -146,7 +162,10 @@ def _load(db: Session, key: str):
         data = json.loads(row.value) if row.value else {}
     except json.JSONDecodeError:
         data = {}
-    return data if isinstance(data, dict) else {}
+    if not isinstance(data, dict):
+        return {}
+    from . import secrets_box
+    return secrets_box.settings_unseal(data)          # the Events API token is sealed at rest
 
 
 def owner_id(db: Session):
@@ -165,7 +184,7 @@ def _mint_user_row(db: Session, user_id: int, base: dict) -> dict:
     data = {k: base.get(k, DEFAULTS[k]) for k in USER_KEYS}
     if not data.get("postback_key"):
         data["postback_key"] = secrets.token_hex(16)
-    queries.insert_setting_if_absent(db, user_key(user_id), json.dumps(data))
+    queries.insert_setting_if_absent(db, user_key(user_id), json.dumps(_sealed(data)))
     db.commit()
     return _load(db, user_key(user_id)) or data
 
@@ -185,7 +204,7 @@ def get_settings(db: Session, user_id: int | None = None) -> dict:
             merged["postback_key"] = secrets.token_hex(16)
             from . import queries
             from .database import safe_commit
-            queries.upsert_setting(db, KEY, json.dumps({**gdata, "postback_key": merged["postback_key"]}))
+            queries.upsert_setting(db, KEY, json.dumps(_sealed({**gdata, "postback_key": merged["postback_key"]})))
             # if the one writer is busy, don't 500 the page: return the key in memory,
             # it persists on the next call that gets the lock
             safe_commit(db)
@@ -257,14 +276,14 @@ def user_for_postback_key(db: Session, key: str):
             k = str((json.loads(row.value or "{}") or {}).get("postback_key") or "")
         except (json.JSONDecodeError, AttributeError):
             continue
-        if k and secrets.compare_digest(k, key):
+        if k and secrets.compare_digest(str(k).encode(), str(key).encode()):
             try:
                 return int(row.key[len(USER_PREFIX):])
             except ValueError:
                 continue
     gdata = _load(db, KEY) or {}
     gk = str(gdata.get("postback_key") or "")
-    if gk and secrets.compare_digest(gk, key):
+    if gk and secrets.compare_digest(str(gk).encode(), str(key).encode()):
         oid = owner_id(db)
         if oid is not None:
             get_settings(db, oid)           # migrates the legacy row into the owner's on first use
@@ -297,6 +316,10 @@ def save_settings(db: Session, values: dict, user_id: int | None = None, global_
         clean["url_param"] = "source"
     clean["url_param_extra"] = ",".join(
         w for w in re.findall(r"[A-Za-z0-9_]+", str(clean.get("url_param_extra") or ""))[:4])
+    if clean.get("rules_mode") not in ("pause", "flag", "dry_run"):
+        clean["rules_mode"] = "pause"
+    if clean.get("profit_lookback") not in ("today", "yesterday", "3d", "7d"):
+        clean["profit_lookback"] = "today"
     if clean.get("source_mode") not in ("campaign", "static"):
         clean["source_mode"] = "campaign"
     if clean.get("tracking_mode") not in ("direct", "redirect", "clickflare"):
@@ -334,16 +357,16 @@ def save_settings(db: Session, values: dict, user_id: int | None = None, global_
         user_id = owner_id(db)
     if user_id is None:
         # no owner account yet: the legacy single row holds everything
-        queries.upsert_setting(db, KEY, json.dumps(clean))      # atomic: two first-time readers can't both INSERT
+        queries.upsert_setting(db, KEY, json.dumps(_sealed(clean)))      # atomic: two first-time readers can't both INSERT
         db.commit()
         return
     if global_too:
         gdata = _load(db, KEY) or {}
         gdata.update({k: clean[k] for k in GLOBAL_KEYS})
-        queries.upsert_setting(db, KEY, json.dumps(gdata))
+        queries.upsert_setting(db, KEY, json.dumps(_sealed(gdata)))
     udata = _load(db, user_key(user_id)) or {}
     if not clean.get("postback_key"):
         clean["postback_key"] = udata.get("postback_key") or secrets.token_hex(16)
     udata.update({k: clean[k] for k in USER_KEYS})
-    queries.upsert_setting(db, user_key(user_id), json.dumps(udata))
+    queries.upsert_setting(db, user_key(user_id), json.dumps(_sealed(udata)))
     db.commit()

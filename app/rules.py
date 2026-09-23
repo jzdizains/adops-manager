@@ -20,10 +20,64 @@ from .settings_store import get_settings
 RESUME_COOLDOWN = timedelta(hours=6)
 
 
+ACT_KINDS = ("pause", "flag", "would_pause", "held")
+LOOKBACK_DAYS = {"today": (0, 1), "yesterday": (-1, 0), "3d": (-2, 1), "7d": (-6, 1)}
+
+
+def lookback_bounds(key: str):
+    """(start_utc, end_utc) of a profit-rule window, in the business timezone's days."""
+    a, b = LOOKBACK_DAYS.get(key, LOOKBACK_DAYS["today"])
+    return timeutil.local_midnight_utc(a), timeutil.local_midnight_utc(b)
+
+
+def decide(mode: str, paused_last_hour: int, cap: int) -> str:
+    """What a breach turns into (pure): pause | held (hourly cap) | flag | would_pause."""
+    if mode == "dry_run":
+        return "would_pause"
+    if mode == "flag":
+        return "flag"
+    if cap and paused_last_hour >= cap:
+        return "held"
+    return "pause"
+
+
+class _Pass:
+    """One evaluation pass for one user: mode, hourly cap budget, one 'held' notice."""
+    def __init__(self, db: Session, settings: dict, ids: set | None):
+        self.mode = settings.get("rules_mode") or "pause"
+        self.cap = int(settings.get("rules_hourly_cap") or 0)
+        since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=1)
+        q = db.query(models.RuleAction).filter(models.RuleAction.action == "pause", models.RuleAction.ok == True,  # noqa: E712
+                                               models.RuleAction.created_at >= since)
+        self.paused_last_hour = sum(1 for r in q if ids is None or r.advertiser_id in ids)
+        self.held = 0
+
+
 def _pause_campaign(db: Session, accounts: dict, rec: models.CampaignRecord,
-                    rule: str, value: float, actions: list):
-    """Shared pause executor: API call + RuleAction + Alert (used by both
-    metric and profit rules)."""
+                    rule: str, value: float, actions: list, run: "_Pass | None" = None):
+    """Shared executor (metric and profit rules): pause — or, per the rails, flag it, log
+    what it would do (dry run), or hold it past the hourly cap. Every outcome is a RuleAction."""
+    kind = decide(run.mode, run.paused_last_hour, run.cap) if run is not None else "pause"
+    if kind != "pause":
+        action = models.RuleAction(advertiser_id=rec.advertiser_id, campaign_id=rec.campaign_id,
+                                   campaign_name=rec.campaign_name, rule=rule, metric_value=value, action=kind, ok=True)
+        if kind == "would_pause":
+            action.detail = f"dry run — would have paused at {rule} (value {value:.2f}, spend ${rec.spend_today or 0:.2f})"
+        elif kind == "flag":
+            action.detail = f"flag-only — {rule} (value {value:.2f}); not paused"
+            db.add(models.Alert(kind="rule_action", ref_id=rec.advertiser_id, level="info",
+                                message=f"Rule flag: “{rec.campaign_name}” — {rule} (hit {value:.2f}). Rules are in flag-only mode, so it's still running.",
+                                href=f"/status?state=all&open={rec.campaign_id}"))
+        else:
+            action.detail = f"held — the hourly cap of {run.cap} rule pauses was reached; not paused"
+            run.held += 1
+            if run.held == 1:
+                db.add(models.Alert(kind="rule_action", ref_id=rec.advertiser_id, level="warn",
+                                    message=f"Rules hit the cap of {run.cap} pauses in an hour — further breaches are held, not paused. "
+                                            "Check Health › Automation; raise the cap in Settings › Rules if this is expected."))
+        db.add(action)
+        actions.append(action)
+        return
     acct = accounts.get(rec.advertiser_id)
     action = models.RuleAction(
         advertiser_id=rec.advertiser_id, campaign_id=rec.campaign_id,
@@ -36,9 +90,11 @@ def _pause_campaign(db: Session, accounts: dict, rec: models.CampaignRecord,
             acct.access_token, rec.advertiser_id, [rec.campaign_id], "DISABLE")
         rec.operation_status = "DISABLE"
         action.ok = True
+        if run is not None:
+            run.paused_last_hour += 1
         action.detail = f"paused at {rule} (value {value:.2f}, spend ${rec.spend_today:.2f})"
         db.add(models.Alert(
-            kind="rule_action", ref_id=rec.campaign_id, level="warn",
+            kind="rule_action", ref_id=rec.advertiser_id, level="warn",
             message=f"Auto-paused “{rec.campaign_name}” — {rule} "
                     f"(hit {value:.2f} after ${rec.spend_today:.2f} spend)."))
         live_log.push("info", f"Rule engine paused {rec.campaign_name}: {rule}", advertiser_id=str(getattr(rec, "advertiser_id", "") or ""))
@@ -46,7 +102,7 @@ def _pause_campaign(db: Session, accounts: dict, rec: models.CampaignRecord,
         action.ok = False
         action.detail = f"pause FAILED: code={e.code} {e.message}"
         db.add(models.Alert(
-            kind="rule_action", ref_id=rec.campaign_id, level="err",
+            kind="rule_action", ref_id=rec.advertiser_id, level="err",
             message=f"Rule engine tried to pause “{rec.campaign_name}” ({rule}) "
                     f"but TikTok refused (code {e.code}). Check it manually."))
     db.add(action)
@@ -54,10 +110,21 @@ def _pause_campaign(db: Session, accounts: dict, rec: models.CampaignRecord,
 
 
 def _recently_paused(db: Session, campaign_id: str, now) -> bool:
+    """A rule acts on a campaign at most once per business day (pause, flag, dry-run entry or
+    hold), and never within RESUME_COOLDOWN of its last pause — a campaign the operator
+    resumed isn't re-paused a minute later."""
     last = (db.query(models.RuleAction)
-            .filter_by(campaign_id=campaign_id, action="pause", ok=True)
+            .filter(models.RuleAction.campaign_id == campaign_id, models.RuleAction.action.in_(ACT_KINDS))
             .order_by(models.RuleAction.created_at.desc()).first())
-    return bool(last and last.created_at and (now - last.created_at) < RESUME_COOLDOWN)
+    if last is None or not last.created_at:
+        return False
+    if last.action == "pause" and last.ok and (now - last.created_at) < RESUME_COOLDOWN:
+        return True
+    if last.action == "held":
+        # held by the HOURLY cap: once the hour has moved on it gets its turn (not a whole day)
+        return (now - last.created_at) < timedelta(hours=1)
+    midnight = timeutil.local_midnight_utc(0).replace(tzinfo=None)
+    return last.created_at >= midnight and (last.action != "pause" or last.ok)
 
 
 # ---------------------------------------------------------------------------
@@ -98,6 +165,7 @@ def evaluate_pause_rules(db: Session, settings: dict | None = None, ids: set | N
         profitable_sources = {src for src, row in pnl.items() if row["profit"] > 0}
 
     accounts = {a.advertiser_id: a for a in db.query(models.AdAccount).all()}
+    run = _Pass(db, settings, ids)
     active = (db.query(models.CampaignRecord)
               .filter(models.CampaignRecord.operation_status == "ENABLE").all())
     for rec in active:
@@ -113,15 +181,33 @@ def evaluate_pause_rules(db: Session, settings: dict | None = None, ids: set | N
         if _recently_paused(db, rec.campaign_id, now):
             continue
         rule, value = breach
-        _pause_campaign(db, accounts, rec, rule, value, actions)
+        _pause_campaign(db, accounts, rec, rule, value, actions, run)
     db.commit()
     return actions
 
 
+def losing_sources(pnl: dict, min_spend: float, loss_limit: float, roas_min: float) -> dict[str, str]:
+    """{source: why} over the window (pure): losing more than loss_limit, or ROAS below
+    roas_min — both only past min_spend."""
+    out: dict[str, str] = {}
+    for src, row in pnl.items():
+        spend = float(row.get("spend") or 0)
+        if spend < min_spend or spend <= 0:
+            continue
+        profit = float(row.get("profit") or 0)
+        roas = float(row.get("revenue") or 0) / spend
+        if loss_limit > 0 and profit <= -loss_limit:
+            out[src] = f"source P&L < -{loss_limit:.2f} ({src})"
+        elif roas_min > 0 and roas < roas_min:
+            out[src] = f"source ROAS {roas:.2f} < {roas_min:.2f} ({src})"
+    return out
+
+
 def evaluate_profit_rules(db: Session, settings: dict | None = None, ids: set | None = None) -> list[models.RuleAction]:
-    """Pause every campaign on a source whose P&L today is worse than
-    -profit_loss_limit after profit_min_spend of spend (revenue truth). With `ids`
-    (one user's accounts) the P&L is that user's share of each source."""
+    """Pause every campaign on a source that is losing more than profit_loss_limit — or whose
+    ROAS is under profit_roas_min — over the chosen lookback (today / yesterday / 3 d / 7 d),
+    after profit_min_spend of spend (revenue truth). With `ids` (one user's accounts) the
+    P&L is that user's share of each source."""
     settings = settings or get_settings(db)
     if not settings.get("profit_rules_enabled"):
         return []
@@ -129,18 +215,20 @@ def evaluate_profit_rules(db: Session, settings: dict | None = None, ids: set | 
         return []
     loss_limit = float(settings["profit_loss_limit"] or 0)
     min_spend = float(settings["profit_min_spend"] or 0)
-    if loss_limit <= 0:
+    roas_min = float(settings.get("profit_roas_min") or 0)
+    if loss_limit <= 0 and roas_min <= 0:
         return []
     now = datetime.now(timezone.utc).replace(tzinfo=None)
-    start, end = timeutil.range_bounds("today")
+    lookback = settings.get("profit_lookback") or "today"
+    start, end = lookback_bounds(lookback)
     pnl = pnl_data.source_pnl(db, start, end, ids)
-    losing = {src for src, row in pnl.items()
-              if row["spend"] >= min_spend and row["profit"] <= -loss_limit}
+    losing = losing_sources(pnl, min_spend, loss_limit, roas_min)
     if not losing:
         return []
     camp_source = pnl_data.campaign_source_map(db)
     losing_campaigns = {cid for cid, src in camp_source.items() if src in losing}
     accounts = {a.advertiser_id: a for a in db.query(models.AdAccount).all()}
+    run = _Pass(db, settings, ids)
     actions: list[models.RuleAction] = []
     active = (db.query(models.CampaignRecord)
               .filter(models.CampaignRecord.operation_status == "ENABLE",
@@ -151,9 +239,10 @@ def evaluate_profit_rules(db: Session, settings: dict | None = None, ids: set | 
         if _recently_paused(db, rec.campaign_id, now):
             continue
         src = camp_source.get(rec.campaign_id, "")
-        profit = pnl.get(src, {}).get("profit", 0.0)
-        _pause_campaign(db, accounts, rec,
-                        f"source P&L < -{loss_limit:.2f} ({src})", profit, actions)
+        row = pnl.get(src, {})
+        why = losing.get(src, "")
+        value = row.get("profit", 0.0) if "P&L" in why else (float(row.get("revenue") or 0) / float(row.get("spend") or 1))
+        _pause_campaign(db, accounts, rec, why + ("" if lookback == "today" else f" · {lookback}"), value, actions, run)
     db.commit()
     return actions
 

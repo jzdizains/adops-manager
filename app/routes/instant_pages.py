@@ -93,14 +93,48 @@ def page(request: Request, db: Session = Depends(get_db)):
     templates = sc.owned(db.query(models.PageTemplate), models.PageTemplate).order_by(models.PageTemplate.name).all()
     tpl_cov = {t.id: sum(1 for a in accounts if a.advertiser_id in have.get(t.name, set())) for t in templates}
     tpl_missing = {t.id: {bc: sum(1 for aid in ids if aid not in have.get(t.name, set())) for bc, ids in by_bc.items()} for t in templates}
+    from .. import page_stock
+    stock = {**page_stock.state(db, sc.user_id), "offers": page_stock.coverage(db, models, sc.user_id)["offers"]}
     return render(request, "instant_pages.html", {
+        "stock": stock,
         "groups": grouped["groups"], "page_data": ipv.page_json(grouped), "tags": tags, "accounts": accounts,
         "title": "Instant Pages", "status_labels": STATUS_LABELS, "bcs": bcs,
         "templates": templates, "tpl_cov": tpl_cov, "tpl_missing": tpl_missing, "shots": recent_shots(db, sc),
         "builder_ready": ipb.available() and bool(spark_web_api.load_cookies()), "builder_installed": ipb.available(),
+        "can_build": bool(spark_web_api.load_cookies()) or ipb.available(),
+        "masters": sorted(({"page_id": p.page_id, "name": p.name, "owner": p.owner_advertiser_id,
+                            "account": next((a.advertiser_name for a in accounts if a.advertiser_id == p.owner_advertiser_id), p.owner_advertiser_id)}
+                           for p in pages if (p.status or "").upper() == "PUBLISHED"), key=lambda m: (m["name"].lower(), m["account"] or "")),
+        "master_names": {p.page_id: p.name for p in pages},
         "web_ready": bool(spark_web_api.load_cookies()),
         "ok": request.query_params.get("ok", ""), "err": request.query_params.get("err", ""),
     })
+
+
+@router.post("/instant-pages/stock")
+async def stock_toggle(request: Request, db: Session = Depends(get_db)):
+    """Keep-stocked switch for this workspace: action = on | off | now."""
+    from urllib.parse import quote as _q
+    from .. import jobs, page_stock, scope as scope_mod
+    sc = scope_mod.for_request(request, db)
+    form = await request.form()
+    action = str(form.get("action") or "")
+    st = page_stock.state(db, sc.user_id)
+    if action in ("on", "off"):
+        st["on"] = action == "on"
+        if st["on"]:
+            st["paused"], st["streak"] = "", 0
+        page_stock.save_state(db, sc.user_id, st)
+        msg = ("Keeping Instant Pages stocked — missing copies are made in the background, a few at a time."
+               if st["on"] else "Stocking is off. Pages are still copied at launch when one is missing.")
+        if st["on"]:
+            jobs.enqueue(db, "page_stock", "Stock Instant Pages on every account", {"user_id": sc.user_id}, href="/instant-pages")
+    elif action == "now":
+        jobs.enqueue(db, "page_stock", "Stock Instant Pages on every account", {"user_id": sc.user_id, "force": True}, href="/instant-pages")
+        msg = "Stocking now — the result pops up when it's done."
+    else:
+        return RedirectResponse("/instant-pages", status_code=303)
+    return RedirectResponse("/instant-pages?ok=" + _q(msg), status_code=303)
 
 
 @router.post("/instant-pages/mark")
@@ -148,26 +182,35 @@ async def mark(request: Request, db: Session = Depends(get_db)):
 
 
 @router.post("/instant-pages/sync")
-def sync(db: Session = Depends(get_db)):
-    accounts = queries.enabled_accounts(db)
-    if not accounts:
+def sync(request: Request, db: Session = Depends(get_db)):
+    """Re-read the Instant Pages of the accounts IN VIEW — as a background job (slow lane), so
+    200 accounts never hold a request open (v151 audit)."""
+    from .. import jobs, scope as scope_mod
+    sc = scope_mod.for_request(request, db)
+    ids = [a.advertiser_id for a in queries.enabled_accounts(db) if sc.allows(a.advertiser_id)]
+    if not ids:
         return RedirectResponse("/instant-pages?err=" + quote("No enabled ad accounts — connect TikTok first."), status_code=303)
+    jobs.enqueue(db, "asset_sync", f"Sync Instant Pages · {len(ids)} account(s)", {"kind": "page", "advertiser_ids": ids}, href="/instant-pages")
+    return RedirectResponse("/instant-pages?ok=" + quote(f"Syncing {len(ids)} account(s) in the background — the list updates when it's done (see Jobs)."), status_code=303)
+
+
+def sync_many(db: Session, kind: str, advertiser_ids: list[str], should_stop=lambda: False, on_progress=lambda t: None) -> dict:
+    """Job body for "asset_sync": one account at a time, committed per account."""
+    from . import lead_forms
+    accts = [a for a in queries.enabled_accounts(db) if a.advertiser_id in set(advertiser_ids)]
     total, ok, failed = 0, 0, []
-    for acct in accounts:
+    for i, acct in enumerate(accts):
+        if should_stop():
+            break
+        on_progress(f"{i + 1}/{len(accts)} {acct.advertiser_name or acct.advertiser_id}")
         try:
-            total += sync_account(db, acct)
+            total += sync_account(db, acct) if kind == "page" else lead_forms.sync_account(db, acct)
             db.commit()                      # per account, so one failure can't undo the others
             ok += 1
-        except tiktok_api.TikTokError as e:
+        except Exception as e:      # noqa: BLE001
             db.rollback()
-            failed.append(f"{acct.advertiser_name or acct.advertiser_id}: {e}")
-    msg = f"Found {total} instant page(s) across {ok} account(s)."
-    if failed:
-        shown = "; ".join(failed[:3]) + (f"; +{len(failed) - 3} more" if len(failed) > 3 else "")
-        msg += f" {len(failed)} account(s) couldn't be read — {shown}"
-        if not ok:
-            return RedirectResponse("/instant-pages?err=" + quote(msg), status_code=303)
-    return RedirectResponse("/instant-pages?ok=" + quote(msg), status_code=303)
+            failed.append(f"{acct.advertiser_name or acct.advertiser_id}: {str(e)[:120]}")
+    return {"total": total, "ok": ok, "failed": failed, "accounts": len(accts)}
 
 
 # ---------------------------------------------------------------------------
@@ -191,7 +234,8 @@ def _builder_gate() -> str:
 @router.post("/instant-pages/templates/save")
 def template_save(request: Request, db: Session = Depends(get_db), tpl_id: str = Form(""), name: str = Form(...),
                   button_text: str = Form("Continue"), url: str = Form(...), button_color: str = Form(""),
-                  hand_cursor: str = Form(""), bottom_fixed: str = Form(""), color_scheme: str = Form("light")):
+                  hand_cursor: str = Form(""), bottom_fixed: str = Form(""), color_scheme: str = Form("light"),
+                  master_page_id: str = Form("")):
     from .. import scope as scope_mod
     sc = scope_mod.for_request(request, db)
     name, url = name.strip()[:100], url.strip()
@@ -208,6 +252,14 @@ def template_save(request: Request, db: Session = Depends(get_db), tpl_id: str =
     t.button_color = col if (col.startswith("#") and len(col) == 7) else ""
     t.hand_cursor, t.bottom_fixed = bool(hand_cursor), bool(bottom_fixed)
     t.color_scheme = "dark" if color_scheme == "dark" else "light"
+    mp = master_page_id.strip()
+    if mp:
+        mrow = db.query(models.InstantPage).filter_by(page_id=mp).first()
+        if mrow is None or not sc.allows(mrow.owner_advertiser_id):
+            return RedirectResponse("/instant-pages?err=" + quote("That master page isn't in your workspace — Sync, then pick it again."), status_code=303)
+        t.master_page_id, t.master_advertiser_id = mp, mrow.owner_advertiser_id
+    else:
+        t.master_page_id, t.master_advertiser_id = "", ""
     db.commit()
     return RedirectResponse("/instant-pages?ok=" + quote(f"Template “{t.name}” saved.") + "#templates", status_code=303)
 
@@ -223,70 +275,35 @@ def template_delete(request: Request, tpl_id: int, db: Session = Depends(get_db)
     return RedirectResponse("/instant-pages?ok=" + quote("Template removed. Pages already built from it stay on their accounts.") + "#templates", status_code=303)
 
 
-@router.post("/instant-pages/templates/{tpl_id}/build")
-def template_build(request: Request, tpl_id: int, advertiser_id: str = Form(...), db: Session = Depends(get_db)):
-    """Build the template's page on ONE account (the test button) — as a job."""
-    from .. import jobs, scope as scope_mod
+def _queue_template(request: Request, db: Session, tpl_id: int, ids: list[str]) -> RedirectResponse:
+    """v150: every template build goes through the build queue (asset_builds) — web copy of a
+    master first, the browser only as a fallback — and shows live on this page."""
+    from .. import asset_builds, scope as scope_mod
     sc = scope_mod.for_request(request, db)
     t = _tpl(db, sc, tpl_id)
-    if t is None or not sc.allows(advertiser_id):
-        return RedirectResponse("/instant-pages?err=" + quote("That template or account is not in your workspace."), status_code=303)
-    gate = _builder_gate()
-    if gate:
-        return RedirectResponse("/instant-pages?err=" + quote(gate), status_code=303)
-    acct = db.query(models.AdAccount).filter_by(advertiser_id=advertiser_id).first()
-    label = (acct.advertiser_name if acct else "") or advertiser_id
-    job = jobs.enqueue(db, "instant_page_build", f"Build page “{t.name}” on {label}",
-                       {"template_id": t.id, "targets": [advertiser_id]}, href="/instant-pages")
-    return RedirectResponse("/instant-pages?ok=" + quote(f"Building “{t.name}” on {label} in the background (job #{job.id}) — you'll get a notification with the result and screenshots.") + "#templates", status_code=303)
+    if t is None:
+        return RedirectResponse("/instant-pages?err=" + quote("That template is not in your workspace."), status_code=303)
+    r = asset_builds.queue(db, models, sc, "page", t, ids)
+    msg = (f"Queued “{t.name}” on {r['queued']} account(s) — progress below." if r["queued"]
+           else f"Every picked account already has “{t.name}” (or it's queued).")
+    return RedirectResponse("/instant-pages?ok=" + quote(msg) + "#builds", status_code=303)
+
+
+@router.post("/instant-pages/templates/{tpl_id}/build")
+def template_build(request: Request, tpl_id: int, advertiser_id: str = Form(...), db: Session = Depends(get_db)):
+    return _queue_template(request, db, tpl_id, [advertiser_id])
 
 
 @router.post("/instant-pages/templates/{tpl_id}/build-bc")
 def template_build_bc(request: Request, tpl_id: int, bc_id: str = Form(...), db: Session = Depends(get_db)):
-    """Build the page on every enabled account of a Business Center (in view) that lacks a page of that name."""
-    from .. import jobs, scope as scope_mod
-    sc = scope_mod.for_request(request, db)
-    t = _tpl(db, sc, tpl_id)
-    if t is None:
-        return RedirectResponse("/instant-pages?err=" + quote("That template is not in your workspace."), status_code=303)
-    gate = _builder_gate()
-    if gate:
-        return RedirectResponse("/instant-pages?err=" + quote(gate), status_code=303)
-    have = _page_names_by_account(db).get(t.name, set())
-    targets = [a.advertiser_id for a in queries.enabled_accounts(db)
-               if a.owner_bc_id == bc_id and sc.allows(a.advertiser_id) and a.advertiser_id not in have]
-    bc = db.query(models.BusinessCenter).filter_by(bc_id=bc_id).first()
-    bc_name = (bc.name if bc else "") or bc_id
-    if not targets:
-        return RedirectResponse("/instant-pages?ok=" + quote(f"Every enabled account in {bc_name} already has “{t.name}”.") + "#templates", status_code=303)
-    job = jobs.enqueue(db, "instant_page_build", f"Build page “{t.name}” on {len(targets)} account(s) in {bc_name}",
-                       {"template_id": t.id, "targets": targets}, href="/instant-pages")
-    return RedirectResponse("/instant-pages?ok=" + quote(
-        f"Building “{t.name}” on {len(targets)} account(s) in {bc_name} — one browser at a time, about a minute each (job #{job.id}). "
-        "Stop it any time from Jobs.") + "#templates", status_code=303)
+    """Every enabled account of a Business Center that lacks a page of that name."""
+    ids = [a.advertiser_id for a in queries.enabled_accounts(db) if a.owner_bc_id == bc_id]
+    return _queue_template(request, db, tpl_id, ids)
 
 
 @router.post("/instant-pages/templates/{tpl_id}/build-multi")
 def template_build_multi(request: Request, tpl_id: int, target_ids: str = Form(""), db: Session = Depends(get_db)):
-    """Build the template's page on the accounts picked in the account pop-up (comma-separated ids)."""
-    from .. import jobs, scope as scope_mod
-    sc = scope_mod.for_request(request, db)
-    t = _tpl(db, sc, tpl_id)
-    if t is None:
-        return RedirectResponse("/instant-pages?err=" + quote("That template is not in your workspace."), status_code=303)
-    gate = _builder_gate()
-    if gate:
-        return RedirectResponse("/instant-pages?err=" + quote(gate), status_code=303)
-    have = _page_names_by_account(db).get(t.name, set())
-    ids = [x.strip() for x in (target_ids or "").split(",") if x.strip() and sc.allows(x.strip())]
-    ids = [i for i in dict.fromkeys(ids) if i not in have]
-    if not ids:
-        return RedirectResponse("/instant-pages?ok=" + quote(f"Every selected account already has “{t.name}”.") + "#templates", status_code=303)
-    job = jobs.enqueue(db, "instant_page_build", f"Build page “{t.name}” on {len(ids)} account(s)",
-                       {"template_id": t.id, "targets": ids}, href="/instant-pages")
-    return RedirectResponse("/instant-pages?ok=" + quote(
-        f"Building “{t.name}” on {len(ids)} account(s) — one browser at a time, about a minute each (job #{job.id}). "
-        "Stop it any time from Jobs.") + "#templates", status_code=303)
+    return _queue_template(request, db, tpl_id, [x.strip() for x in (target_ids or "").split(",") if x.strip()])
 
 
 def build_on_accounts(db: Session, template_id: int, targets: list[str], should_stop=None, on_progress=None) -> dict:

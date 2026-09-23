@@ -60,6 +60,27 @@ def _ad_time(ad: dict):
     return _parse_tt_time(ad.get("modify_time")) or _parse_tt_time(ad.get("create_time"))
 
 
+def issue_key(category, advertiser_id, ref, detail) -> tuple:
+    """What makes two scans' issues the same problem: category + account + object + TikTok's
+    raw status (reasons and appeal state are left out — they change while it's the same issue)."""
+    d = str(detail or "")
+    status = d.split(" ", 1)[0] if d.startswith(("status=", "secondary_status=", "balance=")) else d[:80]
+    if status.startswith("balance="):
+        status = "balance"                      # the amount moves; "out of funds" is one issue
+    return (category or "", advertiser_id or "", ref or "", status)
+
+
+def issue_since(prior, status_changed, started, now):
+    """The date an issue shows: the earliest of when an earlier scan first saw it, when the
+    account's status changed to this (account issues) and when TikTok last touched the ad
+    (rejected ads) — never later than now."""
+    def naive(d):      # stored values are naive UTC; a freshly-set one can still be aware in memory
+        return d.astimezone(timezone.utc).replace(tzinfo=None) if getattr(d, "tzinfo", None) else d
+    now = naive(now)
+    cands = [naive(d) for d in (prior, status_changed, started) if d is not None]
+    return min(cands + [now]) if cands else now
+
+
 def scan(db: Session, should_stop=None, on_progress=None) -> dict:
     """Full issue sweep. Returns {issues, accounts_scanned, ads_read, …, stopped}.
     should_stop() is polled between accounts (a cancelled background job);
@@ -232,7 +253,7 @@ def scan(db: Session, should_stop=None, on_progress=None) -> dict:
         if row:
             from .appeals import STATUS_LABELS
             state = STATUS_LABELS.get(row.status, row.status)
-        found.append(models.Issue(
+        issue = models.Issue(
             category="ad", level="err",
             advertiser_id=ad["advertiser_id"], advertiser_name=ad["advertiser_name"],
             ref=str(ad.get("ad_id", "")),
@@ -240,7 +261,9 @@ def scan(db: Session, should_stop=None, on_progress=None) -> dict:
                     + (f": {reasons[:160]}" if reasons else " (no reason returned)")
                     + (f" — {state}." if state else "."),
             detail=f"secondary_status={sec}" + (f" reasons={reasons}" if reasons else "")
-                   + (f" appeal={row.status}" if row else "")))
+                   + (f" appeal={row.status}" if row else ""))
+        issue._started = _ad_time(ad)           # TikTok's last touch ≈ when it was rejected
+        found.append(issue)
 
     # --- spark resolution failures (last 7 days) ------------------------------
     week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).replace(tzinfo=None)
@@ -271,6 +294,17 @@ def scan(db: Session, should_stop=None, on_progress=None) -> dict:
         return {"issues": len(found), "accounts_scanned": run.accounts_total, "stopped": True,
                 "ads_read": run.ads_read, "accounts_ok": run.accounts_ok, "accounts_failed": run.accounts_failed,
                 "rejected_found": run.rejected_found}
+    # keep each issue's first-seen date across rescans: the table is rebuilt, but a problem
+    # that was already there is the SAME problem — dated when it started, not "3 min ago"
+    prior = {issue_key(i.category, i.advertiser_id, i.ref, i.detail): i.detected_at
+             for i in db.query(models.Issue.category, models.Issue.advertiser_id, models.Issue.ref,
+                               models.Issue.detail, models.Issue.detected_at)}
+    acct_changed = {a.advertiser_id: a.status_changed_at for a in accounts}
+    now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+    for issue in found:
+        issue.detected_at = issue_since(prior.get(issue_key(issue.category, issue.advertiser_id, issue.ref, issue.detail)),
+                                        acct_changed.get(issue.advertiser_id) if issue.category == "account" else None,
+                                        getattr(issue, "_started", None), now_naive)
     db.query(models.Issue).delete()
     for issue in found:
         db.add(issue)

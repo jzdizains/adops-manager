@@ -13,6 +13,7 @@ templates.env.globals.update({
     "BUILD_ID": config.build_id,       # callable: fingerprint of the running code
     "login_path": config.LOGIN_PATH,
     "TZ_NAME": config.BUSINESS_TZ,
+    "MOCK_TIKTOK": config.MOCK_TIKTOK,     # TikTok test mode banner (local development only)
     # Ads Manager deep link for one ad account (verified aadvid format) — every
     # account name/id shown in a table links here, in a new tab.
     "ads_manager_url": lambda advertiser_id: f"https://ads.tiktok.com/i18n/dashboard?aadvid={advertiser_id}",
@@ -79,7 +80,17 @@ def _strip_key(q):
     return strip_key(q or "")
 
 
-templates.env.filters.update({"local": _local, "ago": _ago, "money": _money, "strip_key": _strip_key})
+def _js(json_text):
+    """A JSON string made safe inside <script>: "</script>" in user data (a preset's ad text, a
+    Business Center name) can't end the block and run as HTML. Unicode escapes are still valid JSON."""
+    from markupsafe import Markup
+    t = str(json_text if json_text is not None else "null")
+    for a, b in (("<", "\\u003c"), (">", "\\u003e"), ("&", "\\u0026"), ("\u2028", "\\u2028"), ("\u2029", "\\u2029")):
+        t = t.replace(a, b)
+    return Markup(t)
+
+
+templates.env.filters.update({"local": _local, "ago": _ago, "money": _money, "strip_key": _strip_key, "js": _js})
 
 
 _VIEW_CACHE: dict = {}          # cookie value -> (expires, switch options) for the super admin's top bar
@@ -115,7 +126,7 @@ def forget_view_cache() -> None:
     _VIEW_CACHE.clear()
 
 
-OWNER_ONLY_JUMP = frozenset({"/settings#users", "/settings#access", "/team", "/partners"})
+OWNER_ONLY_JUMP = frozenset({"/settings#users", "/settings#access", "/team", "/partners", "/cookies"})
 
 
 def render(request: Request, name: str, ctx: dict | None = None):

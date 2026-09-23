@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head" style="margin-bottom:10px;">
+  <div><h1>Warm up accounts</h1>
+    <div class="muted" style="font-size:12.5px;">A small Reach campaign on each account, one post, launched live so it goes through TikTok's normal review — then <b>paused automatically</b> the moment TikTok approves it. The account gets a real approved ad in its history for a few dollars.</div></div>
+  <div class="actions"><a class="btn" href="/super-launcher">Super Launcher</a></div>
+</div>
+
+{% if err %}<div class="flash err">{{ err }}</div>{% endif %}
+
+<form method="post" action="/warmup/launch" id="wuForm" novalidate>
+<input type="hidden" name="profile_items" id="wuItems" value="">
+<div id="wuAccIds"></div>
+
+<div class="card">
+  <div class="card-header"><span class="card-title">1 · Accounts</span><span class="card-meta">{{ accounts_n }} in this workspace</span></div>
+  <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+    <button type="button" class="btn" id="wuPickAcc">Choose accounts…</button>
+    <span class="muted" id="wuAccSum" style="font-size:12.5px;">None picked yet.</span>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><span class="card-title">2 · Post</span><span class="card-meta">what the warm-up ad shows</span></div>
+  <div class="seg" id="wuPostSeg" style="display:inline-flex;flex-wrap:wrap;margin-bottom:10px;">
+    <button type="button" class="on" data-mode="profile">From a profile (no code)</button>
+    <button type="button" data-mode="spark" {{ 'disabled' if not sparks }}>Spark code <span class="n">{{ sparks|length }}</span></button>
+  </div>
+  <div data-pane="profile">
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+      <button type="button" class="btn" id="wuPickPost">Pick post…</button>
+      <span class="muted" id="wuPostSum" style="font-size:12.5px;">One post runs on every account. Pick several and they're spread evenly.</span>
+    </div>
+  </div>
+  <div data-pane="spark" hidden>
+    <label class="field"><span class="field-label">Spark code</span>
+      <select name="spark_code_id" id="wuSpark">
+        <option value="">— pick a spark code —</option>
+        {% for s in sparks %}<option value="{{ s.id }}">{{ s.name or s.code[:12] }}</option>{% endfor %}
+      </select></label>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><span class="card-title">3 · Budget &amp; country</span><span class="card-meta">Reach · TikTok placement · max 3 views per person a week</span></div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;">
+    <label class="field"><span class="field-label">Daily budget per account ($)</span>
+      <input type="number" name="budget" min="{{ min_budget|int }}" step="1" value="{{ default_budget|int }}" inputmode="decimal">
+      <span class="hint">TikTok's minimum is ${{ min_budget|int }}. It only spends until the ad is approved — usually a few dollars.</span></label>
+    <div class="field"><span class="field-label">Who sees it</span>
+      <label style="display:flex;gap:8px;align-items:center;font-size:13px;margin-bottom:6px;"><input type="radio" name="geo" value="account" checked> Each account's own registered country</label>
+      <label style="display:flex;gap:8px;align-items:center;font-size:13px;"><input type="radio" name="geo" value="list" {{ 'disabled' if not countries }}> These countries{% if not countries %} <span class="muted" style="font-size:11.5px;">(country list not synced yet)</span>{% endif %}</label>
+      <span class="hint">Own country works across a mixed batch — an account registered in France can't target the US, which is often why it needs warming up.</span>
+    </div>
+  </div>
+  {% if countries %}
+  <label class="field" id="wuCountries" hidden style="margin-top:10px;"><span class="field-label">Countries</span>
+    <select name="location_ids" multiple size="7" style="max-width:420px;">
+      {% for c in countries %}<option value="{{ c.region_id }}">{{ c.name }}{% if c.region_code %} ({{ c.region_code }}){% endif %}</option>{% endfor %}
+    </select>
+    <span class="hint">Hold ⌘ / Ctrl to pick several.</span></label>
+  {% endif %}
+</div>
+
+<div class="pf-foot" style="display:flex;justify-content:flex-end;gap:10px;align-items:center;">
+  <span class="muted" id="wuReady" style="font-size:12px;"></span>
+  <button type="submit" class="btn primary" id="wuGo" disabled>Launch warm-ups</button>
+</div>
+</form>
+
+<div class="card" style="padding:0;overflow:hidden;margin-top:18px;">
+  <div class="card-header" style="padding:12px 14px 0;"><span class="card-title">Warm-ups</span>
+    <span class="card-meta" id="wuCounts">{{ counts.waiting }} waiting for approval · {{ counts.paused }} approved &amp; paused{% if counts.rejected %} · {{ counts.rejected }} rejected{% endif %}</span></div>
+  {% if rows %}
+  <div class="table-scroll">
+  <table class="data dense">
+    <thead><tr><th>Launched</th><th>Account</th><th>Campaign</th><th>State</th><th class="num">Spent before pause</th><th></th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      {% set st = r.warmup_state if r.ok else 'failed' %}
+      <tr data-wu="{{ r.id }}">
+        <td style="white-space:nowrap;"><span title="{{ r.created_at|local('%Y-%m-%d %H:%M:%S') }}">{{ r.created_at|ago }}</span></td>
+        <td class="muted" style="white-space:nowrap;">{{ acct_link(r.advertiser_id, r.advertiser_name) }}</td>
+        <td class="muted">{% if r.campaign_id and not r.campaign_id.startswith('deleted:') %}<a href="/status?state=all&open={{ r.campaign_id }}">{{ r.campaign_id }}</a>{% else %}—{% endif %}</td>
+        <td data-st>
+          {% if st == 'paused' %}<span class="pill ok">{{ labels.paused }}</span>
+          {% elif st == 'waiting' %}<span class="pill warn">{{ labels.waiting }}</span>
+          {% elif st == 'rejected' %}<span class="pill err">{{ labels.rejected }}</span>
+          {% elif st == 'failed' %}<span class="pill err" title="{{ r.error_message }}">Launch failed</span>
+          {% else %}<span class="pill dim">{{ labels.get(st, st) }}</span>{% endif %}
+        </td>
+        <td class="num" data-spend>{% if r.warmup_state == 'paused' %}${{ '%.2f'|format(r.warmup_spend or 0) }}{% else %}—{% endif %}</td>
+        <td class="num" style="white-space:nowrap;">{% if r.batch_ref %}<a class="btn sm" href="/campaigns/result/{{ r.batch_ref }}">Result</a>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <div class="empty" style="margin:14px;"><div class="empty-title">No warm-ups yet</div>
+    <div class="muted" style="font-size:12.5px;">Pick accounts and a post above. Each one shows up here and flips to “approved · paused” by itself.</div></div>
+  {% endif %}
+</div>
+
+<script>
+(function () {
+  var BCS = {{ bcs_json|js }}, FAV = {{ fav_profiles_json|js }};
+  var accs = [], posts = [], mode = "profile";
+  var $ = function (id) { return document.getElementById(id); };
+  function esc(s) { return (window.UI && UI.esc) ? UI.esc(s) : String(s == null ? "" : s); }
+
+  function sync() {
+    var box = $("wuAccIds"); box.innerHTML = "";
+    accs.forEach(function (id) { var i = document.createElement("input"); i.type = "hidden"; i.name = "advertiser_ids"; i.value = id; box.appendChild(i); });
+    $("wuAccSum").textContent = accs.length ? accs.length + " account" + (accs.length === 1 ? "" : "s") + " picked" : "None picked yet.";
+    $("wuItems").value = mode === "profile" ? JSON.stringify(posts) : "";
+    if (mode === "profile") {
+      $("wuPostSum").textContent = posts.length
+        ? posts.length + " post" + (posts.length === 1 ? "" : "s") + " picked · " + posts.map(function (p) { return "@" + (p.handle || "?"); }).filter(function (v, i, a) { return a.indexOf(v) === i; }).join(", ")
+        : "One post runs on every account. Pick several and they're spread evenly.";
+    }
+    var havePost = mode === "profile" ? posts.length > 0 : !!$("wuSpark").value;
+    var ready = accs.length > 0 && havePost;
+    $("wuGo").disabled = !ready;
+    $("wuReady").textContent = ready ? "" : (!accs.length ? "Pick accounts" : "Pick the post");
+    if (ready) $("wuGo").textContent = "Launch " + accs.length + " warm-up" + (accs.length === 1 ? "" : "s");
+  }
+
+  $("wuPickAcc").addEventListener("click", function () {
+    if (!window.UI || !UI.pickAccounts) return;
+    UI.pickAccounts({ title: "Warm up which accounts?", confirmLabel: "Use these", preselect: accs }).then(function (ids) {
+      if (ids) { accs = ids; sync(); }
+    });
+  });
+  $("wuPickPost").addEventListener("click", function () {
+    if (!window.UI || !UI.pickProfileVideos) return;
+    UI.pickProfileVideos({ bcs: BCS, selected: posts, favorites: FAV }).then(function (res) {
+      if (res) { posts = res; sync(); }
+    });
+  });
+  document.querySelectorAll("#wuPostSeg button").forEach(function (b) {
+    b.addEventListener("click", function () {
+      if (b.disabled) return;
+      mode = b.dataset.mode;
+      document.querySelectorAll("#wuPostSeg button").forEach(function (x) { x.classList.toggle("on", x === b); });
+      document.querySelectorAll("[data-pane]").forEach(function (p) { p.hidden = p.dataset.pane !== mode; });
+      if (mode === "profile") $("wuSpark").value = "";
+      sync();
+    });
+  });
+  $("wuSpark").addEventListener("change", sync);
+  document.querySelectorAll("input[name=geo]").forEach(function (r) {
+    r.addEventListener("change", function () { var c = $("wuCountries"); if (c) c.hidden = r.value !== "list" || !r.checked; });
+  });
+  $("wuForm").addEventListener("submit", function () { $("wuGo").disabled = true; $("wuGo").textContent = "Launching…"; });
+  sync();
+
+  // The watch list updates itself while anything is waiting for TikTok's verdict
+  // (the background check runs every ~2 min) — no reload needed.
+  var PILL = { paused: "ok", waiting: "warn", rejected: "err", failed: "err" };
+  function poll() {
+    if (document.hidden) return setTimeout(poll, 15000);
+    fetch("/warmup/state.json", { credentials: "same-origin" }).then(function (r) { return r.json(); }).then(function (d) {
+      (d.rows || []).forEach(function (row) {
+        var tr = document.querySelector('tr[data-wu="' + row.id + '"]');
+        if (!tr) return;
+        var st = tr.querySelector("[data-st]"), sp = tr.querySelector("[data-spend]");
+        st.innerHTML = '<span class="pill ' + (PILL[row.state] || "dim") + '">' + esc(row.label) + "</span>";
+        sp.textContent = row.state === "paused" ? "$" + Number(row.spend || 0).toFixed(2) : "—";
+      });
+      if (d.waiting > 0) setTimeout(poll, 30000);
+    }).catch(function () { setTimeout(poll, 60000); });
+  }
+  if ({{ counts.waiting }} > 0) setTimeout(poll, 20000);
+})();
+</script>
+{% endblock %}

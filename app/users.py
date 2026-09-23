@@ -117,6 +117,11 @@ def set_password(db: Session, user: models.User, password: str, by_admin: bool =
 
 def sign_out_everywhere(db: Session, user: models.User) -> None:
     user.session_version = (user.session_version or 0) + 1
+    try:
+        from . import sessions
+        sessions.revoke_user(db, models, user.id, by="sign-out-everywhere")      # every device row too (v148)
+    except Exception:  # noqa: BLE001 — the fingerprint bump above already ends them
+        pass
     db.commit()
     _forget_cached_sessions()
 

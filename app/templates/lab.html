@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Lab</h1>
+    <div class="muted">One board per offer or question. Each test says what it changes and why, links the launches that ran it, and reads their results live.</div></div>
+  <div class="actions">
+    <a class="btn ghost" href="/lab{{ '' if show_arch else '?archived=1' }}">{{ 'Active boards' if show_arch else 'Archived' }}</a>
+    <button class="btn primary" type="button" id="labNew">+ New board</button>
+  </div>
+</div>
+{% if boards %}
+<div class="lab-boards">
+  {% for b in boards %}{% set c = counts.get(b.id, {}) %}
+  <a class="card lab-bcard" href="/lab/{{ b.id }}">
+    <div class="card-title">{{ b.title }}</div>
+    {% if b.offer %}<div class="muted" style="font-size:12px;">{{ b.offer }}</div>{% endif %}
+    <div class="lab-counts">{% for s, lab_l in labels.items() %}{% if c.get(s) %}<span class="pill {{ {'winner': 'ok', 'failed': 'err', 'running': 'warn'}.get(s, 'dim') }}">{{ c.get(s) }} {{ lab_l|lower }}</span>{% endif %}{% endfor %}{% if not c %}<span class="muted" style="font-size:12px;">no tests yet</span>{% endif %}</div>
+    <div class="muted" style="font-size:11px;">updated {{ b.updated_at|ago }}</div>
+  </a>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card"><div class="empty"><div class="empty-title">{{ 'Nothing archived' if show_arch else 'No boards yet' }}</div>{% if not show_arch %}Start one for an offer — e.g. “Offer X · which hook wins?” — then add a test per idea and link the launches that ran it.{% endif %}</div></div>
+{% endif %}
+<script>
+  (function () {
+    var b = document.getElementById("labNew"); if (!b) return;
+    b.addEventListener("click", function () {
+      var p = UI.popover(b, '<div style="font-weight:700;margin-bottom:6px;">New board</div><div style="display:grid;gap:6px;min-width:260px;"><input type="text" name="title" placeholder="Offer X · which hook wins?" maxlength="200"><input type="text" name="offer" placeholder="Offer (optional)" maxlength="200"><button type="button" class="btn sm primary">Create</button></div>');
+      p.querySelector(".primary").addEventListener("click", function () {
+        var btn = this; if (btn.disabled) return; btn.disabled = true;            // one click = one board
+        UI.post("/lab/boards", { title: p.querySelector('[name="title"]').value, offer: p.querySelector('[name="offer"]').value })
+          .then(function (d) { if (d.ok) location.href = d.href; else { btn.disabled = false; alertMsg(d.error); } })
+          .catch(function () { btn.disabled = false; });
+      });
+      function alertMsg(m) { UI.confirm({ title: "Couldn't create it", text: m || "", ok: "OK" }); }
+    });
+  })();
+</script>
+{% endblock %}

@@ -14,7 +14,18 @@ from .routes import (
     ad_texts, alerts, appeals_page, assistant_page, audience, auth, automation, bc_assets_page, campaigns, jobs_page, partners_page, cookies_admin, creatives, creators, dashboard, diagnostics, display_cards, pub,
     team, inbox, instant_pages, issues_page, lead_forms, locations, monitor, notes, oauth, pnl_page,
     performance, pixels, postback, security, settings_page, spark_codes, escape_test, tracking as tracking_routes,
-    status, super_launcher, templates_routes, landers as landers_page)
+    status, super_launcher, templates_routes, landers as landers_page, warmup_page, lab_page, asset_builds_page)
+
+# log.info/.warning from our modules used to go nowhere (no handler configured): one line each
+# on stdout, which Render keeps. LOG_LEVEL=DEBUG for more.
+import logging as _logging  # noqa: E402
+if not _logging.getLogger().handlers:
+    _logging.basicConfig(level=getattr(_logging, os.environ.get("LOG_LEVEL", "INFO").upper(), _logging.INFO),
+                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+# httpx logs every request URL at INFO — the Telegram bot API carries its token IN the URL, so
+# request lines never reach the logs (v151 audit)
+for _quiet in ("httpx", "httpcore"):
+    _logging.getLogger(_quiet).setLevel(_logging.WARNING)
 
 app = FastAPI(title=config.APP_NAME, docs_url=None, redoc_url=None)
 
@@ -45,19 +56,27 @@ _AUTH_TTL_S = 8
 
 def _auth_user(request, uid, fp, ip: str, ua: str):
     """Resolve the session's user (thread pool). Cached for a few seconds so the
-    4-second job poller and page assets don't each open a DB session."""
+    4-second job poller and page assets don't each open a DB session.
+    v148: the cookie's session id must name a live UserSession of this user (a device signed
+    out on its own ends here); a pre-v148 cookie without one is adopted, not logged out."""
     import time as _time
-    from . import auth_security as sec
+    from . import auth_security as sec, sessions as _sessions
     from .database import SessionLocal as _SL
     if not uid:
         return None
-    key = (uid, fp)
+    sid = request.session.get("sid") or ""
+    key = (uid, fp, sid)
     hit = _AUTH_CACHE.get(key)
     if hit and hit[0] > _time.time():
         return hit[1]
     d = _SL()
     try:
         user = auth.current_user(request, d)
+        if user is not None:
+            if not sid:
+                request.session["sid"] = _sessions.create(d, _models, user, ip, ua)
+            elif _sessions.check(d, _models, sid, user.id, ip, config.SESSION_MAX_AGE_S) is None:
+                user = None
         if user is not None:
             try:
                 sec.touch_seen(d, user, ip, ua)
@@ -83,11 +102,31 @@ from sqlalchemy import event as _sa_event  # noqa: E402
 from . import models as _models  # noqa: E402
 
 
-@_sa_event.listens_for(_models.User, "after_update")
+_SEEN_ONLY = {"last_seen_at", "last_ip", "last_ua"}      # "last active" bookkeeping — not who may sign in
+
+
+def _only_seen(target) -> bool:
+    from sqlalchemy import inspect as _inspect
+    try:
+        changed = {a.key for a in _inspect(target).attrs if a.history.has_changes()}
+    except Exception:      # noqa: BLE001
+        return False
+    return bool(changed) and changed <= _SEEN_ONLY
+
+
 @_sa_event.listens_for(_models.User, "after_insert")
 @_sa_event.listens_for(_models.User, "after_delete")
+@_sa_event.listens_for(_models.UserSession, "after_delete")
 def _user_changed(_mapper, _conn, _target):
     _AUTH_CACHE.clear()
+
+
+@_sa_event.listens_for(_models.User, "after_update")
+@_sa_event.listens_for(_models.UserSession, "after_update")
+def _user_updated(_mapper, _conn, target):
+    # the per-minute "last seen" stamps used to empty the whole cache for everyone (v151 audit)
+    if not _only_seen(target):
+        _AUTH_CACHE.clear()
 
 
 def _record_probe(ip: str, path: str, ua: str) -> None:
@@ -125,6 +164,12 @@ async def require_login(request: Request, call_next):
         elif path == "/login" or path.startswith("/login/"):
             return _not_found()
     public = path.startswith(auth.PUBLIC_PATHS)
+    # a state-changing request from another site's page is refused before anything else
+    # (login CSRF included); machine endpoints (postback, trackers, OAuth) are exempt
+    if not sec.origin_ok(request.method, path, request.headers.get("host", ""), request.headers.get("origin", ""),
+                         request.headers.get("referer", ""), request.headers.get("sec-fetch-site", ""), config.ALLOWED_ORIGINS):
+        from fastapi.responses import PlainTextResponse
+        return PlainTextResponse("Blocked: this request came from another site.", status_code=403)
     if not public:
         import time as _time
         sess = request.session
@@ -168,6 +213,14 @@ async def require_login(request: Request, call_next):
             # 2FA is mandatory: until it's set up, only the setup page (and logout) is reachable
             if config.REQUIRE_2FA and not user.totp_secret and not (path.startswith("/login/2fa/setup") or path == "/logout"):
                 return RedirectResponse(f"{config.LOGIN_PATH}/2fa/setup", status_code=303)
+            # the PIN gate (SECURITY_PIN): the most sensitive changes ask for it once per session
+            from . import security_gate as _gate
+            if _gate.pin_needed(request.method, path, bool(sess.get("pin_ok"))):
+                back = _gate.safe_next(__import__("urllib.parse", fromlist=["urlparse"]).urlparse(request.headers.get("referer", "")).path or "/settings")
+                if request.headers.get("x-requested-with") == "fetch":
+                    from fastapi.responses import JSONResponse as _J
+                    return _J({"ok": False, "error": "Enter the security PIN first.", "unlock": f"/security/unlock?next={back}"}, status_code=403)
+                return RedirectResponse(f"/security/unlock?next={back}", status_code=303)
         else:
             # someone who isn't logged in asked for a dashboard URL — remember who
             if not path.startswith(("/creatives/", "/static")) or path.count("/") < 3:
@@ -179,6 +232,14 @@ async def require_login(request: Request, call_next):
         resp = await call_next(request)
     except Exception as exc:  # noqa: BLE001 — turn a bare "Internal Server Error" into something actionable
         resp = _error_page(request, exc)
+    # audit trail: every state-changing request by a signed-in user (audit.py) — off the event loop
+    try:
+        from . import audit as _audit
+        _u = getattr(request.state, "user", None)
+        if _audit.should_record(request.method, path, _u is not None):
+            _audit.submit(_u, sec.client_ip(request), request.method, path, resp.status_code)
+    except Exception:  # noqa: BLE001
+        pass
     for k, v in SECURITY_HEADERS.items():
         resp.headers.setdefault(k, v)
     if request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https":
@@ -239,6 +300,22 @@ app.add_middleware(SessionMiddleware, secret_key=config.SESSION_SECRET,
 # Create tables / run light migrations at import time — robust under uvicorn,
 # TestClient, and one-off scripts alike.
 init_db()
+# numbered data migrations (v153): each applied exactly once, recorded in schema_migrations
+try:
+    from . import migrations as _migrations
+    from .database import engine as _engine
+    _migrations.run(_engine)
+except Exception:  # noqa: BLE001 — never keep the app from starting
+    _logging.getLogger("adops.migrations").exception("migrations did not run")
+if config.MOCK_TIKTOK:
+    _logging.getLogger("adops").warning("TikTok TEST MODE is ON — every TikTok call is simulated locally (ADOPS_MOCK_TIKTOK=1)")
+elif config.MOCK_TIKTOK_ASKED:
+    _logging.getLogger("adops").error("ADOPS_MOCK_TIKTOK=1 is set on a deployed server and was IGNORED — test mode is for local development only")
+try:
+    from .database import seal_secrets as _seal
+    _seal()                                   # v148: tokens / 2FA secrets / cookie files sealed at rest
+except Exception:  # noqa: BLE001
+    pass
 # first start: turn APP_PASSWORD into the owner account (see users.bootstrap)
 try:
     from . import users as _users
@@ -268,9 +345,26 @@ if os.environ.get("ADOPS_DISABLE_BG") != "1":
     try:
         _jobs.recover(_db)
         try:
+            from . import launch_trace as _lt, models as _m
+            from .routes.campaigns import MAYBE_CREATED_MARK as _mark
+            _lt.recover(_db, _m, _mark)                # launches this restart killed → say what exists
+            # a queued launch the restart caught mid-run: never re-run blindly (its trace above
+            # says whether a campaign exists)
+            _db.query(_m.LaunchQueueItem).filter(_m.LaunchQueueItem.status == "running").update(
+                {_m.LaunchQueueItem.status: "failed",
+                 _m.LaunchQueueItem.last_error: "interrupted by a restart — check the launch result before queueing it again"},
+                synchronize_session=False)
+            _db.commit()
+        except Exception:  # noqa: BLE001
+            _db.rollback()
+        try:
             from .routes.creatives import recover_stuck_ai, resume_hf
             resume_hf(_db)                             # Higgsfield renders kept going — pick their pollers back up
             recover_stuck_ai(_db, max_age_min=0)       # a restart killed every Gemini thread — say so on their tiles
+            from . import video_caption as _vc, models as _vm
+            _vc.recover(_db, _vm, older_than_min=0)    # …and every caption burn in progress
+            from . import asset_builds as _ab
+            _ab.recover(_db, _vm)                      # …and every page / form build
         except Exception:  # noqa: BLE001
             pass
     finally:
@@ -286,5 +380,6 @@ for r in (auth.router, security.router, oauth.router, dashboard.router,
           settings_page.router, postback.router, pixels.router,
           automation.router, issues_page.router, creatives.router,
           ad_texts.router, locations.router, escape_test.router, tracking_routes.router, landers_page.router,
-          appeals_page.router, partners_page.router, bc_assets_page.router, diagnostics.router, jobs_page.router, audience.router, display_cards.router, notes.router, pnl_page.router, assistant_page.router, creators.router, pub.router, team.router):
+          appeals_page.router, partners_page.router, bc_assets_page.router, diagnostics.router, jobs_page.router, audience.router, display_cards.router, notes.router, pnl_page.router, assistant_page.router, creators.router, pub.router, team.router,
+          warmup_page.router, lab_page.router, asset_builds_page.router):
     app.include_router(r)

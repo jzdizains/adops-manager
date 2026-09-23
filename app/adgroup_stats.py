@@ -125,6 +125,10 @@ def write_account(db: Session, acct: models.AdAccount, day: str, fetched) -> int
         row.conversions = int(_f(m, "conversion"))
         n += 1
     try:
+        update_states(db, acct, groups)     # current status per ad group + "left review" notices: same data, no extra calls
+    except Exception:  # noqa: BLE001 — must never break the spend sync
+        log.exception("ad group state update failed for %s", acct.advertiser_id)
+    try:
         from . import bid_bump
         bid_bump.observe(db, acct.advertiser_id, groups, metrics, day)     # idle-bid-bump watch: same data, no extra calls
     except Exception:  # noqa: BLE001 — the watch must never break the spend sync
@@ -147,6 +151,11 @@ def _prune(db: Session) -> None:
     cutoff = (now - timedelta(days=KEEP_DAYS)).strftime("%Y-%m-%d")
     try:
         db.query(models.AdgroupSnapshot).filter(models.AdgroupSnapshot.day < cutoff).delete(synchronize_session=False)
+        # current-state rows of ad groups the sweep hasn't seen for the same period (deleted / long gone)
+        db.query(models.AdgroupState).filter(models.AdgroupState.seen_at < now - timedelta(days=KEEP_DAYS)) \
+          .delete(synchronize_session=False)
+        from . import launch_trace
+        launch_trace.prune(db, models, days=KEEP_DAYS)       # per-step launch records
     except Exception:      # noqa: BLE001
         pass
 
@@ -288,3 +297,105 @@ def revenue_by_adgroup(db: Session, source: str, start_naive: datetime, end_naiv
         out[agid or ""] = {"revenue": float(rv or 0), "conversions": int(cv or 0)}
     return out
 
+
+
+# ---------------------------------------------------------------------------
+# current status per ad group (AdgroupState) + "left review" notices
+# ---------------------------------------------------------------------------
+
+def update_states(db: Session, acct: models.AdAccount, groups: list[dict]) -> dict[str, set]:
+    """Upsert each ad group's current status; when one leaves review (→ delivering or →
+    rejected) remember it per campaign and tell the operator once. DATABASE ONLY.
+    Returns {campaign_id: {"delivering"|"rejected"}} for the transitions seen."""
+    from . import health
+    now = datetime.utcnow()
+    by_id = {str(g.get("adgroup_id") or ""): g for g in groups if g.get("adgroup_id")}
+    have: dict[str, models.AdgroupState] = {}
+    ids = list(by_id)
+    for i in range(0, len(ids), 500):
+        for st in db.query(models.AdgroupState).filter(models.AdgroupState.adgroup_id.in_(ids[i:i + 500])):
+            have[st.adgroup_id] = st
+    moved: dict[str, set] = {}
+    waited: dict[str, float] = {}
+    for agid, g in by_id.items():
+        sec = str(g.get("secondary_status") or "")
+        cid = str(g.get("campaign_id") or "")
+        st = have.get(agid)
+        if st is None:
+            db.add(models.AdgroupState(adgroup_id=agid, advertiser_id=acct.advertiser_id, campaign_id=cid,
+                                       adgroup_name=(g.get("adgroup_name") or "")[:200],
+                                       operation_status=str(g.get("operation_status") or ""),
+                                       secondary_status=sec, status_since=now, seen_at=now))
+            continue                                   # first sight: nothing "changed"
+        if sec and sec != (st.secondary_status or ""):
+            kind = health.transition(st.secondary_status, sec)
+            if kind:
+                moved.setdefault(cid or st.campaign_id, set()).add(kind)
+                if st.status_since:
+                    waited[cid or st.campaign_id] = max(waited.get(cid or st.campaign_id, 0.0),
+                                                        (now - st.status_since).total_seconds())
+            st.secondary_status, st.status_since = sec, now
+        st.operation_status = str(g.get("operation_status") or st.operation_status or "")
+        st.adgroup_name = (g.get("adgroup_name") or st.adgroup_name or "")[:200]
+        st.campaign_id = cid or st.campaign_id
+        st.seen_at = now
+    if moved:
+        _announce(db, acct, moved, waited)
+    try:
+        from . import review
+        by_c: dict[str, list[dict]] = {}
+        for g in by_id.values():
+            if g.get("campaign_id"):
+                by_c.setdefault(str(g["campaign_id"]), []).append(g)
+        review.record(db, models, by_c)            # approved / rejected, kept on the launch log
+    except Exception:      # noqa: BLE001
+        log.exception("review verdicts failed")
+    return moved
+
+
+def _dur(sec: float) -> str:
+    m = int(sec // 60)
+    return f"{m} min" if m < 90 else f"{m // 60} h {m % 60} min"
+
+
+def _announce(db: Session, acct: models.AdAccount, moved: dict[str, set], waited: dict[str, float]) -> None:
+    """One notice per campaign per outcome — only for campaigns this tool launched (a warm-up
+    has its own notice). A campaign where one ad group delivers counts as delivering."""
+    cids = [c for c in moved if c]
+    if not cids:
+        return
+    logs = {l.campaign_id: l for l in db.query(models.LaunchLog)
+            .filter(models.LaunchLog.campaign_id.in_(cids), models.LaunchLog.ok == True)}   # noqa: E712
+    names = {r.campaign_id: r.campaign_name for r in db.query(models.CampaignRecord)
+             .filter(models.CampaignRecord.campaign_id.in_(cids))}
+    who = acct.advertiser_name or acct.advertiser_id
+    for cid in cids:
+        lg = logs.get(cid)
+        if lg is None or getattr(lg, "warmup", False):
+            continue
+        kind = "delivering" if "delivering" in moved[cid] else "rejected"
+        href = f"/status?state=all&open={cid}"
+        level = "info" if kind == "delivering" else "warn"
+        if (db.query(models.Alert.id).filter(models.Alert.kind == "campaign_resolved", models.Alert.href == href,
+                                             models.Alert.level == level).first()):
+            continue                                    # already told
+        name = names.get(cid) or cid
+        if kind == "delivering":
+            msg = (f"“{name}” on {who} is now delivering — TikTok approved it"
+                   + (f" after {_dur(waited[cid])} in review." if waited.get(cid) else "."))
+        else:
+            msg = f"“{name}” on {who} was rejected by TikTok's review — open it to see why and appeal."
+        db.add(models.Alert(kind="campaign_resolved", level=level, ref_id=acct.advertiser_id,
+                            message=msg[:500], href=href))
+
+
+def states_for(db: Session, campaign_ids: list[str]) -> dict[str, list[dict]]:
+    """{campaign_id: [{operation_status, secondary_status, since}]} for the health column."""
+    out: dict[str, list[dict]] = {}
+    ids = [c for c in campaign_ids if c]
+    for i in range(0, len(ids), 500):
+        for st in db.query(models.AdgroupState).filter(models.AdgroupState.campaign_id.in_(ids[i:i + 500])):
+            out.setdefault(st.campaign_id, []).append({"operation_status": st.operation_status,
+                                                       "secondary_status": st.secondary_status,
+                                                       "since": st.status_since})
+    return out

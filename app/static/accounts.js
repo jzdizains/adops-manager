@@ -22,7 +22,7 @@
   var f = "", bcs = {}, search = $("#acSearch"), shown = $("#acShown");
   try { bcs = JSON.parse(localStorage.getItem("adops-acc-bcs") || "{}"); } catch (e) { bcs = {}; }
   var wantBc = new URLSearchParams(location.search).get("bc");   // arrived from Home → only that Business Center
-  if (wantBc != null && $('#acBcChips .chip[data-bc="' + wantBc + '"]')) { bcs = {}; bcs[wantBc] = true; }
+  if (wantBc != null && $('#acBcChips .chip[data-bc="' + CSS.escape(wantBc) + '"]')) { bcs = {}; bcs[wantBc] = true; }
   var wantQ = new URLSearchParams(location.search).get("q");   // arrived from a failed launch → that account
   if (wantQ) { search.value = wantQ; bcs = {}; }
   function anyBc() { return Object.keys(bcs).some(function (k) { return bcs[k]; }); }
@@ -57,7 +57,7 @@
     });
   });
   var pre = new URLSearchParams(location.search).get("state");
-  if (pre) { var pb = $('#acFilter [data-f="' + pre + '"]'); if (pb) pb.click(); }
+  if (pre) { var pb = $('#acFilter [data-f="' + CSS.escape(pre) + '"]'); if (pb) pb.click(); }
   apply();
 
   // ---- selection + bulk bar ------------------------------------------------------------------
@@ -81,6 +81,18 @@
     if (k === "clear") { $$(".acchk, .ac-all").forEach(function (c) { c.checked = false; }); sync(); return; }
     if (!s.length) return;
     if (k === "launch") { location.href = "/super-launcher?accounts=" + s.map(function (r) { return r.dataset.id; }).join(","); return; }
+    if (k === "geo") {
+      var opts = [["any", "Any geo", "whatever it can target"], ["auto", "Auto", "US unlocked → US launches only; otherwise everything but the US"], ["us_only", "US only", "never used for a non-US launch"], ["non_us", "Non-US", "never used for a US launch"]];
+      var pop = UI.popover(b, '<div style="font-weight:700;margin-bottom:6px;">Geo policy for ' + s.length + " account" + (s.length > 1 ? "s" : "") + '</div><div style="display:flex;flex-direction:column;gap:2px;min-width:260px;">' +
+        opts.map(function (o) { return '<button type="button" class="btn sm ghost" data-geo="' + o[0] + '" style="justify-content:flex-start;text-align:left;"><span><b>' + o[1] + '</b><span class="muted" style="display:block;font-size:11px;font-weight:400;">' + o[2] + "</span></span></button>"; }).join("") + "</div>");
+      pop.addEventListener("click", function (ev) {
+        var g = ev.target.closest("[data-geo]"); if (!g) return; pop.close();
+        UI.post("/accounts/geo-policy", { advertiser_ids: s.map(function (r) { return r.dataset.id; }).join(","), policy: g.dataset.geo }).then(function (r) {
+          adopsToast && adopsToast(r.ok ? "ok" : "err", r.ok ? r.changed + " account" + (r.changed === 1 ? "" : "s") + " set to " + r.label : (r.error || "Couldn't save it."));
+        });
+      });
+      return;
+    }
     if (k === "owner") {
       var selEl = $("#acOwnerSel"); if (!selEl) return;
       var uid = selEl.value, email = selEl.options[selEl.selectedIndex].textContent;
@@ -130,7 +142,8 @@
         UI.post("/accounts/" + id + "/transfer", { amount: v }).then(function (d) {
           if (!d.ok) { $(".tf-err", p).textContent = d.error || "Transfer failed."; return; }
           p.close(); adopsToast && adopsToast("ok", "Transferred " + money(v) + " to " + name);
-          if (onDone) onDone(d); else location.reload();
+          if (onDone) onDone(d);
+          else { var cell = document.querySelector('.ac-row[data-id="' + CSS.escape(id) + '"] td.num'); if (cell && d.balance != null) cell.textContent = money(d.balance, 0); }   // in place, no reload
         });
       });
     }
@@ -155,6 +168,8 @@
       var html =
         '<div class="kpis kpis-4" style="margin:0;gap:8px;">' + kpi("Profit today", profitTxt, has ? (f.profit >= 0 ? "good" : "bad") : "") + kpi("ROAS", has && f.spend ? f.roas.toFixed(2) + "×" : "—") + kpi("Spend", money(f.spend)) + kpi("Balance", d.balance == null ? "—" : money(d.balance, 0), d.balance != null && d.balance < 20 ? "bad" : "") + "</div>" +
         '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px 10px;font-size:12px;">' + [["Campaigns", f.active + " live / " + f.total], ["Last launch", f.last || "never"], ["TikTok status", (d.status || "—").replace("STATUS_", "").replace(/_/g, " ").toLowerCase()], ["Currency", d.currency], ["Timezone", d.timezone || "—"], ["Token expires", d.token_expires || "—"]].map(function (x) { return '<div><div class="muted" style="font-size:10.5px;">' + x[0] + '</div><div style="font-weight:600;">' + esc(x[1]) + "</div></div>"; }).join("") + "</div>" +
+        '<div style="font-size:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;"><span class="muted">Geo policy</span><select id="dwGeo" class="sm">' + (d.geo_policies || []).map(function (g) { return '<option value="' + esc(g.value) + '"' + (g.value === d.geo_policy ? " selected" : "") + ">" + esc(g.label) + "</option>"; }).join("") + "</select>" +
+          (d.geo_badge ? '<span class="pill dim" title="Countries TikTok lets this account target">' + esc(d.geo_badge) + "</span>" : "") + '<span class="muted" id="dwGeoHint" style="font-size:11px;flex-basis:100%;"></span></div>' +
         (d.bc ? '<div style="font-size:12px;display:flex;align-items:center;gap:8px;"><span class="muted">BC wallet</span><b style="' + ((d.bc.balance || 0) < 100 ? "color:var(--err);" : "") + '">' + esc(d.bc.name) + " · " + money(d.bc.balance || 0, 0) + '</b><button type="button" class="btn sm" id="dwTransfer" style="margin-left:auto;">Transfer…</button></div>' : "") +
         (d.cooldown_until ? '<div class="flash warn" style="font-size:12px;">Cooling down until ' + esc(d.cooldown_until.replace("T", " ").slice(0, 16)) + " after " + d.error_count + " failed launches.</div>" : "") +
         '<div><div class="drawer-sec">Campaigns today</div>' + (d.campaigns.length ? '<table class="data dense" style="font-size:12px;"><tbody>' + d.campaigns.slice(0, 12).map(function (c) { return '<tr><td style="max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><a href="/status?q=' + encodeURIComponent(c.name) + '" style="color:inherit;">' + esc(c.name) + "</a></td><td>" + (c.status === "ENABLE" ? '<span class="pill ok">live</span>' : '<span class="pill dim">paused</span>') + '</td><td class="num">' + money(c.spend, 0) + '</td><td class="num">' + (c.spend || c.revenue ? '<span class="profit-cell ' + (c.profit >= 0 ? "pos" : "neg") + '">' + (c.profit > 0 ? "+" : "") + money(c.profit, 0) + "</span>" : "—") + "</td></tr>"; }).join("") + "</tbody></table>" + (d.campaigns.length > 12 ? '<div class="muted" style="font-size:11px;margin-top:4px;">+ ' + (d.campaigns.length - 12) + ' more · <a href="/status?account=' + esc(d.id) + '&origin=all">all campaigns</a></div>' : "") : '<div class="muted">Nothing launched here yet.</div>') + "</div>" +
@@ -164,6 +179,9 @@
       drawer.body.innerHTML = html;
       var tr = $("#dwTransfer", drawer.el); if (tr) tr.addEventListener("click", function () { transferPop(tr, d.id, d.name, function (res) { drawer.body.querySelector(".kpi:nth-child(4) .val").textContent = money(res.balance, 0); }); });
       $("#dwToggle", drawer.el).addEventListener("click", function () { setEnabled([row], !(row.dataset.enabled === "1")).then(function () { openDrawer(row); }); });
+      var geo = $("#dwGeo", drawer.el), geoHint = $("#dwGeoHint", drawer.el);
+      function geoText() { var g = (d.geo_policies || []).filter(function (x) { return x.value === geo.value; })[0]; geoHint.textContent = g ? g.hint : ""; }
+      if (geo) { geoText(); geo.addEventListener("change", function () { geoText(); UI.post("/accounts/geo-policy", { advertiser_ids: d.id, policy: geo.value }).then(function (r) { adopsToast && adopsToast(r.ok ? "ok" : "err", r.ok ? "Geo policy: " + r.label : (r.error || "Couldn't save it.")); }); }); }
       var note = $("#dwNote", drawer.el), st = $("#dwNoteSt", drawer.el), t;
       note.addEventListener("input", function () { st.textContent = "typing…"; clearTimeout(t); t = setTimeout(function () { UI.post("/notes/account/" + id, { text: note.value }).then(function (res) { st.textContent = res.ok ? "saved" : "could not save"; }); }, 700); });
     });

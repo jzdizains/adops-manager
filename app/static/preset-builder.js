@@ -134,8 +134,30 @@
   // ---- display cards ---------------------------------------------------------------------------
   var dcSel = $("#displayCardSel"), dcGrid = $("#dcGrid");
   function paintCards() { $$(".pb-dc[data-val]", dcGrid).forEach(function (c) { c.classList.toggle("on", c.dataset.val === dcSel.value); }); $("#displayCardDel").hidden = !dcSel.value; if (dcSel.value) $("#displayCardDelForm").action = "/display-cards/" + dcSel.value + "/delete?next=" + encodeURIComponent(location.pathname); }
-  dcGrid.addEventListener("click", function (e) { var c = e.target.closest(".pb-dc[data-val]"); if (!c) return; dcSel.value = c.dataset.val; paintCards(); refresh(); });
+  dcGrid.addEventListener("click", function (e) { var c = e.target.closest(".pb-dc[data-val]"); if (!c) return; dcSel.value = c.dataset.val; paintCards(); refresh(); dcStock(); });
   paintCards();
+  // pushed ahead of launch (v147): how many accounts already hold the selected card
+  var dcBox = $("#dcStock"), dcTimer = null;
+  function dcStock() {
+    clearTimeout(dcTimer);
+    if (!dcBox) return;
+    var id = dcSel.value; if (!id) { dcBox.hidden = true; return; }
+    UI.get("/display-cards/" + encodeURIComponent(id) + "/status.json").then(function (d) {
+      if (dcSel.value !== id || !d.ok) { dcBox.hidden = !d.ok ? true : dcBox.hidden; return; }
+      dcBox.hidden = false;
+      dcBox.querySelector(".dc-stock-txt").textContent = "On " + d.ready + " of " + d.total + " account" + (d.total === 1 ? "" : "s") +
+        (d.n_failed ? " · " + d.n_failed + " failed" : "") + (d.running ? " · adding now…" : (d.missing ? " · " + d.missing + " still to add" : ""));
+      $("#dcPush").hidden = d.running || (!d.missing && !d.n_failed);
+      var f = dcBox.querySelector(".dc-fail"); f.hidden = !d.n_failed;
+      f.querySelector(".dc-fail-list").innerHTML = (d.failed || []).map(function (x) { return esc(x.account) + " — " + esc(x.error); }).join("<br>");
+      if (d.running) dcTimer = setTimeout(dcStock, 4000);
+    });
+  }
+  if ($("#dcPush")) $("#dcPush").addEventListener("click", function () {
+    var b = this; b.disabled = true;
+    UI.post("/display-cards/" + encodeURIComponent(dcSel.value) + "/push").then(function (d) { b.disabled = false; $("#displayCardMsg").textContent = d.message || d.error || ""; dcStock(); });
+  });
+  dcStock();
   var dcFile = $("#displayCardFile"), dcUp = $("#displayCardUp"), dcMsg = $("#displayCardMsg");
   dcFile.addEventListener("change", function () { dcUp.hidden = !dcFile.files.length; if (dcFile.files.length) dcMsg.textContent = dcFile.files[0].name + " ready — click Upload & select."; });
   dcUp.addEventListener("click", function () {
@@ -149,7 +171,7 @@
         if (!res.ok) { dcMsg.textContent = res.j.error || "Upload failed."; return; }
         var o = document.createElement("option"); o.value = res.j.id; o.textContent = res.j.name; o.selected = true; dcSel.appendChild(o);
         var tile = UI.el('<button type="button" class="pb-dc" data-val="' + res.j.id + '" data-name="' + esc(res.j.name) + '"><img src="/display-cards/' + res.j.id + '/image" alt=""><span>' + esc(res.j.name) + "</span></button>");
-        dcGrid.insertBefore(tile, dcGrid.querySelector(".pb-dc-up")); paintCards(); refresh();
+        dcGrid.insertBefore(tile, dcGrid.querySelector(".pb-dc-up")); paintCards(); refresh(); dcStock();
         dcMsg.textContent = res.j.message + " Save the preset to keep it selected."; dcFile.value = ""; $("#displayCardName").value = ""; dcUp.hidden = true;
       })
       .catch(function () { dcUp.disabled = false; dcMsg.textContent = "Upload failed — check the connection and try again."; });

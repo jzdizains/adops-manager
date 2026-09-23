@@ -58,24 +58,46 @@
   }
   $$("#jbFilter button").forEach(function (b) { b.addEventListener("click", function () { $$("#jbFilter button").forEach(function (o) { o.classList.remove("on"); }); b.classList.add("on"); f = b.dataset.f; apply(); }); });
   var s = $("#jbSearch"); if (s) s.addEventListener("input", function () { q = this.value.trim().toLowerCase(); apply(); });
+  // ---- in-place refresh (v151): the list is re-read and swapped — filters, search and scroll stay
+  function refresh() {
+    return fetch(location.pathname + location.search, { credentials: "same-origin" }).then(function (r) { return r.text(); }).then(function (html) {
+      var doc = new DOMParser().parseFromString(html, "text/html");
+      var nb = doc.querySelector("#jbTable tbody"), ob = $("#jbTable tbody");
+      if (nb && ob) { ob.replaceWith(nb); rows = $$(".jb-row"); apply(); }
+      else if (!!nb !== !!ob) { var nc = doc.querySelector(".card[style*='padding:0']"), oc = $(".card[style*='padding:0']"); if (nc && oc) { oc.replaceWith(nc); rows = $$(".jb-row"); apply(); } }
+      [".page-head .actions", ".kpis"].forEach(function (sel) { var n = doc.querySelector(sel), o = $(sel); if (n && o) o.replaceWith(n); });
+      bindHead();
+    }).catch(function () {});
+  }
   document.addEventListener("click", function (e) {
     var b = e.target.closest(".jb-cancel"); if (!b) return;
     var r = b.closest(".jb-row"), id = r.dataset.id;
-    var go = function () { UI.post("/jobs/" + id + "/cancel", { next: "/jobs" }).then(function (d) { adopsToast && adopsToast(d.ok === false ? "err" : "ok", d.msg || "Done"); setTimeout(function () { location.reload(); }, 400); }); };
+    var go = function () { b.disabled = true; UI.post("/jobs/" + id + "/cancel", { next: "/jobs" }).then(function (d) { adopsToast && adopsToast(d.ok === false ? "err" : "ok", d.msg || "Done"); refresh(); }); };
     if (b.dataset.mode === "stop") UI.confirm({ title: "Stop “" + b.dataset.title + "”?", text: "Long scans stop after the account they are on; a launch in progress finishes the campaign it is creating first.", ok: "Stop" }).then(function (y) { if (y) go(); });
     else go();
   });
-  var clrD = $("#jbClearDone"); if (clrD) clrD.addEventListener("click", function () { UI.confirm({ title: "Clear " + clrD.dataset.n + " finished job(s) from the list?", text: "Queued and running jobs stay. Launch results stay on their own pages.", ok: "Clear finished", danger: true }).then(function (y) { if (y) UI.post("/jobs/clear-finished", { next: "/jobs" }).then(function () { location.reload(); }); }); });
-  var clr = $("#jbClear"); if (clr) clr.addEventListener("click", function () { UI.confirm({ title: "Remove all " + clr.dataset.n + " queued job(s)?", text: "Running ones keep going.", ok: "Clear queue", danger: true }).then(function (y) { if (y) UI.post("/jobs/cancel-queued", { next: "/jobs" }).then(function () { location.reload(); }); }); });
-  // live: when anything finishes or the running set changes, reload the list (cheap — server renders it)
+  function bindHead() {
+    var clrD = $("#jbClearDone"); if (clrD && !clrD.dataset.b) { clrD.dataset.b = "1"; clrD.addEventListener("click", function () { UI.confirm({ title: "Clear " + clrD.dataset.n + " finished job(s) from the list?", text: "Queued and running jobs stay. Launch results stay on their own pages.", ok: "Clear finished", danger: true }).then(function (y) { if (y) UI.post("/jobs/clear-finished", { next: "/jobs" }).then(refresh); }); }); }
+    var clr = $("#jbClear"); if (clr && !clr.dataset.b) { clr.dataset.b = "1"; clr.addEventListener("click", function () { UI.confirm({ title: "Remove all " + clr.dataset.n + " queued job(s)?", text: "Running ones keep going.", ok: "Clear queue", danger: true }).then(function (y) { if (y) UI.post("/jobs/cancel-queued", { next: "/jobs" }).then(refresh); }); }); }
+  }
+  bindHead();
+  // live: progress is patched in place; when a job starts, finishes or appears, the list is
+  // swapped in place (never a page reload). Paused while the tab is hidden or a pop-up is open.
   var lastSig = null;
   function poll() {
+    if (document.hidden || document.querySelector(".layer-bg")) return;
     UI.get("/jobs/data?peek=1").then(function (d) {
-      var sig = (d.running || []).map(function (j) { return j.id + ":" + j.status + ":" + j.progress; }).join("|") + "#" + (d.done_count || 0);
-      if (lastSig !== null && sig !== lastSig) { location.reload(); return; }
+      var run = d.running || [];
+      var sig = run.map(function (j) { return j.id + ":" + j.status; }).join("|") + "#" + (d.done_count || 0);
+      run.forEach(function (j) {
+        var cell = document.querySelector('.jb-row[data-id="' + j.id + '"] .jb-status .pill.warn');
+        if (cell && j.status === "running") cell.textContent = "running" + (j.progress ? " · " + j.progress : "");
+      });
+      if (lastSig !== null && sig !== lastSig) refresh();
       lastSig = sig;
-      $("#jbRunning").textContent = (d.running || []).filter(function (j) { return j.status === "running"; }).length;
-      $("#jbQueued").textContent = (d.running || []).filter(function (j) { return j.status === "queued"; }).length;
+      var rn = $("#jbRunning"), qn = $("#jbQueued");
+      if (rn) rn.textContent = run.filter(function (j) { return j.status === "running"; }).length;
+      if (qn) qn.textContent = run.filter(function (j) { return j.status === "queued"; }).length;
     }).catch(function () {});
   }
   setInterval(poll, 5000); poll();

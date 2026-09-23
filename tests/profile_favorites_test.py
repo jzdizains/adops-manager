@@ -33,7 +33,7 @@ check("picker.js is syntactically valid", r.returncode == 0, r.stderr[:200])
 print("-- launcher passes favorites + persists them --")
 t = read("app/templates/super_launcher.html")
 check("the launcher hands the picker the saved favorites and a save callback",
-      "FAV_PROFILES = {{ fav_profiles_json|safe }}" in t and "favorites: FAV_PROFILES" in t and "onToggleFav: saveFav" in t)
+      "FAV_PROFILES = {{ fav_profiles_json|js }}" in t and "favorites: FAV_PROFILES" in t and "onToggleFav: saveFav" in t)
 check("saving posts to the per-user endpoint", 'fetch("/super-launcher/profile-favorite"' in t)
 
 print("-- route: per-user favorites, no TikTok call --")
@@ -45,8 +45,8 @@ check("add/remove logic is present", "favs.append(idn)" in r2 and "favs = [x for
 print("-- css for the star, both themes (token-based) --")
 css = read("app/static/style.css")
 check("the star has styles and an 'on' state using tokens (no hard-coded theme colors except the gold star)",
-      ".pv-star {" in css and ".pv-star.on {" in css and "var(--muted)" in css)
-check("STATIC_VERSION bumped", 'STATIC_VERSION = "144"' in read("app/config.py"))
+      ".pv-star {" in css and ".pv-star.on {" in css and "var(--text-dim)" in css)
+check("STATIC_VERSION bumped", 'STATIC_VERSION = "153"' in read("app/config.py"))
 
 print()
 print("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}")

@@ -41,11 +41,29 @@ def connect(request: Request):
     return RedirectResponse(tiktok_api.oauth_authorize_url(state), status_code=303)
 
 
+def _state_ok(request: Request) -> bool:
+    """The callback must answer OUR /oauth/connect in THIS browser. The one-time `state`
+    lives in the signed session; a callback link carrying someone else's auth_code (the
+    classic OAuth login-CSRF — it would attach THEIR TikTok login and ad accounts to
+    this user's workspace) has no matching state and is refused. Single use: popped."""
+    expected = request.session.pop("oauth_state", "") if hasattr(request, "session") else ""
+    got = request.query_params.get("state", "")
+    return bool(expected) and bool(got) and secrets.compare_digest(str(got).encode(), str(expected).encode())
+
+
 @router.get("/oauth/callback")
 def callback(request: Request, db: Session = Depends(get_db)):
     err = request.query_params.get("error")
     if err:
         return render(request, "oauth_result.html", {"ok": False, "detail": f"TikTok returned: {err}"})
+    if not _state_ok(request):
+        return render(request, "oauth_result.html", {"ok": False, "detail":
+                      "This connect link didn't start from this dashboard in this browser, so nothing was "
+                      "connected. Sign in, then press Connect TikTok again."})
+    from . import auth as auth_mod
+    if (getattr(getattr(request, "state", None), "user", None) or auth_mod.current_user(request, db)) is None:
+        return render(request, "oauth_result.html", {"ok": False, "detail":
+                      "You're signed out — sign in, then press Connect TikTok again."})
     auth_code = request.query_params.get("auth_code") or request.query_params.get("code", "")
     if not auth_code:
         return render(request, "oauth_result.html", {"ok": False, "detail": "No auth_code in callback."})
@@ -63,6 +81,8 @@ def callback(request: Request, db: Session = Depends(get_db)):
                            datetime.now(timezone.utc) + timedelta(seconds=expires_in),
                            datetime.now(timezone.utc) + timedelta(seconds=refresh_expires),
                            user_id=_owner_for(request, db))
+    from .. import audit
+    audit.from_request(db, models, request, "tiktok.connected", detail=f"{result['count']} ad account(s)")
     return render(request, "oauth_result.html", {"ok": True, "detail":
                   f"Connected. Synced {result['count']} ad account(s)"
                   + (f" across {result['bc_count']} Business Center(s)" if result.get("bc_count") else "") + "."})
@@ -213,16 +233,16 @@ def sync_accounts(db: Session, access_token: str, refresh_token: str = "",
     }))
     # enrich with advertiser info (status, currency, timezone) — best effort
     try:
-        ids = [a["advertiser_id"] for a in advertisers if a["advertiser_id"]][:100]
-        if ids:
-            for info in tiktok_api.get_advertiser_info(access_token, ids):
+        ids = [a["advertiser_id"] for a in advertisers if a["advertiser_id"]]
+        for chunk in (ids[i:i + 100] for i in range(0, len(ids), 100)):     # every account, 100 per call (v151)
+            for info in tiktok_api.get_advertiser_info(access_token, chunk):
                 row = db.query(models.AdAccount).filter_by(
                     advertiser_id=str(info.get("advertiser_id", ""))).first()
                 if row:
                     row.status = info.get("status", row.status)
                     row.currency = info.get("currency", row.currency)
-                    row.timezone = info.get("timezone", row.timezone)
-            db.commit()
+                    row.timezone = info.get("timezone") or info.get("display_timezone") or row.timezone
+        db.commit()
     except tiktok_api.TikTokError:
         pass
     queries.set_setting(db, "accounts_synced_at", now.isoformat())

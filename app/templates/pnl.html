@@ -127,7 +127,7 @@
   </div>
   <div class="empty" id="pnlEmpty" hidden>Nothing matches.</div>
 </div>
-<script type="application/json" id="pnlChartData">{{ chart_json|safe }}</script>
+<script type="application/json" id="pnlChartData">{{ chart_json|js }}</script>
 {% endblock %}
 {% block scripts %}<script src="/static/daterange.js?v={{ STATIC_V }}"></script>
 <script>

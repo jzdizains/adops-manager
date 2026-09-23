@@ -144,7 +144,8 @@ check("PageTemplate model, owned per user, in OWNED_MODELS", "class PageTemplate
 ip = read("app/routes/instant_pages.py")
 check("routes: save / delete / build one / build BC", all(x in ip for x in ('@router.post("/instant-pages/templates/save")', '/templates/{tpl_id}/delete', '/templates/{tpl_id}/build")', '/templates/{tpl_id}/build-bc")')))
 check("templates are workspace-scoped (owns / owner_for_new)", "return t if (t is not None and sc.owns(t)) else None" in ip and "models.PageTemplate(owner_user_id=sc.owner_for_new)" in ip)
-check("BC build targets only accounts in view without the page", "if a.owner_bc_id == bc_id and sc.allows(a.advertiser_id) and a.advertiser_id not in have" in ip)
+check("BC build targets only accounts in view without the page (v150: through the build queue)",
+      "a.owner_bc_id == bc_id" in ip and "sc.allows(i)" in read("app/asset_builds.py") and "i not in have and i not in busy" in read("app/asset_builds.py"))
 check("screenshot route: only for an account in the viewer's workspace", 'if not scope_mod.for_request(request, db).allows(m.group(1)):' in ip)
 check("a challenge or the memory guard stops the whole run", 'if r.get("challenge"):' in ip and 'if r.get("retry"):' in ip)
 check("job in the slow lane with progress", '@jobs.handler("instant_page_build")' in read("app/job_handlers.py") and '"instant_page_build"' in read("app/jobs.py").split("SLOW_KINDS = {")[1][:60])
@@ -156,7 +157,7 @@ check("verification is the official API, retried briefly", "ip.sync_account(db, 
 th = read("app/templates/instant_pages.html"); tf = read("app/templates/template_form.html")
 check("Instant Pages: templates card, form pop-up, build → reusable account pop-up → build-multi",
       'id="templates"' in th and 'id="tplFormBox"' in th and 'tpl-build" type="button"' in th
-      and "UI.pickAccounts({" in th and '/build-multi' in th and 'i.name = "target_ids"' in th)
+      and 'AB.pickNeeding({ kind: "page"' in th and 'id="builds"' in th)
 check("preset form: template picker", 'name="page_template_id"' in tf and "page_templates" in tf)
 
 print()

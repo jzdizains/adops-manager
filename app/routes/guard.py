@@ -41,3 +41,13 @@ def creative_in_view(request: Request, creative_id: int, db: Session = Depends(g
     if row is None or not sc.owns(row):
         raise HTTPException(status_code=404, detail="Not in your view")
     return sc
+
+
+def is_owner(request: Request) -> bool:
+    """The super admin (OWNER_EMAIL). Company-wide switches — the shared TikTok web-session
+    cookie, the raw error feed across every workspace — are theirs alone."""
+    from .. import users as _users
+    return _users.is_owner(getattr(getattr(request, "state", None), "user", None))
+
+
+OWNER_ONLY_MSG = "Only the workspace owner can open that page."

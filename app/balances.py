@@ -172,6 +172,75 @@ def sync_account_balances(db: Session) -> int:
     return updated
 
 
+# ---------------------------------------------------------------------------
+# shared wallets + runway (pure — tested directly)
+# ---------------------------------------------------------------------------
+
+def shared_wallet(wallet, balances: list) -> float | None:
+    """The one balance every account reports when the BC runs a SHARED wallet, else None.
+    Under a shared wallet TikTok answers each account's balance with the wallet's own, so
+    adding them up counts the same money once per account ($25 read as $1,905). Seen as:
+    at least two accounts, 80%+ of them on the same positive figure, and that figure is the
+    wallet's (or the wallet itself wasn't readable)."""
+    vals = [round(float(b), 2) for b in balances if b is not None]
+    if len(vals) < 2:
+        return None
+    counts: dict[float, int] = {}
+    for v in vals:
+        counts[v] = counts.get(v, 0) + 1
+    v, n = max(counts.items(), key=lambda kv: kv[1])
+    if v <= 0 or n < 2 or n < 0.8 * len(vals):
+        return None
+    if wallet is None or float(wallet or 0) == 0 or abs(float(wallet) - v) < 0.01:
+        return v
+    return None
+
+
+def money_in_bc(wallet, balances: list) -> dict:
+    """{wallet, in_accounts, total, shared} — the shared case counts the money once."""
+    w = float(wallet or 0)
+    sv = shared_wallet(wallet, balances)
+    if sv is not None:
+        return {"wallet": max(w, sv), "in_accounts": 0.0, "total": max(w, sv), "shared": True}
+    ia = sum(float(b or 0) for b in balances)
+    return {"wallet": w, "in_accounts": ia, "total": w + ia, "shared": False}
+
+
+def daily_burn(last7: float, days_with_data: int, spend_today: float, day_fraction: float) -> float:
+    """Average spend per day: the last 7 full days when there's history, else today's
+    spend projected over the whole day (never today's partial spend as if it were a day —
+    at 9 am that made a week's money look like a month)."""
+    if days_with_data > 0 and last7 > 0:
+        return last7 / max(days_with_data, 1)
+    if spend_today > 0:
+        return spend_today / max(min(day_fraction, 1.0), 0.1)
+    return 0.0
+
+
+def runway_days(total: float, burn: float) -> float | None:
+    return (float(total) / burn) if burn > 0 else None
+
+
+def burn_by_account(db: Session, advertiser_ids: list[str]) -> tuple[dict, dict]:
+    """({advertiser_id: spend over the last 7 full local days}, {advertiser_id: days with data})."""
+    from sqlalchemy import func
+    from . import timeutil
+    start = timeutil.local_date_str(timeutil.local_midnight_utc(-7))
+    end = timeutil.local_date_str(timeutil.local_midnight_utc(0))
+    spend: dict = {}
+    days: dict = {}
+    ids = [a for a in advertiser_ids if a]
+    for i in range(0, len(ids), 500):
+        for aid, day, sp in (db.query(models.SpendSnapshot.advertiser_id, models.SpendSnapshot.day,
+                                      func.sum(models.SpendSnapshot.spend))
+                             .filter(models.SpendSnapshot.advertiser_id.in_(ids[i:i + 500]),
+                                     models.SpendSnapshot.day >= start, models.SpendSnapshot.day < end)
+                             .group_by(models.SpendSnapshot.advertiser_id, models.SpendSnapshot.day)):
+            spend[aid] = spend.get(aid, 0.0) + float(sp or 0)
+            days.setdefault(aid, set()).add(day)
+    return spend, {k: len(v) for k, v in days.items()}
+
+
 def _latest_alert(db: Session, kind: str, ref_id: str) -> models.Alert | None:
     return (db.query(models.Alert).filter_by(kind=kind, ref_id=ref_id)
             .order_by(models.Alert.created_at.desc()).first())

@@ -29,7 +29,7 @@
       + ".apk-nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}"
       + ".apk-id{font-size:10px;}"
       + ".apk-st{font-size:10px;padding:1px 7px;border-radius:999px;text-transform:capitalize;}"
-      + ".apk-st-fresh{background:rgba(52,199,89,.16);color:#34c759;}.apk-st-used{background:rgba(255,255,255,.08);color:var(--muted,#9aa0aa);}"
+      + ".apk-st-fresh{background:rgba(52,199,89,.16);color:#34c759;}.apk-st-used{background:rgba(255,255,255,.08);color:var(--text-dim);}"
       + ".apk-st-active{background:rgba(255,214,10,.16);color:#ffd60a;}.apk-st-cooldown{background:rgba(255,159,10,.16);color:#ff9f0a;}.apk-st-blocked{background:rgba(255,69,58,.16);color:#ff453a;}";
     var s = document.createElement("style"); s.textContent = css; document.head.appendChild(s);
   }
@@ -55,7 +55,7 @@
       if (opts.extra && opts.extra.length) {
         var exWrap = body.querySelector(".apk-extra"); exWrap.style.margin = "0 0 10px";
         opts.extra.forEach(function (fld) {
-          var lab = document.createElement("label"); lab.style.cssText = "display:block;margin-bottom:6px;font-size:11.5px;color:var(--muted,#9aa0aa);";
+          var lab = document.createElement("label"); lab.style.cssText = "display:block;margin-bottom:6px;font-size:11.5px;color:var(--text-dim);";
           lab.innerHTML = esc(fld.label || fld.name) + '<input type="' + esc(fld.type || "text") + '" placeholder="' + esc(fld.placeholder || "") + '" style="width:100%;margin-top:3px;">';
           extraEls[fld.name] = lab.querySelector("input"); exWrap.appendChild(lab);
         });

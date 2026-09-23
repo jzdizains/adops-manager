@@ -2,7 +2,8 @@
 Also /queue — launch queue statuses with retry/cancel."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone  # noqa: F401
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
@@ -43,20 +44,50 @@ def _resume(db: Session, advertiser_id: str, campaign_id: str) -> str | None:
 
 
 @router.post("/automation/resume")
-def resume_one(advertiser_id: str = Form(...), campaign_id: str = Form(...),
+def resume_one(request: Request, advertiser_id: str = Form(...), campaign_id: str = Form(...),
                db: Session = Depends(get_db)):
+    from .. import scope as scope_mod
+    if not scope_mod.for_request(request, db).allows(advertiser_id):
+        return RedirectResponse("/monitor?view=automation&err=That+campaign+isn't+in+your+workspace", status_code=303)
     err = _resume(db, advertiser_id, campaign_id)
     if err:
         return RedirectResponse(f"/monitor?view=automation&err={err[:150]}", status_code=303)
     return RedirectResponse("/monitor?view=automation&ok=Campaign+resumed", status_code=303)
 
 
+@router.post("/automation/pause")
+def pause_one(request: Request, advertiser_id: str = Form(...), campaign_id: str = Form(...), rule: str = Form(""),
+              db: Session = Depends(get_db)):
+    """A flagged / dry-run / held rule action, paused by hand."""
+    from .. import scope as scope_mod
+    if not scope_mod.for_request(request, db).allows(advertiser_id):
+        return RedirectResponse("/monitor?view=automation&err=That+campaign+isn't+in+your+workspace", status_code=303)
+    acct = db.query(models.AdAccount).filter_by(advertiser_id=advertiser_id).first()
+    if not acct or not acct.access_token:
+        return RedirectResponse("/monitor?view=automation&err=No+token+for+that+account", status_code=303)
+    try:
+        tiktok_api.update_campaign_status(acct.access_token, advertiser_id, [campaign_id], "DISABLE")
+    except tiktok_api.TikTokError as e:
+        return RedirectResponse(f"/monitor?view=automation&err=TikTok+refused+(code+{e.code})", status_code=303)
+    rec = db.query(models.CampaignRecord).filter_by(advertiser_id=advertiser_id, campaign_id=campaign_id).first()
+    if rec:
+        rec.operation_status = "DISABLE"
+    db.add(models.RuleAction(advertiser_id=advertiser_id, campaign_id=campaign_id, campaign_name=rec.campaign_name if rec else "",
+                             rule=(rule or "flagged")[:120], action="pause", ok=True, detail="paused by operator from a rule flag"))
+    db.commit()
+    return RedirectResponse("/monitor?view=automation&ok=Campaign+paused", status_code=303)
+
+
 @router.post("/automation/resume-all")
-def resume_all(db: Session = Depends(get_db)):
-    """Resume every campaign the rule engine paused that is still paused."""
+def resume_all(request: Request, db: Session = Depends(get_db)):
+    """Resume every campaign the rule engine paused that is still paused — in the workspace
+    in view only (a buyer's "Resume all" must never turn on another buyer's campaigns)."""
+    from .. import scope as scope_mod
+    sc = scope_mod.for_request(request, db)
     paused_ids = {r.campaign_id: r.advertiser_id for r in
                   db.query(models.CampaignRecord)
-                  .filter(models.CampaignRecord.operation_status == "DISABLE")}
+                  .filter(models.CampaignRecord.operation_status == "DISABLE")
+                  if sc.allows(r.advertiser_id)}
     engine_paused = (db.query(models.RuleAction)
                      .filter(models.RuleAction.action == "pause",
                              models.RuleAction.ok == True).all())  # noqa: E712
@@ -108,8 +139,12 @@ def _queue_visible(sc, item) -> bool:
 def retry_item(item_id: int, request: Request, db: Session = Depends(get_db)):
     from .. import scope as scope_mod
     sc = scope_mod.for_request(request, db)
+    from .. import queue_worker
     item = db.get(models.LaunchQueueItem, item_id)
     if item and _queue_visible(sc, item) and item.status == "failed":
+        if not queue_worker.retry_safe(db, item):
+            return RedirectResponse("/queue?err=" + quote("Not re-queued: that launch may have left a campaign on the account — "
+                                                          "check its launch result (Retry failed there continues inside the campaign)."), status_code=303)
         item.status = "pending"
         item.attempts = 0
         db.commit()
@@ -122,15 +157,20 @@ def retry_failed(request: Request, db: Session = Depends(get_db)):
     gets a fresh attempt counter). One buyer's click must never relaunch another's failures."""
     from .. import scope as scope_mod
     sc = scope_mod.for_request(request, db)
-    n = 0
+    from .. import queue_worker
+    n = skipped = 0
     for item in db.query(models.LaunchQueueItem).filter_by(status="failed"):
         if not _queue_visible(sc, item):
+            continue
+        if not queue_worker.retry_safe(db, item):
+            skipped += 1                 # may have left a campaign behind — never a blind second one
             continue
         item.status = "pending"
         item.attempts = 0
         n += 1
     db.commit()
-    return RedirectResponse(f"/queue?ok={n}+launch(es)+re-queued", status_code=303)
+    tail = f"+·+{skipped}+left+alone+(they+may+have+made+a+campaign+—+check+their+launch+results)" if skipped else ""
+    return RedirectResponse(f"/queue?ok={n}+launch(es)+re-queued{tail}", status_code=303)
 
 
 @router.post("/queue/{item_id}/cancel")
@@ -146,7 +186,19 @@ def cancel_item(item_id: int, request: Request, db: Session = Depends(get_db)):
 
 @router.post("/queue/process-now")
 def process_now(db: Session = Depends(get_db)):
-    """Manual kick — process a batch immediately instead of waiting a sweep."""
+    """Manual kick — process a batch now instead of waiting a sweep. Runs in its own thread
+    (a launch takes minutes; the request never waits) and never overlaps the sweep's pass."""
+    import threading
     from .. import queue_worker
-    n = queue_worker.process(db)
-    return RedirectResponse(f"/queue?ok=processed+{n}+item(s)", status_code=303)
+    from ..database import SessionLocal
+
+    def _go():
+        d = SessionLocal()
+        try:
+            queue_worker.process(d)
+        except Exception:      # noqa: BLE001
+            d.rollback()
+        finally:
+            d.close()
+    threading.Thread(target=_go, name="queue-now", daemon=True).start()
+    return RedirectResponse("/queue?ok=Processing+now+in+the+background+—+this+page+shows+each+item+as+it+finishes.", status_code=303)

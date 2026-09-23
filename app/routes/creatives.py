@@ -200,9 +200,10 @@ def creatives_page(request: Request, db: Session = Depends(get_db)):
             slide_map[cz.id] = []
     browse = _browse_account(db)
 
-    from .. import text_overlay
+    from .. import text_overlay, review
+    reviews = review.for_creatives(db, models, [r.id for r in videos + carousels if r.status == "used"][:2000])
     return render(request, "creatives.html", {
-        "fonts": text_overlay.available_fonts(), "default_font": text_overlay.default_font(),
+        "fonts": text_overlay.available_fonts(), "default_font": text_overlay.default_font(), "reviews": reviews,
         "carousels": carousels, "slide_map": slide_map, "dims": dims,
         "image_pool": [r for r in images if r.status == "available"],
         "browse_account": browse,
@@ -1175,6 +1176,58 @@ async def add_text(creative_id: int, request: Request, db: Session = Depends(get
 
 
 # ============================================================================
+# CAPTIONS BURNED INTO VIDEOS (Studio, v149) — same renderer as text on images
+# ============================================================================
+@router.post("/creatives/{creative_id}/caption-video/preview")
+async def caption_video_preview(creative_id: int, request: Request, db: Session = Depends(get_db), _own: scope_mod.Scope = Depends(guard.creative_in_view)):
+    """One frame of the video with the caption drawn by the real renderer (what gets burned in)."""
+    from .. import video_caption
+    row = db.get(models.Creative, creative_id)
+    if not row or (row.kind or "video") != "video" or not row.file_path:
+        return Response(status_code=404)
+    form = await request.form()
+    try:
+        at = max(float(form.get("at") or 1.0), 0.0)
+    except ValueError:
+        at = 1.0
+    try:
+        data = await run_in_threadpool(video_caption.preview, row.file_path, dict(form), at)
+    except ValueError as e:
+        return Response(str(e), status_code=422, media_type="text/plain")
+    except Exception as e:  # noqa: BLE001
+        return Response(f"{type(e).__name__}: {str(e)[:200]}", status_code=500, media_type="text/plain")
+    return Response(data, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+@router.post("/creatives/{creative_id}/caption-video")
+async def caption_video(creative_id: int, request: Request, db: Session = Depends(get_db), _own: scope_mod.Scope = Depends(guard.creative_in_view)):
+    """Queue a captioned COPY of this video (the original stays as it is)."""
+    import json as _json
+    from fastapi.responses import JSONResponse
+    from .. import jobs, text_overlay, video_caption
+    row = db.get(models.Creative, creative_id)
+    if not row or (row.kind or "video") != "video" or not row.file_path:
+        return JSONResponse({"ok": False, "error": "Pick a video."}, status_code=404)
+    form = await request.form()
+    try:
+        spec = text_overlay.clean(dict(form))
+    except ValueError as e:
+        return JSONResponse({"ok": False, "error": str(e)})
+    start, end = video_caption.clean_times(form.get("start"), form.get("end"))
+    recipe = {"spec": {**spec, "text": "\n".join(spec["lines"])}, "start": start, "end": end}
+    base = (row.name or "video").rsplit(".", 1)[0]
+    n = db.query(models.Creative).filter(models.Creative.name.like(f"{base}_cap%")).count() + 1
+    fname = _safe_name(f"{base}_cap{n}.mp4")
+    new = models.Creative(name=fname, file_name=fname, kind="video", status="processing", source=row.source,
+                          source_md5=row.source_md5 or row.md5, text_spec=_json.dumps(recipe, ensure_ascii=False),
+                          text_parent_id=row.id, owner_user_id=row.owner_user_id)
+    db.add(new)
+    db.commit()
+    jobs.enqueue(db, "video_caption", f"Burn a caption into “{row.name}”", {"creative_id": new.id}, href="/creatives?view=library")
+    return JSONResponse({"ok": True, "id": new.id, "message": f"Burning the caption into a copy — “{fname}” appears in the library when it's ready."})
+
+
+# ============================================================================
 # CAROUSELS: ordered image slides + a TikTok soundtrack (doc: Create Carousel Ads)
 # ============================================================================
 def _browse_account(db: Session):
@@ -1419,6 +1472,8 @@ def creatives_pick(request: Request, db: Session = Depends(get_db)):
     for r in rows:
         fam_ct[r.source_md5 or r.md5 or ""] = fam_ct.get(r.source_md5 or r.md5 or "", 0) + 1
     notes = activity.notes_for(db, "creative", [str(r.id) for r in rows])
+    from .. import review
+    rvs = review.for_creatives(db, models, [r.id for r in rows if r.status == "used"])
     out = []
     for r in rows:
         st = "used" if r.status == "used" else "fresh"
@@ -1439,7 +1494,8 @@ def creatives_pick(request: Request, db: Session = Depends(get_db)):
                 "slide_ids": _slides_of(r) if r.kind == "carousel" else [],
                 "spend": round(p["spend"], 2) if p else 0.0, "revenue": round(p["revenue"], 2) if p else 0.0,
                 "profit": round(p["profit"], 2) if p else 0.0, "roas": round(p["roas"], 2) if p else 0.0,
-                "used_in": (p["campaign_name"] if p else ""), "used_account": (p["account_name"] if p else "")}
+                "used_in": (p["campaign_name"] if p else ""), "used_account": (p["account_name"] if p else ""),
+                "review": rvs.get(r.id) or {}}
         out.append(item)
     return JSONResponse({"items": out, "kind": kind, "state": state,
                          "counts": {"fresh": sum(1 for r in rows if r.status != "used"), "used": sum(1 for r in rows if r.status == "used")}})

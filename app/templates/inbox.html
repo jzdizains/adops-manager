@@ -67,7 +67,10 @@
     var r = b.closest(".ib-row");
     UI.post("/inbox/dismiss", { id: r.dataset.id, next: "/inbox" }).then(function () { r.remove(); rows = rows.filter(function (x) { return x !== r; }); apply(); adopsToast && adopsToast("ok", "Dismissed"); });
   });
-  var da = $("#ibDismissAll"); if (da) da.addEventListener("click", function () { UI.confirm({ title: "Dismiss every notice?", text: "TikTok-side issues stay until the next scan clears them; only notices (wallet, rule actions) are dismissed.", ok: "Dismiss all" }).then(function (y) { if (y) UI.post("/inbox/dismiss", { id: "all", next: "/inbox" }).then(function () { location.reload(); }); }); });
+  var da = $("#ibDismissAll"); if (da) da.addEventListener("click", function () { UI.confirm({ title: "Dismiss every notice?", text: "TikTok-side issues stay until the next scan clears them; only notices (wallet, rule actions) are dismissed.", ok: "Dismiss all" }).then(function (y) { if (y) UI.post("/inbox/dismiss", { id: "all", next: "/inbox" }).then(function () {
+    rows.filter(function (r) { return r.querySelector(".ib-dismiss"); }).forEach(function (r) { r.remove(); });
+    rows = rows.filter(function (r) { return document.body.contains(r); }); apply(); da.remove(); adopsToast && adopsToast("ok", "Dismissed");
+  }); }); });
 })();
 </script>
 {% endblock %}

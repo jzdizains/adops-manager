@@ -54,7 +54,8 @@ def save_config(host: str, user: str, password: str, port: int = 993,
                "saved_at": datetime.now(timezone.utc).isoformat()}
     try:
         config.DATA_DIR.mkdir(parents=True, exist_ok=True)
-        INVITE_MAIL_FILE.write_text(json.dumps(payload, indent=2))
+        from . import secrets_box
+        secrets_box.write_json(INVITE_MAIL_FILE, payload)           # sealed at rest
     except OSError as e:
         return {"ok": False, "error": f"Couldn't save the mailbox settings: {e}"}
     return {"ok": True}
@@ -62,7 +63,8 @@ def save_config(host: str, user: str, password: str, port: int = 993,
 
 def load_config() -> dict:
     try:
-        return json.loads(INVITE_MAIL_FILE.read_text()) if INVITE_MAIL_FILE.exists() else {}
+        from . import secrets_box
+        return (secrets_box.read_json(INVITE_MAIL_FILE, {}) or {}) if INVITE_MAIL_FILE.exists() else {}
     except (OSError, ValueError):
         return {}
 

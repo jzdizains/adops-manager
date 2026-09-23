@@ -27,6 +27,8 @@ LEVEL_RANK = {"err": 0, "warn": 1, "info": 2}
 
 
 def _alert_href(a: models.Alert) -> tuple[str, bool]:
+    if getattr(a, "href", ""):
+        return a.href, False
     if a.kind == "bc_low_balance" and a.ref_id:
         return balances.bc_portal_url(a.ref_id), True
     if a.kind == "rule_action":
@@ -37,7 +39,28 @@ def _alert_href(a: models.Alert) -> tuple[str, bool]:
         return "/diagnostics?kind=parity", False
     if a.kind == "creative_flaw":
         return "/creatives", False
+    if a.kind == "warmup":
+        return "/warmup", False
     return "", False
+
+
+def alert_visible(a: models.Alert, scope=None) -> bool:
+    """Is this Alert row part of the workspace in view? The ONE rule the inbox list and the
+    acknowledge / dismiss actions share — so "dismiss all" clears only what this person sees."""
+    ids = scope.ids if scope is not None else None          # None = everything
+    uid = scope.user_id if scope is not None else None
+    ref = a.ref_id or ""
+    # an alert about one ad account (ref_id is the advertiser id) follows its owner
+    if ids is not None and ref.isdigit() and len(ref) >= 15 and a.kind not in ("bc_low_balance",) and ref not in ids:
+        return False
+    # a per-user inventory alert (ref_id "fresh:u7", "creatives:u7") shows only in that user's view
+    if ids is not None and ":u" in ref and ref.rsplit(":u", 1)[1] != str(uid):
+        return False
+    return True
+
+
+def visible_unacked(db: Session, scope=None) -> list[models.Alert]:
+    return [a for a in balances.unacknowledged(db, limit=500) if alert_visible(a, scope)]
 
 
 def build(db: Session, scope=None) -> list[dict]:
@@ -54,11 +77,7 @@ def build(db: Session, scope=None) -> list[dict]:
 
     # ---- 1. Alert rows (dismissable) -----------------------------------------
     for a in balances.unacknowledged(db, limit=200):
-        # an alert about one ad account (ref_id is the advertiser id) follows its owner
-        if ids is not None and a.ref_id and a.ref_id.isdigit() and len(a.ref_id) >= 15 and a.kind not in ("bc_low_balance",) and a.ref_id not in ids:
-            continue
-        # a per-user inventory alert (ref_id "fresh:u7", "creatives:u7") shows only in that user's view
-        if ids is not None and a.ref_id and ":u" in a.ref_id and a.ref_id.rsplit(":u", 1)[1] != str(uid):
+        if not alert_visible(a, scope):
             continue
         href, external = _alert_href(a)
         items.append({
@@ -66,7 +85,9 @@ def build(db: Session, scope=None) -> list[dict]:
             "title": {"bc_low_balance": "Wallet low", "account_error": "Account error",
                       "rule_action": "Rule fired", "inventory_low": "Inventory low",
                       "cta_fallback": "Auto CTA fallback", "parity": "TikTok has an option we don't offer",
-                      "creative_flaw": "TikTok flagged a creative"}.get(a.kind, "Notice"),
+                      "creative_flaw": "TikTok flagged a creative",
+                      "warmup": "Warm-up",
+                      "campaign_resolved": ("Launch approved" if a.level == "info" else "Launch rejected")}.get(a.kind, "Notice"),
             "message": a.message, "href": href, "external": external,
             "at": a.created_at, "ack": True, "where": "",
         })
@@ -157,6 +178,8 @@ def build(db: Session, scope=None) -> list[dict]:
     for lg in (db.query(models.LaunchLog).filter(models.LaunchLog.ok == True,          # noqa: E712
                                                  models.LaunchLog.campaign_id != "",
                                                  models.LaunchLog.source == "")):
+        if getattr(lg, "warmup", False):      # a warm-up has no URL by design — nothing to attribute
+            continue
         if (lg.advertiser_id, lg.campaign_id) in live_ids:
             nosrc.add(lg.campaign_id)
     if nosrc:

@@ -9,6 +9,16 @@ import json
 from . import jobs, models, queries
 
 
+def _job_user_id(p: dict) -> int | None:
+    """The workspace a job belongs to, from its payload. None (older jobs, or the
+    super-admin's 'Everyone' view) keeps the original global, every-account behaviour."""
+    v = p.get("user_id")
+    try:
+        return int(v) if v is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 @jobs.handler("launch")
 def _launch(db: Session, p: dict, job: models.Job) -> dict:
     from .routes import campaigns as engine
@@ -313,8 +323,9 @@ def _adgroup_duplicate(db: Session, p: dict, job: models.Job) -> dict:
 def _bc_assets_scan(db: Session, p: dict, job: models.Job) -> dict:
     """Read-only: which ad accounts have the pixel and the profiles (see bc_assets)."""
     from . import bc_assets
+    uid = _job_user_id(p)      # whose workspace this audit is for (None = the global/Everyone view)
     snap = bc_assets.scan(db, on_progress=lambda t: jobs.progress(db, job, t),
-                          should_stop=lambda: jobs.should_stop(db, job))
+                          should_stop=lambda: jobs.should_stop(db, job), user_id=uid)
     s = snap.get("summary") or {}
     detail = (f"{s.get('ready', 0)} of {s.get('accounts', 0)} account(s) fully wired · "
               f"{s.get('in_main_bc', 0)} in the main BC · {s.get('with_pixel', 0)} with a pixel"
@@ -330,7 +341,7 @@ def _bc_assets_wire(db: Session, p: dict, job: models.Job) -> dict:
     from . import bc_assets
     rep = bc_assets.wire(db, str(p.get("advertiser_id") or ""), role=str(p.get("role") or "OPERATOR"),
                          dry_run=bool(p.get("dry_run", True)),
-                         on_progress=lambda t: jobs.progress(db, job, t))
+                         on_progress=lambda t: jobs.progress(db, job, t), user_id=_job_user_id(p))
     if rep.get("error"):
         return {"ok": False, "detail": rep["error"], "href": "/bc-assets"}
     bad = [s for s in rep.get("steps", []) if s.get("ok") is False]
@@ -343,7 +354,7 @@ def _bc_assets_connect(db: Session, p: dict, job: models.Job) -> dict:
     from . import bc_assets
     rep = bc_assets.connect_bc(db, str(p.get("bc_id") or ""), role=str(p.get("role") or "OPERATOR"),
                                dry_run=bool(p.get("dry_run", True)), email=str(p.get("email") or ""),
-                               on_progress=lambda t: jobs.progress(db, job, t))
+                               on_progress=lambda t: jobs.progress(db, job, t), user_id=_job_user_id(p))
     if rep.get("error"):
         return {"ok": False, "detail": rep["error"], "href": "/bc-assets"}
     bad = [s for s in rep.get("steps", []) if s.get("ok") is False]
@@ -377,3 +388,101 @@ def _music_sync(db: Session, p: dict, job: models.Job) -> dict:
     if r["errors"]:
         detail += " — " + "; ".join(e[:80] for e in r["errors"][:2])
     return {"ok": not r["errors"], "detail": detail, "href": "/creatives?view=carousels"}
+
+
+# ---------------------------------------------------------------------------
+# v147 stocking systems (Phase 3)
+# ---------------------------------------------------------------------------
+
+@jobs.handler("spark_check")
+def _spark_check(db: Session, p: dict, job: models.Job) -> dict:
+    """New spark codes checked on TikTok (spark_check.py) — the retries come from the sweep."""
+    from . import spark_check, tiktok_api
+    r = spark_check.run(db, models, tiktok_api, ids=[int(i) for i in p.get("ids") or []], limit=500)
+    d = f"{r.get('ok', 0)} ok"
+    if r.get("bad"):
+        d += f", {r['bad']} rejected by TikTok"
+    if r.get("checking"):
+        d += f", {r['checking']} retrying"
+    if r.get("error"):
+        d += f", {r['error']} couldn't be checked"
+    return {"ok": not r.get("bad") and not r.get("error"), "detail": d, "href": "/spark-codes"}
+
+
+@jobs.handler("post_thumbs")
+def _post_thumbs(db: Session, p: dict, job: models.Job) -> dict:
+    """Copy a Business Center's post covers while TikTok's URLs are alive (thumbs.py)."""
+    from . import profile_videos
+    r = profile_videos.cache_covers(db, str(p.get("bc_id") or ""))
+    return {"ok": True, "detail": f"{r['saved']} cover(s) saved" + (f", {r['failed']} already expired" if r["failed"] else "")}
+
+
+@jobs.handler("profile_refresh")
+def _profile_refresh(db: Session, p: dict, job: models.Job) -> dict:
+    """Re-read one BC's profiles in the background (a stale stored copy was served)."""
+    from . import profile_videos, scope as scope_mod
+    uid = p.get("user_id")
+    sc = scope_mod.Scope(mode="user" if uid is not None else "all",
+                         ids=scope_mod.owned_ids(db, uid) if uid is not None else None, user_id=uid)
+    r = profile_videos.list_for_bc(db, sc, str(p.get("bc_id") or ""), refresh=True)
+    return {"ok": bool(r.get("ok")), "detail": f"{r.get('total', 0)} post(s)" if r.get("ok") else (r.get("error") or "TikTok didn't answer")}
+
+
+@jobs.handler("card_push")
+def _card_push(db: Session, p: dict, job: models.Job) -> dict:
+    """Put one display card on every account of its workspace (display_cards.push)."""
+    from . import display_cards as DC
+    card = db.get(models.DisplayCard, int(p.get("card_id") or 0))
+    if card is None:
+        return {"ok": False, "detail": "the display card was deleted"}
+    r = DC.push(db, card, DC.push_targets(db, card.owner_user_id),
+                should_stop=lambda: jobs.should_stop(db, job), on_progress=lambda t: jobs.progress(db, job, t))
+    d = f"“{card.name}”: {r['done']} account(s) added, {r['skipped']} already had it"
+    if r["failed"]:
+        d += f", {len(r['failed'])} failed — " + ", ".join(r["failed"][:8])
+    return {"ok": not r["failed"], "detail": d, "href": "/presets"}
+
+
+@jobs.handler("video_caption")
+def _video_caption(db: Session, p: dict, job: models.Job) -> dict:
+    """Burn one queued caption into its video copy (video_caption.py)."""
+    from . import video_caption
+    return video_caption.process(db, models, int(p.get("creative_id") or 0))
+
+
+@jobs.handler("asset_sync")
+def _asset_sync(db: Session, p: dict, job: models.Job) -> dict:
+    """Instant Pages / Lead Forms re-read for the accounts that were in view (v151 audit)."""
+    from .routes import instant_pages
+    kind = "form" if p.get("kind") == "form" else "page"
+    r = instant_pages.sync_many(db, kind, [str(x) for x in p.get("advertiser_ids") or []],
+                                should_stop=lambda: jobs.should_stop(db, job), on_progress=lambda t: jobs.progress(db, job, t))
+    what = "instant page(s)" if kind == "page" else "lead form(s)"
+    d = f"{r['total']} {what} across {r['ok']} of {r['accounts']} account(s)"
+    if r["failed"]:
+        d += f" — {len(r['failed'])} couldn't be read: " + "; ".join(r["failed"][:3])
+    return {"ok": r["ok"] > 0 or not r["accounts"], "detail": d, "href": "/instant-pages" if kind == "page" else "/lead-forms"}
+
+
+@jobs.handler("asset_builds")
+def _asset_builds(db: Session, p: dict, job: models.Job) -> dict:
+    """Work through the Instant Page / Form build queue (asset_builds.py)."""
+    from . import asset_builds
+    r = asset_builds.run(db, models, should_stop=lambda: jobs.should_stop(db, job), on_progress=lambda t: jobs.progress(db, job, t))
+    return {"ok": r["ok"] == r["done"], "detail": f"{r['ok']} of {r['done']} built", "href": "/instant-pages"}
+
+
+@jobs.handler("page_stock")
+def _page_stock(db: Session, p: dict, job: models.Job) -> dict:
+    """One stocking pass: missing Instant Pages copied onto the workspace's accounts."""
+    from . import page_stock
+    r = page_stock.run(db, models, p.get("user_id"), force=bool(p.get("force")),
+                       should_stop=lambda: jobs.should_stop(db, job), on_progress=lambda t: jobs.progress(db, job, t))
+    if r.get("reason") and not r.get("made") and not r.get("failed"):
+        return {"ok": r["reason"] == "off", "detail": r["reason"], "href": "/instant-pages"}
+    d = f"{r.get('made', 0)} page(s) copied" + (f", {r['failed']} failed" if r.get("failed") else "")
+    if r.get("remaining"):
+        d += f", {r['remaining']} still to go (next run in 15 min)"
+    if r.get("reason"):
+        d += f" — {r['reason']}"
+    return {"ok": not r.get("failed"), "detail": d, "href": "/instant-pages"}

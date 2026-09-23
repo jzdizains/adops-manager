@@ -68,7 +68,7 @@ start = src.index("def build_campaign_payload(")
 end = src.index("def _launch_smart_plus(")
 helpers = types.ModuleType("app.routes.campaigns")
 helpers.__dict__.update({"models": sys.modules["app.models"], "tiktok_api": tiktok_api, "queries": queries,
-                         "launch_mod": launch, "Session": object, "datetime": datetime, "timezone": timezone, "re": re, "json": json,
+                         "launch_mod": launch, "Session": object, "datetime": datetime, "acct_time": importlib.import_module("app.acct_time"), "timezone": timezone, "re": re, "json": json,
                          "_campaign_name": lambda fields, acct: "camp", "__package__": "app.routes",
                          "__name__": "app.routes.campaigns"})
 exec(compile(src[start:end], "campaigns-helpers", "exec"), helpers.__dict__)
@@ -310,7 +310,7 @@ check("creative-type filter removed (all-carousel made it dead weight); search b
       'id="prCreative"' not in lst and 'data-c="spark"' not in lst and '#prCreative button' not in lst
       and "r.dataset.creative === c" not in lst and 'id="prQ"' in lst and "r.dataset.search.indexOf(q)" in lst)
 cfg = open(os.path.join(ROOT, "app", "config.py"), encoding="utf-8").read()
-check("static version bumped", 'STATIC_VERSION = "144"' in cfg)
+check("static version bumped", 'STATIC_VERSION = "153"' in cfg)
 
 print()
 print("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}")

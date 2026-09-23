@@ -6,12 +6,14 @@
       <span style="color:var(--ok);font-weight:700;">{{ ok_count }} ok</span> ·
       <span style="color:var(--err);font-weight:700;">{{ fail_count }} failed</span></div></div>
   <div class="actions">
-    {% if fail_count and can_retry %}
+    {% if retry_n and can_retry %}
     <form method="post" action="/campaigns/result/{{ batch_ref }}/retry" style="display:inline;"
-          data-confirm="Re-launch the {{ fail_count }} failed account(s)?" data-confirm-text="Same preset, creative and settings as this batch." data-ok-label="Re-launch">
-      <button class="btn" type="submit" style="border-color:var(--err);color:var(--err);">↻ Retry failed ({{ fail_count }})</button>
+          data-confirm="Retry {{ retry_n }} account(s)?"
+          data-confirm-text="Same preset, creative and settings as this batch.{% if retry.resume %} {{ retry.resume|length }} half-built account(s) are finished inside their existing campaign — no second campaign.{% endif %}{% if retry.unstarted %} {{ retry.unstarted|length }} account(s) the restart never reached are launched.{% endif %}" data-ok-label="Retry">
+      <button class="btn" type="submit" style="border-color:var(--err);color:var(--err);">↻ Retry failed ({{ retry_n }})</button>
     </form>
     {% endif %}
+    {% if can_retry and logs %}<button class="btn" type="button" id="dupBtn" title="The same preset, posts and settings on accounts you pick">⧉ Launch again on…</button>{% endif %}
     <a class="btn" href="/super-launcher">← Super Launcher</a>
     <a class="btn primary" href="/status">View Status</a>
   </div>
@@ -23,7 +25,12 @@
 </div>
 <script>
   (function () {
+    var n = 0;
     function tick() {
+      // paused while the tab is hidden; slows down on long launches (3 s → 10 s) — the server
+      // renders this page for every open viewer
+      if (document.hidden) { document.addEventListener("visibilitychange", function once() { if (!document.hidden) { document.removeEventListener("visibilitychange", once); tick(); } }); return; }
+      n++;
       fetch(location.pathname, { credentials: "same-origin" }).then(function (r) { return r.text(); }).then(function (html) {
         var doc = new DOMParser().parseFromString(html, "text/html");
         var live = doc.getElementById("launchLive");
@@ -31,8 +38,8 @@
         var cur = document.getElementById("launchLive"); if (cur) cur.innerHTML = live.innerHTML;
         var list = doc.getElementById("launchLogs"), mine = document.getElementById("launchLogs");
         if (list && mine) mine.innerHTML = list.innerHTML;
-        setTimeout(tick, 3000);
-      }).catch(function () { setTimeout(tick, 5000); });
+        setTimeout(tick, n < 40 ? 3000 : 10000);
+      }).catch(function () { setTimeout(tick, 10000); });
     }
     setTimeout(tick, 3000);
   })();
@@ -41,7 +48,18 @@
 {% if request.query_params.get('note') == 'nofail' %}<div class="flash ok">Nothing to retry — every account in that batch succeeded.</div>{% endif %}
 {% if request.query_params.get('note') == 'norecipe' %}<div class="flash err">Can’t retry this batch — its launch settings weren’t recorded (older launch).</div>{% endif %}
 
+{% if retry.unstarted %}<div class="flash warn">A restart stopped this batch before it reached {{ retry.unstarted|length }} account(s) — nothing was created there. <b>Retry failed</b> launches them.</div>{% endif %}
+
 <div id="launchLogs">
+{% for t in in_flight %}
+<div class="card">
+  <div class="card-header">
+    <span class="card-title"><span class="pill warn">… launching</span> {{ acct_link(t.advertiser_id, '') }}</span>
+    <span class="card-meta mono">{{ t.advertiser_id }}{% if t.campaign_id %} · campaign {{ t.campaign_id }}{% endif %}</span>
+  </div>
+  <p class="muted" style="margin:0;font-size:12px;">{{ (t.steps|last).s if t.steps else 'starting' }}</p>
+</div>
+{% endfor %}
 {% for l in logs %}
 <div class="card">
   <div class="card-header">
@@ -72,9 +90,38 @@
     </div>
     {% endif %}
   {% endif %}
+  {% set tr = traces.get(l.advertiser_id) %}
+  {% if tr and tr.steps %}
+    <details style="margin-top:6px;">
+      <summary class="muted" style="cursor:pointer;font-size:12px;">steps ({{ tr.adgroups }} ad group{{ '' if tr.adgroups == 1 else 's' }}, {{ tr.ads }} ad{{ '' if tr.ads == 1 else 's' }}{% if tr.resumed %}, resumed{% endif %})</summary>
+      <ol class="mono muted" style="margin:6px 0 0;padding-left:20px;font-size:11px;line-height:1.6;">
+        {% for st in tr.steps %}<li><span style="opacity:.7;">{{ st.t }}</span> {{ st.s }}</li>{% endfor %}
+      </ol>
+    </details>
+  {% endif %}
+  {% if not l.ok and l.advertiser_id in retry.resume %}<p class="muted" style="margin:6px 0 0;font-size:12px;">↻ Retry finishes this one inside campaign {{ l.campaign_id }}.</p>{% endif %}
 </div>
 {% endfor %}
 </div>
 
+{% if can_retry and logs %}
+<script>
+  (function () {
+    var b = document.getElementById("dupBtn"); if (!b) return;
+    var done = {{ logs|map(attribute='advertiser_id')|list|tojson }};
+    b.addEventListener("click", function () {
+      UI.pickAccounts({ title: "Launch this batch again on…", confirmLabel: "Launch on selected", exclude: done }).then(function (ids) {
+        if (!ids || !ids.length) return;
+        b.disabled = true;
+        UI.post("/campaigns/result/{{ batch_ref }}/duplicate", { advertiser_ids: ids.join(",") }).then(function (d) {
+          b.disabled = false;
+          if (d.ok && d.href) { location.href = d.href; return; }
+          UI.confirm({ title: "Couldn't launch", text: d.error || "Something went wrong.", ok: "OK" });
+        });
+      });
+    });
+  })();
+</script>
+{% endif %}
 {% if not logs %}<div class="card"><div class="empty"><div class="empty-title">Nothing here</div>That reference has no launches — it may have been cleared, or the link is old.<br><a class="btn" href="/status">Go to Campaigns</a></div></div>{% endif %}
 {% endblock %}

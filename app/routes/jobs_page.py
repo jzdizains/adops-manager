@@ -9,10 +9,41 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from .. import jobs, models
+from .. import scope as scope_mod, users
 from ..database import get_db
 from ..templating import render
 
 router = APIRouter()
+
+
+def _view_owner_ids(request: Request, db: Session):
+    """Jobs in the workspace in view. None = every job (the super admin on "Everyone");
+    the owner also sees system (sweep) jobs, a buyer only their own."""
+    sc = scope_mod.for_request(request, db)
+    if sc.user_id is None:
+        return None
+    me = getattr(request.state, "user", None)
+    return [sc.user_id] + ([None] if me is not None and users.is_owner(me) else [])
+
+
+def _notify_owner_ids(request: Request, db: Session):
+    """"Your job finished" toasts are personal: only jobs this person queued (or queued into the
+    workspace they're viewing) — otherwise whichever tab polls first swallows someone else's."""
+    me = getattr(request.state, "user", None)
+    if me is None:
+        return []
+    sc = scope_mod.for_request(request, db)
+    ids = {me.id}
+    if sc.user_id is not None:
+        ids.add(sc.user_id)
+    if users.is_owner(me):
+        ids.add(None)
+    return list(ids)
+
+
+def _visible(db: Session, request: Request, job_id: int) -> bool:
+    ids = _view_owner_ids(request, db)
+    return jobs.owned(db.query(models.Job.id).filter(models.Job.id == job_id), ids).first() is not None
 
 
 ANNOUNCE_MAX = 4      # individual notifications per poll; the rest become one "N more" line
@@ -29,8 +60,9 @@ def jobs_data(request: Request, db: Session = Depends(get_db)):
     items = []
     more = 0
     if not peek:
-        unseen = (db.query(models.Job)
-                  .filter(models.Job.status.in_(("done", "error")), models.Job.seen == False)  # noqa: E712
+        unseen = (jobs.owned(db.query(models.Job)
+                             .filter(models.Job.status.in_(("done", "error")), models.Job.seen == False),  # noqa: E712
+                             _notify_owner_ids(request, db))
                   .order_by(models.Job.finished_at.desc()).limit(200).all())
         # a notification is for something that JUST finished: results older than half an hour
         # (nobody was looking) are folded into one line; at most 4 pop individually per poll
@@ -42,9 +74,10 @@ def jobs_data(request: Request, db: Session = Depends(get_db)):
         more = len(unseen) - len(items)
         for j in unseen:
             j.seen = True
-    running = (db.query(models.Job).filter(models.Job.status.in_(("queued", "claimed", "running")))
-               .order_by(models.Job.id).all())
-    done_count = db.query(func.count(models.Job.id)).filter(models.Job.status.in_(("done", "error", "cancelled"))).scalar() or 0
+    view_ids = _view_owner_ids(request, db)
+    running = (jobs.owned(db.query(models.Job).filter(models.Job.status.in_(("queued", "claimed", "running"))), view_ids)
+               .order_by(models.Job.id).limit(100).all())
+    done_count = jobs.owned(db.query(func.count(models.Job.id)).filter(models.Job.status.in_(("done", "error", "cancelled"))), view_ids).scalar() or 0
     if items or more:
         # only a write when something was marked seen — every tab polls this, and
         # SQLite has one writer. If it's busy, don't 500 the poller: leave those jobs
@@ -60,11 +93,12 @@ def jobs_data(request: Request, db: Session = Depends(get_db)):
 @router.get("/jobs")
 def jobs_page(request: Request, db: Session = Depends(get_db)):
     from .. import timeutil
-    rows = db.query(models.Job).order_by(models.Job.id.desc()).limit(150).all()
+    view_ids = _view_owner_ids(request, db)
+    rows = jobs.owned(db.query(models.Job), view_ids).order_by(models.Job.id.desc()).limit(150).all()
     day_start = timeutil.local_midnight_utc(0).replace(tzinfo=None)
     today = [j for j in rows if j.finished_at and j.finished_at >= day_start]
-    finished = db.query(models.Job).filter(models.Job.status.in_(jobs.FINISHED)).count()
-    return render(request, "jobs.html", {"title": "Jobs", "rows": rows, "summary": jobs.summary(db), "slow_kinds": jobs.SLOW_KINDS, "finished": finished,
+    finished = jobs.owned(db.query(models.Job).filter(models.Job.status.in_(jobs.FINISHED)), view_ids).count()
+    return render(request, "jobs.html", {"title": "Jobs", "rows": rows, "summary": jobs.summary(db, view_ids), "slow_kinds": jobs.SLOW_KINDS, "finished": finished,
                                          "done_today": sum(1 for j in today if j.status == "done"), "failed_today": sum(1 for j in today if j.status == "error")})
 
 
@@ -74,8 +108,12 @@ def _safe_next(nxt: str) -> str:
 
 @router.post("/jobs/{job_id}/cancel")
 def cancel_job(request: Request, job_id: int, next: str = Form("/jobs"), db: Session = Depends(get_db)):
-    """Queued → removed from the queue. Running → asked to stop at its next checkpoint."""
-    ok, msg = jobs.cancel(db, job_id)
+    """Queued → removed from the queue. Running → asked to stop at its next checkpoint.
+    Only a job in the workspace in view — one buyer can't stop another's launch."""
+    if not _visible(db, request, job_id):
+        ok, msg = False, "That job isn't in your workspace."
+    else:
+        ok, msg = jobs.cancel(db, job_id)
     if request.headers.get("x-requested-with") == "fetch":
         return JSONResponse({"ok": ok, "msg": msg})
     return RedirectResponse(_safe_next(next) + ("?ok=" if ok else "?err=") + quote(msg), status_code=303)
@@ -84,7 +122,7 @@ def cancel_job(request: Request, job_id: int, next: str = Form("/jobs"), db: Ses
 @router.post("/jobs/clear-finished")
 def clear_finished(request: Request, next: str = Form("/jobs"), db: Session = Depends(get_db)):
     """One button: remove every finished job from the list (queued / running stay)."""
-    n = jobs.clear_finished(db)
+    n = jobs.clear_finished(db, _view_owner_ids(request, db))
     if request.headers.get("x-requested-with") == "fetch":
         return JSONResponse({"ok": True, "n": n})
     return RedirectResponse(_safe_next(next) + "?ok=" + quote(f"Cleared {n} finished job(s)." if n else "Nothing finished to clear."), status_code=303)
@@ -92,7 +130,7 @@ def clear_finished(request: Request, next: str = Form("/jobs"), db: Session = De
 
 @router.post("/jobs/cancel-queued")
 def cancel_queued(request: Request, next: str = Form("/jobs"), db: Session = Depends(get_db)):
-    n = jobs.cancel_queued(db)
+    n = jobs.cancel_queued(db, _view_owner_ids(request, db))
     if request.headers.get("x-requested-with") == "fetch":
         return JSONResponse({"ok": True, "n": n})
     return RedirectResponse(_safe_next(next) + "?ok=" + quote(f"Removed {n} queued job(s)." if n else "The queue was already empty."),

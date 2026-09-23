@@ -66,25 +66,39 @@ def monitor(request: Request, db: Session = Depends(get_db)):
 
     # ---- balances --------------------------------------------------------------------------------
     spend_by_aid = {r[0]: float(r[1] or 0) for r in db.query(models.CampaignRecord.advertiser_id, func.sum(models.CampaignRecord.spend_today)).group_by(models.CampaignRecord.advertiser_id)}
+    # runway = money ÷ the average day of the last 7 (today's partial spend only when there's
+    # no history yet, projected over the whole day); a shared wallet is counted once
+    from .. import timeutil
+    b7, bdays = balances.burn_by_account(db, [a.advertiser_id for a in accounts])
+    _now_l = timeutil.now_local()
+    day_frac = (_now_l.hour * 3600 + _now_l.minute * 60) / 86400
+    def _burn(members):
+        return balances.daily_burn(sum(b7.get(a.advertiser_id, 0.0) for a in members),
+                                   max((bdays.get(a.advertiser_id, 0) for a in members), default=0),
+                                   sum(spend_by_aid.get(a.advertiser_id, 0.0) for a in members), day_frac)
     balance_rows, seen = [], set()
     for bc in bcs:
         members = [a for a in accounts if a.owner_bc_id == bc.bc_id]
         seen.update(a.advertiser_id for a in members)
-        in_acc = sum(float(a.balance or 0) for a in members)
-        total = float(bc.balance or 0) + in_acc
+        mo = balances.money_in_bc(bc.balance, [a.balance for a in members])
         sp = sum(spend_by_aid.get(a.advertiser_id, 0.0) for a in members)
-        low_accts = sum(1 for a in members if a.enabled and a.balance is not None and float(a.balance) < float(s["topup_below"] or 20))
+        burn = _burn(members)
+        low_accts = 0 if mo["shared"] else sum(1 for a in members if a.enabled and a.balance is not None and float(a.balance) < float(s["topup_below"] or 20))
         balance_rows.append({"name": bc.name or bc.bc_id, "bc_id": bc.bc_id, "currency": bc.currency or "USD",
                              "low": bc.balance is not None and bc.balance < balances.bc_threshold(bc), "threshold": balances.bc_threshold(bc),
-                             "wallet": float(bc.balance or 0), "in_accounts": in_acc, "total": total, "accounts": len(members),
-                             "spend_today": sp, "runway": (total / sp) if sp > 0 else None, "low_accounts": low_accts,
+                             "wallet": mo["wallet"], "in_accounts": mo["in_accounts"], "total": mo["total"], "shared": mo["shared"],
+                             "accounts": len(members), "spend_today": sp, "burn": burn,
+                             "runway": balances.runway_days(mo["total"], burn), "low_accounts": low_accts,
                              "portal": balances.bc_portal_url(bc.bc_id), "synced": bc.last_synced_at})
     orphans = [a for a in accounts if a.advertiser_id not in seen]
     if orphans:
         in_acc = sum(float(a.balance or 0) for a in orphans); sp = sum(spend_by_aid.get(a.advertiser_id, 0.0) for a in orphans)
+        burn = _burn(orphans)
         balance_rows.append({"name": "No Business Center", "bc_id": "", "currency": "USD", "low": False, "threshold": 0, "wallet": 0.0, "in_accounts": in_acc,
-                             "total": in_acc, "accounts": len(orphans), "spend_today": sp, "runway": (in_acc / sp) if sp > 0 else None, "low_accounts": 0, "portal": "", "synced": None})
-    btotals = {k: sum(r[k] for r in balance_rows) for k in ("wallet", "in_accounts", "total", "spend_today")}
+                             "total": in_acc, "shared": False, "accounts": len(orphans), "spend_today": sp, "burn": burn,
+                             "runway": balances.runway_days(in_acc, burn), "low_accounts": 0, "portal": "", "synced": None})
+    btotals = {k: sum(r[k] for r in balance_rows) for k in ("wallet", "in_accounts", "total", "spend_today", "burn")}
+    btotals["runway"] = balances.runway_days(btotals["total"], btotals["burn"])
     low_bcs = [r for r in balance_rows if r["low"]]
 
     # ---- automation ------------------------------------------------------------------------------
@@ -109,7 +123,11 @@ def monitor(request: Request, db: Session = Depends(get_db)):
         {"key": "rules", "on": bool(s["rules_enabled"]), "name": "Auto-pause on metrics", "tab": "rules",
          "sub": (", ".join(rule_bits) + f" after ${s['rule_min_spend']:.0f} spend") if rule_bits else "no thresholds set"},
         {"key": "profit", "on": bool(s["profit_rules_enabled"]), "name": "Auto-pause losing sources", "tab": "rules",
-         "sub": f"losing more than ${s['profit_loss_limit']:.0f} today after ${s['profit_min_spend']:.0f} spend" + (" · profitable ones protected" if s["protect_profitable"] else "")},
+         "sub": f"losing more than ${s['profit_loss_limit']:.0f} {({'today': 'today', 'yesterday': 'yesterday', '3d': 'over 3 days', '7d': 'over 7 days'}).get(s.get('profit_lookback') or 'today', 'today')} after ${s['profit_min_spend']:.0f} spend"
+                + (f" · or ROAS under {float(s.get('profit_roas_min') or 0):.2f}" if float(s.get('profit_roas_min') or 0) else "")
+                + (" · profitable ones protected" if s["protect_profitable"] else "")
+                + ({"flag": " · FLAG ONLY", "dry_run": " · DRY RUN"}.get(s.get("rules_mode") or "pause", ""))
+                + (f" · max {int(s.get('rules_hourly_cap') or 0)} pauses/h" if int(s.get('rules_hourly_cap') or 0) else "")},
         {"key": "topup", "on": bool(s["topup_enabled"]), "name": "Auto top-up from BC wallet", "tab": "rules",
          "sub": f"${s['topup_amount']:.0f} when an account drops under ${s['topup_below']:.0f} · cap ${s['topup_daily_cap']:.0f}/day"},
         {"key": "bidbump", "on": bool(s.get("bid_bump_enabled")), "name": "Idle bid bump", "tab": "rules",

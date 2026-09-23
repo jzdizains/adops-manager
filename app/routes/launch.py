@@ -39,6 +39,8 @@ OBJECTIVE_MAP: dict[tuple[str, str], tuple[str, str, str]] = {
     ("LEAD_GENERATION", "website"):  ("CONVERT", "OCPM", "BID_TYPE_NO_BID"),
     ("LEAD_GENERATION", "pixel"):    ("CONVERT", "OCPM", "BID_TYPE_NO_BID"),
     ("REACH", "website"):            ("REACH",   "CPM",  "BID_TYPE_NO_BID"),
+    # warm-up (and any pure-awareness launch): Reach with nothing to click through to
+    ("REACH", "none"):               ("REACH",   "CPM",  "BID_TYPE_NO_BID"),
     ("VIDEO_VIEWS", "website"):      ("ENGAGED_VIEW", "CPV", "BID_TYPE_NO_BID"),
 }
 

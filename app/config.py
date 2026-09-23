@@ -34,7 +34,13 @@ ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")   # Assistant page �
 RESET_OWNER_PASSWORD = os.environ.get("RESET_OWNER_PASSWORD", "") == "1"   # lockout escape hatch: owner's password := APP_PASSWORD at next start
 IPINFO_TOKEN = os.environ.get("IPINFO_TOKEN", "")   # optional: ipinfo.io token for IP → location on the access log (works tokenless at a low daily limit)   # the first (admin) account, minted from APP_PASSWORD on first start
 ALLOWED_IPS = os.environ.get("ALLOWED_IPS", "")    # optional: comma-separated IPs/CIDRs allowed to log in ("" = any)
-TEST_MODE = os.environ.get("ADOPS_DISABLE_BG") == "1"   # local tests: plain-http cookies, default password tolerated
+# TEST_MODE relaxes security for the local test harness (plain-http cookies, placeholder
+# password, optional 2FA, fast hashing). It must NEVER follow from ADOPS_DISABLE_BG alone —
+# an operator who sets that on the server to stop the sweeps during an incident would
+# silently switch off 2FA. So: tests opt in (ADOPS_TEST=1 or the legacy ADOPS_DISABLE_BG=1)
+# and it is refused outright on a deployed host (Render sets RENDER; ADOPS_DEPLOYED for others).
+ON_SERVER = bool(os.environ.get("RENDER") or os.environ.get("ADOPS_DEPLOYED"))
+TEST_MODE = (os.environ.get("ADOPS_TEST") == "1" or os.environ.get("ADOPS_DISABLE_BG") == "1") and not ON_SERVER
 # Login is refused while APP_PASSWORD / SESSION_SECRET are still the placeholders
 # (a deployed app with "changeme" is open to anyone). Tests run with TEST_MODE.
 ALLOW_INSECURE_DEFAULTS = TEST_MODE or os.environ.get("ALLOW_INSECURE_DEFAULTS") == "1"
@@ -42,6 +48,10 @@ SESSION_MAX_AGE_S = int(os.environ.get("SESSION_HOURS", "24")) * 3600     # ever
 # 2FA is mandatory for every account (setup forced right after the first password login, the code
 # asked at every login). Only the local test harness may switch it off; production never can.
 REQUIRE_2FA = (not TEST_MODE) or os.environ.get("ADOPS_REQUIRE_2FA") == "1"
+# TikTok TEST MODE (v153, tiktok_mock.py): every Marketing-API call answered by a local simulator.
+# Local development only — refused on a deployed host, whatever the variable says.
+MOCK_TIKTOK_ASKED = os.environ.get("ADOPS_MOCK_TIKTOK") == "1"
+MOCK_TIKTOK = MOCK_TIKTOK_ASKED and not ON_SERVER
 # Hide the front door: with LOGIN_PATH set (e.g. "/door-7f3k2"), the login page lives ONLY there,
 # /login and every other unauthenticated URL answer 404 — a visitor who only knows the domain
 # (say, from a postback URL) sees nothing. POSTBACK_HOST: a second hostname pointed at this
@@ -72,7 +82,16 @@ BC_LOW_BALANCE_THRESHOLD = float(os.environ.get("BC_LOW_BALANCE_THRESHOLD", "50"
 
 # --- Misc --------------------------------------------------------------------
 APP_NAME = "AdOps Manager"
-STATIC_VERSION = "144"  # bump to cache-bust CSS/JS (§9.9)
+# X-Forwarded-For: how many proxies in front of the app APPEND to it (Render's edge = 1; add one
+# for Cloudflare in front of Render). The client IP is read that many entries from the right.
+try:
+    TRUSTED_PROXY_HOPS = max(int(os.environ.get("TRUSTED_PROXY_HOPS", "1" if ON_SERVER else "0")), 0)
+except ValueError:
+    TRUSTED_PROXY_HOPS = 1
+# extra origins allowed to POST to the dashboard (comma-separated, e.g. a second domain)
+ALLOWED_ORIGINS = [o.strip().rstrip("/").lower() for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o.strip()]
+
+STATIC_VERSION = "153"  # bump to cache-bust CSS/JS (§9.9)
 
 
 CODE_SUFFIXES = (".py", ".html", ".js", ".css")

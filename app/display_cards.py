@@ -95,10 +95,80 @@ def resolve_for_account(db: Session, acct: models.AdAccount, card: models.Displa
     if not image_id:
         raise tiktok_api.TikTokError("APP", "Display card image upload returned no image_id")
     pid = tiktok_api.create_display_card_portfolio(acct.access_token, acct.advertiser_id, image_id)
+    from datetime import datetime as _dt
     if cached:
         cached.image_id, cached.portfolio_id, cached.upload_md5 = image_id, pid, card.md5
+        cached.status, cached.error, cached.updated_at = "ok", "", _dt.utcnow()
     else:
         db.add(models.DisplayCardUpload(card_id=card.id, advertiser_id=acct.advertiser_id,
-                                        image_id=image_id, portfolio_id=pid, upload_md5=card.md5))
+                                        image_id=image_id, portfolio_id=pid, upload_md5=card.md5,
+                                        status="ok", updated_at=_dt.utcnow()))
     db.commit()
     return pid
+
+
+# ---------------------------------------------------------------------------
+# pushed ahead of launch (v147): every account of the workspace gets its copy now, with a
+# status per account, instead of the first launch on each account doing the upload
+# ---------------------------------------------------------------------------
+
+def push_targets(db: Session, owner_user_id) -> list[models.AdAccount]:
+    """Enabled, connected, delivering-capable accounts of the card's workspace."""
+    q = db.query(models.AdAccount).filter(models.AdAccount.enabled == True)       # noqa: E712
+    if owner_user_id is not None:
+        q = q.filter(models.AdAccount.owner_user_id == owner_user_id)
+    out = []
+    for a in q.order_by(models.AdAccount.advertiser_name):
+        st = str(a.status or "").upper()
+        if a.access_token and (not st or "ENABLE" in st):
+            out.append(a)
+    return out
+
+
+def push(db: Session, card: models.DisplayCard, accounts: list, should_stop=None, on_progress=None) -> dict:
+    """Make sure every account has this card; record each outcome. Accounts that already
+    have the current image are skipped without a call."""
+    import time as _t
+    from datetime import datetime as _dt
+    done = skipped = 0
+    failed: list[str] = []
+    have = {u.advertiser_id: u for u in db.query(models.DisplayCardUpload).filter_by(card_id=card.id)}
+    for i, acct in enumerate(accounts, 1):
+        if should_stop and should_stop():
+            break
+        if on_progress and (i == 1 or i % 5 == 0 or i == len(accounts)):
+            on_progress(f"{i} of {len(accounts)} accounts")
+        u = have.get(acct.advertiser_id)
+        if u is not None and u.portfolio_id and u.upload_md5 == card.md5:
+            skipped += 1
+            continue
+        try:
+            resolve_for_account(db, acct, card)
+            done += 1
+        except tiktok_api.TikTokError as e:
+            db.rollback()
+            row = db.query(models.DisplayCardUpload).filter_by(card_id=card.id, advertiser_id=acct.advertiser_id).first()
+            if row is None:
+                row = models.DisplayCardUpload(card_id=card.id, advertiser_id=acct.advertiser_id)
+                db.add(row)
+            row.status, row.error, row.updated_at = "failed", f"{e.code}: {e.message}"[:300], _dt.utcnow()
+            row.portfolio_id = "" if row.upload_md5 != card.md5 else row.portfolio_id
+            db.commit()
+            failed.append(acct.advertiser_name or acct.advertiser_id)
+        _t.sleep(0.2)
+    return {"done": done, "skipped": skipped, "failed": failed}
+
+
+def status(db: Session, card: models.DisplayCard, accounts: list) -> dict:
+    """{ready, total, failed: [{account, error}], missing} over the given accounts."""
+    ups = {u.advertiser_id: u for u in db.query(models.DisplayCardUpload).filter_by(card_id=card.id)}
+    ready, failed, missing = 0, [], 0
+    for a in accounts:
+        u = ups.get(a.advertiser_id)
+        if u is not None and u.portfolio_id and u.upload_md5 == card.md5:
+            ready += 1
+        elif u is not None and u.status == "failed":
+            failed.append({"account": a.advertiser_name or a.advertiser_id, "advertiser_id": a.advertiser_id, "error": u.error or ""})
+        else:
+            missing += 1
+    return {"ready": ready, "total": len(accounts), "failed": failed[:50], "n_failed": len(failed), "missing": missing}

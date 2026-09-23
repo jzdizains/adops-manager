@@ -37,7 +37,7 @@ def serve(rel: str, request: Request):
     except ValueError:
         exp = 0
     sig = request.query_params.get("s") or ""
-    if exp < time.time() or not hmac.compare_digest(sig, _sig(rel, exp)):
+    if exp < time.time() or not hmac.compare_digest(str(sig).encode(), str(_sig(rel, exp)).encode()):
         return PlainTextResponse("expired or invalid link", status_code=403)
     path = (ROOT / rel).resolve()
     if ROOT.resolve() not in path.parents or not path.is_file():

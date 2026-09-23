@@ -240,14 +240,41 @@ async def accounts_owner(request: Request, db: Session = Depends(get_db)):
     return RedirectResponse(f"/accounts?ok={n}+account(s)+moved+to+{target.email}", status_code=303)
 
 
+@router.post("/accounts/geo-policy")
+async def accounts_geo_policy(request: Request, db: Session = Depends(get_db)):
+    """Set what geos accounts are FOR (v151): any | auto | us_only | non_us. Form: advertiser_ids
+    (comma-joined), policy. Only accounts in the caller's view are changed."""
+    from fastapi.responses import JSONResponse
+    from .. import geo_fit
+    form = await request.form()
+    policy = str(form.get("policy") or "")
+    if policy not in geo_fit.POLICY_KEYS:
+        return JSONResponse({"ok": False, "error": "unknown geo policy"}, status_code=400)
+    sc = scope_mod.for_request(request, db)
+    ids = [x for x in dict.fromkeys(x.strip() for x in str(form.get("advertiser_ids") or "").split(",")) if x and sc.allows(x)][:2000]
+    if not ids:
+        return JSONResponse({"ok": False, "error": "pick at least one account"}, status_code=400)
+    n = (db.query(models.AdAccount).filter(models.AdAccount.advertiser_id.in_(ids))
+         .update({models.AdAccount.geo_policy: policy}, synchronize_session=False))
+    db.commit()
+    from .. import activity as _activity
+    _activity.record(db, "account", ids[0] if len(ids) == 1 else "bulk", "geo_policy",
+                     f"{n} account(s) → {policy}", request=request)
+    return JSONResponse({"ok": True, "changed": int(n or 0), "policy": policy,
+                         "label": dict((k, l) for k, l, _ in geo_fit.POLICIES)[policy]})
+
+
 @router.get("/accounts/bc/{bc_id}/detail")
-def bc_detail(bc_id: str, db: Session = Depends(get_db)):
-    """One Business Center for the Home drawer: its accounts with state, spend, profit — no page change."""
+def bc_detail(request: Request, bc_id: str, db: Session = Depends(get_db)):
+    """One Business Center for the Home drawer: its accounts with state, spend, profit — no page change.
+    Only the accounts in the caller's view (v151 audit)."""
     from . import super_launcher as sl
     from .. import balances as bal_mod
+    sc = scope_mod.for_request(request, db)
     b = db.query(models.BusinessCenter).filter_by(bc_id=bc_id).first()
-    accounts = [a for a in db.query(models.AdAccount).filter(models.AdAccount.owner_bc_id == bc_id).order_by(models.AdAccount.advertiser_name) if a.status != "ACCESS_LOST"]
-    if not b and not accounts:
+    accounts = [a for a in db.query(models.AdAccount).filter(models.AdAccount.owner_bc_id == bc_id).order_by(models.AdAccount.advertiser_name)
+                if a.status != "ACCESS_LOST" and sc.allows(a.advertiser_id)]
+    if not accounts:
         return JSONResponse({"error": "No such Business Center."}, status_code=404)
     ctx = sl.account_picker_context(db, accounts)
     facts = _account_facts(db, accounts, ctx)
@@ -266,7 +293,7 @@ def account_detail(advertiser_id: str, db: Session = Depends(get_db), _view: sco
     """JSON for the account drawer: facts, today's campaigns, BC, note, recent launches."""
     from fastapi.responses import JSONResponse
     from . import super_launcher as sl
-    from .. import activity as activity_mod
+    from .. import activity as activity_mod, geo_fit as _geo
     a = db.query(models.AdAccount).filter_by(advertiser_id=advertiser_id).first()
     if not a:
         return JSONResponse({"error": "not found"}, status_code=404)
@@ -291,7 +318,9 @@ def account_detail(advertiser_id: str, db: Session = Depends(get_db), _view: sco
         "cooldown_until": a.cooldown_until.isoformat() if a.cooldown_until else "", "error_count": int(a.error_count or 0),
         "bc": {"id": bc.bc_id, "name": bc.name, "balance": bc.balance, "status": bc.status} if bc else None,
         "facts": {**f, "last": _ago(f["last"]) if f["last"] else ""}, "campaigns": camps, "launches": launches,
-        "note": activity_mod.get_note(db, "account", a.advertiser_id),
+        "note": (lambda n: n.text if n else "")(activity_mod.get_note(db, "account", a.advertiser_id)),
+        "geo_policy": a.geo_policy or "any", "geo_badge": _geo.badge(_geo.cached_targetable(db, a.advertiser_id)),
+        "geo_policies": [{"value": k, "label": l, "hint": h} for k, l, h in _geo.POLICIES],
         "ads_manager": f"https://ads.tiktok.com/i18n/dashboard?aadvid={a.advertiser_id}",
     })
 

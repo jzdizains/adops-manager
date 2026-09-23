@@ -125,7 +125,7 @@ html[data-side="collapsed"] .sn-group { height: 10px; }
 .umenu .um-theme button .ic { width: 14px; height: 14px; }
 
 /* ---- command palette (⌘K) ------------------------------------------------- */
-.cmdk-bg { position: fixed; inset: 0; z-index: 400; background: rgba(0, 0, 0, .55); display: flex; align-items: flex-start; justify-content: center; padding-top: 12vh; }
+.cmdk-bg { position: fixed; inset: 0; z-index: 1150; background: rgba(0, 0, 0, .55); display: flex; align-items: flex-start; justify-content: center; padding-top: 12vh; }
 .cmdk-bg[hidden] { display: none; }
 .cmdk { width: min(640px, calc(100vw - 32px)); background: var(--raised); border: 1px solid var(--border-strong); border-radius: 20px; box-shadow: var(--shadow); overflow: hidden; }
 .cmdk-in { display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--border); }
@@ -200,3 +200,4 @@ html[data-side="collapsed"] .sn-group { height: 10px; }
 .viewsw-menu button .vs-sub { font-size: 11px; color: var(--text-dim); }
 .viewsw-menu button.on { color: var(--text); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 @media (max-width: 800px) { .viewsw .vs-lab, .viewsw .vs-chev { display: none; } .viewsw { max-width: 150px; } }
+.umenu .um-logout { margin: 0; }

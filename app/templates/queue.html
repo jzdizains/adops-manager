@@ -65,7 +65,7 @@
 (function () {
   document.addEventListener("click", function (e) {
     var b = e.target.closest(".q-result"); if (!b) return;
-    var d = UI.drawer({ title: "Launch result", sub: b.dataset.ref, body: '<div class="muted">Loading…</div>' });
+    var d = UI.drawer({ title: "Launch result", sub: UI.esc(b.dataset.ref), body: '<div class="muted">Loading…</div>' });
     UI.get("/campaigns/result/" + encodeURIComponent(b.dataset.ref)).then(function (r) {
       if (!r || r.error) { d.body.innerHTML = '<div class="flash err">Could not load.</div>'; return; }
       d.setTitle(r.template || "Launch result", r.batch_ref + " · <span class='pos'>" + r.ok + " ok</span>" + (r.failed ? " · <span class='neg'>" + r.failed + " failed</span>" : "") + (r.running ? " · still running" : ""));

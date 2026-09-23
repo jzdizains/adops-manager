@@ -15,7 +15,9 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
-from .. import adgroup_stats, appeals as appeals_mod, live_spend, models, pnl_data, queries, tags as tags_mod, tiktok_api, timeutil
+from datetime import datetime, timezone
+
+from .. import adgroup_stats, appeals as appeals_mod, board_numbers, live_spend, models, pnl_data, queries, tags as tags_mod, tiktok_api, timeutil
 from ..database import get_db
 from ..templating import render
 
@@ -73,12 +75,50 @@ def blocked_reason(rec, acct) -> str:
     return ""
 
 
+def campaign_health(r, acct, groups: list[dict]) -> dict:
+    """One health per campaign from its ad groups' current statuses (app/health.py), plus
+    how long it has been in that state and the ad-group mix ("16 delivering · 4 in review")."""
+    from .. import health as health_mod
+    st, detail = health_mod.derive((acct.status if acct else "") or "", groups, r.operation_status or "",
+                                   r.budget_mode or "", r.budget or 0.0)
+    h = health_mod.explain(st, detail)
+    matching = [g["since"] for g in groups if g.get("since") and detail and g.get("secondary_status") == detail]
+    anyt = [g["since"] for g in groups if g.get("since")]
+    h["since"] = min(matching) if matching else (max(anyt) if anyt else None)
+    h["mix"] = health_mod.mix_label(health_mod.mix(groups)) if len(groups) > 1 else ""
+    return h
+
+
+def bucket_of(r, acct, h: dict | None) -> tuple[str, str]:
+    """(tab, blocked text) — ONE rule for the row filter and the tab counts.
+    Paused = switched off; Blocked = on but can't deliver (TikTok's campaign/account flags,
+    or a health that means it: rejected, out of money, account suspended); Pending = waiting
+    on TikTok's review or its start time; Active = everything else that's on."""
+    if r.operation_status != "ENABLE":
+        return ("paused" if r.operation_status == "DISABLE" else "other"), ""
+    blocked = blocked_reason(r, acct)
+    if blocked:
+        return "blocked", blocked
+    b = (h or {}).get("bucket") or "active"
+    return (b if b in ("active", "pending", "blocked", "paused") else "active"), ""
+
+
+def _naive(d):
+    return d.astimezone(timezone.utc).replace(tzinfo=None) if getattr(d, "tzinfo", None) else d
+
+
+def _health_json(rec, acct, db: Session) -> dict:
+    h = campaign_health(rec, acct, adgroup_stats.states_for(db, [rec.campaign_id]).get(rec.campaign_id, []))
+    since = h.pop("since", None)
+    return {**h, "since": (since.isoformat() + "Z") if since else "", "since_ago": _ago(since) if since else ""}
+
+
 @router.get("/status")
 def status_page(request: Request, db: Session = Depends(get_db)):
     sc = scope_mod.for_request(request, db)                 # whose campaigns (v116)
     q = request.query_params.get("q", "").strip().lower()
-    state = request.query_params.get("state", "active")       # active (default) | blocked | paused | all
-    if state not in ("active", "blocked", "paused", "all"):
+    state = request.query_params.get("state", "active")       # active (default) | pending | blocked | paused | all
+    if state not in ("active", "pending", "blocked", "paused", "all"):
         state = "active"
     account = request.query_params.get("account", "")          # advertiser_id
     source_f = request.query_params.get("source", "").strip()  # P&L source filter
@@ -125,10 +165,15 @@ def status_page(request: Request, db: Session = Depends(get_db)):
                 "account": acct_names.get(log_row.advertiser_id, log_row.advertiser_id),
                 "sync_error": (f"code {e['code']}: {e['message']}" if e else ""),
             })
+    all_records = records
     if origin == "tool":
         records = [r for r in records if r.campaign_id in tool_campaign_ids]
     accounts = {a.advertiser_id: a for a in db.query(models.AdAccount).all()}
+    older = request.query_params.get("older") == "1"      # Blocked: also errors from before the range
     sources = pnl_data.campaign_source_map(db)
+    ag_states = adgroup_stats.states_for(db, [r.campaign_id for r in records if sc.allows(r.advertiser_id)])
+    healths = {r.campaign_id: campaign_health(r, accounts.get(r.advertiser_id), ag_states.get(r.campaign_id, []))
+               for r in records if sc.allows(r.advertiser_id)}
 
     # --- Glitchy postback truth for the selected range, per source -------------
     start_utc, end_utc = timeutil.range_bounds(range_key, start, end)
@@ -141,11 +186,21 @@ def status_page(request: Request, db: Session = Depends(get_db)):
     from .. import tiktok_api
     range_errors = 0
     metrics_by_cid: dict | None = None
+    range_from_db = False
     if range_key != "today":
         metrics_by_cid = {}
         s_day = timeutil.local_date_str(start_utc)
         e_day = timeutil.local_date_str(end_utc - _td(seconds=1))
-        for aid in {r.advertiser_id for r in records if sc.allows(r.advertiser_id)}:
+        in_view = {r.advertiser_id for r in records if sc.allows(r.advertiser_id)}
+        covered: set = set()
+        if request.query_params.get("live") != "1":
+            # v148: the sweep's saved day rows — no TikTok call; only accounts with no saved
+            # day in the range are still asked live
+            from .. import range_db
+            db_metrics, covered = range_db.metrics(db, models, list(in_view), s_day, e_day)
+            metrics_by_cid.update({cid: {"_db": True, **m} for cid, m in db_metrics.items()})
+            range_from_db = bool(covered)
+        for aid in in_view - covered:
             a = accounts.get(aid)
             if not a or not a.access_token:
                 continue
@@ -166,6 +221,8 @@ def status_page(request: Request, db: Session = Depends(get_db)):
                     "ctr": rec.ctr or 0.0, "cpc": rec.cpc or 0.0,
                     "cpm": rec.cpm or 0.0, "cpa": rec.cpa or 0.0}
         mm = metrics_by_cid.get(rec.campaign_id, {})
+        if mm.get("_db"):              # already in the page's shape (range_db.combine)
+            return {k: mm[k] for k in ("spend", "impressions", "clicks", "conversions", "ctr", "cpc", "cpm", "cpa")}
         f = live_spend._f
         return {"spend": f(mm, "spend"), "impressions": int(f(mm, "impressions")),
                 "clicks": int(f(mm, "clicks")), "conversions": int(f(mm, "conversion")),
@@ -203,13 +260,17 @@ def status_page(request: Request, db: Session = Depends(get_db)):
         name = (acct.advertiser_name if acct else r.advertiser_id) or r.advertiser_id
         if q and q not in r.campaign_name.lower() and q not in name.lower():
             continue
-        blocked = blocked_reason(r, acct) if r.operation_status == "ENABLE" else ""
-        if state == "active" and (r.operation_status != "ENABLE" or blocked):
+        h = healths.get(r.campaign_id)
+        tab, blocked = bucket_of(r, acct, h)
+        if state != "all" and tab != state:
             continue
-        if state == "blocked" and not blocked:
-            continue
-        if state == "paused" and r.operation_status != "DISABLE":
-            continue
+        err_at = None
+        if tab == "blocked":
+            # errors are dated: with a range picked, only the ones that started in it (the week-old
+            # suspensions stay one click away — "N older")
+            err_at = board_numbers.error_at(h, acct, bool(blocked) and blocked.startswith("account "))
+            if state == "blocked" and not older and err_at is not None and err_at < start_utc.replace(tzinfo=None):
+                continue
         if account and r.advertiser_id != account:
             continue
         if source_f and sources.get(r.campaign_id, "") != source_f:
@@ -237,7 +298,7 @@ def status_page(request: Request, db: Session = Depends(get_db)):
         src_clicks = int(src_pb.get("clicks", 0))
         src_conv = int(src_pb.get("conversions", 0))
         rows.append({
-            "r": r, "m": m, "account_name": name, "source": src, "blocked": blocked,
+            "r": r, "m": m, "account_name": name, "source": src, "blocked": blocked, "health": h, "tab": tab, "err_at": err_at,
             "ag": ({"on": True, "live": ag_live,
                     **{k: (ag_metrics.get(r.campaign_id) or {}).get(k, 0) for k in ("active_n", "total_n", "hidden_spend", "hidden_conversions")},
                     **{k: ag_revenue.get(r.campaign_id, {}).get(k, 0) for k in ("unsplit_revenue", "unsplit_conversions")}}
@@ -257,6 +318,15 @@ def status_page(request: Request, db: Session = Depends(get_db)):
     reverse = sort not in ("name", "source")
     keyfn = SORT_KEYS[sort]
     rows.sort(key=lambda row: keyfn(row) or (0 if reverse else ""), reverse=reverse)
+    if state == "pending" and "sort" not in request.query_params:
+        # Pending: the one waiting longest first (a spend sort means nothing — none of them spend)
+        _far = datetime(2999, 1, 1)
+        rows.sort(key=lambda row: _naive((row["health"] or {}).get("since")) or _far)
+
+    # lifetime spend / revenue / ROAS on each row (range-independent)
+    life = board_numbers.lifetime(db, models, [row["r"].campaign_id for row in rows], sources)
+    for row in rows:
+        row["life"] = life.get(row["r"].campaign_id)
 
     # totals across the FILTERED rows; rate metrics recomputed from the sums so
     # they're properly weighted (never an average of averages)
@@ -283,7 +353,8 @@ def status_page(request: Request, db: Session = Depends(get_db)):
     }
     active = sum(1 for row in rows if row["r"].operation_status == "ENABLE")
     # how many rows each Status view would show (the segmented control's counts)
-    state_counts = {"active": 0, "blocked": 0, "paused": 0, "all": 0}
+    state_counts = {"active": 0, "pending": 0, "blocked": 0, "paused": 0, "all": 0, "blocked_older": 0}
+    _range_start = start_utc.replace(tzinfo=None)
     for r in records:
         if not sc.allows(r.advertiser_id):
             continue
@@ -296,13 +367,14 @@ def status_page(request: Request, db: Session = Depends(get_db)):
         if q and q not in (r.campaign_name or "").lower() and q not in nm:
             continue
         state_counts["all"] += 1
-        blk = blocked_reason(r, acct_) if r.operation_status == "ENABLE" else ""
-        if r.operation_status == "ENABLE" and not blk:
-            state_counts["active"] += 1
-        elif blk:
-            state_counts["blocked"] += 1
-        elif r.operation_status == "DISABLE":
-            state_counts["paused"] += 1
+        tab_, _blk = bucket_of(r, acct_, healths.get(r.campaign_id))
+        if tab_ == "blocked" and not older:
+            ea = board_numbers.error_at(healths.get(r.campaign_id), acct_, bool(_blk) and _blk.startswith("account "))
+            if ea is not None and ea < _range_start:
+                state_counts["blocked_older"] += 1
+                continue
+        if tab_ in state_counts:
+            state_counts[tab_] += 1
 
     # account dropdown: only accounts that actually have campaigns cached
     adv_ids_with_campaigns = {r.advertiser_id for r in records if sc.allows(r.advertiser_id)}
@@ -448,7 +520,21 @@ def status_page(request: Request, db: Session = Depends(get_db)):
                 "epc": lambda g: g["epc"], "conv": lambda g: g["conversions"], "name": lambda g: g["label"].lower()}.get(sort, lambda g: g["spend"])
         grouped = sorted(buckets.values(), key=gkey, reverse=sort != "name")
 
+    # --- reconciliation: what the totals above leave out, so they add up -------------
+    recon = {"unmatched": 0.0, "unmatched_items": [], "outside": 0.0, "outside_items": []}
+    if sc.ids is None:
+        # revenue on a source no campaign carries (a typo'd source, an old campaign) — company-wide,
+        # so only on the everything view
+        recon["unmatched"], recon["unmatched_items"] = board_numbers.unmatched(pb, sources.values())
+    if origin == "tool":
+        _names = {aid: (a.advertiser_name or aid) for aid, a in accounts.items()}
+        not_ours = [r for r in all_records if sc.allows(r.advertiser_id) and r.campaign_id not in tool_campaign_ids
+                    and (not account or r.advertiser_id == account)]
+        recon["outside"], recon["outside_items"] = board_numbers.outside_spend(
+            db, models, not_ours, range_key, timeutil.local_date_str(start_utc), timeutil.local_date_str(end_utc - _td(seconds=1)), _names)
+
     return render(request, "status.html", {
+        "recon": recon, "older": older,
         "rejections": appeals_mod.by_campaign(db),
         "view": sc,
         "ag_flags": ag_flags,
@@ -462,7 +548,7 @@ def status_page(request: Request, db: Session = Depends(get_db)):
         "rows": rows, "totals": totals, "active_count": active,
         "synced_ago": queries.campaigns_synced_ago(db),
         "q": q, "state": state, "account": account, "sort": sort, "origin": origin,
-        "range_key": range_key, "start": start or "", "end": end or "",
+        "range_key": range_key, "start": start or "", "end": end or "", "range_from_db": range_from_db,
         "range_errors": range_errors,
         "pending_tool": pending_tool, "pending_details": pending_details,
         "account_options": account_options,
@@ -471,17 +557,19 @@ def status_page(request: Request, db: Session = Depends(get_db)):
 
 
 @router.post("/status/verify-pending")
-def verify_pending(db: Session = Depends(get_db)):
+def verify_pending(request: Request, db: Session = Depends(get_db)):
     """For every tool-launched campaign missing from the cache, query TikTok BY
-    CAMPAIGN ID (including deleted status) and report exactly what it says."""
+    CAMPAIGN ID (including deleted status) and report exactly what it says.
+    Only the workspace in view — one buyer's click must not walk everyone's launches."""
     import json as _json
 
-    from .. import tiktok_api
+    from .. import tiktok_api, scope as scope_mod
+    sc = scope_mod.for_request(request, db)
     cached = {r.campaign_id for r in db.query(models.CampaignRecord.campaign_id)}
     tool_logs = (db.query(models.LaunchLog)
                  .filter(models.LaunchLog.ok == True,          # noqa: E712
                          models.LaunchLog.campaign_id != "").all())
-    pending = [l for l in tool_logs if l.campaign_id not in cached]
+    pending = [l for l in tool_logs if l.campaign_id not in cached and sc.allows(l.advertiser_id)]
     if not pending:
         return RedirectResponse("/status?ok=nothing+pending+to+verify", status_code=303)
     results = []
@@ -611,6 +699,7 @@ def campaign_detail(advertiser_id: str, campaign_id: str, db: Session = Depends(
                      "account_status": (acct.status if acct else "") or "", "bc": (bc.name if bc else ""),
                      "status": rec.operation_status, "secondary": (rec.secondary_status or "").replace("CAMPAIGN_STATUS_", "").replace("_", " ").lower(),
                      "blocked": blocked_reason(rec, acct) if rec.operation_status == "ENABLE" else "",
+                     "health": _health_json(rec, acct, db),
                      "budget": float(rec.budget or 0), "budget_mode": rec.budget_mode or "", "objective": rec.objective_type or "",
                      "smart_plus": bool(rec.is_smart_plus), "launched_at": rec.launched_at.isoformat() + "Z" if rec.launched_at else "",
                      "launched_ago": _ago(rec.launched_at), "source": src,

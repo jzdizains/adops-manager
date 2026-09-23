@@ -37,12 +37,30 @@
   var rf = $("#rsFilter");
   if (rf) rf.addEventListener("click", function (e) { var b = e.target.closest("[data-cls]"); if (!b) return; $$("button", rf).forEach(function (x) { x.classList.toggle("on", x === b); }); $$("#rsGrid .cr-tile").forEach(function (t) { t.hidden = !!b.dataset.cls && t.dataset.cls !== b.dataset.cls; }); });
 
+  // ---- soft refresh (v151): re-read the page and swap the grids in place — no reload, so
+  // filters, scroll, open pop-ups and the Undo toast all survive
+  var refreshing = null;
+  function softRefresh() {
+    if (refreshing) return refreshing;
+    refreshing = fetch(location.href, { credentials: "same-origin" }).then(function (r) { return r.text(); }).then(function (html) {
+      var doc = new DOMParser().parseFromString(html, "text/html");
+      ["#rsGrid", "#libGrid", "#imgGrid", ".page-head .muted"].forEach(function (sel) {
+        var n = doc.querySelector(sel), o = $(sel);
+        if (n && o) { o.innerHTML = n.innerHTML; if (o._sync) o._sync(); }
+      });
+      $$("table.data").forEach(function (o, i) { var n = doc.querySelectorAll("table.data")[i]; if (n && o.querySelector(".cz-del")) o.innerHTML = n.innerHTML; });
+    }).catch(function () {}).then(function () { refreshing = null; });
+    return refreshing;
+  }
+  window.CR_softRefresh = softRefresh;
+
   // ---- selection + bulk (both grids) -------------------------------------------------------
   function bulkSetup(gridSel, chk, barSel, countSel, attr) {
     var g = $(gridSel), bar = $(barSel); if (!g || !bar) return;
     function selected() { return $$(".cr-tile", g).filter(function (t) { return t.querySelector(chk).checked; }); }
     function sync() { var s = selected(); bar.hidden = !s.length; $(countSel).textContent = s.length + " selected"; $$(".cr-tile", g).forEach(function (t) { t.classList.toggle("sel", t.querySelector(chk).checked); }); }
     var last = null;
+    g._sync = sync;
     g.addEventListener("change", function (e) { if (e.target.matches(chk)) { last = e.target.closest(".cr-tile"); sync(); } });
     // shift-click on a checkbox selects the range from the last one; in Select mode a click anywhere on the tile toggles it
     g.addEventListener("click", function (e) {
@@ -78,9 +96,17 @@
         });
         return;
       }
-      if (k === "label") { labelPop(b, ids(s), function () { location.reload(); }); return; }
+      if (k === "label") { labelPop(b, ids(s), function () { softRefresh(); }); return; }
       var action = { fav: "favorite", archive: "archive", restore: "restore", delete: "delete" }[k];
-      var go = function () { UI.post("/creatives/bulk", { action: action, ids: ids(s) }).then(function (d) { if (d.ok) { if (action === "archive") UI.undo("Archived " + d.n + " creative" + (d.n > 1 ? "s" : ""), function () { return UI.post("/creatives/bulk", { action: "restore", ids: ids(s) }).then(function () { location.reload(); }); }); setTimeout(function () { location.reload(); }, action === "archive" ? 900 : 0); } }); };
+      var go = function () {
+        var picked = ids(s);
+        UI.post("/creatives/bulk", { action: action, ids: picked }).then(function (d) {
+          if (!d.ok) { adopsToast && adopsToast("err", d.error || "Couldn't do that."); return; }
+          if (action === "archive" || action === "delete" || action === "restore") s.forEach(function (t) { t.hidden = true; });   // gone at once
+          if (action === "archive") UI.undo("Archived " + d.n + " creative" + (d.n > 1 ? "s" : ""), function () { return UI.post("/creatives/bulk", { action: "restore", ids: picked }).then(softRefresh); });
+          softRefresh();
+        });
+      };
       if (action === "delete") UI.confirm({ title: "Delete " + s.length + " creative" + (s.length > 1 ? "s" : "") + " for good?", text: "Files are removed from disk; campaigns already launched with them keep running on TikTok. Images used by a carousel stay. Prefer Archive if you might want them back.", ok: "Delete " + s.length, danger: true }).then(function (y) { if (y) go(); });
       else go();
     });
@@ -98,6 +124,52 @@
       inp.addEventListener("keydown", function (e) { if (e.key === "Enter") add(inp.value); });
       p.addEventListener("click", function (e) { var c = e.target.closest("[data-l]"); if (c) add(c.dataset.l); });
     });
+  }
+
+  // ---- Studio: burn a caption into a copy of a video (v149) ---------------------------------
+  function captionEditor(d) {
+    var body = UI.el('<div class="capv">' +
+      '<div class="capv-stage"><img alt="" class="capv-img"><div class="muted capv-wait">Type a caption to see it on the video</div></div>' +
+      '<div class="capv-form">' +
+      '<label class="field"><span class="field-label">Caption</span><textarea name="text" rows="3" maxlength="300" placeholder="Your caption — Enter for a new line"></textarea></label>' +
+      '<div class="form-row"><label class="field"><span class="field-label">Look</span><select name="style"><option value="outline">TikTok outline</option><option value="box">Box</option><option value="plain">Shadow</option></select></label>' +
+      '<label class="field"><span class="field-label">Colour</span><input type="color" name="color" value="#ffffff"></label></div>' +
+      '<label class="field"><span class="field-label">Size <span class="muted capv-v" data-for="size"></span></span><input type="range" name="size" min="0.02" max="0.09" step="0.002" value="0.04"></label>' +
+      '<label class="field"><span class="field-label">Height on screen <span class="muted capv-v" data-for="y"></span></span><input type="range" name="y" min="0.08" max="0.92" step="0.01" value="0.72"></label>' +
+      '<div class="form-row"><label class="field"><span class="field-label">From (s)</span><input type="number" name="start" min="0" step="0.1" value="0"></label>' +
+      '<label class="field"><span class="field-label">To (s) <span class="muted">empty = the end</span></span><input type="number" name="end" min="0" step="0.1" value=""></label>' +
+      '<label class="field"><span class="field-label">Preview at (s)</span><input type="number" name="at" min="0" step="0.5" value="1"></label></div>' +
+      '<div class="hint">Burned into a <b>new copy</b> — the original stays as it is. The preview is drawn by the same renderer as the final video.</div>' +
+      '</div></div>');
+    var foot = UI.el('<div style="display:flex;gap:8px;align-items:center;width:100%;"><span class="muted capv-msg" style="font-size:12px;"></span><button type="button" class="btn primary capv-go" style="margin-left:auto;" disabled>Burn into a copy</button></div>');
+    var m = UI.modal({ title: "Caption · " + d.name, body: body, footer: foot, wide: true,
+      onClose: function () { clearTimeout(timer); seq++; if (url) { URL.revokeObjectURL(url); url = null; } } });   // no late render, no leaked blob
+    var img = body.querySelector(".capv-img"), wait = body.querySelector(".capv-wait"), timer = null, url = null, seq = 0;
+    function fd() { var f = new FormData(); body.querySelectorAll("[name]").forEach(function (el) { f.append(el.name, el.value); }); f.append("weight", "tiktok"); f.append("max_w", "540"); return f; }
+    function labels() { body.querySelectorAll(".capv-v").forEach(function (s) { var v = body.querySelector('[name="' + s.dataset.for + '"]').value; s.textContent = Math.round(v * 100) + "%"; }); }
+    function refresh() {
+      labels();
+      var txt = body.querySelector('[name="text"]').value.trim();
+      foot.querySelector(".capv-go").disabled = !txt;
+      if (!txt) { img.hidden = true; wait.hidden = false; return; }
+      clearTimeout(timer);
+      timer = setTimeout(function () {
+        var my = ++seq; wait.textContent = "Drawing…";
+        fetch("/creatives/" + d.id + "/caption-video/preview", { method: "POST", body: fd(), credentials: "same-origin" })
+          .then(function (r) { return r.ok ? r.blob() : r.text().then(function (t) { throw new Error(t); }); })
+          .then(function (b) { if (my !== seq) return; if (url) URL.revokeObjectURL(url); url = URL.createObjectURL(b); img.src = url; img.hidden = false; wait.hidden = true; })
+          .catch(function (e) { if (my !== seq) return; img.hidden = true; wait.hidden = false; wait.textContent = String(e.message || e).slice(0, 160); });
+      }, 350);
+    }
+    body.addEventListener("input", refresh);
+    foot.querySelector(".capv-go").addEventListener("click", function () {
+      var b = this; b.disabled = true; foot.querySelector(".capv-msg").textContent = "Queuing…";
+      UI.post("/creatives/" + d.id + "/caption-video", fd()).then(function (r) {
+        if (!r.ok) { b.disabled = false; foot.querySelector(".capv-msg").textContent = r.error || "Couldn't queue it."; return; }
+        foot.querySelector(".capv-msg").textContent = r.message; setTimeout(function () { m.close(); softRefresh(); }, 1400);
+      });
+    });
+    labels();
   }
 
   // ---- drawer: one creative --------------------------------------------------------------
@@ -122,7 +194,7 @@
         (d.kind === "carousel" ? '<div><div class="drawer-sec">Caption <span class="muted" style="font-weight:400;">· ad text</span></div><textarea id="dwCaption" rows="2" maxlength="100" style="min-height:52px;font-family:var(--font-sans);font-size:12.5px;" placeholder="Empty = the preset\'s ad text (or the Ad Texts pool) at launch">' + esc(d.ad_text || "") + '</textarea><div class="muted" id="dwCaptionSt" style="font-size:10.5px;margin-top:2px;">saves on its own · applies to launches from now on</div></div>' : "") +
         '<div><div class="drawer-sec">Note</div><textarea id="dwNote" rows="2" style="min-height:52px;font-family:var(--font-sans);font-size:12.5px;" placeholder="What this creative is, what to try next…">' + esc(d.note) + '</textarea><div class="muted" id="dwNoteSt" style="font-size:10.5px;margin-top:2px;">saves on its own</div></div>' +
         (d.by_account.length ? '<div><div class="drawer-sec">By account · best → worst</div>' + d.by_account.slice(0, 12).map(function (x) { return '<div style="display:flex;justify-content:space-between;gap:8px;font-size:12px;padding:4px 0;border-bottom:1px solid var(--border-soft);"><span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><a href="/status?q=' + encodeURIComponent(x.campaign) + '" style="color:inherit;">' + esc(x.account) + "</a>" + (x.active ? ' <span class="dot on" style="margin-left:4px;"></span>' : "") + "</span><span style='flex:none;'>" + profit(x.profit) + " " + roas(x.roas) + "</span></div>"; }).join("") + "</div>" : "") +
-        '<div style="display:flex;gap:6px;flex-wrap:wrap;"><a class="btn sm primary" href="/super-launcher?creatives=' + d.id + '">🚀 Launch with preset…</a><button type="button" class="btn sm" id="dwFav">' + (d.favorite ? "★ Favourited" : "☆ Favourite") + '</button><button type="button" class="btn sm" id="dwRename">Rename</button><button type="button" class="btn sm ghost" id="dwArchive">' + (d.archived ? "Restore" : "Archive") + '</button><button type="button" class="btn sm ghost danger" id="dwDelete">Delete</button></div>';
+        '<div style="display:flex;gap:6px;flex-wrap:wrap;"><a class="btn sm primary" href="/super-launcher?creatives=' + d.id + '">🚀 Launch with preset…</a><button type="button" class="btn sm" id="dwFav">' + (d.favorite ? "★ Favourited" : "☆ Favourite") + '</button><button type="button" class="btn sm" id="dwRename">Rename</button>' + (d.kind === "video" && d.file ? '<button type="button" class="btn sm" id="dwCaptionVid" title="Burn a caption into a copy of this video">Aa Caption</button>' : "") + '<button type="button" class="btn sm ghost" id="dwArchive">' + (d.archived ? "Restore" : "Archive") + '</button><button type="button" class="btn sm ghost danger" id="dwDelete">Delete</button></div>';
       drawer.body.innerHTML = html;
       if (d.kind === "carousel") UI.slides(drawer.body.querySelector(".dw-phone"), d.slide_ids || [], { poster: d.poster });
       if (d.kind === "carousel") {
@@ -131,17 +203,18 @@
       }
       var nt = $("#dwNote"), timer = null, last = d.note;
       nt.addEventListener("input", function () { clearTimeout(timer); $("#dwNoteSt").textContent = "…"; timer = setTimeout(function () { if (nt.value === last) { $("#dwNoteSt").textContent = "saved"; return; } UI.post("/notes/creative/" + d.id, { text: nt.value }).then(function (r) { last = nt.value; $("#dwNoteSt").textContent = r.ok ? "saved" : "couldn't save"; }); }, 700); });
-      $("#dwFav").addEventListener("click", function () { var on = this.textContent.indexOf("★") === 0; UI.post("/creatives/bulk", { action: on ? "unfavorite" : "favorite", ids: String(d.id) }).then(function () { location.reload(); }); });
+      $("#dwFav").addEventListener("click", function () { var on = this.textContent.indexOf("★") === 0; UI.post("/creatives/bulk", { action: on ? "unfavorite" : "favorite", ids: String(d.id) }).then(function () { softRefresh(); openDrawer(d.id); }); });
       $("#dwDelete").addEventListener("click", function () {
         UI.confirm({ title: "Delete “" + d.name + "” for good?", text: (d.status === "used" ? "It has been launched — the campaign on TikTok keeps its own copy, but its results disappear from Results here. Archive keeps the history instead. " : "") + "The file is removed from disk." + (d.kind === "carousel" ? " Its slide images stay." : ""), ok: "Delete", danger: true })
-          .then(function (y) { if (!y) return; UI.post("/creatives/" + d.id + "/delete", {}).then(function (r) { if (!r.ok) { adopsToast && adopsToast("err", r.error || "Could not delete."); return; } drawer.close(); location.reload(); }); });
+          .then(function (y) { if (!y) return; UI.post("/creatives/" + d.id + "/delete", {}).then(function (r) { if (!r.ok) { adopsToast && adopsToast("err", r.error || "Could not delete."); return; } drawer.close(); softRefresh(); }); });
       });
-      $("#dwArchive").addEventListener("click", function () { UI.post("/creatives/bulk", { action: d.archived ? "restore" : "archive", ids: String(d.id) }).then(function () { location.reload(); }); });
+      $("#dwArchive").addEventListener("click", function () { UI.post("/creatives/bulk", { action: d.archived ? "restore" : "archive", ids: String(d.id) }).then(function () { drawer.close(); softRefresh(); }); });
       $("#dwRename").addEventListener("click", function () {
         var p = UI.popover(this, '<div style="font-weight:700;margin-bottom:6px;">Rename</div><div style="display:flex;gap:6px;"><input type="text" value="' + esc(d.name) + '" style="flex:1;"><button type="button" class="btn sm primary">Save</button></div>');
-        p.querySelector(".primary").addEventListener("click", function () { var v = p.querySelector("input").value.trim(); if (!v) return; UI.post("/creatives/" + d.id + "/rename", { name: v }).then(function () { location.reload(); }); });
+        p.querySelector(".primary").addEventListener("click", function () { var v = p.querySelector("input").value.trim(); if (!v) return; p.close(); UI.post("/creatives/" + d.id + "/rename", { name: v }).then(function () { softRefresh(); openDrawer(d.id); }); });
       });
       $("#dwLabelAdd").addEventListener("click", function () { labelPop(this, String(d.id), function () { openDrawer(d.id); }); });
+      if ($("#dwCaptionVid")) $("#dwCaptionVid").addEventListener("click", function () { captionEditor(d); });
       $("#dwLabels").addEventListener("click", function (e) { var l = e.target.closest("[data-l]"); if (!l) return; UI.post("/creatives/bulk", { action: "unlabel", ids: String(d.id), label: l.dataset.l }).then(function () { openDrawer(d.id); }); });
     });
   }

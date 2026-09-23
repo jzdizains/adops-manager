@@ -44,9 +44,54 @@ async def upload(request: Request, db: Session = Depends(get_db)):
         return JSONResponse({"error": str(e)}, status_code=422) if wants_json else \
             RedirectResponse(f"{nxt}?err={quote(str(e))}", status_code=303)
     note = f"Saved display card “{card.name}”" + (" (scaled and cropped to 750×421)." if resized else ".")
+    try:
+        enqueue_push(db, card, quiet=True)             # every account gets its copy ahead of launch
+        note += " It's being put on every account in the background."
+    except Exception:  # noqa: BLE001
+        pass
     if wants_json:
         return JSONResponse({"id": card.id, "name": card.name, "resized": resized, "message": note})
     return RedirectResponse(f"{nxt}?ok={quote(note)}", status_code=303)
+
+
+@router.get("/display-cards/{card_id}/status.json")
+def card_status(card_id: int, request: Request, db: Session = Depends(get_db)):
+    """How many of the workspace's accounts already have this card (pushed ahead of launch)."""
+    sc = scope_mod.for_request(request, db)
+    card = db.get(models.DisplayCard, card_id)
+    if not card or not sc.owns(card):
+        return JSONResponse({"ok": False, "error": "That display card is gone."}, status_code=404)
+    running = _push_busy(db, card.id)
+    return JSONResponse({"ok": True, "running": running, **DC.status(db, card, DC.push_targets(db, card.owner_user_id))})
+
+
+@router.post("/display-cards/{card_id}/push")
+def card_push(card_id: int, request: Request, db: Session = Depends(get_db)):
+    """Put the card on every account of the workspace now (a background job)."""
+    sc = scope_mod.for_request(request, db)
+    card = db.get(models.DisplayCard, card_id)
+    if not card or not sc.owns(card):
+        return JSONResponse({"ok": False, "error": "That display card is gone."}, status_code=404)
+    enqueue_push(db, card)
+    return JSONResponse({"ok": True, "message": f"Putting “{card.name}” on every account — it runs in the background."})
+
+
+def _push_busy(db: Session, card_id: int) -> bool:
+    import json
+    for j in db.query(models.Job).filter(models.Job.kind == "card_push", models.Job.status.in_(("queued", "claimed", "running"))):
+        try:
+            if int(json.loads(j.payload or "{}").get("card_id") or 0) == int(card_id):
+                return True
+        except (ValueError, TypeError):
+            continue
+    return False
+
+
+def enqueue_push(db: Session, card, quiet: bool = False) -> None:
+    from .. import jobs
+    if _push_busy(db, card.id):
+        return
+    jobs.enqueue(db, "card_push", f"Display card “{card.name}” → every account", {"card_id": card.id}, href="/presets", quiet=quiet)
 
 
 @router.get("/display-cards/{card_id}/image")

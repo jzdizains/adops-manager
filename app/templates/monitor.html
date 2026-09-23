@@ -62,20 +62,20 @@
   <span><span class="muted">In ad accounts</span> <b>{{ money0(btotals.in_accounts) }}</b></span>
   <span><span class="muted">Total available</span> <b style="font-size:14px;">{{ money0(btotals.total) }}</b></span>
   <span><span class="muted">Spend today</span> <b>{{ money0(btotals.spend_today) }}</b></span>
-  <span class="muted" style="margin-left:auto;">{% if btotals.spend_today %}≈ <b style="color:var(--text);">{{ "%.1f"|format(btotals.total / btotals.spend_today) }} days</b> of runway at today's pace{% else %}no spend yet today{% endif %}</span>
+  <span class="muted" style="margin-left:auto;" title="Total available ÷ the average day of the last 7 (today's spend projected over the day when there's no history yet)">{% if btotals.runway is not none %}≈ <b style="color:var(--text);">{{ "%.1f"|format(btotals.runway) }} days</b> of runway at {{ money0(btotals.burn) }}/day (7-day average){% else %}no spend in the last 7 days{% endif %}</span>
 </div>
 <div class="card" style="padding:0;overflow:hidden;">
   <div class="table-scroll"><table class="data dense">
-    <thead><tr><th>Business Center</th><th class="num">Wallet</th><th class="num">In accounts</th><th class="num">Total</th><th class="num">Spend today</th><th class="num">Runway</th><th class="num">Accounts</th><th></th></tr></thead>
+    <thead><tr><th>Business Center</th><th class="num">Wallet</th><th class="num">In accounts</th><th class="num">Total</th><th class="num">Spend today</th><th class="num" title="Total ÷ average daily spend over the last 7 days">Runway</th><th class="num">Accounts</th><th></th></tr></thead>
     <tbody>
     {% for r in balance_rows %}
     <tr>
       <td><div style="font-weight:600;">{{ r.name }}{% if r.low %} <span class="pill err">low</span>{% endif %}</div><div class="mono muted" style="font-size:10.5px;">{{ r.bc_id or '—' }}{% if r.synced %} · synced {{ r.synced|ago }}{% endif %}</div></td>
       <td class="num"><b style="{{ 'color:var(--err);' if r.low }}">{{ r.currency }} {{ "%.0f"|format(r.wallet) }}</b>{% if r.threshold %}<div class="muted" style="font-size:10px;">floor ${{ "%.0f"|format(r.threshold) }}</div>{% endif %}</td>
-      <td class="num">{{ money0(r.in_accounts) }}{% if r.low_accounts %}<div style="font-size:10px;color:var(--warn);">{{ r.low_accounts }} account{{ 's' if r.low_accounts != 1 }} under ${{ "%.0f"|format(s.topup_below) }}</div>{% endif %}</td>
+      <td class="num">{% if r.shared %}<span class="pill dim" title="This Business Center runs a shared wallet: every account reports the wallet's balance, so it's counted once, not once per account.">shared wallet</span>{% else %}{{ money0(r.in_accounts) }}{% endif %}{% if r.low_accounts %}<div style="font-size:10px;color:var(--warn);">{{ r.low_accounts }} account{{ 's' if r.low_accounts != 1 }} under ${{ "%.0f"|format(s.topup_below) }}</div>{% endif %}</td>
       <td class="num"><b>{{ money0(r.total) }}</b></td>
       <td class="num">{{ money0(r.spend_today) if r.spend_today else '—' }}</td>
-      <td class="num">{% if r.runway is not none %}<span style="{{ 'color:var(--err);font-weight:700;' if r.runway < 2 else ('color:var(--warn);' if r.runway < 5) }}">{{ "%.1f"|format(r.runway) }} d</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+      <td class="num">{% if r.runway is not none %}<span style="{{ 'color:var(--err);font-weight:700;' if r.runway < 2 else ('color:var(--warn);' if r.runway < 5) }}" title="at {{ money0(r.burn) }}/day">{{ "%.1f"|format(r.runway) }} d</span>{% else %}<span class="muted">—</span>{% endif %}</td>
       <td class="num">{{ r.accounts }}</td>
       <td style="text-align:right;white-space:nowrap;">{% if r.portal %}<a class="btn sm {{ 'primary' if r.low }}" href="{{ r.portal }}" target="_blank" rel="noopener">{{ 'Top up ↗' if r.low else 'Portal ↗' }}</a> {% endif %}<a class="btn sm" href="/accounts">Accounts</a></td>
     </tr>
@@ -110,10 +110,10 @@
       <td class="muted" style="white-space:nowrap;"><span title="{{ a.created_at|local('%Y-%m-%d %H:%M:%S') }}">{{ a.created_at|ago }}</span></td>
       <td><a href="/status?q={{ (a.campaign_name or a.campaign_id)|urlencode }}" style="color:inherit;font-weight:600;">{{ a.campaign_name[:44] or a.campaign_id }}</a>{% if a.campaign_id in paused_ids and a.action == 'pause' %} <span class="pill warn">still paused</span>{% endif %}</td>
       <td class="muted" style="white-space:nowrap;">{{ acct_link(a.advertiser_id, (names.get(a.advertiser_id) or a.advertiser_id)[:26]) }}</td>
-      <td><span class="pill {{ 'warn' if a.action == 'pause' else 'dim' }}">{{ a.action }}</span> <span class="mono" style="font-size:11px;">{{ a.rule }}</span></td>
+      <td><span class="pill {{ 'warn' if a.action == 'pause' else ('err' if a.action == 'held' else 'dim') }}" title="{{ a.detail }}">{{ {'would_pause': 'dry run', 'flag': 'flagged', 'held': 'held (cap)'}.get(a.action, a.action) }}</span> <span class="mono" style="font-size:11px;">{{ a.rule }}</span></td>
       <td class="num">{{ "%.2f"|format(a.metric_value) if a.metric_value else "—" }}</td>
       <td>{% if a.ok %}<span class="pill ok">ok</span>{% else %}<span class="pill err" data-expand="{{ a.detail }}" data-expand-title="Why it failed">failed</span>{% endif %}</td>
-      <td style="text-align:right;">{% if a.action == 'pause' and a.ok and a.campaign_id in paused_ids %}<form method="post" action="/automation/resume" style="display:inline;" data-confirm="Resume this campaign?" data-confirm-text="It was paused by a rule — it starts spending again on TikTok right away." data-ok-label="Resume"><input type="hidden" name="advertiser_id" value="{{ a.advertiser_id }}"><input type="hidden" name="campaign_id" value="{{ a.campaign_id }}"><button class="btn sm" type="submit" title="Undo — resume this campaign on TikTok">▶ Resume</button></form>{% endif %}</td>
+      <td style="text-align:right;">{% if a.action == 'pause' and a.ok and a.campaign_id in paused_ids %}<form method="post" action="/automation/resume" style="display:inline;" data-confirm="Resume this campaign?" data-confirm-text="It was paused by a rule — it starts spending again on TikTok right away." data-ok-label="Resume"><input type="hidden" name="advertiser_id" value="{{ a.advertiser_id }}"><input type="hidden" name="campaign_id" value="{{ a.campaign_id }}"><button class="btn sm" type="submit" title="Undo — resume this campaign on TikTok">▶ Resume</button></form>{% elif a.action in ('flag', 'would_pause', 'held') and a.campaign_id not in paused_ids %}<form method="post" action="/automation/pause" style="display:inline;" data-confirm="Pause this campaign now?" data-confirm-text="The rule only flagged it — this pauses it on TikTok." data-ok-label="Pause"><input type="hidden" name="advertiser_id" value="{{ a.advertiser_id }}"><input type="hidden" name="campaign_id" value="{{ a.campaign_id }}"><input type="hidden" name="rule" value="{{ a.rule }}"><button class="btn sm" type="submit">⏸ Pause now</button></form>{% endif %}</td>
     </tr>
     {% endfor %}
     </tbody></table></div>
@@ -191,13 +191,16 @@
   $$("#hlLevel button").forEach(function (b) { b.addEventListener("click", function () { $$("#hlLevel button").forEach(function (o) { o.classList.remove("on"); }); b.classList.add("on"); lvl = b.dataset.l; apply(); }); });
   $$("#hlKinds .chip").forEach(function (c) { c.addEventListener("click", function () { kinds[c.dataset.k] = !kinds[c.dataset.k]; apply(); }); });
   $("#hlSearch").addEventListener("input", function () { q = this.value.trim().toLowerCase(); apply(); });
-  var preL = new URLSearchParams(location.search).get("level"); if (preL) { var lb = $('#hlLevel [data-l="' + preL + '"]'); if (lb) lb.click(); }
+  var preL = new URLSearchParams(location.search).get("level"); if (preL) { var lb = $('#hlLevel [data-l="' + CSS.escape(preL) + '"]'); if (lb) lb.click(); }
   document.addEventListener("click", function (e) {
     var b = e.target.closest(".hl-dismiss"); if (!b) return;
     var r = b.closest(".hl-row");
     UI.post("/inbox/dismiss", { id: r.dataset.id, next: "/monitor" }).then(function () { r.remove(); rows = rows.filter(function (x) { return x !== r; }); apply(); adopsToast && adopsToast("ok", "Dismissed"); });
   });
-  var da = $("#hlDismissAll"); if (da) da.addEventListener("click", function () { UI.confirm({ title: "Dismiss every notice?", text: "TikTok-side issues stay until the next scan clears them; only notices (wallet, rule actions) are dismissed.", ok: "Dismiss all" }).then(function (y) { if (y) UI.post("/inbox/dismiss", { id: "all", next: "/monitor" }).then(function () { location.reload(); }); }); });
+  var da = $("#hlDismissAll"); if (da) da.addEventListener("click", function () { UI.confirm({ title: "Dismiss every notice?", text: "TikTok-side issues stay until the next scan clears them; only notices (wallet, rule actions) are dismissed.", ok: "Dismiss all" }).then(function (y) { if (y) UI.post("/inbox/dismiss", { id: "all", next: "/monitor" }).then(function () {
+    rows.filter(function (r) { return r.querySelector(".hl-dismiss"); }).forEach(function (r) { r.remove(); });
+    rows = rows.filter(function (r) { return document.body.contains(r); }); apply(); da.remove(); adopsToast && adopsToast("ok", "Dismissed");
+  }); }); });
 })();
 </script>
 {% endblock %}

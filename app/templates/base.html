@@ -21,6 +21,7 @@
   <script src="/static/ui.js?v={{ STATIC_V }}"></script>
   <script src="/static/picker.js?v={{ STATIC_V }}" defer></script>
   <script src="/static/account-picker-modal.js?v={{ STATIC_V }}" defer></script>
+  <script src="/static/asset-builds.js?v={{ STATIC_V }}" defer></script>
 </head>
 <body>
 {# ---- icon set: inline SVG (crisp at any size, inherits currentColor) ---- #}
@@ -98,6 +99,7 @@
 </aside>
 
 <main class="main">
+  {% if MOCK_TIKTOK %}<div class="mock-banner" title="ADOPS_MOCK_TIKTOK=1 — every TikTok call is answered by a local simulator. Refused on a deployed server.">🧪 TikTok test mode — nothing here reaches TikTok. <a href="/diagnostics#testmode">Triggers &amp; outage switch</a></div>{% endif %}
   <header class="top">
     {% if section_tabs %}<nav class="tabs" data-section-tabs>{% for href, label, on in section_tabs %}<a href="{{ href }}" class="{{ 'on' if on else '' }}">{{ label }}</a>{% endfor %}</nav>{% endif %}
     <div class="right">
@@ -125,7 +127,7 @@
       </div>
       <a href="/settings#security">{{ ic('shield') }} Security &amp; 2FA</a>
       <a href="/settings">{{ ic('settings') }} Settings</a>
-      <a href="/logout">{{ ic('logout') }} Log out</a>
+      <form method="post" action="/logout" class="um-logout"><button type="submit">{{ ic('logout') }} Log out</button></form>
     </div>
   </header>
   <div class="page {% block page_width %}{% endblock %}">

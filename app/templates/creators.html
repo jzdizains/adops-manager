@@ -239,7 +239,7 @@
     var p = UI.popover(syncBtn, '<div style="max-width:380px;"><div style="font-weight:700;margin-bottom:6px;">Refresh identities for</div><div style="display:flex;gap:6px;"><select style="flex:1;min-width:240px;">' + document.getElementById("crScopeSrc").innerHTML + '</select><button type="button" class="btn sm primary">Refresh</button></div><div class="hint" style="margin-top:6px;">Reads each account\'s identities from TikTok — nothing is changed.</div></div>', { alignRight: true });
     p.querySelector(".primary").addEventListener("click", function () { syncForm.scope.value = p.querySelector("select").value; syncBtn.disabled = true; syncBtn.textContent = "↻ Refreshing…"; syncForm.submit(); });
   });
-  document.addEventListener("adops:job", function (e) { var j = e.detail || {}; if (j.kind === "identities_sync" || j.kind === "spark_authorize") location.href = "/creators?" + (j.status === "done" ? "ok" : "err") + "=" + encodeURIComponent(j.detail || ""); });
+  document.addEventListener("adops:job", function (e) { var j = e.detail || {}; if (j.kind === "identities_sync" || j.kind === "spark_authorize") UI.staleBanner(j.status === "done" ? "Identities refreshed" : "Refresh finished with errors", "/creators?" + (j.status === "done" ? "ok" : "err") + "=" + encodeURIComponent(j.detail || "")); });
   // filter
   document.getElementById("crQ").addEventListener("input", function () { var q = this.value.trim().toLowerCase(), n = 0; document.querySelectorAll(".cr-row").forEach(function (r) { var on = !q || r.dataset.search.indexOf(q) >= 0; r.hidden = !on; if (on) n++; }); });
   // arrived from a failed launch: open the pop-up on the authorise step, prefilled

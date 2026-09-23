@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div><h1>{{ board.title }}</h1>
+    <div class="muted">{% if board.offer %}{{ board.offer }} · {% endif %}{{ board.tests|length }} test{{ '' if board.tests|length == 1 else 's' }} · numbers read live from the linked launches</div></div>
+  <div class="actions">
+    <a class="btn ghost" href="/lab">← Boards</a>
+    <button class="btn" type="button" id="labArchive">Archive board</button>
+    <button class="btn primary" type="button" id="labAdd">+ Test</button>
+  </div>
+</div>
+<div class="lab-cols">
+  {% for s in statuses %}
+  <div class="lab-col" data-status="{{ s }}">
+    <div class="lab-col-h"><b>{{ labels[s] }}</b> <span class="n">{{ board.counts[s] }}</span></div>
+    {% for t in board.tests if t.status == s %}{% set m = t.m %}
+    <div class="card lab-card" data-id="{{ t.id }}">
+      <div class="lab-card-t">{{ t.title }}</div>
+      {% if t.variable %}<div class="lab-var"><span class="pill dim">tests: {{ t.variable }}</span></div>{% endif %}
+      {% if t.parent_title %}<div class="muted" style="font-size:11px;">↳ iteration of “{{ t.parent_title }}”{% if t.changed %} · changed {{ t.changed|join(', ') }}{% endif %}</div>{% endif %}
+      {% if m.campaigns %}
+      <div class="lab-kpis">
+        <span class="profit-cell {{ 'pos' if m.profit >= 0 else 'neg' }}">{{ '+' if m.profit > 0 }}{{ m.profit|money(0) }}</span>
+        {% if m.spend %}<span class="roas-pill {{ 'g' if m.roas >= 1.3 else ('w' if m.roas >= 0.9 else 'r') }}">{{ "%.2f"|format(m.roas) }}×</span>{% endif %}
+        <span class="muted">{{ m.spend|money(0) }} spend · {{ m.campaigns }} campaign{{ '' if m.campaigns == 1 else 's' }}{% if m.live %} · {{ m.live }} live{% endif %}</span>
+      </div>
+      {% if m.review.approved or m.review.rejected %}<div class="rv-chips">{% if m.review.approved %}<span class="rv ok">✓{{ m.review.approved }}</span>{% endif %}{% if m.review.rejected %}<span class="rv err">✕{{ m.review.rejected }}</span>{% endif %}</div>{% endif %}
+      {% elif m.refs %}<div class="muted" style="font-size:11.5px;">{{ m.refs|length }} launch{{ '' if m.refs|length == 1 else 'es' }} linked · no campaigns in view yet</div>
+      {% else %}<div class="muted" style="font-size:11.5px;">no launches linked</div>{% endif %}
+      {% if t.learning %}<div class="lab-learn">💡 {{ t.learning[:140] }}{{ '…' if t.learning|length > 140 }}</div>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endfor %}
+</div>
+<script type="application/json" id="labData">{{ {"board": board, "statuses": statuses, "labels": labels, "recent": recent_refs}|tojson }}</script>
+<script>
+  (function () {
+    var D = JSON.parse(document.getElementById("labData").textContent), esc = UI.esc, byId = {};
+    D.board.tests.forEach(function (t) { byId[t.id] = t; });
+    // in place (v151): re-read the board and swap the columns + data — no page reload
+    function softRefresh() {
+      return fetch(location.href, { credentials: "same-origin" }).then(function (r) { return r.text(); }).then(function (html) {
+        var doc = new DOMParser().parseFromString(html, "text/html"), nc = doc.querySelector(".lab-cols"), nd = doc.getElementById("labData");
+        if (nc) document.querySelector(".lab-cols").innerHTML = nc.innerHTML;
+        if (nd) { D = JSON.parse(nd.textContent); byId = {}; D.board.tests.forEach(function (t) { byId[t.id] = t; }); }
+      }).catch(function () {});
+    }
+    function editor(t) {
+      t = t || { title: "", hypothesis: "", variable: "", status: "planned", batch_refs: "", learning: "", parent_id: null, m: { refs: [], setup: {} } };
+      var opts = D.statuses.map(function (s) { return '<option value="' + s + '"' + (t.status === s ? " selected" : "") + ">" + esc(D.labels[s]) + "</option>"; }).join("");
+      var parents = '<option value="">—</option>' + D.board.tests.filter(function (x) { return x.id !== t.id; }).map(function (x) { return '<option value="' + x.id + '"' + (t.parent_id === x.id ? " selected" : "") + ">" + esc(x.title) + "</option>"; }).join("");
+      var setup = Object.keys(t.m.setup || {}).map(function (k) { return '<div><span class="muted">' + esc(k) + '</span><br>' + esc(t.m.setup[k]) + "</div>"; }).join("");
+      var body = UI.el('<div style="display:grid;gap:10px;">' +
+        '<label class="field"><span class="field-label">Test</span><input type="text" name="title" maxlength="200" value="' + esc(t.title) + '" placeholder="Hook B: problem-first opening"></label>' +
+        '<div class="form-row"><label class="field"><span class="field-label">What it changes</span><input type="text" name="variable" maxlength="120" value="' + esc(t.variable) + '" placeholder="hook · CTA · geo · cost cap · page…"></label>' +
+        '<label class="field"><span class="field-label">Status</span><select name="status">' + opts + "</select></label></div>" +
+        '<label class="field"><span class="field-label">Why (hypothesis)</span><textarea name="hypothesis" rows="2" maxlength="3000">' + esc(t.hypothesis) + "</textarea></label>" +
+        '<label class="field"><span class="field-label">Launches that ran it <span class="muted">— batch refs or pasted result links</span></span><input type="text" name="batch_refs" value="' + esc(t.batch_refs) + '" list="labRefs" placeholder="e.g. K7Q2M…, K9A1B…"><datalist id="labRefs">' + D.recent.map(function (r) { return '<option value="' + esc(r) + '">'; }).join("") + "</datalist></label>" +
+        '<label class="field"><span class="field-label">Iteration of</span><select name="parent_id">' + parents + "</select></label>" +
+        '<label class="field"><span class="field-label">Learning</span><textarea name="learning" rows="3" maxlength="5000" placeholder="What we now know — the reason to keep, kill or iterate">' + esc(t.learning) + "</textarea></label>" +
+        (setup ? '<div><div class="drawer-sec">Setup (from the first linked launch)</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;font-size:12px;">' + setup + "</div></div>" : "") +
+        (t.m.refs && t.m.refs.length ? '<div class="muted" style="font-size:12px;">' + t.m.refs.map(function (r) { return '<a href="/campaigns/result/' + encodeURIComponent(r) + '">' + esc(r) + "</a>"; }).join(" · ") + "</div>" : "") +
+        '<div style="display:flex;gap:8px;"><button type="button" class="btn primary lab-save">' + (t.id ? "Save" : "Add test") + "</button>" + (t.id ? '<button type="button" class="btn ghost danger lab-del" style="margin-left:auto;">Delete</button>' : "") + "</div></div>");
+      var dw = UI.drawer({ title: t.id ? t.title : "New test", sub: UI.esc(D.board.title), body: body });
+      body.querySelector(".lab-save").addEventListener("click", function () {
+        var btn = this; if (btn.disabled) return; btn.disabled = true;           // one click = one test
+        var f = {}; body.querySelectorAll("[name]").forEach(function (el) { f[el.name] = el.value; });
+        if (t.id) f.id = t.id; else f.board_id = D.board.id;
+        UI.post("/lab/tests", f).then(function (d) {
+          if (d.ok) { dw.close(); softRefresh(); } else { btn.disabled = false; UI.confirm({ title: "Couldn't save", text: d.error || "", ok: "OK" }); }
+        }).catch(function () { btn.disabled = false; });
+      });
+      var del = body.querySelector(".lab-del");
+      if (del) del.addEventListener("click", function () {
+        UI.confirm({ title: "Delete “" + t.title + "”?", text: "The launches and campaigns stay; only this test card goes.", ok: "Delete", danger: true }).then(function (y) {
+          if (y) UI.post("/lab/tests/" + t.id + "/delete", {}).then(function () { dw.close(); softRefresh(); });
+        });
+      });
+    }
+    document.getElementById("labAdd").addEventListener("click", function () { editor(null); });
+    document.querySelector(".lab-cols").addEventListener("click", function (e) { var c = e.target.closest(".lab-card"); if (c) editor(byId[+c.dataset.id]); });
+    document.getElementById("labArchive").addEventListener("click", function () {
+      UI.confirm({ title: "Archive this board?", text: "It moves to Archived; nothing is deleted.", ok: "Archive" }).then(function (y) {
+        if (y) UI.post("/lab/boards", { id: D.board.id, archived: "1" }).then(function () { location.href = "/lab"; });
+      });
+    });
+  })();
+</script>
+{% endblock %}

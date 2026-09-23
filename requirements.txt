@@ -9,3 +9,4 @@ tzdata
 playwright>=1.49,<2.0
 imageio-ffmpeg>=0.5,<1.0    # bundled static ffmpeg for creative "freshening"
 Pillow>=10,<12                # thumbnails, text on images, carousel slide sizing
+cryptography>=42,<47             # AES-GCM for secrets at rest (secrets_box.py)

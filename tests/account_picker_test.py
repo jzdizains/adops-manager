@@ -96,8 +96,8 @@ check("Instant Pages Clone to… uses the same pop-up + a clone-multi job", '@ro
 check("the pop-up supports optional extra fields (the page's button re-point), back-compat for id-only callers",
       "opts.extra && opts.extra.length" in js and "out = { ids: ids, values: vals }" in js and 'name: "new_url"' in ipjs)
 iph = read("app/templates/instant_pages.html")
-check("Instant Pages Build on… uses the same pop-up + a build-multi job",
-      '@router.post("/instant-pages/templates/{tpl_id}/build-multi")' in ipr and "UI.pickAccounts({" in iph and "/build-multi" in iph and 'i.name = "target_ids"' in iph)
+check("Instant Pages Build on… opens the needs-a-page picker (v150 build queue); build-multi still queues",
+      '@router.post("/instant-pages/templates/{tpl_id}/build-multi")' in ipr and 'AB.pickNeeding({ kind: "page"' in iph)
 check("the old single-account / whole-BC build dropdowns are gone from the template",
       'class="tpl-one"' not in iph and 'class="tpl-bc"' not in iph)
 

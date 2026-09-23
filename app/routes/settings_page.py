@@ -74,7 +74,7 @@ def settings_page(request: Request, db: Session = Depends(get_db)):
                  "last": (with_id[0].ttclid if with_id else "")}
     from .. import lpv_events
     return render(request, "settings.html", {
-        "lpv_stats": lpv_events.STATS,
+        "lpv_stats": lpv_events.STATS, "smtp_ok": __import__("app.notify", fromlist=["smtp_configured"]).smtp_configured(),
         "roundtrip": roundtrip, "tr": tracking.stats(db, 1), "clickflare_postback": clickflare_postback, "ad_url_example": ad_url_example, "track_base": track_base,
         "track_host_hint": base_url.split("://", 1)[-1].split("/")[0], "postback_host": config.POSTBACK_HOST,
         "title": "Settings", "s": s, "has_anthropic_key": bool(config.ANTHROPIC_API_KEY),
@@ -143,6 +143,9 @@ def classic_font_file(weight: str):
                         headers={"Cache-Control": "no-cache"})
 
 
+SECRET_FIELDS = ("notify_telegram_token", "events_access_token")    # write-only in the form (v151 audit)
+
+
 @router.post("/settings/save")
 async def save(request: Request, db: Session = Depends(get_db)):
     form = await request.form()
@@ -156,11 +159,30 @@ async def save(request: Request, db: Session = Depends(get_db)):
             continue  # server-wide knobs: only the owner, on their own view, sees or saves them
         if isinstance(current[key], bool):
             values[key] = form.get(key) is not None          # checkbox present = on
+        elif key in SECRET_FIELDS:
+            # tokens are never sent to the browser: an empty field keeps the saved one
+            if form.get("clear_" + key) is not None:
+                values[key] = ""
+            elif str(form.get(key) or "").strip():
+                values[key] = str(form.get(key)).strip()
         elif key in form:
             values[key] = form.get(key)
     save_settings(db, values, user_id=ws["user_id"], global_too=ws["own_view"])
     who = f"+for+{quote(ws['email'])}" if ws["other"] else ""
     return RedirectResponse(f"/settings?ok=Saved{who}.+Changes+apply+within+one+sweep.", status_code=303)
+
+
+@router.post("/settings/notify/test")
+def notify_test(request: Request, db: Session = Depends(get_db)):
+    """Send a test message to the SAVED alert channels of the workspace in view."""
+    from fastapi.responses import JSONResponse
+    from .. import notify
+    ws = _workspace(request, db)
+    s = get_settings(db, ws["user_id"])
+    if not any(notify.channels(s).values()):
+        return JSONResponse({"ok": False, "error": "Save a Telegram bot token + chat id, or an email address, first."})
+    errs = notify.deliver(s, f"{config.APP_NAME}: test alert", "🔴 This is a test — error alerts will arrive here.")
+    return JSONResponse({"ok": not errs, "error": " · ".join(errs), "message": "Sent — check Telegram / your inbox."})
 
 
 STANDARD_WEB_EVENTS = ("Purchase", "CompleteRegistration", "ViewContent", "AddToCart", "InitiateCheckout",
@@ -268,7 +290,19 @@ def _security_ctx(request: Request, db: Session, own_view: bool | None = None) -
         "allow_trust": sec.trusted_devices_allowed(db),
         "users": db.query(models.User).order_by(models.User.email).all() if own_view else [],
         "min_password": users.MIN_PASSWORD,
+        "devices": _devices(db, me, request.session.get("sid") or ""),
+        "audit": (__import__("app.audit", fromlist=["recent"]).recent(db, models, 60) if own_view else []),
     }
+
+
+def _devices(db: Session, me, current_sid: str) -> list[dict]:
+    """This user's signed-in browsers (sessions.py), newest first, this one marked."""
+    from .. import sessions
+    if me is None:
+        return []
+    return [{"id": r.id, "label": sessions.device_label(r.ua), "ip": r.ip or "", "last": r.last_seen_at, "since": r.created_at,
+             "current": r.sid == current_sid}
+            for r in sessions.active_for(db, models, me.id, config.SESSION_MAX_AGE_S)]
 
 
 def _where(db: Session, ip: str) -> str:
@@ -290,6 +324,31 @@ def _me(request: Request, db: Session):
 def _back(ok: str = "", err: str = "") -> RedirectResponse:
     q = ("ok=" + quote(ok)) if ok else ("err=" + quote(err))
     return RedirectResponse(f"/settings?{q}#security", status_code=303)
+
+
+# ---- my signed-in devices (server-side sessions, v148) ---------------------------------------
+@router.post("/settings/sessions/{row_id}/revoke")
+def session_revoke(row_id: int, request: Request, db: Session = Depends(get_db)):
+    from .. import audit
+    me = _me(request, db)
+    row = db.get(models.UserSession, row_id)
+    if not me or row is None or row.user_id != me.id:
+        return _back(err="That session is already gone.")
+    row.revoked_at, row.revoked_by = __import__("datetime").datetime.utcnow(), f"user:{me.email}"[:80]
+    db.commit()
+    audit.from_request(db, models, request, "session.revoked", target=f"{__import__('app.sessions', fromlist=['device_label']).device_label(row.ua)} · {row.ip}")
+    return _back(ok="That device is signed out.")
+
+
+@router.post("/settings/sessions/revoke-others")
+def session_revoke_others(request: Request, db: Session = Depends(get_db)):
+    from .. import audit, sessions
+    me = _me(request, db)
+    if not me:
+        return _back(err="Log in again first.")
+    n = sessions.revoke_user(db, models, me.id, except_sid=request.session.get("sid") or "", by=f"user:{me.email}")
+    audit.from_request(db, models, request, "session.revoked_others", detail=f"{n} device(s)")
+    return _back(ok=f"Signed out {n} other device(s).")
 
 
 # ---- my account: 2FA + password --------------------------------------------------------
@@ -314,7 +373,10 @@ def twofa_confirm(request: Request, code: str = Form(""), db: Session = Depends(
         return _back(err="Start the 2FA setup first.")
     if not sec.totp_ok(secret, code):
         return _back(err="That code didn't match — check the phone's clock and try the next code.")
+    step = sec.totp_step(secret, code)
     codes = sec.enable_totp(db, me, secret)
+    me.totp_last_step = step or 0                    # the setup code can't be replayed at the next login
+    db.commit()
     request.session.pop("totp_setup", None)
     request.session["totp_new_codes"] = codes
     return _back(ok="Two-factor authentication is on. Save the recovery codes below now — they are shown once.")
@@ -333,9 +395,11 @@ def twofa_disable(request: Request, code: str = Form(""), password: str = Form("
     me = _me(request, db)
     if not me or not users.verify_password(password, me.password_hash):
         return _back(err="Wrong password — 2FA stays on.")
-    if not (sec.totp_ok(me.totp_secret, code) or sec.recovery_ok(db, me, code)):
-        return _back(err="That code didn't match — 2FA stays on.")
+    if not (sec.totp_accept(db, me, code) or sec.recovery_ok(db, me, code)):
+        return _back(err="That code didn't match (or was already used) — 2FA stays on.")
     sec.disable_totp(db, me)
+    from .. import audit
+    audit.from_request(db, models, request, "2fa.disabled", target=me.email)
     return _back(ok="Two-factor authentication is off.")
 
 
@@ -435,6 +499,8 @@ def user_2fa_reset(user_id: int, request: Request, db: Session = Depends(get_db)
         return _back(err="The owner's 2FA can only be changed from its own account.")
     sec.disable_totp(db, u)
     users.sign_out_everywhere(db, u)
+    from .. import audit
+    audit.from_request(db, models, request, "2fa.reset_by_admin", target=u.email)
     return _back(ok=f"2FA cleared for {u.email} — they'll log in with the password only until they set it up again.")
 
 

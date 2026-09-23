@@ -108,6 +108,7 @@
         <input type="number" name="ads_per_group" min="0" max="20" value="0" style="width:90px;">
         <span class="hint" style="display:block;">0 = one ad · more duplicates the ad inside each ad group</span></label>
     </div>
+    <div class="lr" id="clReview"></div>
     <button class="btn primary" type="submit" id="clLaunch" style="width:100%;justify-content:center;font-size:14px;padding:11px;">🚀 Launch</button>
   </div>
   <div class="pf-foot"><button type="button" class="btn ghost" data-next="accounts">← Accounts</button><span></span></div>
@@ -126,14 +127,15 @@
 {% endblock %}
 {% block scripts %}
 <script src="/static/account-picker.js?v={{ STATIC_V }}"></script>
+<script src="/static/launch-review.js?v={{ STATIC_V }}"></script>
 <script>
 (function () {
   var $ = function (s) { return document.querySelector(s); }, $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
-  var PRESETS = {{ preset_info_json | safe }};
+  var PRESETS = {{ preset_info_json|js }};
   var CREATIVE_LABELS = { spark: "Spark code (creator post)", library: "Library video — next unused", carousel: "Library carousel — next unused" };
   var preset = $("#clPreset"), preview = $("#clPreview"), summary = $("#clSummary"), launchBtn = $("#clLaunch"), launchSide = $("#clLaunchSide"), form = $("#clForm");
   var sparkId = $("#sparkId"), creativeId = $("#creativeId"), mode = "", picked = null, sparkPick = null, wiz = null;
-  var picker = window.AccountPicker.init({ onChange: function () { if (picker) syncSummary(); } });
+  var picker = window.AccountPicker.init({ onChange: function () { if (picker) { syncSummary(); if (review && wiz && wiz.current() === "review") review.refresh(); } } });
 
   function n() { return picker.selected().length; }
   function problem(tab) {
@@ -142,7 +144,18 @@
     if (tab === "accounts") { if (!n()) return "Tick at least one account."; if (mode === "pick" && picked && n() > 1) return "A specific creative launches once — keep one account, or use the Super Launcher."; return ""; }
     return "";
   }
-  wiz = UI.wizard({ nav: $("#clNav"), problem: problem, start: "preset", onBlock: function (why) { adopsToast && adopsToast("err", why); }, onShow: function () { if (wiz) syncSummary(); } });
+  var review = null;
+  wiz = UI.wizard({ nav: $("#clNav"), problem: problem, start: "preset", onBlock: function (why) { adopsToast && adopsToast("err", why); }, onShow: function (t) { if (wiz) syncSummary(); if (t === "review" && review) review.refresh(); } });
+  // the Review step's per-account check (page / form / card / identity / geo / start time)
+  review = window.LR && LR.mount($("#clReview"), {
+    form: form,
+    params: function () { if (!preset || !preset.value || !n()) return null; return { template_id: preset.value, advertiser_ids: picker.selected().map(function (b) { return b.value; }).join(","), spark_code_id: sparkId.value || "", creative_mode: creativeId.value ? "pick" : "" }; },
+    onChange: function () { syncSummary(); }
+  });
+  function launchCount() {       // picked minus the blocked ones the Review left out (only those still picked)
+    var st = review ? review.state() : null, ids = picker.selected().map(function (b) { return b.value; });
+    return Math.max(0, ids.length - (st ? st.excluded.filter(function (x) { return ids.indexOf(x) >= 0; }).length : 0));
+  }
 
   function setMode(m) {
     mode = m; $$("#clCreativeSeg button").forEach(function (b) { b.classList.toggle("on", b.dataset.mode === m); });
@@ -205,7 +218,7 @@
     return "preset default";
   }
   function syncSummary() {
-    var k = n(), name = preset && preset.value ? preset.options[preset.selectedIndex].text : "", p = (preset && PRESETS[preset.value]) || {};
+    var k = launchCount(), name = preset && preset.value ? preset.options[preset.selectedIndex].text : "", p = (preset && PRESETS[preset.value]) || {};
     var pr = problem("preset") || problem("creative") || problem("accounts");
     wiz.sub("preset", name || "not chosen"); wiz.sub("creative", name ? creativeText() : ""); wiz.sub("accounts", k ? k + " selected" : "none yet");
     if (pr) { summary.textContent = pr; summary.classList.remove("ready"); launchBtn.textContent = "🚀 Launch"; }
@@ -235,8 +248,9 @@
     e.preventDefault();
     var pr = problem("preset") || problem("creative") || problem("accounts");
     if (pr) { adopsToast && adopsToast("err", pr); wiz.show(problem("preset") ? "preset" : (problem("creative") ? "creative" : "accounts")); return; }
-    var k = n();
-    UI.confirm({ title: "Launch " + k + " campaign" + (k === 1 ? "" : "s") + "?", html: true, text: "<b>" + UI.esc(preset.options[preset.selectedIndex].text) + "</b> with " + UI.esc(creativeText()) + " on " + k + " account" + (k === 1 ? "" : "s") + ". They start in the background; you land on the result page.", ok: "Launch" })
+    var k = launchCount(), out = n() - k;
+    if (!k) { adopsToast && adopsToast("err", "Every picked account is blocked — see the Review table."); wiz.show("review"); return; }
+    UI.confirm({ title: "Launch " + k + " campaign" + (k === 1 ? "" : "s") + "?", html: true, text: "<b>" + UI.esc(preset.options[preset.selectedIndex].text) + "</b> with " + UI.esc(creativeText()) + " on " + k + " account" + (k === 1 ? "" : "s") + (out ? " (" + out + " blocked left out)" : "") + ". They start in the background; you land on the result page.", ok: "Launch" })
       .then(function (y) { if (!y) return; form.dataset.ok = "1"; launchBtn.disabled = true; launchSide.disabled = true; launchBtn.textContent = "Starting…"; form.submit(); });
   });
   // arrived with ?accounts=id,id or ?creative=ID

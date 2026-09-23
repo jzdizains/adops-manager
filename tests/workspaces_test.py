@@ -160,7 +160,7 @@ for name in scope.OWNED_MODELS + ("BusinessCenter",):
     check(f"models.{name} has owner_user_id", "owner_user_id = Column(Integer" in body)
     if name != "BusinessCenter":
         check(f"models.{name}.owner_user_id defaults to the request's owner", "default=ctx.owner_default" in body)
-check("BusinessCenter carries the login's token", "access_token = Column(Text" in re.search(r"^class BusinessCenter\(Base\):.*?(?=^class )", msrc, re.M | re.S).group(0))
+check("BusinessCenter carries the login's token", "access_token = Column(EncryptedText" in re.search(r"^class BusinessCenter\(Base\):.*?(?=^class )", msrc, re.M | re.S).group(0))
 dbsrc = read("app/database.py")
 for t in ("ad_accounts", "templates", "creatives", "display_cards", "ad_texts", "spark_codes", "spark_code_groups", "tags", "business_centers"):
     check(f"schema_additions adds owner_user_id to {t}", re.search(rf'"{t}": \{{[^}}]*"owner_user_id": "INTEGER"', dbsrc, re.S) is not None)
@@ -201,7 +201,7 @@ pages = {
     "app/routes/monitor.py": ["inbox_mod.build(db, sc)", "if sc.allows(a.advertiser_id)]"],
     "app/routes/performance.py": ["pnl_data.overall_totals(db, start_utc, end_utc, sc.ids)", "scope_mod.event_in_view(e, sc, srcs)"],
     "app/routes/team.py": ['@router.post("/view")', '@router.get("/team")', '@router.get("/team/{user_id}/detail.json")', "pnl_data.overall_totals(db, start_utc, end_utc, ids)", "timeutil.range_bounds(range_key, start, end)", "resp.set_cookie(scope_mod.COOKIE"],
-    "app/routes/super_launcher.py": ["sc.owned(db.query(models.Template), models.Template)", 'fields["_launched_by"] = sc.owner_for_new', "owner_user_id=sc.user_id)", "if sc.allows(a)]"],
+    "app/routes/super_launcher.py": ["sc.owned(db.query(models.Template), models.Template)", 'fields["_launched_by"] = sc.owner_for_new', "owner_user_id=sc.user_id,", "if sc.allows(a) and a not in skip]"],
     "app/routes/campaigns.py": ["_scope.claim(db, acct, fields.get(\"_launched_by\"))", "_owned(db.query(models.Creative), models.Creative, fields)", "_owned(db.query(models.AdText), models.AdText, fields)", 'fields["_launched_by"] = sc.owner_for_new'],
     "app/queue_worker.py": ["launched_by=launched_by", 'fields["_launched_by"] = item.launched_by or template.owner_user_id', "owner_user_id=(item.launched_by or template.owner_user_id)"],
     "app/routes/templates_routes.py": ["sc.owned(db.query(models.Template), models.Template)", "models.Template(owner_user_id=sc.owner_for_new)", "if not t or not sc.owns(t):", "scope_mod.pixels_in_view(db, sc,"],
@@ -240,8 +240,8 @@ check("launch engine: every 'next unused' creative / text pick is owner-scoped",
       'db.query(models.Creative).filter_by(status="available"' not in seg and 'db.query(models.AdText).filter_by(status="available"' not in seg
       and "db.query(models.AdText)\n                             .filter_by(status=\"available\")" not in seg)
 sl = read("app/routes/super_launcher.py")
-check("super launcher never launches to an account outside the view", 'advertiser_ids = [a for a in form.getlist("advertiser_ids") if sc.allows(a)]' in sl)
-check("STATIC_VERSION bumped", "STATIC_VERSION = \"144\"" in read("app/config.py"))
+check("super launcher never launches to an account outside the view", 'advertiser_ids = [a for a in form.getlist("advertiser_ids") if sc.allows(a) and a not in skip]' in sl)
+check("STATIC_VERSION bumped", "STATIC_VERSION = \"153\"" in read("app/config.py"))
 
 print()
 print("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}")

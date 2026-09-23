@@ -21,13 +21,25 @@ TIMEOUT = httpx.Timeout(30.0, connect=10.0)
 
 class TikTokError(Exception):
     def __init__(self, code: Any, message: str, request_id: str = "", data: Any = None,
-                 path: str = ""):
+                 path: str = "", maybe_sent: bool = False):
         self.code = code
         self.message = message
         self.request_id = request_id
         self.data = data
         self.path = path            # endpoint that answered, e.g. "/ad/create/" — which STEP failed
+        # A network failure AFTER the request left us (read timeout, gateway page): TikTok may
+        # have acted on it. Retrying a CREATE then can make a duplicate campaign / ad group.
+        self.maybe_sent = maybe_sent
         super().__init__(f"TikTok API error {code}: {message}")
+
+
+# Failures where the request provably never reached TikTok — always safe to send again.
+_NOT_SENT = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
+
+
+def _net_error(e: Exception, path: str = "") -> "TikTokError":
+    sent = not isinstance(e, _NOT_SENT)
+    return TikTokError("HTTP", f"Network error calling TikTok: {e!r}", path=path, maybe_sent=sent)
 
 
 def _endpoint(resp: httpx.Response) -> str:
@@ -79,7 +91,7 @@ def _parse(resp: httpx.Response) -> Any:
     except Exception:
         _note(resp, "HTTP", f"Non-JSON response (HTTP {resp.status_code}): {resp.text[:300]}")
         raise TikTokError("HTTP", f"Non-JSON response (HTTP {resp.status_code})",
-                          data=resp.text[:500], path=_endpoint(resp))
+                          data=resp.text[:500], path=_endpoint(resp), maybe_sent=True)
     code = body.get("code")
     if code != 0:
         # Recorded BEFORE it is raised: some callers handle a TikTok error on purpose
@@ -106,11 +118,16 @@ def _client() -> httpx.Client:
     if _shared_client is None:
         with _client_lock:
             if _shared_client is None:
-                _shared_client = httpx.Client(
-                    timeout=TIMEOUT,
-                    limits=httpx.Limits(max_connections=10,
-                                        max_keepalive_connections=5,
-                                        keepalive_expiry=30.0))
+                if config.MOCK_TIKTOK:
+                    # TikTok TEST MODE: the simulator answers every call — nothing leaves the machine
+                    from . import tiktok_mock
+                    _shared_client = httpx.Client(timeout=TIMEOUT, transport=tiktok_mock.transport())
+                else:
+                    _shared_client = httpx.Client(
+                        timeout=TIMEOUT,
+                        limits=httpx.Limits(max_connections=10,
+                                            max_keepalive_connections=5,
+                                            keepalive_expiry=30.0))
     return _shared_client
 
 
@@ -124,9 +141,9 @@ def api_get(path: str, access_token: str, params: dict | None = None) -> Any:
     try:
         resp = _client().get(f"{BASE}{path}", params=q, headers={"Access-Token": access_token})
     except httpx.HTTPError as e:
-        # network/timeout/proxy problems become a retryable "HTTP" TikTokError
+        # network/timeout/proxy problems become an "HTTP" TikTokError
         # instead of crashing whole sync loops with a raw transport exception
-        raise TikTokError("HTTP", f"Network error calling TikTok: {e!r}")
+        raise _net_error(e, path)
     return _parse(resp)
 
 
@@ -136,14 +153,17 @@ RETRYABLE_CODES = {"40100", "50000"}  # rate limit / TikTok internal error
 def api_get_retry(path: str, access_token: str, params: dict | None = None,
                   attempts: int = 3, backoff: float = 0.6) -> Any:
     """api_get with retry+backoff on transient codes — used by the sync paths,
-    where a rate limit must not silently drop a whole BC's account list."""
+    where a rate limit must not silently drop a whole BC's account list. A connection
+    that never opened is retried too (fails fast, safe); a READ timeout is not — it
+    already cost 30 s, and three of them would stall a whole sweep."""
     import time as _time
     last: TikTokError | None = None
     for i in range(attempts):
         try:
             return api_get(path, access_token, params)
         except TikTokError as e:
-            if str(e.code) not in RETRYABLE_CODES or i == attempts - 1:
+            retry = str(e.code) in RETRYABLE_CODES or (str(e.code) == "HTTP" and not e.maybe_sent)
+            if not retry or i == attempts - 1:
                 raise
             last = e
             _time.sleep(backoff * (i + 1))
@@ -157,7 +177,7 @@ def api_post(path: str, access_token: str, payload: dict) -> Any:
             headers={"Access-Token": access_token, "Content-Type": "application/json"},
         )
     except httpx.HTTPError as e:
-        raise TikTokError("HTTP", f"Network error calling TikTok: {e!r}")
+        raise _net_error(e, path)
     return _parse(resp)
 
 
@@ -178,18 +198,27 @@ def _is_transient(e: "TikTokError") -> bool:
 
 
 def api_post_retry(path: str, access_token: str, payload: dict,
-                   attempts: int = 5, backoff: float = 1.5) -> Any:
+                   attempts: int = 5, backoff: float = 1.5, idempotent: bool = True) -> Any:
     """api_post with exponential backoff on transient failures — rate limits
     (40100), internal errors (50000), network blips (HTTP), and 40002 responses
     whose MESSAGE says the failure is transient ('Internal error… Try again',
     which TikTok returns while a freshly-uploaded video is still replicating).
-    Absorbs these so a launch POST doesn't fail the whole account over a blip."""
+    Absorbs these so a launch POST doesn't fail the whole account over a blip.
+
+    idempotent=False (every /create/ call): a network failure AFTER the request left us
+    is NOT retried — TikTok may already have made the campaign / ad group / ad, and a
+    second POST makes a duplicate. The error says so, so nobody relaunches blind."""
     import time as _time
     last: TikTokError | None = None
     for i in range(attempts):
         try:
             return api_post(path, access_token, payload)
         except TikTokError as e:
+            if not idempotent and str(e.code) == "HTTP" and e.maybe_sent:
+                raise TikTokError("HTTP", "The connection to TikTok dropped after the request was sent, so it "
+                                  "may or may not have been created. It was NOT sent again (that could make a "
+                                  "duplicate) — check the account in Ads Manager before relaunching. "
+                                  f"({e.message})", path=path, maybe_sent=True) from e
             if not _is_transient(e) or i == attempts - 1:
                 raise
             last = e
@@ -568,15 +597,18 @@ def track_event(access_token: str, pixel_code: str, event: str,
 # the create endpoints retry transient rate limits (40100) with backoff so a
 # burst during a batch launch doesn't fail the account outright
 def create_campaign(access_token: str, advertiser_id: str, payload: dict) -> dict:
-    return api_post_retry("/campaign/create/", access_token, {"advertiser_id": advertiser_id, **payload})
+    return api_post_retry("/campaign/create/", access_token, {"advertiser_id": advertiser_id, **payload},
+                          idempotent=False)
 
 
 def create_adgroup(access_token: str, advertiser_id: str, payload: dict) -> dict:
-    return api_post_retry("/adgroup/create/", access_token, {"advertiser_id": advertiser_id, **payload})
+    return api_post_retry("/adgroup/create/", access_token, {"advertiser_id": advertiser_id, **payload},
+                          idempotent=False)
 
 
 def create_ad(access_token: str, advertiser_id: str, payload: dict) -> dict:
-    return api_post_retry("/ad/create/", access_token, {"advertiser_id": advertiser_id, **payload})
+    return api_post_retry("/ad/create/", access_token, {"advertiser_id": advertiser_id, **payload},
+                          idempotent=False)
 
 
 # ---------------------------------------------------------------------------
@@ -893,17 +925,27 @@ def delete_campaigns(access_token: str, advertiser_id: str, campaign_ids: list[s
 
 def update_campaign_status(access_token: str, advertiser_id: str, campaign_ids: list[str],
                            operation_status: str) -> dict:
-    """operation_status: ENABLE | DISABLE | DELETE."""
-    return api_post("/campaign/status/update/", access_token, {
+    """operation_status: ENABLE | DISABLE | DELETE. Idempotent (setting the same status twice
+    is harmless), so it is retried — a rule's pause must not be lost to one rate-limit blip."""
+    return api_post_retry("/campaign/status/update/", access_token, attempts=3, payload={
         "advertiser_id": advertiser_id, "campaign_ids": campaign_ids,
+        "operation_status": operation_status,
+    })
+
+
+def update_adgroup_status(access_token: str, advertiser_id: str, adgroup_ids: list[str],
+                          operation_status: str) -> dict:
+    """/adgroup/status/update/ — ENABLE | DISABLE | DELETE. Idempotent → retried."""
+    return api_post_retry("/adgroup/status/update/", access_token, attempts=3, payload={
+        "advertiser_id": advertiser_id, "adgroup_ids": [str(x) for x in adgroup_ids][:100],
         "operation_status": operation_status,
     })
 
 
 def update_campaign_budget(access_token: str, advertiser_id: str, campaign_id: str,
                            budget: float) -> dict:
-    """Change a CBO campaign's budget (/campaign/update/)."""
-    return api_post("/campaign/update/", access_token, {
+    """Change a CBO campaign's budget (/campaign/update/). Idempotent → retried."""
+    return api_post_retry("/campaign/update/", access_token, attempts=3, payload={
         "advertiser_id": advertiser_id, "campaign_id": campaign_id,
         "budget": round(float(budget), 2),
     })
@@ -934,7 +976,7 @@ def update_adgroup(access_token: str, advertiser_id: str, adgroup_id: str,
     if bid_price is not None:
         payload["bid_price"] = round(float(bid_price), 2)
         payload["bid_type"] = "BID_TYPE_CUSTOM"
-    return api_post("/adgroup/update/", access_token, payload)
+    return api_post_retry("/adgroup/update/", access_token, payload, attempts=3)   # idempotent → retried
 
 
 def list_campaigns(access_token: str, advertiser_id: str, page: int = 1, page_size: int = 100,
@@ -1092,7 +1134,7 @@ def list_adgroups(access_token: str, advertiser_id: str, campaign_ids: list[str]
 def get_report(access_token: str, advertiser_id: str, *, dimensions: list[str],
                metrics: list[str], start_date: str, end_date: str,
                data_level: str = "AUCTION_CAMPAIGN", page_size: int = 200) -> list[dict]:
-    data = api_get("/report/integrated/get/", access_token, {
+    data = api_get_retry("/report/integrated/get/", access_token, {
         "advertiser_id": advertiser_id,
         "report_type": "BASIC",
         "data_level": data_level,
@@ -1250,7 +1292,8 @@ def create_spark_ad(access_token: str, advertiser_id: str, payload: dict) -> dic
     The generic /ad/create/ endpoint mishandles spark photo CAROUSELS — route
     spark creatives through here with identity + tiktok_item_id creatives.
     """
-    return api_post_retry("/ad/create/", access_token, {"advertiser_id": advertiser_id, **payload})
+    return api_post_retry("/ad/create/", access_token, {"advertiser_id": advertiser_id, **payload},
+                          idempotent=False)
 
 
 # ---------------------------------------------------------------------------

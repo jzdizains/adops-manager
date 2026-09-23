@@ -153,7 +153,7 @@
   });
   document.addEventListener("adops:job", function (e) {
     var j = e.detail || {};
-    if (j.kind === "pixels_sync" || j.kind === "pixel_link_all") location.href = "/pixels?" + (j.status === "done" ? "ok" : "err") + "=" + encodeURIComponent(j.detail || (j.status === "done" ? "Pixels synced." : "Sync failed."));
+    if (j.kind === "pixels_sync" || j.kind === "pixel_link_all") UI.staleBanner(j.status === "done" ? "Pixels synced" : "Pixel sync finished with errors", "/pixels?" + (j.status === "done" ? "ok" : "err") + "=" + encodeURIComponent(j.detail || (j.status === "done" ? "Pixels synced." : "Sync failed.")));
   });
   document.addEventListener("click", function (e) {
     var rn = e.target.closest(".px-rename");

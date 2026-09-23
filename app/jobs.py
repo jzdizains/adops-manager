@@ -37,7 +37,8 @@ _current: dict = {}      # job id → job (for progress updates)
 # lane of their own with LAUNCH_WORKERS threads — one user's ten-account batch no
 # longer holds up another user's launch, and a manual campaign sync (minutes over
 # hundreds of accounts) never sits in front of a launch either.
-SLOW_KINDS = {"instant_page_build", "instant_page_clone_all", "lead_form_clone_all", "issues_scan", "appeals_refresh", "pixels_sync", "pixel_link_all", "audience_sync", "music_sync", "identities_sync", "spark_authorize", "bc_assets_scan", "bc_assets_wire", "bc_assets_connect", "adgroup_duplicate", "invite_autoaccept"}
+SLOW_KINDS = {"instant_page_build", "instant_page_clone_all", "lead_form_clone_all", "issues_scan", "appeals_refresh", "pixels_sync", "pixel_link_all", "audience_sync", "music_sync", "identities_sync", "spark_authorize", "bc_assets_scan", "bc_assets_wire", "bc_assets_connect", "adgroup_duplicate", "invite_autoaccept",
+              "spark_check", "post_thumbs", "profile_refresh", "card_push", "page_stock", "video_caption", "asset_builds", "asset_sync"}
 LAUNCH_KINDS = {"launch"}
 SYNC_KINDS = {"status_sync"}      # the manual campaign sync: its own lane, never in front of a launch or behind a scan
 LANES = ("fast", "slow", "launch", "sync")
@@ -127,10 +128,24 @@ def cancel(db: Session, job_id: int) -> tuple[bool, str]:
     return False, f"“{job.title}” already finished."
 
 
-def cancel_queued(db: Session) -> int:
-    """Drop everything still waiting (running jobs are left alone)."""
+def owned(q, owner_ids):
+    """Restrict a Job query to these owners. None = every job (super admin on Everyone, the
+    sweep). A list may contain None to include system / pre-ownership jobs."""
+    if owner_ids is None:
+        return q
+    ids = [i for i in owner_ids if i is not None]
+    cond = models.Job.owner_user_id.in_(ids) if ids else None
+    if None in owner_ids:
+        from sqlalchemy import or_
+        cond = or_(cond, models.Job.owner_user_id.is_(None)) if cond is not None else models.Job.owner_user_id.is_(None)
+    from sqlalchemy import false
+    return q.filter(cond) if cond is not None else q.filter(false())
+
+
+def cancel_queued(db: Session, owner_ids=None) -> int:
+    """Drop everything still waiting (running jobs are left alone) — only these owners' jobs."""
     n = 0
-    for job in db.query(models.Job).filter(models.Job.status == "queued").all():
+    for job in owned(db.query(models.Job).filter(models.Job.status == "queued"), owner_ids).all():
         job.status = CANCELLED
         job.detail = "removed from the queue before it started"
         job.finished_at = _now()
@@ -291,10 +306,12 @@ def run_pending(db: Session, limit: int = 20, which: str | None = None) -> int:
 FINISHED = ("done", "error", CANCELLED)
 
 
-def clear_finished(db: Session) -> int:
+def clear_finished(db: Session, owner_ids=None) -> int:
     """The one-button clear on the Jobs page: drop every finished job (done, failed,
-    cancelled) from the list. Queued and running ones are never touched."""
-    n = db.query(models.Job).filter(models.Job.status.in_(FINISHED)).delete(synchronize_session=False)
+    cancelled) from the list — only these owners' jobs. Queued and running ones are never touched."""
+    q = owned(db.query(models.Job.id).filter(models.Job.status.in_(FINISHED)), owner_ids)
+    ids = [r[0] for r in q.all()]
+    n = (db.query(models.Job).filter(models.Job.id.in_(ids)).delete(synchronize_session=False)) if ids else 0
     db.commit()
     return n
 
@@ -344,7 +361,7 @@ def recover(db: Session) -> int:
     return n
 
 
-def summary(db: Session) -> dict:
-    running = db.query(models.Job).filter(models.Job.status.in_(("running", "claimed"))).count()
-    queued = db.query(models.Job).filter(models.Job.status == "queued").count()
+def summary(db: Session, owner_ids=None) -> dict:
+    running = owned(db.query(models.Job).filter(models.Job.status.in_(("running", "claimed"))), owner_ids).count()
+    queued = owned(db.query(models.Job).filter(models.Job.status == "queued"), owner_ids).count()
     return {"running": running, "queued": queued}

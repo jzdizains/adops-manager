@@ -4,6 +4,25 @@
 (function () {
   "use strict";
   var esc = UI.esc, money = UI.money;
+  // TikTok's verdict on this post's / creative's earlier launches (review.py): ✓ approved, ✕ rejected, … in review
+  function rvChip(r, long) {
+    if (!r || !(r.approved || r.rejected || r.pending)) return "";
+    function c(cls, sym, n, word) { return n ? '<span class="rv ' + cls + '" title="' + n + " launch" + (n === 1 ? "" : "es") + " " + word + '">' + sym + (long ? " " + n + " " + word : n) + "</span>" : ""; }
+    return '<span class="rv-chips">' + c("ok", "✓", r.approved, "approved") + c("err", "✕", r.rejected, "rejected") + c("warn", "…", r.pending, "in review") +
+      (long && r.last ? '<span class="muted" style="font-size:11px;">last ' + esc(r.last === "unknown" ? "launch" : r.last) + (r.last_at ? " · " + esc(r.last_at) : "") + "</span>" : "") + "</span>";
+  }
+  UI.rvChip = rvChip;
+  // spark code checked on paste (spark_check.py): checking… / ✕ code rejected / ⚠ duplicate / ⚠ not checked
+  function ckChip(c) {
+    if (!c || !c.state) return "";
+    var e = esc(c.error || "");
+    if (c.state === "checking") return '<span class="ck dim" title="Checking the code on TikTok">checking…</span>';
+    if (c.state === "bad") return '<span class="ck err" title="' + e + '">✕ code rejected</span>';
+    if (c.state === "error") return '<span class="ck warn" title="' + e + '">⚠ not checked</span>';
+    if (c.state === "ok" && c.error) return '<span class="ck warn" title="' + e + '">⚠ duplicate</span>';
+    return "";
+  }
+  UI.ckChip = ckChip;
   function roas(r) { if (!r) return '<span class="roas-pill n">—</span>'; return '<span class="roas-pill ' + (r >= 1.3 ? "g" : (r >= 0.9 ? "w" : "r")) + '">' + r.toFixed(2) + "×</span>"; }
   UI.pickCreatives = function (o) {
     o = o || {};
@@ -37,7 +56,7 @@
         return '<div class="pk-tile' + (on ? " on" : "") + '" data-id="' + it.id + '" title="' + esc(it.name) + '">' +
           '<div class="pk-thumb"><img loading="lazy" src="' + esc(it.poster) + '" alt=""><span class="pill ' + (it.state === "fresh" ? "ok" : "mute") + ' pk-state-pill">' + it.state + '</span>' +
           (it.slides ? '<span class="pk-dur">' + it.slides + ' slides</span>' : "") + '<span class="pk-chk">' + (on ? "✓" : "") + '</span></div>' +
-          '<div class="pk-meta"><div class="pk-name">' + esc(it.name) + '</div><div class="muted" style="font-size:10.5px;">' + esc(it.uploaded_ago) + (it.variants > 1 ? " · " + it.variants + " variants" : "") + (it.note ? " · 📝" : "") + '</div></div></div>';
+          '<div class="pk-meta"><div class="pk-name">' + esc(it.name) + '</div><div class="muted" style="font-size:10.5px;">' + esc(it.uploaded_ago) + (it.variants > 1 ? " · " + it.variants + " variants" : "") + (it.note ? " · 📝" : "") + " " + rvChip(it.review) + '</div></div></div>';
       }
       function render() {
         grid.dataset.kind = kind;          // images get the Images-shelf tile shape (4/5), video/carousel stay 9/13
@@ -62,6 +81,7 @@
           '<div class="muted" style="font-size:11.5px;">' + esc(it.kind) + (it.slides ? " · " + it.slides + " slides" : "") + (it.music ? " · ♫ " + esc(it.music) : "") + " · " + it.size_mb + " MB</div>" +
           '<div style="margin-top:8px;display:flex;gap:6px;align-items:center;"><span class="pill ' + (it.state === "fresh" ? "ok" : "mute") + '">' + it.state + '</span><span class="muted" style="font-size:11.5px;">uploaded ' + esc(it.uploaded_ago) + '</span></div>' +
           (it.spend || it.revenue ? '<div style="margin-top:8px;font-size:12.5px;">All time: <span class="profit-cell ' + (it.profit >= 0 ? "pos" : "neg") + '">' + (it.profit > 0 ? "+" : "") + money(it.profit, 0) + "</span> · " + roas(it.roas) + ' <span class="muted">' + money(it.spend, 0) + " spend</span></div>" : '<div class="muted" style="margin-top:8px;font-size:12px;">Never launched.</div>') +
+          (rvChip(it.review, true) ? '<div style="margin-top:6px;">' + rvChip(it.review, true) + "</div>" : "") +
           (it.used_in ? '<div class="muted" style="font-size:11.5px;margin-top:4px;">last in ' + esc(it.used_in) + " · " + esc(it.used_account) + "</div>" : "") +
           (it.note ? '<div class="muted" style="font-size:12px;margin-top:8px;border-left:2px solid var(--border-strong);padding-left:8px;">' + esc(it.note) + "</div>" : "") +
           '<div style="margin-top:10px;"><button type="button" class="btn sm ' + (sel[it.id] ? "" : "primary") + ' pk-toggle">' + (sel[it.id] ? "Remove" : (o.multi ? "Add" : "Select")) + "</button></div></div>";
@@ -119,7 +139,7 @@
         return '<div class="sp-row" data-id="' + it.id + '">' +
           (it.thumb ? '<img src="' + esc(it.thumb) + '" alt="" loading="lazy">' : '<span class="sp-ph">✦</span>') +
           '<div class="sp-main"><b>' + esc(it.name) + '</b>' + (it.creator ? ' <span class="muted">· @' + esc(it.creator.replace(/^@/, "")) + '</span>' : "") +
-          '<div class="muted" style="font-size:11px;">' + esc(it.type) + (it.source ? " · source " + esc(it.source) : "") + (it.uses ? " · used " + it.uses + "×" + (it.last_used ? " · last " + esc(it.last_used) : "") : (it.added ? " · added " + esc(it.added) : "")) + '</div></div>' +
+          '<div class="muted" style="font-size:11px;">' + esc(it.type) + (it.source ? " · source " + esc(it.source) : "") + (it.uses ? " · used " + it.uses + "×" + (it.last_used ? " · last " + esc(it.last_used) : "") : (it.added ? " · added " + esc(it.added) : "")) + " " + rvChip(it.review) + " " + ckChip(it.check) + '</div></div>' +
           '<span class="pill ' + (it.state === "fresh" ? "ok" : "mute") + '">' + esc(it.state) + '</span>' +
           (it.post_url ? '<a href="' + esc(it.post_url) + '" target="_blank" rel="noopener" class="muted" style="font-size:11px;" title="Open the post">post ↗</a>' : "") +
           '<span class="sp-chk">' + (sel == it.id ? "✓" : "") + '</span></div>';
@@ -177,7 +197,7 @@
         return '<div class="sp-row" data-id="' + it.id + '">' +
           (it.thumb ? '<img src="' + esc(it.thumb) + '" alt="" loading="lazy">' : '<span class="sp-ph">✦</span>') +
           '<div class="sp-main"><b>' + esc(it.name) + '</b>' + (it.creator ? ' <span class="muted">· @' + esc(it.creator.replace(/^@/, "")) + '</span>' : "") +
-          '<div class="muted" style="font-size:11px;">' + esc(it.type) + (it.source ? " · source " + esc(it.source) : "") + (it.uses ? " · used " + it.uses + "×" + (it.last_used ? " · last " + esc(it.last_used) : "") : (it.added ? " · added " + esc(it.added) : "")) + '</div></div>' +
+          '<div class="muted" style="font-size:11px;">' + esc(it.type) + (it.source ? " · source " + esc(it.source) : "") + (it.uses ? " · used " + it.uses + "×" + (it.last_used ? " · last " + esc(it.last_used) : "") : (it.added ? " · added " + esc(it.added) : "")) + " " + rvChip(it.review) + " " + ckChip(it.check) + '</div></div>' +
           '<span class="pill ' + (it.state === "fresh" ? "ok" : "mute") + '">' + esc(it.state) + '</span>' +
           (it.post_url ? '<a href="' + esc(it.post_url) + '" target="_blank" rel="noopener" class="muted" style="font-size:11px;" title="Open the post">post ↗</a>' : "") +
           '<span class="sp-chk"></span></div>';
@@ -218,6 +238,7 @@
   // opens instantly on what's already loaded. UI.warmProfileVideos() fills it in the
   // background (up to 5 BCs at once) on page load, so there's nothing to wait for.
   var PV_STORE = {};                 // bc_id -> { profiles:[…], error:"" }
+  var PV_REVIEWS = {};               // item_id -> review history (fresh from the DB on every read)
   var PV_CONCURRENCY = 5;
   function pvFetchBc(b, refresh) {
     return UI.get("/super-launcher/profile-videos.json?bc_id=" + encodeURIComponent(b.id) + (refresh ? "&refresh=1" : ""))
@@ -225,6 +246,7 @@
         var e = { profiles: [], error: "" };
         if (d && d.ok === false) e.error = (d.error || "TikTok didn't answer");
         ((d && d.profiles) || []).forEach(function (p) { p.bc_name = b.name; e.profiles.push(p); });
+        if (d && d.reviews) Object.keys(d.reviews).forEach(function (k) { PV_REVIEWS[k] = d.reviews[k]; });
         PV_STORE[b.id] = e; return e;
       })
       .catch(function () { PV_STORE[b.id] = { profiles: [], error: "couldn't reach the dashboard" }; return PV_STORE[b.id]; });
@@ -261,7 +283,7 @@
         '<span class="muted pk-count" style="margin-left:auto;font-size:12px;"></span></div>' +
         '<div class="pk-body"><div class="pk-grid" data-kind="video"></div><div class="pk-side"><div class="muted" style="padding:20px 0;text-align:center;">Hover or click a post to preview</div></div></div></div>');
       var foot = UI.el('<div class="pv-foot"><b class="pk-sel">0 selected</b><span class="muted pk-hint">Each post runs under its profile\'s identity — no spark code needed.</span><span class="pv-foot-btns"><button type="button" class="btn" data-close>Cancel</button><button type="button" class="btn primary pk-use">Use</button></span></div>');
-      var m = UI.modal({ title: o.title || "Pick profile videos", body: body, footer: foot, wide: true, onClose: function () { if (!done) { done = true; resolve(null); } } });
+      var m = UI.modal({ title: o.title || "Pick profile videos", body: body, footer: foot, wide: true, onClose: function () { document.removeEventListener("keydown", onKey); if (!done) { done = true; resolve(null); } } });
       m.el.classList.add("pk-modal");
       var grid = body.querySelector(".pk-grid"), side = body.querySelector(".pk-side"), pfSel = body.querySelector(".pv-profile");
       function key(p) { return p.bc_id + ":" + p.identity_id; }
@@ -289,20 +311,48 @@
         var on = !!sel[v.item_id];
         return '<div class="pk-tile' + (on ? " on" : "") + '" data-id="' + esc(v.item_id) + '" data-pid="' + esc(key(p)) + '" title="' + esc(v.text || v.item_id) + '">' +
           '<div class="pk-thumb">' + (v.cover ? '<img loading="lazy" src="' + esc(v.cover) + '" alt="">' : '<span class="sp-ph" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;">✦</span>') +
-          '<span class="pv-type">' + esc(v.type === "carousel" ? (v.slides ? v.slides + " photos" : "photos") : (v.duration ? v.duration + "s" : "video")) + '</span><span class="pk-chk">' + (on ? "✓" : "") + '</span></div>' +
-          '<div class="pk-meta"><div class="pk-name">' + esc(v.text || ("post " + v.item_id.slice(-6))) + '</div><div class="muted" style="font-size:10.5px;">@' + esc(p.name) + (v.created ? " · " + esc(v.created.slice(0, 10)) : "") + '</div></div></div>';
+          '<span class="pv-type">' + esc(v.type === "carousel" ? (v.slides ? v.slides + " photos" : "photos") : (v.duration ? v.duration + "s" : "video")) + '</span><span class="pk-chk">' + (on ? "✓" : "") + '</span>' +
+          (launches(v) ? '<span class="pv-lch" title="Launched ' + launches(v) + ' time' + (launches(v) === 1 ? "" : "s") + ' from here">' + launches(v) + '×</span>' : '<span class="pv-lch new" title="Never launched from here">new</span>') +
+          (v.via === "code" ? '<span class="pv-via" title="Reached through a spark code (not the Business Center) — it launches with that code">code</span>' : '') +
+          '<button type="button" class="pv-big-btn" title="Open the big player (← → to move)">⤢</button></div>' +
+          '<div class="pk-meta"><div class="pk-name">' + esc(v.text || ("post " + v.item_id.slice(-6))) + '</div><div class="muted" style="font-size:10.5px;">@' + esc(p.name) + (v.created ? " · " + esc(v.created.slice(0, 10)) : "") + " " + rvChip(PV_REVIEWS[v.item_id]) + '</div></div></div>';
       }
+      function launches(v) { var r = PV_REVIEWS[v.item_id]; return (r && r.tests) || 0; }
+      function dayKey(v) {            // the post's LOCAL day (created is UTC "YYYY-MM-DD HH:MM:SS")
+        if (!v.created) return "";
+        var d = new Date(v.created.replace(" ", "T") + (v.created.length > 10 ? "Z" : "T12:00:00Z"));
+        if (isNaN(d)) return v.created.slice(0, 10);
+        return d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2) + "-" + ("0" + d.getDate()).slice(-2);
+      }
+      function dayLabel(k) {
+        var t = new Date(), y = new Date(Date.now() - 864e5);
+        var f = function (d) { return d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2) + "-" + ("0" + d.getDate()).slice(-2); };
+        if (!k) return "Undated";
+        if (k === f(t)) return "Today";
+        if (k === f(y)) return "Yesterday";
+        var d = new Date(k + "T12:00:00");
+        return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }).toUpperCase() + (d.getFullYear() !== t.getFullYear() ? " " + d.getFullYear() : "");
+      }
+      var flat = [];                  // the posts in the order shown — the big player's ← →
       function render() {
         var html = "", total = 0, vis = 0, list = shownProfiles();
+        flat = [];
         list.forEach(function (p) {
-          var vs = shown(p); total += p.videos.length; vis += vs.length;
+          // newest day first; inside a day, the ones never launched first
+          var vs = shown(p).slice().sort(function (a, b) { var da = dayKey(a), db = dayKey(b); if (da !== db) return da < db ? 1 : -1; return (launches(a) > 0) - (launches(b) > 0); });
+          total += p.videos.length; vis += vs.length;
           if (!vs.length && q) return;
           var picked = p.videos.filter(function (v) { return sel[v.item_id]; }).length;
           html += '<div class="pv-head">' +
             '<button type="button" class="pv-star' + (isFav(p) ? ' on' : '') + '" data-idn="' + esc(p.identity_id) + '" title="' + (isFav(p) ? 'Remove from favorites' : 'Favorite this profile') + '">' + (isFav(p) ? '★' : '☆') + '</button>' +
             (p.avatar ? '<img src="' + esc(p.avatar) + '" alt="">' : '<span class="pv-ph">@</span>') + '<b>@' + esc(p.name) + '</b><span class="muted">' + p.videos.length + ' post' + (p.videos.length === 1 ? '' : 's') + (p.bc_name ? ' · ' + esc(p.bc_name) : '') + (picked ? ' · ' + picked + ' picked' : '') + (p.error ? ' · <span style="color:var(--err);">' + esc(p.error) + '</span>' : '') + '</span>' +
             (vs.length ? '<button type="button" class="btn sm pv-all" data-pid="' + esc(key(p)) + '">' + (vs.every(function (v) { return sel[v.item_id]; }) ? "None" : "Select all") + '</button>' : '') + '</div>';
-          html += vs.map(function (v) { return tile(p, v); }).join("");
+          var lastDay = null;
+          vs.forEach(function (v) {
+            var k = dayKey(v);
+            if (k !== lastDay) { lastDay = k; var n = vs.filter(function (x) { return dayKey(x) === k; }).length; html += '<div class="pv-day">' + esc(dayLabel(k)) + ' <span class="muted">· ' + n + '</span></div>'; }
+            html += tile(p, v); flat.push({ p: p, v: v });
+          });
           if (!vs.length) html += '<div class="muted pv-empty" style="padding:4px 6px 10px;font-size:12px;">No ad-usable posts on this profile.</div>';
         });
         if (loading) html += '<div class="muted pv-empty" style="padding:10px 6px;font-size:12px;">Reading ' + loading + ' more Business Center' + (loading === 1 ? "" : "s") + '…</div>';
@@ -329,15 +379,17 @@
         }, function () { loading = 0; fillProfiles(); render(); });
       }
       function find(id) { var hit = null; profiles.forEach(function (p) { p.videos.forEach(function (v) { if (v.item_id == id) hit = { p: p, v: v }; }); }); return hit; }
-      function entry(p, v) { return { item_id: v.item_id, identity_id: p.identity_id, identity_type: p.identity_type, bc_id: p.bc_id, handle: p.name, text: v.text, cover: v.cover, preview: v.preview || "", type: v.type, auth_code: v.auth_code, url: v.url, duration: v.duration || 0, slides: v.slides || 0 }; }
+      function entry(p, v) { var code = v.via === "code"; return { item_id: v.item_id, identity_id: code ? (v.identity_id || "") : p.identity_id, identity_type: code ? "AUTH_CODE" : p.identity_type, bc_id: p.bc_id, handle: p.name, text: v.text, cover: v.cover, preview: v.preview || "", type: v.type, auth_code: v.auth_code, url: v.url, duration: v.duration || 0, slides: v.slides || 0 }; }
       function preview(p, v) {
         cur = v;
         var media = v.preview ? '<video src="' + esc(v.preview) + '" controls playsinline preload="metadata"' + (v.cover ? ' poster="' + esc(v.cover) + '"' : '') + '></video>' : (v.cover ? '<img src="' + esc(v.cover) + '" alt="">' : '<div class="muted" style="padding:40px 10px;text-align:center;font-size:12px;">No preview from TikTok for this post — open it ↗</div>');
         side.innerHTML = '<div class="pk-phone">' + media + '</div><div class="pk-info"><b>@' + esc(p.name) + '</b>' +
           '<div style="font-size:12.5px;margin-top:4px;">' + esc(v.text || "(no caption)") + '</div>' +
           '<div class="muted" style="font-size:11.5px;margin-top:6px;">' + esc(v.type === "carousel" ? (v.slides ? v.slides + " photos" : "photo post") : "video") + (v.created ? " · " + esc(v.created) : "") + (v.duration ? " · " + v.duration + "s" : "") + (v.url ? ' · <a href="' + esc(v.url) + '" target="_blank" rel="noopener">open post ↗</a>' : "") + '</div>' +
-          '<div style="margin-top:10px;"><button type="button" class="btn sm ' + (sel[v.item_id] ? "" : "primary") + ' pk-toggle">' + (sel[v.item_id] ? "Remove" : "Add") + "</button></div></div>";
+          (rvChip(PV_REVIEWS[v.item_id], true) ? '<div style="margin-top:6px;">' + rvChip(PV_REVIEWS[v.item_id], true) + "</div>" : "") +
+          '<div style="margin-top:10px;display:flex;gap:6px;"><button type="button" class="btn sm ' + (sel[v.item_id] ? "" : "primary") + ' pk-toggle">' + (sel[v.item_id] ? "Remove" : "Add") + '</button><button type="button" class="btn sm pv-big-open" title="Big player with launch history — ← → to move">⤢ Big player</button></div></div>';
         side.querySelector(".pk-toggle").addEventListener("click", function () { toggle(p, v); preview(p, v); });
+        side.querySelector(".pv-big-open").addEventListener("click", function () { big(v.item_id); });
       }
       function toggle(p, v) {
         if (sel[v.item_id]) { delete sel[v.item_id]; order = order.filter(function (x) { return x !== v.item_id; }); }
@@ -356,9 +408,68 @@
         if (a) { var p = profiles.filter(function (x) { return key(x) === a.dataset.pid; })[0]; if (!p) return; var vs = shown(p), every = vs.every(function (v) { return sel[v.item_id]; }); vs.forEach(function (v) { if (every ? sel[v.item_id] : !sel[v.item_id]) { if (sel[v.item_id]) { delete sel[v.item_id]; order = order.filter(function (x) { return x !== v.item_id; }); } else { sel[v.item_id] = entry(p, v); order.push(v.item_id); } } }); render(); return; }
         var t = e.target.closest(".pk-tile"); if (!t) return;
         var hit = find(t.dataset.id); if (!hit) return;
+        if (e.target.closest(".pv-big-btn")) { preview(hit.p, hit.v); big(hit.v.item_id); return; }
         if (e.target.closest(".pk-thumb")) toggle(hit.p, hit.v);
         preview(hit.p, hit.v);
       });
+      grid.addEventListener("dblclick", function (e) { var t = e.target.closest(".pk-tile"); if (t) big(t.dataset.id); });
+      // ← → move the preview through the posts shown (not while typing in the search box)
+      function step(d) {
+        if (!flat.length) return;
+        var i = cur ? flat.map(function (x) { return x.v.item_id; }).indexOf(cur.item_id) : -1;
+        var n = flat[Math.max(0, Math.min(flat.length - 1, i + d))];
+        preview(n.p, n.v);
+        var el = grid.querySelector('.pk-tile[data-id="' + CSS.escape(String(n.v.item_id)) + '"]'); if (el) el.scrollIntoView({ block: "nearest" });
+      }
+      function onKey(e) {
+        if (bigOpen || e.target.closest("input, select, textarea") || !document.body.contains(body)) return;
+        if (e.key === "ArrowRight") { e.preventDefault(); step(1); } else if (e.key === "ArrowLeft") { e.preventDefault(); step(-1); }
+      }
+      document.addEventListener("keydown", onKey);
+      // the big player (v152): the post large, ← → through the posts shown, Add / Remove, and
+      // every launch of it from here (when, which account, TikTok's verdict, spend since)
+      var bigOpen = null;
+      function big(itemId) {
+        var i = flat.map(function (x) { return String(x.v.item_id); }).indexOf(String(itemId));
+        if (i < 0) return;
+        var box = UI.el('<div class="pvb"><div class="pvb-media"></div><div class="pvb-info"></div></div>');
+        var bm = UI.modal({ title: "Post", body: box, wide: true, onClose: function () { document.removeEventListener("keydown", bk); var vd = box.querySelector("video"); if (vd) vd.pause(); bigOpen = null; } });
+        bm.el.classList.add("pvb-modal");
+        bigOpen = bm;
+        var hseq = 0;
+        function show(j) {
+          i = (j + flat.length) % flat.length;
+          var p = flat[i].p, v = flat[i].v, my = ++hseq;
+          box.querySelector(".pvb-media").innerHTML = v.preview ? '<video src="' + esc(v.preview) + '" controls autoplay playsinline' + (v.cover ? ' poster="' + esc(v.cover) + '"' : "") + '></video>'
+            : (v.cover ? '<img src="' + esc(v.cover) + '" alt="">' : '<div class="muted" style="padding:40px;text-align:center;">No preview from TikTok — open the post ↗</div>');
+          box.querySelector(".pvb-info").innerHTML =
+            '<div class="pvb-nav"><button type="button" class="btn sm pvb-prev" title="Previous (←)">←</button><span class="muted">' + (i + 1) + " of " + flat.length + '</span><button type="button" class="btn sm pvb-next" title="Next (→)">→</button></div>' +
+            '<b>@' + esc(p.name) + '</b>' + (v.via === "code" ? ' <span class="pill dim" title="Reached through a spark code">code</span>' : "") +
+            '<div class="pvb-cap">' + esc(v.text || "(no caption)") + '</div>' +
+            '<div class="muted" style="font-size:12px;">' + esc(dayLabel(dayKey(v))) + (v.created ? " · " + esc(v.created.slice(11, 16)) + " UTC" : "") + " · " + esc(v.type === "carousel" ? (v.slides ? v.slides + " photos" : "photo post") : (v.duration ? v.duration + "s video" : "video")) + (v.url ? ' · <a href="' + esc(v.url) + '" target="_blank" rel="noopener">open ↗</a>' : "") + '</div>' +
+            '<button type="button" class="btn ' + (sel[v.item_id] ? "" : "primary") + ' pvb-toggle" style="margin:10px 0;">' + (sel[v.item_id] ? "✓ Added — remove" : "Add to this launch") + '</button>' +
+            '<div class="drawer-sec">Launch history</div><div class="pvb-hist muted" style="font-size:12px;">' + (launches(v) ? "Loading…" : "Never launched from here.") + '</div>';
+          box.querySelector(".pvb-prev").onclick = function () { show(i - 1); };
+          box.querySelector(".pvb-next").onclick = function () { show(i + 1); };
+          box.querySelector(".pvb-toggle").onclick = function () { toggle(p, v); preview(p, v); show(i); };
+          if (launches(v)) UI.get("/super-launcher/post-history.json?item_id=" + encodeURIComponent(v.item_id)).then(function (d) {
+            if (my !== hseq || !d.ok) return;
+            var h = box.querySelector(".pvb-hist");
+            h.classList.remove("muted");
+            h.innerHTML = (d.launches || []).length ? '<table class="data dense"><tbody>' + d.launches.map(function (l) {
+              var vv = { approved: '<span class="pill ok">approved</span>', rejected: '<span class="pill err">rejected</span>', pending: '<span class="pill warn">in review</span>' }[l.verdict] || "";
+              return "<tr><td class='muted' style='white-space:nowrap;'>" + esc(l.at) + "</td><td>" + esc(l.account) + (l.preset ? '<div class="muted" style="font-size:10.5px;">' + esc(l.preset) + "</div>" : "") + "</td><td>" +
+                (l.ok ? vv || '<span class="pill ok">live</span>' : '<span class="pill err" title="' + esc(l.error) + '">failed</span>') + '</td><td class="num">' + (l.spend ? UI.money(l.spend, 0) : "—") + "</td></tr>";
+            }).join("") + "</tbody></table>" : "Never launched from here.";
+          }).catch(function () {});
+        }
+        function bk(e) {
+          if (e.target.closest("input, select, textarea")) return;
+          if (e.key === "ArrowRight") { e.preventDefault(); show(i + 1); } else if (e.key === "ArrowLeft") { e.preventDefault(); show(i - 1); }
+        }
+        document.addEventListener("keydown", bk);
+        show(i);
+      }
       grid.addEventListener("mouseover", function (e) { var t = e.target.closest(".pk-tile"); if (!t) return; var hit = find(t.dataset.id); if (hit && (!cur || cur.item_id !== hit.v.item_id) && !(side.querySelector("video") && !side.querySelector("video").paused)) preview(hit.p, hit.v); });
       pfSel.addEventListener("change", function () { userPickedFilter = true; pf = pfSel.value; render(); });
       body.querySelector(".pv-refresh").addEventListener("click", function () { if (!loading) load(true); });

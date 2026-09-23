@@ -60,7 +60,7 @@
 {% block scripts %}
 <script>
 (function () {
-  var ITEMS = {{ items_json|safe }}, TEMPLATES = {{ templates|tojson }}, ESC_A = {{ escape_android|tojson }}, ESC_I = {{ escape_ios|tojson }}, PIXEL_EVENTS = {{ pixel_events|tojson }}, AGE = {{ age_brackets|tojson }};
+  var ITEMS = {{ items_json|js }}, TEMPLATES = {{ templates|tojson }}, ESC_A = {{ escape_android|tojson }}, ESC_I = {{ escape_ios|tojson }}, PIXEL_EVENTS = {{ pixel_events|tojson }}, AGE = {{ age_brackets|tojson }};
   var esc = UI.esc;
   function opts(list, cur) { return list.map(function (o) { var v = Array.isArray(o) ? o[0] : o, l = Array.isArray(o) ? o[1] : (o || "— none —"); return '<option value="' + esc(v) + '"' + (v === cur ? " selected" : "") + '>' + esc(l) + '</option>'; }).join(""); }
   function ruleRow(r) {

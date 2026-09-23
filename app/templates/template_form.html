@@ -281,6 +281,7 @@
       <button class="btn sm ghost" type="submit" id="displayCardDel" form="displayCardDelForm" hidden>Remove selected card</button>
       <span class="hint" id="displayCardMsg" style="margin:0;"></span>
     </div>
+    <div id="dcStock" class="dc-stock" hidden><span class="dc-stock-txt muted"></span> <button class="btn sm" type="button" id="dcPush">Put on every account</button> <details class="dc-fail" hidden><summary class="muted">why it failed</summary><div class="dc-fail-list mono"></div></details></div>
     <div class="hint" style="margin-top:8px;">Uploaded once; each account gets its own copy at launch. Other sizes are scaled and centre-cropped to 750 × 421. The button text comes from the CTA.</div>
     <img id="displayCardPrev" alt="" hidden>
   </div>
@@ -308,8 +309,8 @@
 </aside>
 </div>
 <form method="post" id="displayCardDelForm" action="" hidden data-confirm="Remove this display card from the app?" data-confirm-text="Cards already created in TikTok accounts stay there." data-ok-label="Remove" data-danger></form>
-<script type="application/json" id="pbRules">{{ objective_rules_json|safe }}</script>
-<script type="application/json" id="pbDest">{{ dest_labels_json|safe }}</script>
+<script type="application/json" id="pbRules">{{ objective_rules_json|js }}</script>
+<script type="application/json" id="pbDest">{{ dest_labels_json|js }}</script>
 <script type="application/json" id="pbMeta">{{ {"preset_id": t.id if t else 0, "video": {"id": pv.id, "name": pv.name} if pv else None, "carousel": {"id": pc.id, "name": pc.name, "slides": pc.carousel_images or ''} if pc else None, "spark": {"id": ps.id, "name": ps.name or ps.code[:16], "thumb": ps.thumbnail_url or ''} if ps else None, "card": {"id": pdc.id, "name": pdc.name} if pdc else None}|tojson }}</script>
 {% endblock %}
 {% block scripts %}

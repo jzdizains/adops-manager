@@ -54,7 +54,8 @@ def save_cookies(raw: str) -> dict:
     if not verdict["ok"]:
         raise WebAuthError(verdict["reason"])
     payload = {"cookies": cookies, "saved_at": datetime.now(timezone.utc).isoformat()}
-    config.COOKIE_FILE.write_text(json.dumps(payload, indent=2))
+    from . import secrets_box
+    secrets_box.write_json(config.COOKIE_FILE, payload)          # sealed at rest
     return verdict
 
 
@@ -62,7 +63,8 @@ def load_cookies() -> dict[str, str]:
     if not config.COOKIE_FILE.exists():
         return {}
     try:
-        return json.loads(config.COOKIE_FILE.read_text()).get("cookies", {})
+        from . import secrets_box
+        return (secrets_box.read_json(config.COOKIE_FILE, {}) or {}).get("cookies", {})
     except Exception:
         return {}
 
@@ -71,7 +73,8 @@ def cookies_saved_at() -> str:
     if not config.COOKIE_FILE.exists():
         return ""
     try:
-        return json.loads(config.COOKIE_FILE.read_text()).get("saved_at", "")
+        from . import secrets_box
+        return (secrets_box.read_json(config.COOKIE_FILE, {}) or {}).get("saved_at", "")
     except Exception:
         return ""
 

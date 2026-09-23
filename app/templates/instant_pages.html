@@ -8,27 +8,54 @@
   </div>
 </div>
 
+<details class="card tpl-card" id="stocking" style="margin-bottom:12px;" {% if stock.on and stock.paused %}open{% endif %}>
+  <summary class="card-header"><span class="card-title">Keep stocked{% if stock.on %} <span class="pill {{ 'err' if stock.paused else 'ok' }}">{{ 'paused' if stock.paused else 'on' }}</span>{% else %} <span class="pill dim">off</span>{% endif %}</span>
+    <span class="card-meta">every page your presets launch to, copied onto every account before a launch needs it — web API only, a few at a time</span>
+    {% if stock.on %}
+    <form method="post" action="/instant-pages/stock" style="margin-left:auto;display:flex;gap:6px;" onclick="event.stopPropagation();">
+      <button class="btn sm" name="action" value="now" type="submit" {{ 'disabled' if not web_ready }}>Stock now</button><button class="btn sm ghost" name="action" value="off" type="submit">Turn off</button>
+    </form>
+    {% else %}
+    <form method="post" action="/instant-pages/stock" style="margin-left:auto;" onclick="event.stopPropagation();"
+          data-confirm="Keep Instant Pages stocked?" data-confirm-text="Every page your presets launch to gets copied onto every enabled account of this workspace that lacks it — up to 6 every 15 minutes, from a published copy you already have. Two failures in a row pause it." data-ok-label="Turn on">
+      <input type="hidden" name="action" value="on"><button class="btn sm primary" type="submit" {{ 'disabled' if not web_ready }}>Turn on</button>
+    </form>
+    {% endif %}</summary>
+  {% if not web_ready %}<div class="flash" style="font-size:12.5px;">Copying pages uses your ads.tiktok.com web session — paste the cookies on the <a href="/cookies">TikTok Cookies</a> page first.</div>{% endif %}
+  {% if stock.paused %}<div class="flash err" style="font-size:12.5px;">{{ stock.paused }}</div>{% endif %}
+  {% if stock.offers %}
+  <div class="table-scroll"><table class="data dense">
+    <thead><tr><th>Page your presets use</th><th class="num">Accounts with it</th><th></th></tr></thead>
+    <tbody>{% for o in stock.offers %}<tr>
+      <td><b>{{ o.name }}</b></td>
+      <td class="num"><span class="pill {{ 'ok' if o.have == o.total else ('warn' if o.have else 'dim') }}">{{ o.have }} of {{ o.total }}</span></td>
+      <td class="muted" style="font-size:11.5px;">{% if not o.can_copy and o.have < o.total %}no published copy to copy from yet — build one first{% elif o.have < o.total %}{{ o.total - o.have }} to copy{% else %}complete{% endif %}</td>
+    </tr>{% endfor %}</tbody></table></div>
+  {% else %}<div class="empty" style="padding:14px;">No preset launches to an Instant Page yet.</div>{% endif %}
+  {% if stock.last %}<div class="muted" style="font-size:11.5px;margin-top:8px;">Last copies: {% for x in stock.last[:6] %}<span style="margin-right:10px;{{ '' if x.ok else 'color:var(--err);' }}" title="{{ x.error }}">{{ '✓' if x.ok else '✕' }} {{ x.what }} <span style="opacity:.7;">{{ x.at }}</span></span>{% endfor %}</div>{% endif %}
+</details>
+
 <details class="card tpl-card" id="templates" style="margin-bottom:12px;" {% if templates and not groups %}open{% endif %}>
   <summary class="card-header"><span class="card-title">Page templates{% if templates %} <span class="n">{{ templates|length }}</span>{% endif %}</span>
-    <span class="card-meta">a one-button page the dashboard builds on any account by driving TikTok's own builder — presets match the page by name</span>
+    <span class="card-meta">a saved page offer — name, link, button — built on any account by copying a master page (seconds, no browser); presets match the page by name</span>
     <button class="btn sm primary" type="button" id="tplNew" style="margin-left:auto;">+ New template</button></summary>
-  {% if not builder_installed %}<div class="flash err" style="font-size:12.5px;">The page builder needs Playwright + Chromium in this deployment (requirements.txt lists it; the build must run <span class="mono">playwright install chromium</span>). Templates can be saved, builds will refuse until then.</div>
-  {% elif not builder_ready %}<div class="flash" style="font-size:12.5px;">Builds drive Ads Manager with your web session — paste your ads.tiktok.com cookies on the <a href="/cookies">TikTok Cookies</a> page first.</div>{% endif %}
+  {% if not web_ready %}<div class="flash" style="font-size:12.5px;">Builds copy a master page with your ads.tiktok.com web session — paste the cookies on the <a href="/cookies">TikTok Cookies</a> page first.{% if not builder_installed %} (The browser fallback isn't installed here either.){% endif %}</div>{% endif %}
   {% if templates %}
   <div class="table-scroll"><table class="data dense">
-    <thead><tr><th>Template · page name</th><th>Button</th><th>Destination</th><th>Built on</th><th class="num">Build</th><th></th></tr></thead>
+    <thead><tr><th>Template · page name</th><th>Button</th><th>Destination</th><th>Copies</th><th>Built on</th><th class="num">Build</th><th></th></tr></thead>
     <tbody>
     {% for t in templates %}
     <tr>
       <td><b>{{ t.name }}</b><div class="muted" style="font-size:11px;">{{ t.color_scheme }} scheme{% if t.button_color %} · {{ t.button_color }}{% endif %}{% if t.bottom_fixed %} · pinned to bottom{% endif %}{% if t.hand_cursor %} · hand cursor{% endif %}</div></td>
       <td>{{ t.button_text }}</td>
       <td class="mono" style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{{ t.url }}">{{ t.url }}</td>
+      <td style="font-size:11.5px;">{% if t.master_page_id %}<span title="page {{ t.master_page_id }}">{{ master_names.get(t.master_page_id) or t.master_page_id }}</span>{% else %}<span class="muted" title="A published page named “{{ t.name }}” in your workspace; the browser builder when there is none">auto</span>{% endif %}</td>
       <td><span class="pill {{ 'ok' if tpl_cov.get(t.id, 0) == accounts|length and accounts else ('warn' if tpl_cov.get(t.id, 0) else 'dim') }}">{{ tpl_cov.get(t.id, 0) }} of {{ accounts|length }}</span></td>
       <td class="num">
-        <button class="btn sm tpl-build" type="button" data-tpl="{{ t.id }}" data-name="{{ t.name }}" {{ 'disabled' if not builder_ready }}>▶ Build on…</button>
+        <button class="btn sm tpl-build" type="button" data-tpl="{{ t.id }}" data-name="{{ t.name }}" {{ 'disabled' if not can_build }}>▶ Build on…</button>
       </td>
       <td class="num">
-        <button class="btn sm tpl-edit" type="button" data-id="{{ t.id }}" data-name="{{ t.name }}" data-button="{{ t.button_text }}" data-url="{{ t.url }}" data-color="{{ t.button_color }}" data-cursor="{{ 1 if t.hand_cursor else 0 }}" data-bottom="{{ 1 if t.bottom_fixed else 0 }}" data-scheme="{{ t.color_scheme }}">Edit</button>
+        <button class="btn sm tpl-edit" type="button" data-id="{{ t.id }}" data-name="{{ t.name }}" data-button="{{ t.button_text }}" data-url="{{ t.url }}" data-color="{{ t.button_color }}" data-cursor="{{ 1 if t.hand_cursor else 0 }}" data-bottom="{{ 1 if t.bottom_fixed else 0 }}" data-scheme="{{ t.color_scheme }}" data-master="{{ t.master_page_id }}">Edit</button>
         <form method="post" action="/instant-pages/templates/{{ t.id }}/delete" style="display:inline;" data-confirm="Remove template “{{ t.name }}”?" data-confirm-text="Pages already built from it stay on their accounts." data-ok-label="Remove" data-danger="1"><button class="btn sm ghost" type="submit">Remove</button></form>
       </td>
     </tr>
@@ -42,7 +69,12 @@
       {% for s in shots %}<a href="/instant-pages/builds/{{ s.name }}" target="_blank" rel="noopener" style="display:block;width:150px;text-decoration:none;color:inherit;"><img src="/instant-pages/builds/{{ s.name }}" alt="" loading="lazy" style="width:150px;height:105px;object-fit:cover;object-position:top;border:1px solid var(--border);border-radius:8px;background:#000;"><div style="font-size:11px;margin-top:3px;"><span class="pill {{ 'err' if s.tag == 'failed' else 'dim' }}">{{ s.tag }}</span> {{ s.label[:18] }}</div><div class="muted mono" style="font-size:10px;">{{ s.at }}</div></a>{% endfor %}
     </div></div>
   {% endif %}
-  <div class="hint" style="margin-top:10px;">How a build works: the dashboard opens Ads Manager in a headless browser with your web session, does Create → Customize → names the page → sets the call-to-action button → Complete, then checks through TikTok's API that the page now exists on the account. One account at a time, about a minute each, with screenshots kept for every build. If TikTok asks for a verification step, the build stops and tells you — it never tries to pass one.</div>
+  <div class="hint" style="margin-top:10px;">How a build works: the template's master page (or a published page with the same name) is copied onto the account through the page editor's web session, its button re-pointed to the template's link and text, published, then checked through TikTok's API. Only when there's nothing to copy — or TikTok refuses the copy — does the headless-browser builder take over. Progress shows live under Builds.</div>
+</details>
+
+<details class="card" id="builds" style="margin-bottom:12px;" open>
+  <summary class="card-header"><span class="card-title">Builds</span><span class="card-meta">the real step each build is on · red after 90 s without progress · retry, cancel, TikTok's preview</span></summary>
+  <div id="abPages"><div class="muted" style="font-size:12.5px;">Loading…</div></div>
 </details>
 
 <div id="tplFormBox" hidden><div>
@@ -59,6 +91,10 @@
       <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;"><input type="checkbox" name="bottom_fixed" id="tplBottom" value="1" checked style="width:auto;"> Set the button to the bottom of the page</label>
     </div>
     <label class="field"><span class="field-label">Colour scheme</span><select name="color_scheme" id="tplScheme"><option value="light">Light</option><option value="dark">Dark</option></select></label>
+    <label class="field"><span class="field-label">Copy from (master page)</span><select name="master_page_id" id="tplMaster">
+      <option value="">Auto — a published page with this name; the browser builder when there is none</option>
+      {% for m in masters %}<option value="{{ m.page_id }}">{{ m.name }} · {{ (m.account or m.owner)[:30] }}</option>{% endfor %}</select>
+      <span class="hint">Copied as-is (design, images) with its button re-pointed to the link and text above. Colour, cursor and position only apply when the browser builds it.</span></label>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px;"><button type="button" class="btn" data-close>Cancel</button><button type="submit" class="btn primary">Save template</button></div>
   </form>
 </div></div>
@@ -113,21 +149,17 @@
     document.getElementById("tplCursor").checked = d.cursor === undefined ? true : d.cursor === "1";
     document.getElementById("tplBottom").checked = d.bottom === undefined ? true : d.bottom === "1";
     document.getElementById("tplScheme").value = d.scheme || "light";
+    document.getElementById("tplMaster").value = d.master || "";
     var node = box.firstElementChild; box.hidden = false;
     UI.modal({ title: d.id ? "Edit template" : "New page template", body: node, onClose: function () { box.appendChild(node); box.hidden = true; } });
   }
   var nb = document.getElementById("tplNew"); if (nb) nb.addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); openForm(); });
   document.addEventListener("click", function (e) {
     var ed = e.target.closest(".tpl-edit"); if (ed) { openForm(ed.dataset); return; }
-    var bb = e.target.closest(".tpl-build"); if (!bb || bb.disabled || !window.UI || !UI.pickAccounts) return;
-    var tplId = bb.dataset.tpl || "";
-    UI.pickAccounts({ title: "Build “" + bb.dataset.name + "” on…", confirmLabel: "Build on selected" }).then(function (r) {
-      var ids = (r && r.ids) ? r.ids : r; if (!ids || !ids.length) return;
-      var f = document.createElement("form"); f.method = "post"; f.action = "/instant-pages/templates/" + tplId + "/build-multi"; f.hidden = true;
-      var i = document.createElement("input"); i.type = "hidden"; i.name = "target_ids"; i.value = ids.join(","); f.appendChild(i);
-      document.body.appendChild(f); f.submit();
-    });
+    var bb = e.target.closest(".tpl-build"); if (!bb || bb.disabled || !window.AB) return;
+    AB.pickNeeding({ kind: "page", templateId: bb.dataset.tpl, name: bb.dataset.name }).then(function () { var c = document.getElementById("builds"); if (c) c.open = true; });
   });
+  document.addEventListener("DOMContentLoaded", function () { if (window.AB) AB.mount(document.getElementById("abPages"), "page"); });
 
 })();
 </script>

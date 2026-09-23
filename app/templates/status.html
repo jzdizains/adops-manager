@@ -39,7 +39,7 @@
           <div class="cname"><a href="#" class="open-drawer" style="color:inherit;text-decoration:none;font-weight:600;">{{ r.campaign_name[:52] }}</a>{% if r.is_smart_plus %} <span class="pill dim" title="Smart+">S+</span>{% endif %}<span class="ctags" data-cid="{{ r.campaign_id }}">{% for t in tags_by_cid.get(r.campaign_id, []) %}<span class="ctag ctag-{{ t.color }}" data-tag="{{ t.id }}">{{ t.name }}<span class="ctag-x" title="Remove tag">×</span></span>{% endfor %}</span><span class="ctag-add" title="Add a tag" tabindex="0">+</span>{% set rj = rejections.get(r.campaign_id) %}{% if rj %}{% if rj.open %} <a href="#" class="pill err open-drawer" style="text-decoration:none;" title="TikTok rejected {{ rj.open }} ad group(s) — open the campaign to see why and appeal in one click">✕ {{ rj.open }} rejected</a>{% endif %}{% if rj.failed %} <a href="#" class="pill err open-drawer" style="text-decoration:none;" title="TikTok turned down the appeal for {{ rj.failed }} ad group(s)">appeal rejected{% if rj.failed > 1 %} ×{{ rj.failed }}{% endif %}</a>{% endif %}{% if rj.appealing %} <a href="#" class="pill warn open-drawer" style="text-decoration:none;" title="Appeal filed for {{ rj.appealing }} ad group(s) — waiting for TikTok">appeal filed{% if rj.appealing > 1 %} ×{{ rj.appealing }}{% endif %}</a>{% endif %}{% endif %}{% if notes.get(r.campaign_id) %} <span title="{{ notes.get(r.campaign_id)[:200] }}" style="font-size:11px;">📝</span>{% endif %}</div>
           <div class="muted" style="font-size:10.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:320px;">
             {{ acct_link(r.advertiser_id, row.account_name[:22]) }}{% if bc_by_aid.get(r.advertiser_id) %} · {{ bc_by_aid.get(r.advertiser_id)[:18] }}{% endif %}{% if r.launched_at %} · {{ r.launched_at|ago }}{% endif %}
-            {% if row.blocked %} · <span style="color:var(--err);">blocked: {{ row.blocked }}</span>{% elif r.operation_status == 'DISABLE' %} · <span style="color:var(--warn);">paused</span>{% endif %}
+            {% set h = row.health %}{% if row.blocked %} · <span style="color:var(--err);">blocked: {{ row.blocked }}</span>{% elif r.operation_status == 'DISABLE' %} · <span style="color:var(--warn);">paused</span>{% elif h and h.state not in ('ACTIVE', 'UNKNOWN') %} · <span class="pill {{ h.pill }}" title="{{ h.meaning }} {{ h.fix }}{% if h.raw %} — TikTok: {{ h.raw }}{% endif %}">{{ h.title }}{% if h.since %} · {{ h.since|ago }}{% endif %}</span>{% endif %}{% if h and h.mix and r.operation_status == 'ENABLE' %} · <span title="Ad groups by state">{{ h.mix }}</span>{% endif %}
             {% if row.ag %}{% if not row.ag.live %} · <span style="color:var(--warn);" title="Active-ad-groups-only is on for this campaign, but no per-ad-group rows exist for this range yet (they arrive with the next sync). Full numbers shown meanwhile.">active ad groups only — waiting for the next sync</span>{% else %} · <span style="color:var(--warn);" title="Numbers from the ad groups that are ON right now (switch in the drawer)">active ad groups only · {{ row.ag.active_n }} of {{ row.ag.total_n }}</span>{% if row.ag.hidden_spend or row.ag.hidden_conversions %} · <span class="muted" title="From ad groups that are paused now — left out of this row">${{ '%.2f'|format(row.ag.hidden_spend) }}{% if row.ag.hidden_conversions %} · {{ row.ag.hidden_conversions }} conv{% endif %} from paused ad groups hidden</span>{% endif %}{% if row.ag.unsplit_revenue %} · <span style="color:var(--warn);" title="Postbacks that arrived without an ad group id (before the postback URL carried it) — they can't be assigned to an ad group and are NOT in this row's revenue">${{ '%.2f'|format(row.ag.unsplit_revenue) }} unsplit revenue</span>{% endif %}{% endif %}{% endif %}
             {% if cr_ and group != 'creative' %} · {{ cr_.name[:24] }}{% elif spark_by_cid.get(r.campaign_id) and group != 'creative' %} · ✦ {{ spark_by_cid.get(r.campaign_id)[:20] }}{% endif %}
           </div>
@@ -49,8 +49,9 @@
     <td class="c-status"><button type="button" class="tog {{ 'on' if r.operation_status == 'ENABLE' }}" data-toggle title="{{ 'Pause' if r.operation_status == 'ENABLE' else 'Resume' }} on TikTok"></button></td>
     <td class="num c-spend"><div>${{ "%.2f"|format(row.m.spend) }}</div>{% if p %}<div class="pl">{{ pace_chip(p, 'spend', true) }}</div>{% endif %}</td>
     <td class="num c-revenue">{% if row.source %}${{ "%.2f"|format(row.revenue) }}{% else %}<span class="muted">—</span>{% endif %}</td>
-    <td class="num c-profit">{{ profit(row.profit, row.source) }}</td>
-    <td class="num c-roas">{{ roas_pill(row.roas, row.source and row.m.spend) }}</td>
+    {% set lf = row.life %}
+    <td class="num c-profit">{{ profit(row.profit, row.source) }}{% if lf and lf.has and lf.spend %}<div class="life" title="Since launch: ${{ '%.2f'|format(lf.spend) }} spent · ${{ '%.2f'|format(lf.revenue) }} revenue">life {{ '+' if lf.profit > 0 }}{{ '−' if lf.profit < 0 }}${{ "%.0f"|format(lf.profit|abs) }}</div>{% endif %}</td>
+    <td class="num c-roas">{{ roas_pill(row.roas, row.source and row.m.spend) }}{% if lf and lf.has and lf.spend %}<div class="life {{ 'g' if lf.roas >= 1 else 'r' }}" title="ROAS since launch">life {{ "%.2f"|format(lf.roas) }}×</div>{% endif %}</td>
     <td class="num c-epc">{% if row.source and row.m.clicks %}${{ "%.2f"|format(row.epc) }}{% else %}<span class="muted">—</span>{% endif %}</td>
     <td class="num c-cpa">{% if row.m.conversions %}${{ "%.2f"|format(row.m.cpa) }}{% else %}<span class="muted">—</span>{% endif %}</td>
     <td class="num c-conv">{{ row.m.conversions }}</td>
@@ -108,9 +109,11 @@
 <form method="get" action="/status" id="filterForm" class="filterbar" style="margin-bottom:12px;">
   <div class="search-wrap" style="max-width:230px;"><input type="text" name="q" value="{{ q }}" placeholder="Search campaign, account…"></div>
   <div class="seg" id="stateSeg">
-    {% for k, lbl in [('active', 'Active'), ('blocked', 'Blocked'), ('paused', 'Paused'), ('all', 'All')] %}<button type="button" class="{{ 'on' if state == k }}" data-state="{{ k }}">{{ lbl }} <span class="n">{{ state_counts[k] }}</span></button>{% endfor %}
+    {% for k, lbl in [('active', 'Active'), ('pending', 'Pending'), ('blocked', 'Blocked'), ('paused', 'Paused'), ('all', 'All')] %}<button type="button" class="{{ 'on' if state == k }}" data-state="{{ k }}">{{ lbl }} <span class="n">{{ state_counts[k] }}</span></button>{% endfor %}
   </div>
   <input type="hidden" name="state" value="{{ state }}">
+  {% if older %}<input type="hidden" name="older" value="1">{% endif %}
+  {% if state == 'blocked' and state_counts.blocked_older and not older %}<a class="btn sm ghost" href="{{ request.url.include_query_params(older='1') }}" title="Blocked campaigns whose problem started before {{ range_labels[range_key]|lower }}">+{{ state_counts.blocked_older }} older errors</a>{% elif state == 'blocked' and older %}<a class="btn sm ghost" href="{{ request.url.remove_query_params('older') }}">Only errors from {{ range_labels[range_key]|lower }}</a>{% endif %}
   <div class="fsel" data-fsel>
     <button type="button"><span class="k">Range</span> <span class="v">{{ range_labels[range_key] }}</span> <span class="chev">▾</span></button>
     <div class="fmenu">{% for k, lbl in range_labels.items() %}<a data-val="{{ k }}" class="{{ 'sel' if range_key == k }}">{{ lbl }}</a>{% endfor %}</div>
@@ -141,6 +144,7 @@
   <input type="hidden" name="sort" value="{{ sort }}">
   {% if q or state != 'active' or account or source_f or origin != 'tool' or range_key != 'today' %}<a class="btn sm" href="/status">✕ Clear</a>{% endif %}
   {% if range_errors %}<span class="hint" style="color:var(--warn);">{{ range_errors }} account(s) failed to load range metrics</span>{% endif %}
+  {% if range_from_db %}<span class="hint" title="Summed from the day rows the sweep saves — no TikTok calls. Add &live=1 to the address to ask TikTok instead.">from saved history</span>{% endif %}
 </form>
 
 <div class="card" style="padding:0;overflow:hidden;" id="campCard">
@@ -230,6 +234,12 @@
     </tfoot>
   </table>
   </div>
+  {% if recon.unmatched or recon.outside %}
+  <div class="recon">
+    {% if recon.outside %}<div title="{% for it in recon.outside_items %}{{ it.account }} · {{ it.name }}: ${{ '%.2f'|format(it.spend) }}&#10;{% endfor %}"><span class="muted">Spend outside this board</span> <b>${{ "%.2f"|format(recon.outside) }}</b> <span class="muted">— campaigns on these accounts that weren't launched here</span> <a href="{{ request.url.include_query_params(origin='all') }}">show them</a></div>{% endif %}
+    {% if recon.unmatched %}<div title="{% for s, v in recon.unmatched_items %}{{ s }}: ${{ '%.2f'|format(v) }}&#10;{% endfor %}"><span class="muted">Revenue not matched to any campaign</span> <b>${{ "%.2f"|format(recon.unmatched) }}</b> <span class="muted">— postbacks on {{ recon.unmatched_items|length }}{{ '+' if recon.unmatched_items|length >= 6 }} source{{ '' if recon.unmatched_items|length == 1 else 's' }} no campaign carries ({{ recon.unmatched_items[0][0][:30] }}{% if recon.unmatched_items|length > 1 %}, …{% endif %})</span> <a href="/pnl">P&amp;L</a></div>{% endif %}
+  </div>
+  {% endif %}
   {% else %}
   <div class="empty">{% if origin == 'tool' %}<div class="empty-title">Nothing launched from here yet</div>Everything you launch appears here. Switch “Show” to “All on TikTok” for campaigns created elsewhere.<br><a class="btn primary" href="/super-launcher">🚀 Launch</a>{% else %}<div class="empty-title">No campaigns cached yet</div>Hit “Sync” to pull them from every account.{% endif %}</div>
   {% endif %}
@@ -241,7 +251,7 @@
     <video id="vidPlayer" controls playsinline preload="metadata" style="width:100%;max-height:78vh;border-radius:10px;background:#000;display:block;"></video>
   </div>
 </div>
-<script id="sparkData" type="application/json">{{ spark_json|safe }}</script>
+<script id="sparkData" type="application/json">{{ spark_json|js }}</script>
 <script id="pageState" type="application/json">{{ {'range': range_key, 'group': group, 'state': state} | tojson }}</script>
 <script src="/static/campaigns.js?v={{ STATIC_V }}"></script>
 {% endblock %}

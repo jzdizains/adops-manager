@@ -9,6 +9,50 @@
   </div>
 </div>
 
+{% if mock %}
+<div class="card" id="testmode" style="margin-bottom:12px;">
+  <div class="card-header"><span class="card-title">🧪 TikTok test mode</span><span class="card-meta">{{ mock.calls }} simulated calls · {{ mock.campaigns }} campaigns · {{ mock.ads }} ads · ads in review {{ '%.0f'|format(mock.review_s) }} s</span></div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">
+    <button type="button" class="btn {{ 'danger' if mock.outage }}" id="mockOutage">{{ '⚡ Outage ON — end it' if mock.outage else 'Simulate a TikTok outage' }}</button>
+    <button type="button" class="btn ghost" id="mockReset">Forget simulated campaigns</button>
+  </div>
+  <div class="muted" style="font-size:12px;line-height:1.6;">Triggers: <b>failx2</b> in a campaign name → its first 2 creates fail · <b>REJECT</b> in a campaign name → its ads are disapproved · <b>bad</b> in a spark code → the code is refused · connect with any token on Accounts › Manual connect. Only on a local machine — a deployed server ignores ADOPS_MOCK_TIKTOK.</div>
+</div>
+<script>
+(function () {
+  var o = document.getElementById("mockOutage"), r = document.getElementById("mockReset");
+  if (o) o.addEventListener("click", function () { UI.post("/diagnostics/mock/outage").then(function (d) { o.textContent = d.outage ? "⚡ Outage ON — end it" : "Simulate a TikTok outage"; o.classList.toggle("danger", !!d.outage); }); });
+  if (r) r.addEventListener("click", function () { UI.post("/diagnostics/mock/reset").then(function () { adopsToast && adopsToast("ok", "Simulated campaigns forgotten"); }); });
+})();
+</script>
+{% endif %}
+
+<details class="card" id="migrations" style="margin-bottom:12px;">
+  <summary class="card-header"><span class="card-title">Database migrations</span>
+    <span class="card-meta">{{ migrations|length }} of {{ migrations_total }} applied{% if migrations|length < migrations_total %} · <span style="color:var(--warn);">{{ migrations_total - migrations|length }} pending — see the log</span>{% endif %}</span></summary>
+  <table class="data dense" style="font-size:12px;"><thead><tr><th>#</th><th>Step</th><th>Applied</th><th class="num">Rows</th><th class="num">ms</th></tr></thead><tbody>
+  {% for m in migrations %}<tr><td class="mono">{{ m.version }}</td><td>{{ m.name }}</td><td class="muted">{{ m.applied_at }}</td><td class="num">{{ m.rows }}</td><td class="num">{{ m.ms }}</td></tr>{% endfor %}
+  </tbody></table>
+</details>
+
+<details class="card" id="scheduler" style="margin-bottom:12px;" {% if sched.sweep.error or (sched.since_sweep is not none and sched.since_sweep > 3 * (sched.sweep.interval or 60)) %}open{% endif %}>
+  <summary class="card-header"><span class="card-title">Scheduler</span>
+    <span class="card-meta">{% if sched.sweep.n %}sweep #{{ sched.sweep.n }} {{ 'full' if sched.sweep.slow else 'fast' }} · took {{ sched.sweep.dur }} s · {% if sched.running %}running <b>{{ sched.running }}</b> for {{ sched.running_for }} s{% elif sched.since_sweep is not none %}finished {{ sched.since_sweep }} s ago · next in ~{{ [(sched.sweep.interval or 60) - sched.since_sweep, 0]|max }} s{% endif %}{% else %}no sweep since the last restart yet{% endif %}
+      {% if sched.sweep.error %} · <span style="color:var(--err);">last sweep failed</span>{% endif %}</span></summary>
+  {% if sched.sweep.error %}<div class="flash err" style="font-size:12px;">{{ sched.sweep.error }}</div>{% endif %}
+  <div class="muted" style="font-size:12px;margin-bottom:6px;">Job lanes: {% for ln in ['fast', 'slow', 'launch', 'sync'] %}<span style="margin-right:12px;"><b>{{ ln }}</b> {{ (lanes.get(ln) or {}).get('running', 0) }} running · {{ (lanes.get(ln) or {}).get('queued', 0) }} queued</span>{% endfor %}</div>
+  {% if sched.steps %}
+  <div class="table-scroll"><table class="data dense" style="font-size:12px;">
+    <thead><tr><th>Step</th><th class="num">Last ran</th><th class="num">Took</th><th class="num">Slowest</th><th class="num">Runs</th><th>Last error</th></tr></thead><tbody>
+    {% for s in sched.steps %}<tr>
+      <td class="mono">{{ s.name }}{% if s.name == sched.running %} <span class="pill warn">running</span>{% endif %}</td>
+      <td class="num">{{ s.ago }} s ago</td><td class="num">{{ s.dur }} s</td><td class="num">{{ s.max }} s</td><td class="num">{{ s.runs }}</td>
+      <td>{% if s.error %}<span style="color:var(--err);" title="{{ s.error }}">{{ s.error[:90] }}</span> <span class="muted">{{ s.error_ago }} s ago</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+    </tr>{% endfor %}</tbody></table></div>
+  {% endif %}
+  <div class="hint" style="margin-top:6px;">One sweep thread (never two at once); a full pass every few sweeps; the issue scan at most every 15 minutes. Background jobs run in their own lanes so a scan never holds up a launch.</div>
+</details>
+
 <div class="card">
   <form method="get" action="/diagnostics" class="form-row" style="align-items:flex-end;">
     <label class="field" style="max-width:220px;"><span class="field-label">Source</span>

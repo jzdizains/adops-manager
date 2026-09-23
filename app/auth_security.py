@@ -49,12 +49,52 @@ def password_ok(candidate: str) -> bool:
 
 
 # --- client address ------------------------------------------------------------
+def ip_from_chain(xff: str, peer: str, hops: int) -> str:
+    """The client IP from X-Forwarded-For, counting `hops` trusted proxies from the RIGHT.
+    Each proxy APPENDS the address it saw, so the entries on the left are whatever the
+    caller chose to send — taking the leftmost let anyone pick their IP (and walk past the
+    lockout and ALLOWED_IPS). hops=0 (no proxy in front) = the socket's peer. Pure."""
+    parts = [p.strip() for p in (xff or "").split(",") if p.strip()]
+    if hops <= 0 or not parts:
+        return (peer or "unknown")[:64]
+    return parts[-hops][:64] if len(parts) >= hops else parts[0][:64]
+
+
 def client_ip(request: Request) -> str:
-    """Render (and most proxies) put the real client first in X-Forwarded-For."""
-    xff = request.headers.get("x-forwarded-for", "")
-    if xff:
-        return xff.split(",")[0].strip()[:64]
-    return (request.client.host if request.client else "") or "unknown"
+    """Real client address behind TRUSTED_PROXY_HOPS proxies (Render = 1)."""
+    return ip_from_chain(request.headers.get("x-forwarded-for", ""),
+                         request.client.host if request.client else "", config.TRUSTED_PROXY_HOPS)
+
+
+UNSAFE_METHODS = ("POST", "PUT", "PATCH", "DELETE")
+CSRF_EXEMPT = ("/postback", "/t/", "/pub/src/", "/oauth/callback", "/health")
+
+
+def origin_ok(method: str, path: str, host: str, origin: str = "", referer: str = "",
+              fetch_site: str = "", allowed: list | None = None) -> bool:
+    """Cross-site request check for state-changing requests (pure). A browser always says
+    where a POST comes from — Origin (every modern browser), else Referer, else at least
+    Sec-Fetch-Site. It must be this site (or ALLOWED_ORIGINS). A request with none of these
+    isn't from a browser page at all (curl, a server) and is left to the login check."""
+    from urllib.parse import urlparse
+    if method.upper() not in UNSAFE_METHODS or path.startswith(CSRF_EXEMPT):
+        return True
+    fs = (fetch_site or "").lower()
+    if fs in ("same-origin", "none"):
+        return True
+    src = origin if origin and origin != "null" else referer
+    host = (host or "").lower()
+    if src:
+        try:
+            u = urlparse(src)
+        except ValueError:
+            return False
+        net = (u.netloc or "").lower()
+        if net and net == host:
+            return True
+        base = f"{u.scheme}://{net}".lower()
+        return any(base == a or net == a for a in (allowed or []))
+    return fs not in ("cross-site", "same-site")
 
 
 def ip_allowed(ip: str) -> bool:
@@ -108,11 +148,16 @@ def record_probe(db: Session, ip: str, path: str, ua: str) -> None:
     record_attempt(db, ip, False, note="1 hit — not logged in", kind="probe", ua=ua, path=path)
 
 
-def _failures(db: Session, col, value) -> int:
+EMAIL_LOCK_AFTER = 20      # one email across MANY IPs: a distributed guess — locked, but far later than
+                           # a pair, so a stranger can't lock the owner out with five wrong passwords
+
+
+def _failures(db: Session, col, value, *more) -> int:
+    """Failures since the last success for this key (col == value [and more conditions])."""
     since = _now() - timedelta(minutes=WINDOW_MIN)
-    last_ok = (db.query(models.LoginAttempt).filter(col == value, models.LoginAttempt.ok == True)  # noqa: E712
+    last_ok = (db.query(models.LoginAttempt).filter(col == value, *more, models.LoginAttempt.ok == True)  # noqa: E712
                .order_by(models.LoginAttempt.at.desc()).first())
-    q = db.query(models.LoginAttempt).filter(col == value, models.LoginAttempt.ok == False,  # noqa: E712
+    q = db.query(models.LoginAttempt).filter(col == value, *more, models.LoginAttempt.ok == False,  # noqa: E712
                                              models.LoginAttempt.kind != "probe", models.LoginAttempt.at >= since)
     if last_ok:
         q = q.filter(models.LoginAttempt.at > last_ok.at)
@@ -123,23 +168,35 @@ def recent_failures(db: Session, ip: str) -> int:
     return _failures(db, models.LoginAttempt.ip, ip)
 
 
-def _lock_seconds(db: Session, col, value, n: int) -> int:
-    if n < LOCK_AFTER:
+def lock_minutes(n: int, after: int = LOCK_AFTER) -> int:
+    """How long n failures lock for: LOCK_MIN at `after`, ×2 at double, ×4 at triple. Pure."""
+    if n < after:
         return 0
-    mult = 4 if n >= 15 else 2 if n >= 10 else 1
-    last = (db.query(models.LoginAttempt).filter(col == value, models.LoginAttempt.ok == False,  # noqa: E712
+    return LOCK_MIN * (4 if n >= 3 * after else 2 if n >= 2 * after else 1)
+
+
+def _lock_seconds(db: Session, col, value, n: int, *more, after: int = LOCK_AFTER) -> int:
+    mins = lock_minutes(n, after)
+    if not mins:
+        return 0
+    last = (db.query(models.LoginAttempt).filter(col == value, *more, models.LoginAttempt.ok == False,  # noqa: E712
                                                  models.LoginAttempt.kind != "probe")
             .order_by(models.LoginAttempt.at.desc()).first())
-    until = last.at + timedelta(minutes=LOCK_MIN * mult)
+    if last is None:
+        return 0
+    until = last.at + timedelta(minutes=mins)
     return max(0, int((until - _now()).total_seconds()))
 
 
 def locked_for(db: Session, ip: str, email: str = "") -> int:
-    """Seconds to wait: the IP is locked after LOCK_AFTER failures, and so is
-    an email address (so a distributed guess at one account also stops)."""
+    """Seconds to wait. Keyed like the reference tool: the IP (LOCK_AFTER), the (email, IP)
+    pair (LOCK_AFTER) and — much later — the email on its own (EMAIL_LOCK_AFTER), so a
+    distributed guess still stops but nobody can lock someone else out from their own IP."""
     wait = _lock_seconds(db, models.LoginAttempt.ip, ip, recent_failures(db, ip))
     if email:
-        wait = max(wait, _lock_seconds(db, models.LoginAttempt.email, email, _failures(db, models.LoginAttempt.email, email)))
+        E, I = models.LoginAttempt.email, models.LoginAttempt.ip
+        wait = max(wait, _lock_seconds(db, E, email, _failures(db, E, email, I == ip), I == ip))
+        wait = max(wait, _lock_seconds(db, E, email, _failures(db, E, email), after=EMAIL_LOCK_AFTER))
     return wait
 
 
@@ -165,13 +222,37 @@ def totp_now(secret_b32: str, at: float | None = None) -> str:
     return _hotp(secret_b32, int((at if at is not None else time.time()) // 30))
 
 
-def totp_ok(secret_b32: str, code: str, at: float | None = None) -> bool:
-    """Accepts the current step and one either side (clock drift)."""
+def totp_step(secret_b32: str, code: str, at: float | None = None) -> int | None:
+    """The time step the code belongs to (current, or one either side for clock drift),
+    None when it doesn't match. An unusable secret never matches (and never raises)."""
     code = (code or "").strip().replace(" ", "")
     if not code.isdigit() or len(code) != 6 or not secret_b32:
-        return False
+        return None
     step = int((at if at is not None else time.time()) // 30)
-    return any(hmac.compare_digest(_hotp(secret_b32, step + d), code) for d in (-1, 0, 1))
+    for d in (-1, 0, 1):
+        try:
+            if hmac.compare_digest(str(_hotp(secret_b32, step + d)).encode(), str(code).encode()):
+                return step + d
+        except (ValueError, TypeError):          # (binascii.Error is a ValueError) — e.g. a secret that won't decrypt
+            return None
+    return None
+
+
+def totp_ok(secret_b32: str, code: str, at: float | None = None) -> bool:
+    """Accepts the current step and one either side (clock drift)."""
+    return totp_step(secret_b32, code, at) is not None
+
+
+def totp_accept(db: Session, user, code: str, at: float | None = None) -> bool:
+    """totp_ok + replay guard: each code works ONCE — a step at or before the last one used
+    is refused (a code read over someone's shoulder, or captured, can't be replayed within
+    its 90-second window)."""
+    step = totp_step(user.totp_secret, code, at)
+    if step is None or step <= int(getattr(user, "totp_last_step", 0) or 0):
+        return False
+    user.totp_last_step = step
+    db.commit()
+    return True
 
 
 def otpauth_uri(secret_b32: str, account: str = "operator") -> str:
@@ -215,8 +296,14 @@ def disable_totp(db: Session, user) -> None:
     db.commit()
 
 
-def _hash_code(code: str) -> str:
-    return hashlib.sha256(("rc:" + code.replace("-", "").replace(" ", "") + config.SESSION_SECRET).encode()).hexdigest()
+def _hash_code(code: str, secret: str | None = None) -> str:
+    return hashlib.sha256(("rc:" + code.replace("-", "").replace(" ", "") + (config.SESSION_SECRET if secret is None else secret)).encode()).hexdigest()
+
+
+def _old_secrets() -> list[str]:
+    """Previous SESSION_SECRETs (SECRETS_KEY_OLD) — recovery codes made before a rotation still work."""
+    import os
+    return [k.strip() for k in os.environ.get("SECRETS_KEY_OLD", "").split(",") if k.strip()]
 
 
 def recovery_ok(db: Session, user, code: str) -> bool:
@@ -225,9 +312,9 @@ def recovery_ok(db: Session, user, code: str) -> bool:
         hashes = json.loads(user.totp_recovery or "[]")
     except ValueError:
         hashes = []
-    h = _hash_code(code or "")
-    for stored in hashes:
-        if hmac.compare_digest(stored, h):
+    cands = [_hash_code(code or "")] + [_hash_code(code or "", s) for s in _old_secrets()]
+    for stored in list(hashes):
+        if any(hmac.compare_digest(stored, h) for h in cands):
             hashes.remove(stored)
             user.totp_recovery = json.dumps(hashes)
             queries.log(db, f"recovery code used by {user.email} — {len(hashes)} left", level="warn", source="auth")
@@ -268,7 +355,7 @@ def device_trusted(user, request: Request) -> bool:
         val = _signer().unsign(raw.encode(), max_age=TRUST_DAYS * 86400).decode()
     except BadSignature:
         return False
-    return hmac.compare_digest(val, _trust_value(user))
+    return hmac.compare_digest(str(val).encode(), str(_trust_value(user)).encode())
 
 
 TRUST_SETTING = "allow_trusted_devices"

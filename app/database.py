@@ -195,6 +195,29 @@ def init_db():
                     v = column.default.arg
                     default = " DEFAULT " + ("1" if v is True else "0" if v is False else repr(v) if isinstance(v, str) else str(v))
                 conn.execute(text(f"ALTER TABLE {table_obj.name} ADD COLUMN {column.name} {sqltype}{default}"))
+        # …and every index a model declares (index=True on a column of an EXISTING table is
+        # otherwise never built — create_all only makes indexes for tables it creates)
+        for table_obj in Base.metadata.sorted_tables:
+            if table_obj.name not in tables:
+                continue
+            for index in table_obj.indexes:
+                try:
+                    index.create(conn, checkfirst=True)
+                except Exception:  # noqa: BLE001 — an index is an optimisation, never a boot blocker
+                    pass
+
+
+def seal_secrets() -> dict:
+    """Encrypt what was stored in the clear before v148 (idempotent; see secrets_box)."""
+    from . import secrets_box
+    try:
+        out = secrets_box.seal_existing(engine)
+        files = secrets_box.seal_files()
+        return {**out, **({"files": files} if files else {})}
+    except Exception as e:  # noqa: BLE001 — never a boot blocker
+        import logging
+        logging.getLogger("adops.secrets").exception("sealing stored secrets failed: %s", e)
+        return {}
 
 
 def missing_columns() -> dict[str, list[str]]:

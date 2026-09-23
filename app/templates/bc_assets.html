@@ -161,7 +161,7 @@
   </div>
   {% endfor %}
   {% if wire.checks %}
-  <div class="card-header" style="border-top:1px solid var(--line);"><span class="card-title" style="font-size:12.5px;">What TikTok reports now</span>
+  <div class="card-header" style="border-top:1px solid var(--border);"><span class="card-title" style="font-size:12.5px;">What TikTok reports now</span>
     <span class="card-meta">re-read straight after the run — this is the answer, not the request</span></div>
   <table class="table">
     <thead><tr><th>Ad account</th><th>In the main BC</th><th>Pixel</th><th>Profiles</th></tr></thead>
@@ -202,7 +202,7 @@
   {% elif not rows %}
   <div class="empty"><div class="empty-title">{{ 'Every account is fully wired' if show == 'gaps' else 'No ad accounts' }}</div>{{ 'Pixel and every profile are linked everywhere the dashboard manages.' if show == 'gaps' else 'Connect an ad account first.' }}</div>
   {% else %}
-  <div class="filterbar" id="acaBar" style="padding:10px 14px;border-bottom:1px solid var(--line);">
+  <div class="filterbar" id="acaBar" style="padding:10px 14px;border-bottom:1px solid var(--border);">
     <div class="search-wrap" style="max-width:250px;"><input type="search" id="acaQ" placeholder="Name, advertiser id or BC…"></div>
     <select id="acaBc" style="width:auto;max-width:260px;" title="Only accounts owned by this Business Center">
       <option value="">Every Business Center</option>

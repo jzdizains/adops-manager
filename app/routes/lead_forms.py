@@ -20,18 +20,22 @@ def sync_account(db: Session, acct: models.AdAccount) -> int:
     """Read one account's instant forms (API, web fallback) into LeadForm rows.
     Returns rows touched. Raises nothing — an unreadable account counts 0."""
     items = []
+    from_api = True
     try:
         items = tiktok_api.list_all_lead_forms(acct.access_token, acct.advertiser_id)
     except tiktok_api.TikTokError:
+        from_api = False
         try:  # web fallback (§5)
             items = spark_web_api.web_list_lead_forms(acct.advertiser_id).get("data", {}).get("list", [])
         except spark_web_api.WebAuthError:
             return 0
     n = 0
+    seen = set()
     for f in items:
         fid = str(f.get("page_id", f.get("form_id", "")))
         if not fid:
             continue
+        seen.add(fid)
         row = (db.query(models.LeadForm)
                .filter_by(form_id=fid, owner_advertiser_id=acct.advertiser_id).first())
         if not row:
@@ -40,6 +44,11 @@ def sync_account(db: Session, acct: models.AdAccount) -> int:
         row.name = f.get("title", f.get("name", "")) or row.name
         row.status = str(f.get("status", "")) or row.status
         n += 1
+    # forms TikTok no longer lists are dropped (a deleted form must not count as "has it") —
+    # only on a full API answer, never on the web fallback's guessed shape
+    for row in [] if not from_api else db.query(models.LeadForm).filter(models.LeadForm.owner_advertiser_id == acct.advertiser_id).all():
+        if row.form_id not in seen:
+            db.delete(row)
     return n
 
 
@@ -82,7 +91,12 @@ def page(request: Request, db: Session = Depends(get_db)):
         groups.append({"name": gname, "count": len(fl), "rep_form_id": rep.form_id, "rep_owner": rep.owner_advertiser_id,
                        "bcs": gbcs, "n_pub": n_pub, "accounts": accts,
                        "cov": "full" if len(fl) >= len(accounts) else "partial"})
+    ftpls = sc.owned(db.query(models.FormTemplate), models.FormTemplate).order_by(models.FormTemplate.name).all()
+    acct_ids = {a.advertiser_id for a in accounts}
+    ftpl_cov = {t.id: len(have.get(t.name, set()) & acct_ids) for t in ftpls}
+    form_names = {f.form_id: f"{f.name} · {names.get(f.owner_advertiser_id, f.owner_advertiser_id)}" for f in forms}
     return render(request, "lead_forms.html", {
+        "form_templates": ftpls, "ftpl_cov": ftpl_cov, "form_names": form_names,
         "forms": forms, "groups": groups, "names": names, "title": "Lead Forms", "accounts": accounts,
         "copies": copies, "bcs": bcs, "missing": missing, "acct_bc": acct_bc, "n_accounts": len(accounts),
         "web_ready": bool(spark_web_api.load_cookies()),
@@ -91,12 +105,16 @@ def page(request: Request, db: Session = Depends(get_db)):
 
 
 @router.post("/lead-forms/sync")
-def sync(db: Session = Depends(get_db)):
-    synced = 0
-    for acct in queries.enabled_accounts(db):
-        synced += sync_account(db, acct)
-    db.commit()
-    return RedirectResponse(f"/lead-forms?ok=synced+{synced}", status_code=303)
+def sync(request: Request, db: Session = Depends(get_db)):
+    """Re-read the forms of the accounts IN VIEW, as a background job (v151 audit)."""
+    from urllib.parse import quote
+    from .. import jobs, scope as scope_mod
+    sc = scope_mod.for_request(request, db)
+    ids = [a.advertiser_id for a in queries.enabled_accounts(db) if sc.allows(a.advertiser_id)]
+    if not ids:
+        return RedirectResponse("/lead-forms?err=" + quote("No enabled ad accounts — connect TikTok first."), status_code=303)
+    jobs.enqueue(db, "asset_sync", f"Sync Lead Forms · {len(ids)} account(s)", {"kind": "form", "advertiser_ids": ids}, href="/lead-forms")
+    return RedirectResponse("/lead-forms?ok=" + quote(f"Syncing {len(ids)} account(s) in the background — see Jobs."), status_code=303)
 
 
 @router.get("/lead-forms/inspect")
