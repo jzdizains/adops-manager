@@ -320,6 +320,31 @@ check("Instant Form: no click/view window is sent (TikTok's own default applies)
 p_web = ag(dict(base, objective_type="LEAD_GENERATION", destination_type="pixel"), pixel="123")
 check("website lead gen keeps the preset's windows (TikTok accepts 1/1 and 7/7 there — seen on live ad groups)",
       p_web.get("promotion_target_type") == "EXTERNAL_WEBSITE" and p_web.get("click_attribution_window") == "ONE_DAY" and p_web.get("view_attribution_window") == "ONE_DAY", str(p_web))
+# v155.7: "Lead Generation agreement has not been signed yet" on an Instant Form ad → one retry in the
+# reference tool's shape (it launches Instant Form ads with ONE fixed button and no ad text)
+print("\n-- Instant Form ad: the plain-shape retry --")
+live = {"adgroup_id": "1877149100479490", "creatives": [{"ad_name": "x ad", "ad_format": "SINGLE_VIDEO", "ad_text": "Have you checked it?",
+        "call_to_action_id": "7688802756777364501", "identity_id": "i", "identity_type": "BC_AUTH_TT", "tiktok_item_id": "7688392808218086669",
+        "page_id": "7688798794846077205"}]}                    # exactly what TikTok refused on 23 Sep
+lf_fields = {"destination_type": "lead_form", "call_to_action": "AUTO"}
+pl = helpers.lead_form_plain(live, lf_fields)
+c = pl["creatives"][0]
+check("Dynamic CTA → one fixed button (Learn more), no ad text on the Spark post, form + post kept",
+      "call_to_action_id" not in c and c["call_to_action"] == "LEARN_MORE" and "ad_text" not in c
+      and c["page_id"] == "7688798794846077205" and c["tiktok_item_id"] == "7688392808218086669", str(c))
+check("a fixed button in the preset is kept", helpers.lead_form_plain(live, {"destination_type": "lead_form", "call_to_action": "SIGN_UP"})["creatives"][0]["call_to_action"] == "SIGN_UP")
+check("the original payload isn't changed", "call_to_action_id" in live["creatives"][0] and "ad_text" in live["creatives"][0])
+check("nothing to change → no retry", helpers.lead_form_plain({"creatives": [{"call_to_action": "LEARN_MORE", "page_id": "1"}]}, lf_fields) is None)
+check("only for Instant Form ads", helpers.lead_form_plain(live, {"destination_type": "website", "call_to_action": "AUTO"}) is None)
+lib_ad = {"creatives": [{"ad_text": "Hi", "call_to_action_id": "9", "video_id": "v", "page_id": "1"}]}
+check("an uploaded video keeps its ad text (only a Spark post has a caption of its own)",
+      helpers.lead_form_plain(lib_ad, lf_fields)["creatives"][0].get("ad_text") == "Hi")
+check("matched on TikTok's exact words (with its 'has not be signed' typo)",
+      helpers.is_lead_agreement("Lead Generation agreement has not be signed yet.") and not helpers.is_lead_agreement("Invalid landing page"))
+csrc = open(os.path.join(ROOT, "app", "routes", "campaigns.py"), encoding="utf-8").read()
+check("the launch retries ONCE on that error and writes the outcome to Diagnostics either way",
+      "plain = lead_form_plain(ad_payload, fields) if is_lead_agreement(e.message) else None" in csrc
+      and '"lead-form-plain-ok"' in csrc and '"lead-form-plain-refused"' in csrc and "raise e2" in csrc)
 tf = open(os.path.join(ROOT, "app", "templates", "template_form.html"), encoding="utf-8").read()
 check("the preset form says so under the attribution fields", "Instant Form lead gen always uses TikTok’s default" in tf)
 cfg = open(os.path.join(ROOT, "app", "config.py"), encoding="utf-8").read()

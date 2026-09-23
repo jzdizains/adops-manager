@@ -1000,6 +1000,33 @@ def apply_destination(creative: dict, fields: dict) -> None:
         creative["landing_page_url"] = fields["landing_page_url"]
 
 
+def is_lead_agreement(message: str) -> bool:
+    """TikTok's "Lead Generation agreement has not be(en) signed yet" (its typo included). Pure."""
+    import re as _re
+    return bool(_re.search(r"lead generation agreement|agreement has not be(en)? signed", message or "", _re.I))
+
+
+def lead_form_plain(ad_payload: dict, fields: dict) -> dict | None:
+    """The Instant-Form ad in the shape the reference tool launches it (no ad text on a Spark
+    post, ONE fixed button instead of a Dynamic-CTA portfolio) — tried once when TikTok answers
+    "Lead Generation agreement has not been signed yet" to ours (live 23 Sep: ad_text +
+    call_to_action_id). None when there is nothing to change. Pure."""
+    from .launch import CTA_AUTO
+    if fields.get("destination_type") != "lead_form":
+        return None
+    cr = dict(ad_payload["creatives"][0])
+    changed = False
+    if "call_to_action_id" in cr:
+        cr.pop("call_to_action_id")
+        fixed = fields.get("call_to_action")
+        cr["call_to_action"] = fixed if fixed and fixed != CTA_AUTO else "LEARN_MORE"
+        changed = True
+    if cr.get("tiktok_item_id") and "ad_text" in cr:
+        cr.pop("ad_text")            # a Spark ad shows the post's own caption
+        changed = True
+    return {**ad_payload, "creatives": [cr]} if changed else None
+
+
 def build_ad_payload(fields: dict, adgroup_id: str, spark_ref: dict | None,
                      spark: models.SparkCode | None) -> dict:
     creative: dict = {
@@ -2319,11 +2346,16 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                     elif spark_ref or fields.get("landing_page_url") or fields.get("instant_page_id") \
                             or fields.get("lead_form_id"):
                         ad_payload = _uniq(build_ad_payload(fields, adgroup_id, spark_ref, spark))
-                        if spark_ref:
+
+                        def _send_ad(payload):
+                            if spark_ref:
+                                return tiktok_api.create_spark_ad(acct.access_token, acct.advertiser_id, payload)
+                            return tiktok_api.create_ad(acct.access_token, acct.advertiser_id, payload)
+                        try:
                             try:
-                                resp = tiktok_api.create_spark_ad(acct.access_token, acct.advertiser_id, ad_payload)
+                                resp = _send_ad(ad_payload)
                             except tiktok_api.TikTokError as e:
-                                flipped = format_flip_for(e, ad_payload["creatives"][0].get("ad_format", ""))
+                                flipped = format_flip_for(e, ad_payload["creatives"][0].get("ad_format", "")) if spark_ref else ""
                                 if not flipped:
                                     raise
                                 # TikTok says the post is the other kind — send it that way
@@ -2331,9 +2363,25 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                                 spark_ref["item_type"] = "CAROUSEL" if flipped == "CAROUSEL_ADS" else "VIDEO"
                                 reconcile_media_type(db, spark, spark_ref)
                                 ad_payload = {**ad_payload, "creatives": [{**ad_payload["creatives"][0], "ad_format": flipped}]}
-                                resp = tiktok_api.create_spark_ad(acct.access_token, acct.advertiser_id, ad_payload)
-                        else:
-                            resp = tiktok_api.create_ad(acct.access_token, acct.advertiser_id, ad_payload)
+                                resp = _send_ad(ad_payload)
+                        except tiktok_api.TikTokError as e:
+                            plain = lead_form_plain(ad_payload, fields) if is_lead_agreement(e.message) else None
+                            if plain is None:
+                                raise
+                            # v155.7: once, in the reference tool's shape; the answer goes to Diagnostics
+                            # either way so "agreement not signed" is settled by a fact, not a guess
+                            from .. import diag
+                            try:
+                                resp = _send_ad(plain)
+                                diag.record("app", "launch", "lead-form-plain-ok",
+                                            "Instant Form ad went through with ONE fixed button and no ad text after TikTok "
+                                            "refused the Dynamic-CTA/ad-text shape as 'agreement not signed'",
+                                            {"advertiser_id": acct.advertiser_id, "body": plain})
+                            except tiktok_api.TikTokError as e2:
+                                diag.record("app", "launch", "lead-form-plain-refused",
+                                            f"Plain-button Instant Form ad refused too: {e2.message}"[:400],
+                                            {"advertiser_id": acct.advertiser_id, "body": plain})
+                                raise e2
                         ad_created = True
                     if resp is not None:
                         trace.ad(i, _ad_ids(resp))

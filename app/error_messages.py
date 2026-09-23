@@ -46,6 +46,8 @@ _MESSAGE_HINTS: list[tuple[re.Pattern, str, str]] = [
     (re.compile(r"lead generation agreement|agreement has not be(en)? signed|"
                 r"lead[- ]?gen(eration)? terms (of service )?(has|have)? ?not", re.I),
      "This ad account hasn't accepted TikTok's Lead Generation Terms yet.",
+     "The launcher already retried the ad once with a single fixed button and no ad text (how the reference "
+     "tool builds Instant Form ads) — TikTok refused that too. "
      "It's a one-time agreement per ad account and the launcher can't sign it. TikTok doesn't document "
      "where it's accepted: creating an Instant Form by hand does NOT always ask (seen 24 Sep). In Ads Manager, "
      "switched to THIS advertiser, build one Instant Form lead-gen ad through to Submit and look for a Lead "
