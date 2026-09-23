@@ -106,11 +106,31 @@ def outside_spend(db, models, records: list, range_key: str, start_day: str, end
     return round(sum(s for _, s in items), 2), out
 
 
-def error_at(health: dict | None, acct, blocked_by_account: bool):
-    """When a blocked campaign's problem started (naive UTC) — its ad groups' state change, or the
-    account's status change for an account-level block. None = unknown (counts as recent). Pure."""
+def issue_dates(db, models) -> dict:
+    """When the issue scan FIRST saw each problem (Issue.detected_at survives rescans): per
+    campaign ("c", id) and per account ("a", id) — the earliest. One query."""
+    out: dict = {}
+    for cat, adv, ref, at in (db.query(models.Issue.category, models.Issue.advertiser_id, models.Issue.ref, models.Issue.detected_at)
+                              .filter(models.Issue.category.in_(("campaign", "account", "payment")))):
+        if at is None:
+            continue
+        key = ("c", ref) if cat == "campaign" and ref else ("a", adv)
+        if key[1] and (key not in out or at < out[key]):
+            out[key] = at
+    return out
+
+
+def error_at(health: dict | None, acct, blocked_by_account: bool, campaign_id: str = "", issues: dict | None = None):
+    """When a blocked campaign's problem started (naive UTC): the issue scan's first sighting of
+    it (campaign, then account), the account's status change for an account-level block, or its
+    ad groups' state change. None = unknown (counts as recent). Pure."""
     d = None
-    if blocked_by_account and acct is not None:
+    issues = issues or {}
+    if campaign_id:
+        d = issues.get(("c", campaign_id))
+    if d is None and acct is not None:
+        d = issues.get(("a", getattr(acct, "advertiser_id", "")))
+    if d is None and blocked_by_account and acct is not None:
         d = getattr(acct, "status_changed_at", None)
     if d is None and health:
         d = health.get("since")

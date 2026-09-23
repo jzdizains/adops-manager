@@ -273,8 +273,21 @@
     return new Promise(function (resolve) {
       var bcs = o.bcs || [], q = "", profiles = [], sel = {}, order = [], cur = null, done = false, loading = 0, pf = "", errors = [];
       var favs = {}; (o.favorites || []).forEach(function (id) { favs[String(id)] = true; });
+      // v153: "Mine" = starred + the profiles this workspace launched from lately (server-computed);
+      // hidden = profiles this user never wants to see (not theirs / unused) — out of every view but "Hidden"
+      var hid = {}; (o.hidden || []).forEach(function (id) { hid[String(id)] = true; });
+      var used = o.used || {}, usedIds = {}, usedHandles = {};
+      (used.ids || []).forEach(function (id) { usedIds[String(id)] = true; });
+      (used.handles || []).forEach(function (h) { usedHandles[String(h).toLowerCase()] = true; });
       var userPickedFilter = false;                 // once the operator picks a filter, stop auto-defaulting
       function isFav(p) { return !!favs[String(p.identity_id)]; }
+      function isHidden(p) { return !!hid[String(p.identity_id)]; }
+      function isUsed(p) { return !!usedIds[String(p.identity_id)] || !!usedHandles[String(p.name || "").replace(/^@/, "").toLowerCase()]; }
+      function isMine(p) { return !isHidden(p) && (isFav(p) || isUsed(p)); }
+      function savePref(url, idn, on) {
+        var fd = new FormData(); fd.append("identity_id", idn); fd.append("on", on ? "1" : "");
+        fetch(url, { method: "POST", body: fd, credentials: "same-origin", headers: { "X-Requested-With": "fetch" } }).catch(function () {});
+      }
       (o.selected || []).forEach(function (v) { sel[v.item_id] = v; order.push(v.item_id); });
       var body = UI.el('<div class="pk"><div class="pk-top">' +
         '<select class="pv-profile" style="max-width:280px;"><option value="">All profiles</option></select>' +
@@ -287,7 +300,14 @@
       m.el.classList.add("pk-modal");
       var grid = body.querySelector(".pk-grid"), side = body.querySelector(".pk-side"), pfSel = body.querySelector(".pv-profile");
       function key(p) { return p.bc_id + ":" + p.identity_id; }
-      function shownProfiles() { return profiles.filter(function (p) { return pf === "__fav__" ? isFav(p) : (!pf || key(p) === pf); }); }
+      function shownProfiles() {
+        return profiles.filter(function (p) {
+          if (pf === "__hidden__") return isHidden(p);
+          if (isHidden(p)) return false;
+          if (pf === "__mine__") return isMine(p);
+          return !pf || key(p) === pf;
+        });
+      }
       function shown(p) { var qq = q.toLowerCase(); return p.videos.filter(function (v) { return !qq || (v.text || "").toLowerCase().indexOf(qq) >= 0 || (p.name || "").toLowerCase().indexOf(qq) >= 0; }); }
       function mark() {
         var n = order.filter(function (id) { return sel[id]; }).length;
@@ -296,14 +316,17 @@
         foot.querySelector(".pk-use").disabled = n === 0;
       }
       function fillProfiles() {
-        var total = profiles.reduce(function (a, p) { return a + p.videos.length; }, 0);
-        var favProfs = profiles.filter(isFav), favPosts = favProfs.reduce(function (a, p) { return a + p.videos.length; }, 0);
-        if (!userPickedFilter) pf = favProfs.length ? "__fav__" : "";     // default to favorites once they've loaded
+        var vis = profiles.filter(function (p) { return !isHidden(p); }), hidden = profiles.filter(isHidden);
+        var total = vis.reduce(function (a, p) { return a + p.videos.length; }, 0);
+        var mine = vis.filter(isMine), minePosts = mine.reduce(function (a, p) { return a + p.videos.length; }, 0);
+        if (!userPickedFilter) pf = mine.length ? "__mine__" : "";     // open on "Mine" once there is one
         pfSel.innerHTML =
-          (favProfs.length ? '<option value="__fav__">★ Favorites · ' + favProfs.length + ' profile' + (favProfs.length === 1 ? '' : 's') + ' · ' + favPosts + ' posts</option>' : '') +
-          '<option value="">All profiles · ' + total + ' posts</option>' +
-          profiles.slice().sort(function (a, b) { return a.name.localeCompare(b.name); }).map(function (p) { return '<option value="' + esc(key(p)) + '">' + (isFav(p) ? '★ ' : '') + '@' + esc(p.name) + ' · ' + p.videos.length + (p.bc_name ? ' · ' + esc(p.bc_name) : '') + '</option>'; }).join("");
-        if (pf === "__fav__" && !favProfs.length) pf = "";
+          (mine.length ? '<option value="__mine__">★ Mine · ' + mine.length + ' profile' + (mine.length === 1 ? '' : 's') + ' · ' + minePosts + ' posts</option>' : '') +
+          '<option value="">All profiles · ' + vis.length + ' · ' + total + ' posts</option>' +
+          vis.slice().sort(function (a, b) { return (isMine(b) - isMine(a)) || a.name.localeCompare(b.name); }).map(function (p) { return '<option value="' + esc(key(p)) + '">' + (isFav(p) ? '★ ' : (isUsed(p) ? '• ' : '')) + '@' + esc(p.name) + ' · ' + p.videos.length + (p.bc_name ? ' · ' + esc(p.bc_name) : '') + '</option>'; }).join("") +
+          (hidden.length ? '<option value="__hidden__">Hidden · ' + hidden.length + ' profile' + (hidden.length === 1 ? '' : 's') + '</option>' : '');
+        if (pf === "__mine__" && !mine.length) pf = "";
+        if (pf === "__hidden__" && !hidden.length) pf = "";
         pfSel.value = pf;
         if (pfSel.value !== pf) pf = pfSel.value || "";                    // selected profile scrolled out of the list
       }
@@ -311,11 +334,11 @@
         var on = !!sel[v.item_id];
         return '<div class="pk-tile' + (on ? " on" : "") + '" data-id="' + esc(v.item_id) + '" data-pid="' + esc(key(p)) + '" title="' + esc(v.text || v.item_id) + '">' +
           '<div class="pk-thumb">' + (v.cover ? '<img loading="lazy" src="' + esc(v.cover) + '" alt="">' : '<span class="sp-ph" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;">✦</span>') +
-          '<span class="pv-type">' + esc(v.type === "carousel" ? (v.slides ? v.slides + " photos" : "photos") : (v.duration ? v.duration + "s" : "video")) + '</span><span class="pk-chk">' + (on ? "✓" : "") + '</span>' +
+          '<span class="pv-type">' + esc(v.type === "carousel" ? (v.slides ? v.slides + " photos" : "photos") : (v.duration ? Math.round(v.duration) + "s" : "video")) + '</span><span class="pk-chk">' + (on ? "✓" : "") + '</span>' +
           (launches(v) ? '<span class="pv-lch" title="Launched ' + launches(v) + ' time' + (launches(v) === 1 ? "" : "s") + ' from here">' + launches(v) + '×</span>' : '<span class="pv-lch new" title="Never launched from here">new</span>') +
           (v.via === "code" ? '<span class="pv-via" title="Reached through a spark code (not the Business Center) — it launches with that code">code</span>' : '') +
           '<button type="button" class="pv-big-btn" title="Open the big player (← → to move)">⤢</button></div>' +
-          '<div class="pk-meta"><div class="pk-name">' + esc(v.text || ("post " + v.item_id.slice(-6))) + '</div><div class="muted" style="font-size:10.5px;">@' + esc(p.name) + (v.created ? " · " + esc(v.created.slice(0, 10)) : "") + " " + rvChip(PV_REVIEWS[v.item_id]) + '</div></div></div>';
+          '<div class="pk-meta"><div class="pk-name">' + esc(v.text || ("post " + v.item_id.slice(-6))) + '</div><div class="muted" style="font-size:10.5px;">@' + esc(p.name) + (v.created ? " · " + esc(dayKey(v)) : "") + " " + rvChip(PV_REVIEWS[v.item_id]) + '</div></div></div>';
       }
       function launches(v) { var r = PV_REVIEWS[v.item_id]; return (r && r.tests) || 0; }
       function dayKey(v) {            // the post's LOCAL day (created is UTC "YYYY-MM-DD HH:MM:SS")
@@ -345,8 +368,10 @@
           var picked = p.videos.filter(function (v) { return sel[v.item_id]; }).length;
           html += '<div class="pv-head">' +
             '<button type="button" class="pv-star' + (isFav(p) ? ' on' : '') + '" data-idn="' + esc(p.identity_id) + '" title="' + (isFav(p) ? 'Remove from favorites' : 'Favorite this profile') + '">' + (isFav(p) ? '★' : '☆') + '</button>' +
+            (isUsed(p) && !isFav(p) ? '<span class="pill dim" title="You launched from this profile in the last 60 days — it shows under Mine on its own">used</span>' : '') +
             (p.avatar ? '<img src="' + esc(p.avatar) + '" alt="">' : '<span class="pv-ph">@</span>') + '<b>@' + esc(p.name) + '</b><span class="muted">' + p.videos.length + ' post' + (p.videos.length === 1 ? '' : 's') + (p.bc_name ? ' · ' + esc(p.bc_name) : '') + (picked ? ' · ' + picked + ' picked' : '') + (p.error ? ' · <span style="color:var(--err);">' + esc(p.error) + '</span>' : '') + '</span>' +
-            (vs.length ? '<button type="button" class="btn sm pv-all" data-pid="' + esc(key(p)) + '">' + (vs.every(function (v) { return sel[v.item_id]; }) ? "None" : "Select all") + '</button>' : '') + '</div>';
+            (vs.length ? '<button type="button" class="btn sm pv-all" data-pid="' + esc(key(p)) + '">' + (vs.every(function (v) { return sel[v.item_id]; }) ? "None" : "Select all") + '</button>' : '') +
+            '<button type="button" class="btn sm ghost pv-hide" data-idn="' + esc(p.identity_id) + '" title="' + (isHidden(p) ? "Show this profile in your picker again" : "Not yours / not used — hide it from your picker (only for you; undo under Hidden)") + '">' + (isHidden(p) ? "Unhide" : "Hide") + '</button></div>';
           var lastDay = null;
           vs.forEach(function (v) {
             var k = dayKey(v);
@@ -358,7 +383,7 @@
         if (loading) html += '<div class="muted pv-empty" style="padding:10px 6px;font-size:12px;">Reading ' + loading + ' more Business Center' + (loading === 1 ? "" : "s") + '…</div>';
         if (errors.length) html += '<div class="muted pv-empty" style="padding:4px 6px;font-size:12px;color:var(--err);">' + errors.map(esc).join("<br>") + '</div>';
         grid.innerHTML = (list.length || loading) ? html
-          : (pf === "__fav__" ? '<div class="empty pv-empty">No favorite profiles yet — choose “All profiles” above and tap ☆ on the ones you use, so this window opens on just those next time.</div>'
+          : (pf === "__mine__" ? '<div class="empty pv-empty">None of yours yet — choose “All profiles”, tap ☆ on the ones you use (and Hide the rest), and this window opens on just yours next time.</div>'
              : '<div class="empty pv-empty">No profiles shared on your Business Centers' + (q ? " match “" + esc(q) + "”" : "") + '.</div>');
         body.querySelector(".pk-count").textContent = profiles.length ? (profiles.length + " profile" + (profiles.length === 1 ? "" : "s") + " · " + ((q || pf) ? vis + " of " : "") + profiles.reduce(function (a, p) { return a + p.videos.length; }, 0) + " post" + (total === 1 ? "" : "s")) : "";
         mark();
@@ -385,7 +410,7 @@
         var media = v.preview ? '<video src="' + esc(v.preview) + '" controls playsinline preload="metadata"' + (v.cover ? ' poster="' + esc(v.cover) + '"' : '') + '></video>' : (v.cover ? '<img src="' + esc(v.cover) + '" alt="">' : '<div class="muted" style="padding:40px 10px;text-align:center;font-size:12px;">No preview from TikTok for this post — open it ↗</div>');
         side.innerHTML = '<div class="pk-phone">' + media + '</div><div class="pk-info"><b>@' + esc(p.name) + '</b>' +
           '<div style="font-size:12.5px;margin-top:4px;">' + esc(v.text || "(no caption)") + '</div>' +
-          '<div class="muted" style="font-size:11.5px;margin-top:6px;">' + esc(v.type === "carousel" ? (v.slides ? v.slides + " photos" : "photo post") : "video") + (v.created ? " · " + esc(v.created) : "") + (v.duration ? " · " + v.duration + "s" : "") + (v.url ? ' · <a href="' + esc(v.url) + '" target="_blank" rel="noopener">open post ↗</a>' : "") + '</div>' +
+          '<div class="muted" style="font-size:11.5px;margin-top:6px;">' + esc(v.type === "carousel" ? (v.slides ? v.slides + " photos" : "photo post") : "video") + (v.created ? " · " + esc(v.created) : "") + (v.duration ? " · " + Math.round(v.duration) + "s" : "") + (v.url ? ' · <a href="' + esc(v.url) + '" target="_blank" rel="noopener">open post ↗</a>' : "") + '</div>' +
           (rvChip(PV_REVIEWS[v.item_id], true) ? '<div style="margin-top:6px;">' + rvChip(PV_REVIEWS[v.item_id], true) + "</div>" : "") +
           '<div style="margin-top:10px;display:flex;gap:6px;"><button type="button" class="btn sm ' + (sel[v.item_id] ? "" : "primary") + ' pk-toggle">' + (sel[v.item_id] ? "Remove" : "Add") + '</button><button type="button" class="btn sm pv-big-open" title="Big player with launch history — ← → to move">⤢ Big player</button></div></div>';
         side.querySelector(".pk-toggle").addEventListener("click", function () { toggle(p, v); preview(p, v); });
@@ -402,7 +427,19 @@
           var idn = String(st.dataset.idn), on = !favs[idn];
           if (on) favs[idn] = true; else delete favs[idn];
           if (o.onToggleFav) { try { o.onToggleFav(idn, on); } catch (_e) {} }
+          else savePref("/super-launcher/profile-favorite", idn, on);
+          if (on && hid[idn]) { delete hid[idn]; savePref("/super-launcher/profile-hide", idn, false); }
           fillProfiles(); render(); return;
+        }
+        var hb = e.target.closest(".pv-hide");
+        if (hb) {
+          var hidn = String(hb.dataset.idn), hon = !hid[hidn];
+          if (hon) hid[hidn] = true; else delete hid[hidn];
+          if (hon && favs[hidn]) { delete favs[hidn]; if (o.onToggleFav) { try { o.onToggleFav(hidn, false); } catch (_e) {} } else savePref("/super-launcher/profile-favorite", hidn, false); }
+          savePref("/super-launcher/profile-hide", hidn, hon);
+          fillProfiles(); render();
+          if (window.adopsToast) adopsToast("ok", hon ? "Hidden — find it again under “Hidden” in the list" : "Shown again");
+          return;
         }
         var a = e.target.closest(".pv-all");
         if (a) { var p = profiles.filter(function (x) { return key(x) === a.dataset.pid; })[0]; if (!p) return; var vs = shown(p), every = vs.every(function (v) { return sel[v.item_id]; }); vs.forEach(function (v) { if (every ? sel[v.item_id] : !sel[v.item_id]) { if (sel[v.item_id]) { delete sel[v.item_id]; order = order.filter(function (x) { return x !== v.item_id; }); } else { sel[v.item_id] = entry(p, v); order.push(v.item_id); } } }); render(); return; }
@@ -422,7 +459,8 @@
         var el = grid.querySelector('.pk-tile[data-id="' + CSS.escape(String(n.v.item_id)) + '"]'); if (el) el.scrollIntoView({ block: "nearest" });
       }
       function onKey(e) {
-        if (bigOpen || e.target.closest("input, select, textarea") || !document.body.contains(body)) return;
+        var tg = e.target && e.target.closest ? e.target : null;
+        if (bigOpen || (tg && tg.closest("input, select, textarea")) || !document.body.contains(body)) return;
         if (e.key === "ArrowRight") { e.preventDefault(); step(1); } else if (e.key === "ArrowLeft") { e.preventDefault(); step(-1); }
       }
       document.addEventListener("keydown", onKey);
@@ -446,7 +484,7 @@
             '<div class="pvb-nav"><button type="button" class="btn sm pvb-prev" title="Previous (←)">←</button><span class="muted">' + (i + 1) + " of " + flat.length + '</span><button type="button" class="btn sm pvb-next" title="Next (→)">→</button></div>' +
             '<b>@' + esc(p.name) + '</b>' + (v.via === "code" ? ' <span class="pill dim" title="Reached through a spark code">code</span>' : "") +
             '<div class="pvb-cap">' + esc(v.text || "(no caption)") + '</div>' +
-            '<div class="muted" style="font-size:12px;">' + esc(dayLabel(dayKey(v))) + (v.created ? " · " + esc(v.created.slice(11, 16)) + " UTC" : "") + " · " + esc(v.type === "carousel" ? (v.slides ? v.slides + " photos" : "photo post") : (v.duration ? v.duration + "s video" : "video")) + (v.url ? ' · <a href="' + esc(v.url) + '" target="_blank" rel="noopener">open ↗</a>' : "") + '</div>' +
+            '<div class="muted" style="font-size:12px;">' + esc(dayLabel(dayKey(v))) + (v.created ? " · " + esc(v.created.slice(11, 16)) + " UTC" : "") + " · " + esc(v.type === "carousel" ? (v.slides ? v.slides + " photos" : "photo post") : (v.duration ? Math.round(v.duration) + "s video" : "video")) + (v.url ? ' · <a href="' + esc(v.url) + '" target="_blank" rel="noopener">open ↗</a>' : "") + '</div>' +
             '<button type="button" class="btn ' + (sel[v.item_id] ? "" : "primary") + ' pvb-toggle" style="margin:10px 0;">' + (sel[v.item_id] ? "✓ Added — remove" : "Add to this launch") + '</button>' +
             '<div class="drawer-sec">Launch history</div><div class="pvb-hist muted" style="font-size:12px;">' + (launches(v) ? "Loading…" : "Never launched from here.") + '</div>';
           box.querySelector(".pvb-prev").onclick = function () { show(i - 1); };
@@ -464,7 +502,7 @@
           }).catch(function () {});
         }
         function bk(e) {
-          if (e.target.closest("input, select, textarea")) return;
+          if (e.target && e.target.closest && e.target.closest("input, select, textarea")) return;
           if (e.key === "ArrowRight") { e.preventDefault(); show(i + 1); } else if (e.key === "ArrowLeft") { e.preventDefault(); show(i - 1); }
         }
         document.addEventListener("keydown", bk);

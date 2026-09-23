@@ -103,6 +103,12 @@ def bucket_of(r, acct, h: dict | None) -> tuple[str, str]:
     return (b if b in ("active", "pending", "blocked", "paused") else "active"), ""
 
 
+def _acct_level(blocked: str) -> bool:
+    """A block that comes from the ad ACCOUNT (suspended / punished), not the campaign itself."""
+    b = (blocked or "").lower()
+    return b.startswith("account ") or "punish" in b or "advertiser" in b
+
+
 def _naive(d):
     return d.astimezone(timezone.utc).replace(tzinfo=None) if getattr(d, "tzinfo", None) else d
 
@@ -170,6 +176,7 @@ def status_page(request: Request, db: Session = Depends(get_db)):
         records = [r for r in records if r.campaign_id in tool_campaign_ids]
     accounts = {a.advertiser_id: a for a in db.query(models.AdAccount).all()}
     older = request.query_params.get("older") == "1"      # Blocked: also errors from before the range
+    issue_at = board_numbers.issue_dates(db, models)       # when each problem was first seen (errors-since)
     sources = pnl_data.campaign_source_map(db)
     ag_states = adgroup_stats.states_for(db, [r.campaign_id for r in records if sc.allows(r.advertiser_id)])
     healths = {r.campaign_id: campaign_health(r, accounts.get(r.advertiser_id), ag_states.get(r.campaign_id, []))
@@ -268,7 +275,7 @@ def status_page(request: Request, db: Session = Depends(get_db)):
         if tab == "blocked":
             # errors are dated: with a range picked, only the ones that started in it (the week-old
             # suspensions stay one click away — "N older")
-            err_at = board_numbers.error_at(h, acct, bool(blocked) and blocked.startswith("account "))
+            err_at = board_numbers.error_at(h, acct, _acct_level(blocked), r.campaign_id, issue_at)
             if state == "blocked" and not older and err_at is not None and err_at < start_utc.replace(tzinfo=None):
                 continue
         if account and r.advertiser_id != account:
@@ -369,7 +376,7 @@ def status_page(request: Request, db: Session = Depends(get_db)):
         state_counts["all"] += 1
         tab_, _blk = bucket_of(r, acct_, healths.get(r.campaign_id))
         if tab_ == "blocked" and not older:
-            ea = board_numbers.error_at(healths.get(r.campaign_id), acct_, bool(_blk) and _blk.startswith("account "))
+            ea = board_numbers.error_at(healths.get(r.campaign_id), acct_, _acct_level(_blk), r.campaign_id, issue_at)
             if ea is not None and ea < _range_start:
                 state_counts["blocked_older"] += 1
                 continue

@@ -45,7 +45,7 @@ def _row_json(r: models.LaunchLog) -> dict:
 
 @router.get("/warmup")
 def warmup_page(request: Request, db: Session = Depends(get_db)):
-    from .super_launcher import _get_favs, profile_bcs
+    from .super_launcher import picker_prefs, profile_bcs
     sc = scope_mod.for_request(request, db)
     accounts = [a for a in (db.query(models.AdAccount).filter(models.AdAccount.enabled == True)   # noqa: E712
                             .order_by(models.AdAccount.advertiser_name).all()) if sc.allows(a.advertiser_id)]
@@ -62,7 +62,7 @@ def warmup_page(request: Request, db: Session = Depends(get_db)):
         "rows": rows, "counts": counts, "labels": warmup.STATE_LABELS,
         "default_budget": warmup.DEFAULT_BUDGET, "min_budget": warmup.MIN_BUDGET,
         "bcs_json": json.dumps(profile_bcs(db, accounts)),
-        "fav_profiles_json": json.dumps(_get_favs(db, sc)),
+        **picker_prefs(db, sc),
         "ok": request.query_params.get("ok", ""), "err": request.query_params.get("err", ""),
     })
 

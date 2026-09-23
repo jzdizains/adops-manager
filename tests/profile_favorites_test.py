@@ -19,12 +19,12 @@ def read(p): return open(os.path.join(ROOT, p), encoding="utf-8").read()
 
 js = read("app/static/picker.js")
 print("-- the picker learned favorites --")
-check("favorites come in as an option and default the view", "o.favorites" in js and 'pf = favProfs.length ? "__fav__" : ""' in js)
-check("a ★ Favorites filter shows only starred profiles", 'value="__fav__"' in js and 'pf === "__fav__" ? isFav(p)' in js)
+check("favorites come in as an option and default the view (v153: as part of Mine)", "o.favorites" in js and 'pf = mine.length ? "__mine__" : ""' in js)
+check("a ★ Mine filter shows starred (and recently used) profiles", 'value="__mine__"' in js and 'if (pf === "__mine__") return isMine(p);' in js and "isFav(p) || isUsed(p)" in js)
 check("each profile header has a star toggle", 'class="pv-star' in js and 'data-idn="' in js)
 check("tapping the star flips it, persists via the callback, and never double-defaults after a manual pick",
       "o.onToggleFav" in js and "userPickedFilter = true" in js and "if (!userPickedFilter) pf =" in js)
-check("the empty favorites view tells the operator how to add some", 'No favorite profiles yet' in js)
+check("the empty favorites view tells the operator how to add some", 'None of yours yet' in js and 'tap ☆ on the ones you use' in js)
 
 print("-- js parses --")
 r = subprocess.run(["node", "-e", "new Function(require('fs').readFileSync('app/static/picker.js','utf8'))"], cwd=ROOT, capture_output=True, text=True)
@@ -39,14 +39,14 @@ check("saving posts to the per-user endpoint", 'fetch("/super-launcher/profile-f
 print("-- route: per-user favorites, no TikTok call --")
 r2 = read("app/routes/super_launcher.py")
 check("a POST toggles one profile in this user's list", '@router.post("/super-launcher/profile-favorite")' in r2 and "queries.set_setting(db, _fav_key(sc)" in r2)
-check("favorites are keyed per user and seeded into the page", 'f"fav_profiles:{sc.user_id' in r2 and '"fav_profiles_json": json.dumps(_get_favs(db, sc))' in r2)
+check("favorites are keyed per user and seeded into the page", 'f"fav_profiles:{sc.user_id' in r2 and '"fav_profiles_json": json.dumps(_get_favs(db, sc))' in r2 and "**picker_prefs(db, sc)" in r2)
 check("add/remove logic is present", "favs.append(idn)" in r2 and "favs = [x for x in favs if x != idn]" in r2)
 
 print("-- css for the star, both themes (token-based) --")
 css = read("app/static/style.css")
 check("the star has styles and an 'on' state using tokens (no hard-coded theme colors except the gold star)",
       ".pv-star {" in css and ".pv-star.on {" in css and "var(--text-dim)" in css)
-check("STATIC_VERSION bumped", 'STATIC_VERSION = "153"' in read("app/config.py"))
+check("STATIC_VERSION bumped", 'STATIC_VERSION = "154"' in read("app/config.py"))
 
 print()
 print("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}")

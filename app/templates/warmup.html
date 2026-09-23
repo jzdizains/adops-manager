@@ -104,7 +104,7 @@
 
 <script>
 (function () {
-  var BCS = {{ bcs_json|js }}, FAV = {{ fav_profiles_json|js }};
+  var BCS = {{ bcs_json|js }}, FAV = {{ fav_profiles_json|js }}, HIDDEN = {{ hidden_profiles_json|js }}, USED = {{ used_profiles_json|js }};
   var accs = [], posts = [], mode = "profile";
   var $ = function (id) { return document.getElementById(id); };
   function esc(s) { return (window.UI && UI.esc) ? UI.esc(s) : String(s == null ? "" : s); }
@@ -134,7 +134,7 @@
   });
   $("wuPickPost").addEventListener("click", function () {
     if (!window.UI || !UI.pickProfileVideos) return;
-    UI.pickProfileVideos({ bcs: BCS, selected: posts, favorites: FAV }).then(function (res) {
+    UI.pickProfileVideos({ bcs: BCS, selected: posts, favorites: FAV, hidden: HIDDEN, used: USED }).then(function (res) {
       if (res) { posts = res; sync(); }
     });
   });

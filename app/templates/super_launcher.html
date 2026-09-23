@@ -194,7 +194,7 @@
   var slCreative = document.getElementById("slCreative"), slItems = document.getElementById("slItems");
   var items = [];      // the board: [{kind: library|spark|profile, id|item_id, name, cover, video, type, sub, …}] in the picked order
   var BCS = {{ bcs_json|js }};
-  var FAV_PROFILES = {{ fav_profiles_json|js }};
+  var FAV_PROFILES = {{ fav_profiles_json|js }}, HIDDEN_PROFILES = {{ hidden_profiles_json|js }}, USED_PROFILES = {{ used_profiles_json|js }};
   function saveFav(identityId, on) {
     var i = FAV_PROFILES.indexOf(String(identityId));
     if (on && i < 0) FAV_PROFILES.push(String(identityId));
@@ -369,7 +369,7 @@
       });
     } else if (src === "profile") {
       var prof = items.filter(function (it) { return it.kind === "profile"; });
-      UI.pickProfileVideos({ bcs: BCS, selected: prof, favorites: FAV_PROFILES, onToggleFav: saveFav }).then(function (res) {
+      UI.pickProfileVideos({ bcs: BCS, selected: prof, favorites: FAV_PROFILES, onToggleFav: saveFav, hidden: HIDDEN_PROFILES, used: USED_PROFILES }).then(function (res) {
         if (!res) return;
         var keep = {}; res.forEach(function (v) { keep["profile:" + v.item_id] = 1; });
         items = items.filter(function (it) { return it.kind !== "profile" || keep[itemKey(it)]; });

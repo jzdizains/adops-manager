@@ -73,6 +73,52 @@ def _get_favs(db: Session, sc) -> list[str]:
         return []
 
 
+def _hide_key(sc) -> str:
+    return f"hidden_profiles:{sc.user_id if sc.user_id is not None else 'all'}"
+
+
+def _get_hidden(db: Session, sc) -> list[str]:
+    """Per-user list of profiles hidden from the picker (not theirs / never used)."""
+    try:
+        return [str(x) for x in json.loads(queries.get_setting(db, _hide_key(sc), "[]") or "[]")]
+    except (ValueError, TypeError):
+        return []
+
+
+USED_DAYS = 60
+
+
+def used_profiles(db: Session, sc, days: int = USED_DAYS) -> dict:
+    """The profiles this workspace actually launches from (last `days`): the identity a picked
+    post ran under, and the creator handle of any spark it launched — so the picker can open
+    on "Mine" without anyone starring 26 profiles by hand. One query each."""
+    from datetime import datetime as _dt, timedelta as _td
+    since = _dt.utcnow() - _td(days=days)
+    sids = {sid for (sid,) in db.query(models.LaunchLog.spark_code_id)
+            .filter(models.LaunchLog.spark_code_id.isnot(None), models.LaunchLog.created_at >= since).distinct()
+            }
+    if not sids:
+        return {"ids": [], "handles": []}
+    ids, handles = set(), set()
+    groups = {}
+    for s in sc.owned(db.query(models.SparkCode), models.SparkCode).filter(models.SparkCode.id.in_(list(sids)[:5000])):
+        if s.identity_id:
+            ids.add(str(s.identity_id))
+        if s.group_id:
+            groups.setdefault(s.group_id, None)
+    if groups:
+        for g in db.query(models.SparkCodeGroup).filter(models.SparkCodeGroup.id.in_(list(groups))):
+            if g.name:
+                handles.add(g.name.strip().lstrip("@").lower())
+    return {"ids": sorted(ids), "handles": sorted(handles)}
+
+
+def picker_prefs(db: Session, sc) -> dict:
+    """What the profile picker needs about this user: favorites, hidden, used."""
+    return {"fav_profiles_json": json.dumps(_get_favs(db, sc)), "hidden_profiles_json": json.dumps(_get_hidden(db, sc)),
+            "used_profiles_json": json.dumps(used_profiles(db, sc))}
+
+
 def profile_bcs(db: Session, accounts: list) -> list[dict]:
     """The Business Centers behind these accounts, for the profile-video picker
     ({id, name, accounts}). Shared by the Super Launcher and the Warm-up page."""
@@ -111,7 +157,7 @@ def page(request: Request, db: Session = Depends(get_db)):
         **picker, "preset_info_json": json.dumps(preset_info), "bcs_json": json.dumps(bcs),
         "creatives_available": creatives_available, "carousels_available": carousels_available,
         "dest_labels_json": json.dumps(dest_labels),
-        "fav_profiles_json": json.dumps(_get_favs(db, sc)),
+        **picker_prefs(db, sc),
         "title": "Super Launcher",
     })
 
@@ -134,6 +180,25 @@ async def profile_favorite(request: Request, db: Session = Depends(get_db)):
         favs = [x for x in favs if x != idn]
     queries.set_setting(db, _fav_key(sc), json.dumps(favs))
     return JSONResponse({"ok": True, "favorites": favs})
+
+
+@router.post("/super-launcher/profile-hide")
+async def profile_hide(request: Request, db: Session = Depends(get_db)):
+    """Hide (or show again) one profile in this user's picker. Per user, no TikTok call."""
+    from .. import scope as scope_mod
+    sc = scope_mod.for_request(request, db)
+    form = await request.form()
+    idn = str(form.get("identity_id") or "").strip()
+    on = str(form.get("on") or "").lower() in ("1", "true", "on", "yes")
+    hidden = _get_hidden(db, sc)
+    if not idn:
+        return JSONResponse({"ok": False, "hidden": hidden})
+    if on and idn not in hidden:
+        hidden.append(idn)
+    elif not on:
+        hidden = [x for x in hidden if x != idn]
+    queries.set_setting(db, _hide_key(sc), json.dumps(hidden[-2000:]))
+    return JSONResponse({"ok": True, "hidden": hidden})
 
 
 @router.post("/super-launcher/refresh-accounts")
@@ -189,6 +254,12 @@ def profile_videos_json(request: Request, db: Session = Depends(get_db)):
                for a in db.query(models.AdAccount).filter(models.AdAccount.owner_bc_id == bc_id)):
         return JSONResponse({"ok": False, "error": "That Business Center has no account in this view.", "profiles": []})
     out = profile_videos.list_for_bc(db, sc, bc_id, refresh=request.query_params.get("refresh") == "1")
+    # our own saved copy of a cover when we have one (small, never expires) instead of TikTok's
+    # full-size signed URL (1080 px each, dead after about an hour)
+    owned = profile_videos._owned_covers()
+    if owned:
+        out = {**out, "profiles": [{**p, "videos": [({**v, "cover": "/thumbs/pp/%s.jpg" % v["item_id"]} if v.get("item_id") in owned else v)
+                                                   for v in p.get("videos") or []]} for p in out.get("profiles") or []]}
     # TikTok's verdict on earlier launches of each post — read fresh from the DB (the post
     # list itself is cached; this is not)
     from .. import review
