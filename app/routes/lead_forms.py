@@ -206,6 +206,8 @@ def _clone_one(db: Session, form_id: str, from_advertiser_id: str, acct: models.
         r = instant_page_web.duplicate(form_id, name, acct.advertiser_id, source_owner=from_advertiser_id)
     except spark_web_api.WebAuthError as e:
         return str(e)[:160]
+    if r.get("no_access"):
+        return r.get("error", "")          # nothing was created — no re-read, no pause (v155.1)
     answered = "" if r.get("ok") else f"TikTok refused the copy — {r.get('error', '')[:140]}"
     try:
         sync_account(db, acct)
@@ -291,8 +293,11 @@ def clone_to_many(db: Session, form_id: str, from_advertiser_id: str, name: str,
     """The job body: one web call per account, verified by re-reading, a short pause
     between accounts; a failure on one account never stops the rest."""
     import time as _time
+    from .. import instant_page_web
     ok, failed, stopped = [], [], False
+    no_access: list = []                     # (label, bc) — reported as ONE line with the fix
     accts = {a.advertiser_id: a for a in db.query(models.AdAccount).filter(models.AdAccount.advertiser_id.in_(targets or [""])).all()}
+    bc_names = {b.bc_id: (b.name or b.bc_id) for b in db.query(models.BusinessCenter).all()}
     for i, adv in enumerate(targets):
         if should_stop and should_stop():
             stopped = True
@@ -308,6 +313,10 @@ def clone_to_many(db: Session, form_id: str, from_advertiser_id: str, name: str,
             ok.append(adv)                       # a re-run never duplicates
             continue
         why = _clone_one(db, form_id, from_advertiser_id, acct, name)
+        if why and instant_page_web.is_no_access(why):
+            no_access.append((label, bc_names.get(acct.owner_bc_id or "", "")))
+            _time.sleep(0.3)
+            continue
         if why and ("200000" in why or "expired" in why.lower() or "log in" in why.lower()):
             failed.append(f"{label}: {why} — stopped here, the remaining accounts were not attempted")
             stopped = True
@@ -315,4 +324,6 @@ def clone_to_many(db: Session, form_id: str, from_advertiser_id: str, name: str,
         (failed.append(f"{label}: {why}") if why else ok.append(adv))
         if i + 1 < len(targets):
             _time.sleep(1.5)
-    return {"ok": ok, "failed": failed, "stopped": stopped}
+    if no_access:
+        failed.insert(0, instant_page_web.no_access_summary([x[0] for x in no_access], [x[1] for x in no_access]))
+    return {"ok": ok, "failed": failed, "stopped": stopped, "no_access": len(no_access)}

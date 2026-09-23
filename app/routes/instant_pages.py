@@ -443,8 +443,11 @@ def clone_to_many(db: Session, page_id: str, from_advertiser_id: str, targets: l
     """The job body: copy to each target and verify it, one account at a time with a short
     pause; a refused account never stops the rest, dead cookies stop the whole run."""
     import time as _time
+    from .. import instant_page_web
     ok, failed, notes, stopped = [], [], [], False
+    no_access: list = []                     # (label, bc) — reported as ONE line with the fix (v155.1)
     accts = {a.advertiser_id: a for a in db.query(models.AdAccount).filter(models.AdAccount.advertiser_id.in_(targets or [""])).all()}
+    bc_names = {b.bc_id: (b.name or b.bc_id) for b in db.query(models.BusinessCenter).all()}
     if not name:
         src = db.query(models.InstantPage).filter_by(page_id=page_id, owner_advertiser_id=from_advertiser_id).first()
         name = (src.name if src else "") or f"page {page_id}"
@@ -469,6 +472,10 @@ def clone_to_many(db: Session, page_id: str, from_advertiser_id: str, targets: l
             failed.append(f"{label}: {str(e)[:120]} — stopped here, the remaining accounts were not attempted")
             stopped = True
             break
+        if r.get("no_access") or (not r["ok"] and instant_page_web.is_no_access(r.get("error", ""))):
+            no_access.append((label, bc_names.get(acct.owner_bc_id or "", "")))
+            _time.sleep(0.3)
+            continue
         if r["ok"]:
             ok.append(adv)
             if r.get("error"):
@@ -477,7 +484,9 @@ def clone_to_many(db: Session, page_id: str, from_advertiser_id: str, targets: l
             failed.append(f"{label}: {r['error'][:140]}")
         if i + 1 < len(targets):
             _time.sleep(1.5)
-    return {"ok": ok, "failed": failed, "stopped": stopped, "notes": notes}
+    if no_access:
+        failed.insert(0, instant_page_web.no_access_summary([x[0] for x in no_access], [x[1] for x in no_access]))
+    return {"ok": ok, "failed": failed, "stopped": stopped, "notes": notes, "no_access": len(no_access)}
 
 
 @router.post("/instant-pages/clone-multi")

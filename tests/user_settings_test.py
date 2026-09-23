@@ -178,7 +178,7 @@ check("nav: Users, Access log, Server, Assistant, font gated by own_view; no is_
 check("server-wide inputs live in the owner-only Server section", th.index('{% if sec.own_view %}\n<section class="stab" data-tab="server">') < th.index('name="queue_per_sweep"') < th.index('name="sweep_interval_sec"') < th.index('name="assistant_model"') < th.index("{% endif %}\n<div class=\"save-bar\""))
 check("editing another user shows a banner", "{% if ws.other %}" in th and "Editing <b>{{ ws.email }}</b>'s settings" in th)
 check("⌘K hides owner-only pages outside the own view", 'OWNER_ONLY_JUMP = frozenset({"/settings#users", "/settings#access", "/team"})' in read("app/templating.py"))
-check("STATIC_VERSION bumped", 'STATIC_VERSION = "155"' in read("app/config.py"))
+check("STATIC_VERSION bumped", 'STATIC_VERSION = "156"' in read("app/config.py"))
 
 print()
 print("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}")

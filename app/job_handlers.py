@@ -87,6 +87,12 @@ def _bid_bump(db: Session, p: dict, job: models.Job) -> dict:
     return {"ok": not r["failed"], "detail": d, "href": "/monitor?view=automation"}
 
 
+def _n_failed(r: dict) -> int:
+    """Failed accounts: the no-access ones are folded into ONE summary line (v155.1)."""
+    na = int(r.get("no_access") or 0)
+    return len(r["failed"]) - (1 if na else 0) + na
+
+
 @jobs.handler("instant_page_clone_all")
 def _instant_page_clone_all(db: Session, p: dict, job: models.Job) -> dict:
     from .routes import instant_pages
@@ -95,7 +101,7 @@ def _instant_page_clone_all(db: Session, p: dict, job: models.Job) -> dict:
                                     name=str(p.get("name") or ""), new_url=str(p.get("new_url") or ""), new_text=str(p.get("new_text") or ""))
     d = f"“{p.get('name', '')}” cloned to {len(r['ok'])} account(s)"
     if r["failed"]:
-        d += f", {len(r['failed'])} failed — " + " · ".join(r["failed"])[:500]
+        d += f", {_n_failed(r)} failed — " + " · ".join(r["failed"])[:900]
     if r.get("notes"):
         d += " · " + " · ".join(r["notes"])[:200]
     if r["stopped"]:
@@ -111,7 +117,7 @@ def _lead_form_clone_all(db: Session, p: dict, job: models.Job) -> dict:
                                  should_stop=lambda: jobs.should_stop(db, job), on_progress=lambda t: jobs.progress(db, job, t))
     d = f"form “{p.get('name', '')}” now on {len(r['ok'])} more account(s)"
     if r["failed"]:
-        d += f", {len(r['failed'])} failed — " + " · ".join(r["failed"])[:400]
+        d += f", {_n_failed(r)} failed — " + " · ".join(r["failed"])[:900]
     if r["stopped"]:
         d += " (stopped)"
     return {"ok": not r["failed"] and not r["stopped"], "detail": d, "href": "/lead-forms"}

@@ -23,7 +23,7 @@
   </form>
 </div>
 
-{% if snap.at %}
+{% if snap.at and snap.summary %}
 <div class="kpis" style="margin-top:12px;">
   <div class="kpi"><div class="lab">Ad accounts</div><div class="val">{{ snap.summary.accounts }}</div><div class="sub">the dashboard manages</div></div>
   <div class="kpi"><div class="lab">In the main BC</div><div class="val {{ 'bad' if snap.summary.in_main_bc < snap.summary.accounts }}">{{ snap.summary.in_main_bc }}</div><div class="sub">shared in — assets can be linked</div></div>

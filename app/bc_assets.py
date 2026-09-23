@@ -418,10 +418,33 @@ def scan(db: Session, on_progress=None, should_stop=None, user_id: int | None = 
         "pixels_owned": len(snap["pixels"]),
     }
     say(f"{ready} of {len(snap['accounts'])} account(s) fully wired")
-    return _store(db, snap, user_id)
+    return _store(db, snap, user_id, complete=True)
 
 
-def _store(db: Session, snap: dict, user_id: int | None = None) -> dict:
+EMPTY_SUMMARY = {"accounts": 0, "in_main_bc": 0, "with_pixel": 0, "all_profiles": 0, "ready": 0,
+                 "profiles": 0, "pixels": 0, "pixels_owned": 0}
+
+
+def merge_partial(prev: dict, snap: dict) -> dict:
+    """An audit that stopped early (Stop pressed, no main BC chosen) must not wipe the last
+    COMPLETE one — before v155.1 it replaced it with a snapshot without totals and the Assets
+    page crashed. Keep the last complete audit and put this run's notes on top. Pure."""
+    if prev.get("summary") and prev.get("accounts"):
+        out = dict(prev)
+        out["errors"] = list(snap.get("errors") or []) + [
+            f"this audit didn't finish ({snap.get('at', '')[:16].replace('T', ' ')} UTC) — the numbers are from the "
+            f"last complete one ({str(prev.get('at', ''))[:16].replace('T', ' ')} UTC)"]
+        for k in ("main_bc", "main_bc_name", "bcs", "admin_on_main"):
+            if snap.get(k):
+                out[k] = snap[k]
+        return out
+    snap.setdefault("summary", dict(EMPTY_SUMMARY))
+    return snap
+
+
+def _store(db: Session, snap: dict, user_id: int | None = None, complete: bool = False) -> dict:
+    if not complete:
+        snap = merge_partial(snapshot(db, user_id), snap)
     try:
         queries.upsert_setting(db, _skey(SNAPSHOT_KEY, user_id), json.dumps(snap)[:900_000])
         queries.upsert_setting(db, _skey(SNAPSHOT_AT_KEY, user_id), str(snap.get("at") or ""))

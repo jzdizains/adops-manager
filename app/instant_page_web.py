@@ -122,12 +122,31 @@ def no_access(body: dict) -> bool:
     return "access permission" in _err_msg(body).lower() or "GetLoginAdvInfoByUid" in _err_msg(body)
 
 
+NO_ACCESS_MARK = "has no access to ad account"
+NO_ACCESS_FIX = ("Fix: in that Business Center (Members), give the TikTok login whose cookies are stored access to these ad "
+                 "accounts — or paste cookies from a login that already has it on the TikTok Cookies page — then run it again; "
+                 "accounts that already have it are skipped. (The API connection that launches ads doesn't count here: "
+                 "copying goes through the Ads Manager editor, which only sees what the logged-in person can see.)")
+
+
+def is_no_access(text: str) -> bool:
+    return NO_ACCESS_MARK in str(text or "")
+
+
+def no_access_summary(labels: list[str], bcs: list[str] | None = None, show: int = 3) -> str:
+    """ONE line for every account the cookie login can't reach (v155.1) — 68 copies of the same
+    long reason truncated the fix away. Pure."""
+    n = len(labels)
+    names = ", ".join(labels[:show]) + (f" +{n - show} more" if n > show else "")
+    where = (" in " + ", ".join(sorted({b for b in (bcs or []) if b}))[:80]) if bcs and any(bcs) else ""
+    return (f"{n} account{'s' if n != 1 else ''}{where} — the TikTok login in your stored cookies "
+            f"{NO_ACCESS_MARK}{'s' if n != 1 else ''} {names}. " + NO_ACCESS_FIX)
+
+
 def explain(body: dict, account_id: str) -> str:
     if no_access(body):
-        return (f"the TikTok login behind the stored cookies has no access to ad account {account_id} "
-                "(TikTok: “not any access permission”). Log into ads.tiktok.com with a user that is a member of the "
-                "Business Center holding BOTH the source and the target account, with access to those ad accounts, "
-                "and paste that session's cookies on the TikTok Cookies page")
+        return (f"the TikTok login behind the stored cookies {NO_ACCESS_MARK} {account_id} "
+                "(TikTok: “not any access permission”). " + NO_ACCESS_FIX)
     return f"{body.get('code')} {_msg(body)}" + (f" ({_err_msg(body)[:160]})" if _err_msg(body) else "")
 
 
@@ -184,7 +203,7 @@ def duplicate(source_page_id: str, name: str, target: str, new_url: str = "", ne
         info, shape, probes = read_page(source_page_id, target, source_owner)
         if not _ok(info):
             if no_access(info):
-                raise CloneError("read source: " + explain(info, target))
+                return {"ok": False, "page_id": "", "steps": steps, "error": explain(info, target), "no_access": True}
             raise CloneError(f"read source: {explain(info, target)} — tried " + "; ".join(probes))
         if shape != "target":
             steps.append(f"read shape: {shape}")
