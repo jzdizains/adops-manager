@@ -15,6 +15,22 @@
     mount: function (el, o) {
       if (!el) return null;
       var seq = 0, last = "", data = null, timer = null, leaveOut = true;
+      // v155.19: a page / form that was just shared, copied or built shows up by itself — the
+      // rows still "missing" are re-checked on TikTok every RECHECK_MS while this review is on
+      // screen (at most RECHECK_MAX times per review), and at once when such a job finishes
+      var RECHECK_MS = window.LR_RECHECK_MS || 45000, RECHECK_MAX = 12, ASSET_JOBS = ["lead_form_clone_all", "lead_form_build_many", "instant_page_clone_all", "instant_page_build", "asset_builds", "asset_sync", "page_stock"];
+      var rechecks = 0, recheckTimer = null;
+      function anyMissing() { return !!data && data.rows.some(function (r) { return ["page", "form"].some(function (k) { return r.cells[k] && r.cells[k].text === "missing"; }); }); }
+      function onScreen() { return document.body.contains(el) && !document.hidden && el.getClientRects().length > 0; }
+      function planRecheck() {
+        clearTimeout(recheckTimer);
+        if (!anyMissing() || rechecks >= RECHECK_MAX) return;
+        recheckTimer = setTimeout(function () {
+          if (!anyMissing()) return;
+          if (!onScreen()) { planRecheck(); return; }          // out of sight: wait, don't ask TikTok
+          rechecks++; load(true);
+        }, RECHECK_MS);
+      }
       var hidden = o.form.querySelector('input[name="exclude_ids"]');
       if (!hidden) { hidden = document.createElement("input"); hidden.type = "hidden"; hidden.name = "exclude_ids"; o.form.appendChild(hidden); }
 
@@ -54,7 +70,8 @@
         var st = state(), warned = rows.filter(function (r) { return !r.blocked && r.warnings.length; }).length;
         var missing = rows.some(function (r) { return ["page", "form"].some(function (k) { return r.cells[k] && r.cells[k].text === "missing"; }); });
         var head = '<div class="lr-top"><b>' + st.ready + " ready</b>" + (st.blocked ? ' · <span class="lr-bad">' + st.blocked + " blocked</span>" : "") + (warned ? ' · <span class="muted">' + warned + " with notes</span>" : "") +
-          (missing ? '<button type="button" class="btn sm ghost lr-live" title="Ask TikTok again for the pages / forms the last sync didn\'t see">Re-check on TikTok</button>' : "") +
+          (missing ? '<button type="button" class="btn sm ghost lr-live" title="Ask TikTok again for the pages / forms the last sync didn\'t see">Re-check on TikTok</button>' +
+            (rechecks < RECHECK_MAX ? '<span class="muted lr-auto" title="A page or form you share, copy or build meanwhile shows up here by itself">re-checks itself every ' + Math.round(RECHECK_MS / 1000) + ' s</span>' : "") : "") +
           (noTerms.length ? '<button type="button" class="btn sm primary lr-terms" title="Confirms TikTok\'s Lead Generation Terms for these ad accounts through TikTok\'s API — what Ads Manager records the first time a lead ad is built there">Confirm Lead Generation Terms · ' + noTerms.length + " account" + (noTerms.length === 1 ? "" : "s") + '</button> <a class="muted" style="font-size:11.5px;" href="' + TERMS_URL + '" target="_blank" rel="noopener">read the terms ↗</a>' : "") +
           (st.blocked > 1 ? '<button type="button" class="btn sm ghost lr-share-all" title="Copy every blocked account and why, ready to paste">⧉ Share all ' + st.blocked + "</button>" : "") +
           (st.blocked ? '<label class="lr-leave"><input type="checkbox" class="lr-leave-cb"' + (leaveOut ? " checked" : "") + "> Leave out the " + st.blocked + " blocked account" + (st.blocked === 1 ? "" : "s") + "</label>" : "") + "</div>";
@@ -128,8 +145,10 @@
             }, function () { btn.disabled = false; if (window.adopsToast) adopsToast("err", "Couldn't reach the dashboard."); });
           });
       }
+      document.addEventListener("visibilitychange", function () { if (!document.hidden && anyMissing() && onScreen()) { rechecks++; load(true); } });
       document.addEventListener("adops:job", function (e) {
         var j = e.detail || {};
+        if (ASSET_JOBS.indexOf(j.kind) >= 0 && anyMissing() && document.body.contains(el)) { load(true); return; }
         if (j.kind === "lead_terms_accept" && data) {
           data.rows.forEach(function (r) { if (r.cells.terms && r.cells.terms.state === "bad") { r.cells.terms = { state: "na", text: "checking…" }; r.terms_pending = true; } });
           draw(); terms(seq);
@@ -141,6 +160,7 @@
         if (!p) { data = { rows: [] }; draw(); return; }
         var key = JSON.stringify(p);
         if (!live && key === last && data) return;
+        if (key !== last) rechecks = 0;
         last = key; var my = ++seq;
         if (live) p.live = "1";
         el.classList.add("lr-loading");
@@ -149,7 +169,7 @@
           if (my !== seq) return;
           el.classList.remove("lr-loading");
           if (!d.ok) { data = null; el.innerHTML = '<div class="muted lr-empty">' + esc(d.error || "Couldn't check the accounts.") + "</div>"; hidden.value = ""; if (o.onChange) o.onChange(state()); return; }
-          data = d; draw(); identities(my); terms(my);
+          data = d; draw(); identities(my); terms(my); planRecheck();
         }).catch(function () { if (my === seq) { el.classList.remove("lr-loading"); el.innerHTML = '<div class="muted lr-empty">Couldn\'t check the accounts — the launch still checks each one.</div>'; } });
       }
 

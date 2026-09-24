@@ -32,6 +32,13 @@ const ui = fs.readFileSync(path.join(ROOT, "app/static/ui.js"), "utf8");
   const modalA = await p.evaluate(() => { const t = document.querySelector(".modal textarea"); return t ? t.value : ""; });
   const textA = clip.includes("Result: 1 failed") ? clip : modalA;
   check("…the text itself is intact", textA.includes("Job: clone form\nResult: 1 failed") && textA.includes("v160"), textA.slice(0, 200));
+  // v155.20: the pop-up ALWAYS opens (a click on Share visibly does something), text already copied, Copy button confirms
+  check("the report opens in a pop-up every time, already copied, with a Copy button saying so",
+        modalA.includes("Job: clone form") && (await p.$eval(".modal .share-copy", (x) => x.textContent)) === "✓ Copied"
+        && (await p.$eval(".modal .modal-h span", (x) => x.textContent)).startsWith("Share: FAILED JOB #7"));
+  await p.evaluate(() => navigator.clipboard.writeText("x"));
+  await p.click(".modal .share-copy"); await p.waitForTimeout(150);
+  check("…Copy copies it again", (await p.evaluate(() => navigator.clipboard.readText())).includes("Job: clone form"));
   await p.evaluate(() => document.querySelectorAll(".modal [data-close]").forEach((x) => x.click()));
   const labelB = await p.$eval("#b", (x) => x.textContent);
   await p.click("#b"); await p.waitForTimeout(400);

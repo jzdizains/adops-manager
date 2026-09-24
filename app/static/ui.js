@@ -31,24 +31,27 @@
   }
   UI.shareText = function (text, title) { return shareHeader(title) + "\n\n" + String(text || "").trim() + "\n"; };
   UI.share = function (text, title) {
+    // v155.20: the report always opens in a pop-up (so pressing Share visibly does something), and
+    // is copied to the clipboard at the same time where the browser allows it — the Copy button
+    // in the pop-up says whether it was, and copies again on demand.
     var full = UI.shareText(text, title);
-    function manual() {
-      var ta = document.createElement("textarea");
-      ta.value = full; ta.readOnly = true; ta.style.cssText = "width:100%;min-height:260px;font-family:var(--font-mono,monospace);font-size:11.5px;";
-      UI.modal({ title: "Copy this and paste it where you need it", body: ta, wide: true });
-      setTimeout(function () { ta.focus(); ta.select(); }, 30);
+    var ta = document.createElement("textarea");
+    ta.value = full; ta.readOnly = true; ta.spellcheck = false;
+    ta.style.cssText = "width:100%;min-height:260px;font-family:var(--font-mono,monospace);font-size:11.5px;white-space:pre;";
+    var f = el('<div class="share-f"><span class="muted share-st" style="font-size:12px;flex:1;"></span><button type="button" class="btn primary share-copy">Copy</button><button type="button" class="btn" data-close>Close</button></div>');
+    var st = f.querySelector(".share-st"), cp = f.querySelector(".share-copy");
+    function copy() {
+      var p = null;
+      try { if (navigator.clipboard && window.isSecureContext) p = navigator.clipboard.writeText(full); } catch (e) {}
+      if (!p) {
+        try { ta.focus(); ta.select(); p = document.execCommand("copy") ? Promise.resolve() : Promise.reject(new Error("copy refused")); } catch (e) { p = Promise.reject(e); }
+      }
+      return p.then(function () { cp.textContent = "✓ Copied"; st.textContent = "Copied — paste it into the chat (or to support)."; if (window.adopsToast) adopsToast("ok", "Copied — paste it into the chat (or to support)."); return true; },
+                    function () { cp.textContent = "Copy"; st.textContent = "The browser wouldn't copy it by itself — select the text and copy it by hand."; try { ta.focus(); ta.select(); } catch (e) {} return false; });
     }
-    function done() { if (window.adopsToast) adopsToast("ok", "Copied — paste it into the chat (or to support)."); }
-    try {
-      if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(full).then(done, manual);
-    } catch (e) {}
-    try {
-      var t = document.createElement("textarea"); t.value = full; t.style.cssText = "position:fixed;left:-9999px;top:0;";
-      document.body.appendChild(t); t.select(); var ok = document.execCommand("copy"); t.remove();
-      if (ok) { done(); return Promise.resolve(); }
-    } catch (e) {}
-    manual();
-    return Promise.resolve();
+    cp.addEventListener("click", function () { copy(); });
+    UI.modal({ title: title ? "Share: " + title : "Copy this and paste it where you need it", body: ta, footer: f, wide: true });
+    return copy();
   };
   document.addEventListener("click", function (e) {
     var b = e.target.closest && e.target.closest("[data-share], [data-share-url]");
