@@ -1740,12 +1740,9 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
             # UPGRADED_SMART_PLUS; a manual Traffic campaign refuses the goal) — the preset
             # runs as Smart+ whether or not the toggle is on, and every Smart+ rule applies
             fields = {**fields, "smart_plus": True, "_smart_plus_implied": True}
-        if lead_form_as_smart_plus(fields):
-            # v155.8: an Instant Form ad on a REGULAR campaign is refused with a misleading "Lead
-            # Generation agreement has not be signed yet" (blue bat_260706030017, 23 Sep — nothing to
-            # sign anywhere); the same form, post and account went through as Smart+ built by hand in
-            # Ads Manager (campaign 1877159655653634, where Smart+ is now the default)
-            fields = {**fields, "smart_plus": True, "_smart_plus_implied": True, "_smart_plus_lead": True}
+        # (v155.8 forced Instant Form launches onto Smart+ on a wrong reading of "agreement not signed";
+        # v155.13 found the real cause — TikTok's Lead Generation Terms per ad account, see lead_terms —
+        # so the preset's own Smart+ switch decides again. Smart+ Instant Form ad groups stay supported.)
         use_library = fields.get("creative_source") == "library"
         use_carousel = fields.get("creative_source") == "carousel"
         if use_carousel:
@@ -2186,6 +2183,13 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                 if not r.get("ok"):
                     raise AssetResolveError(f"This account has no lead form “{name}” and building it from the template failed: {r.get('error', 'unknown')}")
                 fields["lead_form_id"] = r["id"]
+            # v155.13: TikTok refuses the AD on an account without its Lead Generation Terms — only
+            # after the campaign and ad group exist. Stop here instead, with the way out.
+            from .. import lead_terms as _lt_terms
+            if _lt_terms.status(acct.advertiser_id) is False:
+                raise ConfigError("TikTok's Lead Generation Terms aren't accepted on this ad account, so TikTok would refuse the "
+                                  "Instant Form ad — nothing was created. Accept them on the launch's Review step "
+                                  "(“Accept Lead Generation Terms”), then Retry failed.")
 
         pixel_id = str(fields.get("pixel_id") or "").strip()
         if pixel_id and not pixel_id.isdigit():
@@ -2937,6 +2941,55 @@ def _launch_review(request: Request, db: Session, form):
     accounts = _review_accounts(db, sc, form, fields)
     out = launch_review.review(db, models, fields, accounts, spark=spark, identity=identity, live=form.get("live") == "1")
     return JSONResponse({"ok": True, **out})
+
+
+@router.post("/campaigns/review/lead-terms.json")
+async def launch_review_lead_terms(request: Request, db: Session = Depends(get_db)):
+    """TikTok's Lead Generation Terms state for a few accounts at a time (v155.13) — read through the
+    TikTok web session, in the threadpool. Read-only."""
+    from starlette.concurrency import run_in_threadpool
+    from .. import lead_terms, launch_review, scope as scope_mod
+    form = await request.form()
+
+    def work():
+        sc = scope_mod.for_request(request, db)
+        ids = [v for v in str(form.get("advertiser_ids") or "").replace(" ", "").split(",") if v and sc.allows(v)][:5]
+        db.rollback()                  # no DB connection held while TikTok answers
+        return JSONResponse({"ok": True, "cells": {a: launch_review.terms_cell(lead_terms.status(a)) for a in ids}})
+    return await run_in_threadpool(work)
+
+
+LEAD_TERMS_INLINE = 5
+
+
+@router.post("/campaigns/lead-terms/accept")
+async def lead_terms_accept(request: Request, db: Session = Depends(get_db)):
+    """The operator's "Accept TikTok's Lead Generation Terms" button (v155.13): signs them on the
+    picked accounts the way Ads Manager does at the first lead ad. A few accounts right away, more
+    as a background job. Never called by anything else."""
+    from starlette.concurrency import run_in_threadpool
+    from .. import jobs, lead_terms, scope as scope_mod, spark_web_api
+    form = await request.form()
+
+    def work():
+        sc = scope_mod.for_request(request, db)
+        ids = list(dict.fromkeys(v for v in str(form.get("advertiser_ids") or "").replace(" ", "").split(",") if v and sc.allows(v)))[:500]
+        if not ids:
+            return JSONResponse({"ok": False, "error": "no accounts picked"})
+        if not spark_web_api.load_cookies():
+            return JSONResponse({"ok": False, "error": "Paste the ads.tiktok.com cookies on the TikTok Cookies page first — accepting goes through that session."})
+        if len(ids) > LEAD_TERMS_INLINE:
+            job = jobs.enqueue(db, "lead_terms_accept", f"Accept Lead Generation Terms · {len(ids)} account(s)",
+                               {"advertiser_ids": ids}, href="/jobs")
+            return JSONResponse({"ok": True, "queued": True, "job_id": job.id,
+                                 "msg": f"Accepting on {len(ids)} accounts in the background — the check refreshes when it's done."})
+        db.rollback()
+        res = {a: lead_terms.accept(a) for a in ids}
+        bad = {a: m for a, (ok, m) in res.items() if not ok}
+        return JSONResponse({"ok": not bad, "done": [a for a, (ok, _m) in res.items() if ok], "failed": bad,
+                             "msg": f"Accepted on {len(ids) - len(bad)} of {len(ids)} account(s)."
+                                    + (" Failed: " + "; ".join(f"{a}: {m}" for a, m in list(bad.items())[:3]) if bad else "")})
+    return await run_in_threadpool(work)
 
 
 @router.post("/campaigns/review/identities.json")

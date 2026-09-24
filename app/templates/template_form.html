@@ -107,7 +107,7 @@
           <optgroup label="Existing forms (by name)">{% for f in lead_forms if f.name not in tpl_names %}<option value="{{ f.name }}" {{ 'selected' if blob.get('lead_form_name') == f.name }}>{{ f.name }} — on {{ f.count }} account(s)</option>{% endfor %}</optgroup>
         </select>
         <span class="hint">Same per-account matching as instant pages. Pick a <b>form template</b> and each account without that form gets it built at launch (from the template, then the ad). Sync or <a href="/lead-forms">build a new form</a>.
-          With a Spark post this launches as <b>Smart+</b> (optimised for form leads) — TikTok refuses Instant Form ads on regular campaigns.</span></label>
+          Each ad account needs TikTok's Lead Generation Terms accepted once — the launch's Review step shows it and has the button.</span></label>
     </div>
     <div class="pb-sub" data-dest="pixel website" data-needs-event="1" data-fix="pixel_event">
       <div class="pb-sub-h">Pixel &amp; optimisation event</div>

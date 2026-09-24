@@ -37,7 +37,7 @@ _current: dict = {}      # job id → job (for progress updates)
 # lane of their own with LAUNCH_WORKERS threads — one user's ten-account batch no
 # longer holds up another user's launch, and a manual campaign sync (minutes over
 # hundreds of accounts) never sits in front of a launch either.
-SLOW_KINDS = {"instant_page_build", "instant_page_clone_all", "lead_form_clone_all", "lead_form_build_many", "issues_scan", "appeals_refresh", "pixels_sync", "pixel_link_all", "audience_sync", "music_sync", "identities_sync", "spark_authorize", "bc_assets_scan", "bc_assets_wire", "bc_assets_connect", "adgroup_duplicate", "invite_autoaccept",
+SLOW_KINDS = {"instant_page_build", "instant_page_clone_all", "lead_form_clone_all", "lead_form_build_many", "lead_terms_accept", "issues_scan", "appeals_refresh", "pixels_sync", "pixel_link_all", "audience_sync", "music_sync", "identities_sync", "spark_authorize", "bc_assets_scan", "bc_assets_wire", "bc_assets_connect", "adgroup_duplicate", "invite_autoaccept",
               "spark_check", "post_thumbs", "profile_refresh", "card_push", "page_stock", "video_caption", "asset_builds", "asset_sync"}
 LAUNCH_KINDS = {"launch"}
 SYNC_KINDS = {"status_sync"}      # the manual campaign sync: its own lane, never in front of a launch or behind a scan

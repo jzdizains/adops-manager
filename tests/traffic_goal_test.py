@@ -382,14 +382,13 @@ check("a website Smart+ ad is unchanged (URL, general buttons)",
       "page_list" not in helpers.build_spc_ad_payload(dict(lf, destination_type="website", landing_page_url="https://x.test"), "ag", spark_ref, None)
       and helpers.build_spc_ad_payload(dict(lf, destination_type="website", landing_page_url="https://x.test"), "ag", spark_ref, None)["landing_page_url_list"])
 csrc2 = open(os.path.join(ROOT, "app", "routes", "campaigns.py"), encoding="utf-8").read()
-check("the preset form tells the operator", "With a Spark post this launches as <b>Smart+</b>" in open(os.path.join(ROOT, "app", "templates", "template_form.html"), encoding="utf-8").read())
-check("the launch switches such a preset to Smart+ before anything is created, and Smart+ accepts the Instant Form destination",
-      "if lead_form_as_smart_plus(fields):" in csrc2 and csrc2.count('not in ("pixel", "website", "lead_form")') == 2
-      and csrc2.index("if lead_form_as_smart_plus(fields):") < csrc2.index("trace.inflight(\"Smart+ campaign\")"))
+check("the preset form points at the Lead Generation Terms step", "needs TikTok's Lead Generation Terms accepted once" in open(os.path.join(ROOT, "app", "templates", "template_form.html"), encoding="utf-8").read())
+check("v155.13: the preset's own Smart+ switch decides again (no forced Smart+), and Smart+ still accepts the Instant Form destination",
+      "if lead_form_as_smart_plus(fields):" not in csrc2 and csrc2.count('not in ("pixel", "website", "lead_form")') == 2)
 tf = open(os.path.join(ROOT, "app", "templates", "template_form.html"), encoding="utf-8").read()
 check("the preset form says so under the attribution fields", "Instant Form lead gen always uses TikTok’s default" in tf)
 cfg = open(os.path.join(ROOT, "app", "config.py"), encoding="utf-8").read()
-check("static version bumped", 'STATIC_VERSION = "163"' in cfg)
+check("static version bumped", 'STATIC_VERSION = "164"' in cfg)
 
 print()
 print("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}")

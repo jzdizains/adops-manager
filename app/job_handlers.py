@@ -137,6 +137,30 @@ def _lead_form_build_many(db: Session, p: dict, job: models.Job) -> dict:
     return {"ok": not r["failed"] and not r["stopped"], "detail": d, "href": "/lead-forms"}
 
 
+@jobs.handler("lead_terms_accept")
+def _lead_terms_accept(db: Session, p: dict, job: models.Job) -> dict:
+    """The operator's "Accept Lead Generation Terms" for many accounts (v155.13), one at a time."""
+    from . import lead_terms
+    ids = [str(a) for a in (p.get("advertiser_ids") or [])]
+    names = {a.advertiser_id: (a.advertiser_name or a.advertiser_id)
+             for a in db.query(models.AdAccount).filter(models.AdAccount.advertiser_id.in_(ids or [""]))}
+    db.rollback()
+    ok, failed = [], []
+    for i, a in enumerate(ids):
+        if jobs.should_stop(db, job):
+            break
+        jobs.progress(db, job, f"{i + 1} of {len(ids)} — {names.get(a, a)}")
+        good, msg = lead_terms.accept(a)
+        (ok.append(a) if good else failed.append(f"{names.get(a, a)}: {msg}"))
+        if "cookies" in msg.lower() or "expired" in msg.lower():
+            failed.append("stopped — the TikTok session needs fresh cookies")
+            break
+    d = f"Lead Generation Terms accepted on {len(ok)} of {len(ids)} account(s)"
+    if failed:
+        d += " — " + " · ".join(failed)[:500]
+    return {"ok": not failed, "detail": d, "href": "/jobs"}
+
+
 @jobs.handler("instant_page_build")
 def _instant_page_build(db: Session, p: dict, job: models.Job) -> dict:
     from .routes import instant_pages

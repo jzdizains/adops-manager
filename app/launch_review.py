@@ -22,7 +22,7 @@ def cell(state: str, text: str, hint: str = "") -> dict:
 def verdict(cells: dict) -> tuple[str, list[str]]:
     """(blocked reason or "", warnings) from a row's cells. The first BAD cell (in column order)
     is the reason. Pure."""
-    order = ("account", "page", "form", "card", "identity", "geo")
+    order = ("account", "page", "form", "terms", "card", "identity", "geo")
     blocked = ""
     warns = []
     for k in order:
@@ -223,12 +223,23 @@ def review(db, models, fields: dict, accounts: list, spark=None, identity: str =
                     cells["geo"] = cell(OK, geo_fit.badge(known) or label, "" if known else "its countries haven't been read yet — checked at launch")
         else:
             cells["geo"] = cell(NA, "own country" if fields.get("account_default_geo") else "—")
+        # TikTok's Lead Generation Terms (v155.13): an Instant Form ad is refused on an account where
+        # they aren't accepted; read lazily (terms_cell), a known answer is shown at once
+        terms_pending = False
+        if dest == "lead_form":
+            from . import lead_terms
+            known_terms = lead_terms.cached(aid)
+            if known_terms is None:
+                cells["terms"] = cell(NA, "checking…")
+                terms_pending = True
+            else:
+                cells["terms"] = terms_cell(known_terms)
         blocked, warns = verdict(cells)
         tz = a.timezone or ""
         rows.append({"id": aid, "name": a.advertiser_name or aid, "bc": (bcs[a.owner_bc_id].name if a.owner_bc_id in bcs else ""),
                      "cells": cells, "blocked": blocked, "warnings": warns,
                      "tz": acct_time.label(tz), "starts": acct_time.start_now(tz)[11:16] if tz else "",
-                     "identity_pending": identity == "account" and not blocked})
+                     "identity_pending": identity == "account" and not blocked, "terms_pending": terms_pending})
     if live:
         _live_recheck(db, models, rows, accounts, page_name, form_name)
     return {"rows": rows, "blocked": sum(1 for r in rows if r["blocked"]),
@@ -268,6 +279,21 @@ def _live_recheck(db, models, rows: list, accounts: list, page_name: str, form_n
             except Exception as e:      # noqa: BLE001
                 r["cells"][key] = cell(BAD, "missing", c["hint"] + f" (TikTok check failed: {str(e)[:80]})")
         r["blocked"], r["warnings"] = verdict(r["cells"])
+
+
+# ---- TikTok's Lead Generation Terms (v155.13) --------------------------------------------------
+TERMS_NOT = ("TikTok's Lead Generation Terms aren't accepted on this ad account — TikTok refuses Instant Form ads "
+             "until they are. Accept them with the button above (Ads Manager does the same the first time "
+             "a lead ad is built there by hand).")
+
+
+def terms_cell(state) -> dict:
+    """The review cell for lead_terms.status(): True / False / None (couldn't tell). Pure."""
+    if state is True:
+        return cell(OK, "accepted")
+    if state is False:
+        return {**cell(BAD, "not accepted", TERMS_NOT), "terms": False}
+    return cell(WARN, "not checked", "couldn't read the Lead Generation Terms state (TikTok cookies?) — the launch will try")
 
 
 # ---- identities (library / carousel ads publish under the account's own identity) ------------

@@ -49,6 +49,7 @@
 "launch_review.py",
 "launch_trace.py",
 "lead_form_builder.py",
+"lead_terms.py",
 "live_log.py",
 "live_spend.py",
 "lpv_events.py",
