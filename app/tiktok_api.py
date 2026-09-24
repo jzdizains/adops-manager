@@ -408,6 +408,27 @@ def bc_asset_assign(access_token: str, bc_id: str, user_id: str, asset_type: str
     return api_post("/bc/asset/assign/", access_token, payload)
 
 
+# ---- Terms (v155.15): TikTok's per-ad-account agreements, through the official API ----
+# The Marketing API keeps its own record of which Terms an ad account has confirmed — separate from
+# what Ads Manager signs on the web. /ad/create/ refuses an Instant Form ad with "Lead Generation
+# agreement has not be signed yet" until the lead-gen Terms are confirmed HERE.
+
+def term_check(access_token: str, advertiser_id: str, term_type: str) -> dict:
+    """GET /term/check/ — has this ad account confirmed these Terms? Raw `data`."""
+    return api_get("/term/check/", access_token, {"advertiser_id": advertiser_id, "term_type": term_type}) or {}
+
+
+def term_get(access_token: str, advertiser_id: str, term_type: str, lang: str = "EN") -> dict:
+    """GET /term/get/ — the Terms' text, for the operator to read before confirming."""
+    return api_get("/term/get/", access_token, {"advertiser_id": advertiser_id, "term_type": term_type, "lang": lang}) or {}
+
+
+def term_confirm(access_token: str, advertiser_id: str, term_type: str) -> dict:
+    """POST /term/confirm/ — confirm the Terms for this ad account. Only ever called by the
+    operator's explicit button."""
+    return api_post("/term/confirm/", access_token, {"advertiser_id": advertiser_id, "term_type": term_type}) or {}
+
+
 def user_info(access_token: str) -> dict:
     """GET /user/info/ — the TikTok for Business login this token belongs to (display_name,
     email, core_user_id). Read-only; what the "Who connected TikTok" card shows (v155.12)."""

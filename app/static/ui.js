@@ -63,6 +63,20 @@
     }, function () { b.disabled = false; b.textContent = label; if (window.adopsToast) adopsToast("err", "Couldn't collect the details."); });
   });
 
+  // ---- TikTok's Lead Generation Terms (v155.15): one confirm dialog, showing TikTok's own text -------
+  UI.leadTermsConfirm = function (opts) {
+    var n = opts.count || 1, who = n === 1 ? (opts.name || "this ad account") : n + " ad accounts";
+    var body = document.createElement("div");
+    body.innerHTML = '<p style="margin:0 0 8px;">This confirms TikTok\'s Lead Generation Terms for ' + UI.esc(who) + ' through TikTok\'s API, as your TikTok login — the same commitment Ads Manager records the first time a lead ad is built there. Instant Form ads can run on ' + (n === 1 ? "it" : "them") + ' afterwards.</p>'
+      + '<pre class="lt-text muted" style="max-height:220px;overflow:auto;white-space:pre-wrap;font:inherit;font-size:12px;background:var(--panel-hover);padding:10px;border-radius:8px;margin:0 0 6px;">Loading TikTok\'s terms…</pre>'
+      + '<a class="muted" style="font-size:11.5px;" href="https://ads.tiktok.com/i18n/official/policy/lead-gen-terms" target="_blank" rel="noopener">Lead Generation Terms on tiktok.com ↗</a>';
+    var pre = body.querySelector(".lt-text");
+    UI.get("/campaigns/lead-terms/text.json?advertiser_id=" + encodeURIComponent(opts.advertiserId || "")).then(function (d) {
+      pre.textContent = (d && d.ok && d.text) ? d.text : "TikTok didn't return the terms' text — read them at the link below.";
+    }, function () { pre.textContent = "Couldn't load the terms' text — read them at the link below."; });
+    return UI.confirm({ title: "Confirm TikTok's Lead Generation Terms on " + who + "?", text: body, ok: "Confirm on " + who });
+  };
+
   // ---- layers: one stack, Escape closes the top one --------------------------
   var stack = [];
   function open(node, opts) {
@@ -115,7 +129,10 @@
       var done = false;
       var f = el('<div><button type="button" class="btn" data-close>Cancel</button><button type="button" class="btn primary' + (o.danger ? " danger" : "") + '"></button></div>');
       f.querySelector(".primary").textContent = o.ok || "Confirm";
-      var rec = UI.modal({ title: o.title, body: '<div class="muted" style="font-size:13px;line-height:1.5;">' + (o.html ? o.text : esc(o.text || "")) + "</div>", footer: f, onClose: function () { if (!done) { done = true; resolve(false); } } });
+      var body;
+      if (o.text && typeof o.text === "object" && o.text.nodeType === 1) { body = o.text; body.style.fontSize = body.style.fontSize || "13px"; body.style.lineHeight = "1.5"; }
+      else body = '<div class="muted" style="font-size:13px;line-height:1.5;">' + (o.html ? o.text : esc(o.text || "")) + "</div>";
+      var rec = UI.modal({ title: o.title, body: body, footer: f, onClose: function () { if (!done) { done = true; resolve(false); } } });
       f.querySelector(".primary").addEventListener("click", function () { done = true; rec.close(); resolve(true); });
       f.querySelector(".primary").focus();
     });

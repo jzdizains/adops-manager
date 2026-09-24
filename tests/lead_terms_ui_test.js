@@ -31,6 +31,7 @@ const S = path.resolve(__dirname, "..", "app/static") + "/";
       if (url === "/campaigns/lead-terms/accept") { data.advertiser_ids.split(",").forEach((id) => { window.__signed[id] = true; }); return Promise.resolve({ ok: true, msg: "Accepted on 1 of 1 account(s)." }); }
       return Promise.resolve({ ok: true });
     };
+    UI.get = (url) => Promise.resolve(url.startsWith("/campaigns/lead-terms/text.json") ? { ok: true, text: "TIKTOK LEAD GEN TERMS TEXT" } : { ok: true });
     LR.mount(document.getElementById("lr"), { form: document.getElementById("f"), params: () => ({ a: 1 }) }).refresh(true);
   });
   await p.waitForSelector(".lr-terms");
@@ -40,9 +41,11 @@ const S = path.resolve(__dirname, "..", "app/static") + "/";
   check("one button for the accounts missing it, with the terms linked", (await p.textContent(".lr-terms")).includes("1 account") && !!(await p.$('a[href*="lead-gen-terms"]')));
   await p.click(".lr-terms"); await p.waitForSelector(".modal");
   const dialog = await p.textContent(".modal");
-  check("asks first, naming what gets signed", dialog.includes("Lead Generation Terms") && dialog.includes("lead-gen-terms"), dialog.slice(0, 160));
+  await p.waitForFunction(() => /TIKTOK LEAD GEN TERMS TEXT/.test(document.querySelector(".modal").textContent), null, { timeout: 3000 }).catch(() => {});
+  const dialog2 = await p.textContent(".modal");
+  check("asks first, showing TikTok's own Terms text and the link", dialog.includes("Lead Generation Terms") && dialog2.includes("TIKTOK LEAD GEN TERMS TEXT") && !!(await p.$(".modal a[href*=lead-gen-terms]")), dialog2.slice(0, 200));
   check("nothing was signed before the answer", !(await p.evaluate(() => window.__posts.some((x) => x.startsWith("/campaigns/lead-terms/accept")))));
-  await p.evaluate(() => { const bs = [...document.querySelectorAll(".modal button")]; (bs.find((x) => /Accept on/.test(x.textContent)) || bs[bs.length - 1]).click(); });
+  await p.evaluate(() => { const bs = [...document.querySelectorAll(".modal button")]; (bs.find((x) => /Confirm on/.test(x.textContent)) || bs[bs.length - 1]).click(); });
   await p.waitForFunction(() => !document.querySelector(".lr-terms") && ![...document.querySelectorAll(".lr-t tbody tr")].some((r) => r.classList.contains("lr-blocked")), null, { timeout: 5000 }).catch(() => {});
   check("after accepting: only the missing account was sent, re-checked in place, nobody blocked, button gone",
         (await p.evaluate(() => window.__posts.filter((x) => x.startsWith("/campaigns/lead-terms/accept")).join("|"))).includes('"advertiser_ids":"7659134748954083346"')

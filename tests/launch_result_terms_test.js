@@ -32,20 +32,23 @@ execFileSync("python3", ["-c", py, ROOT, out]);
   await p.route("**/*", (r) => {
     const u = r.request().url();
     if (u.includes("/static/")) return r.fulfill({ contentType: "application/javascript", body: fs.readFileSync(S + u.split("/static/")[1].split("?")[0]) });
+    if (u.includes("/campaigns/lead-terms/text.json")) return r.fulfill({ contentType: "application/json", body: JSON.stringify({ ok: true, text: "TIKTOK LEAD GEN TERMS TEXT" }) });
     if (u.includes("/campaigns/lead-terms/accept")) { posts.push(r.request().postData()); return r.fulfill({ contentType: "application/json", body: JSON.stringify({ ok: true, msg: "Accepted on 1 of 1 account(s)." }) }); }
     return r.fulfill({ contentType: "text/html; charset=utf-8", body: fs.readFileSync(out, "utf8") });
   });
   await p.goto("http://localhost/campaigns/result/892537");
   await p.evaluate(() => { window.adopsToast = () => {}; });
   const btn = await p.$(".lt-accept");
-  check("the failure shows an Accept button (not just a link to read)", !!btn && (await btn.textContent()).includes("Accept Lead Generation Terms"));
+  check("the failure shows a Confirm button (not just a link to read)", !!btn && (await btn.textContent()).includes("Confirm Lead Generation Terms"));
   check("…for that account, with the terms still one click away", (await btn.getAttribute("data-adv")) === "7659134748954083346" && !!(await p.$('.lr-fix a[href*="lead-gen-terms"]')));
   await btn.click(); await p.waitForSelector(".modal");
-  check("it asks first, naming the account and the terms", (await p.textContent(".modal")).includes("blue bat_260706030014") && (await p.textContent(".modal")).includes("lead-gen-terms"));
+  await p.waitForFunction(() => /TIKTOK LEAD GEN TERMS TEXT/.test(document.querySelector(".modal").textContent), null, { timeout: 3000 }).catch(() => {});
+  const dlg = await p.textContent(".modal");
+  check("it asks first, naming the account and showing TikTok's own Terms text", dlg.includes("blue bat_260706030014") && dlg.includes("TIKTOK LEAD GEN TERMS TEXT") && !!(await p.$(".modal a[href*=lead-gen-terms]")), dlg.slice(0, 200));
   check("nothing sent before the answer", posts.length === 0);
-  await p.evaluate(() => { const bs = [...document.querySelectorAll(".modal button")]; (bs.find((x) => x.textContent.trim() === "Accept") || bs[bs.length - 1]).click(); });
-  await p.waitForFunction(() => /Accepted/.test(document.querySelector(".lt-accept").textContent), null, { timeout: 5000 }).catch(() => {});
-  check("accepts that one account, then says Retry failed is next", posts.length === 1 && decodeURIComponent(posts[0]).includes("advertiser_ids=7659134748954083346")
+  await p.evaluate(() => { const bs = [...document.querySelectorAll(".modal button")]; (bs.find((x) => /^Confirm on/.test(x.textContent.trim())) || bs[bs.length - 1]).click(); });
+  await p.waitForFunction(() => /Confirmed/.test(document.querySelector(".lt-accept").textContent), null, { timeout: 5000 }).catch(() => {});
+  check("confirms that one account, then says Retry failed is next", posts.length === 1 && decodeURIComponent(posts[0]).includes("advertiser_ids=7659134748954083346")
         && (await p.textContent(".lt-accept")).includes("now Retry failed"));
   check("…and highlights the Retry failed button", await p.evaluate(() => document.querySelector('form[action$="/retry"] button').classList.contains("primary")));
   check("no page errors", errs.length === 0, errs.join(" | "));

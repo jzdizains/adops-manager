@@ -2183,10 +2183,10 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                 if not r.get("ok"):
                     raise AssetResolveError(f"This account has no lead form “{name}” and building it from the template failed: {r.get('error', 'unknown')}")
                 fields["lead_form_id"] = r["id"]
-            # v155.13: TikTok refuses the AD on an account without its Lead Generation Terms — only
-            # after the campaign and ad group exist. Stop here instead, with the way out.
+            # v155.13/15: TikTok refuses the AD on an account whose lead-gen Terms aren't confirmed
+            # through the API — only after the campaign and ad group exist. Stop here instead.
             from .. import lead_terms as _lt_terms
-            if _lt_terms.status(acct.advertiser_id) is False:
+            if _lt_terms.status(db, acct.advertiser_id) is False:
                 raise ConfigError("TikTok's Lead Generation Terms aren't accepted on this ad account, so TikTok would refuse the "
                                   "Instant Form ad — nothing was created. Accept them on the launch's Review step "
                                   "(“Accept Lead Generation Terms”), then Retry failed.")
@@ -2954,8 +2954,21 @@ async def launch_review_lead_terms(request: Request, db: Session = Depends(get_d
     def work():
         sc = scope_mod.for_request(request, db)
         ids = [v for v in str(form.get("advertiser_ids") or "").replace(" ", "").split(",") if v and sc.allows(v)][:5]
-        db.rollback()                  # no DB connection held while TikTok answers
-        return JSONResponse({"ok": True, "cells": {a: launch_review.terms_cell(lead_terms.status(a)) for a in ids}})
+        return JSONResponse({"ok": True, "cells": {a: launch_review.terms_cell(lead_terms.status(db, a)) for a in ids}})
+    return await run_in_threadpool(work)
+
+
+@router.get("/campaigns/lead-terms/text.json")
+async def lead_terms_text(request: Request, advertiser_id: str = "", db: Session = Depends(get_db)):
+    """The lead-gen Terms' text from TikTok (/term/get/), for the confirm dialog. Read-only."""
+    from starlette.concurrency import run_in_threadpool
+    from .. import lead_terms, scope as scope_mod
+
+    def work():
+        sc = scope_mod.for_request(request, db)
+        if not advertiser_id or not sc.allows(advertiser_id):
+            return JSONResponse({"ok": False, "error": "not found"}, status_code=404)
+        return JSONResponse({"ok": True, "text": lead_terms.text(db, advertiser_id)[:20000]})
     return await run_in_threadpool(work)
 
 
@@ -2968,7 +2981,7 @@ async def lead_terms_accept(request: Request, db: Session = Depends(get_db)):
     picked accounts the way Ads Manager does at the first lead ad. A few accounts right away, more
     as a background job. Never called by anything else."""
     from starlette.concurrency import run_in_threadpool
-    from .. import jobs, lead_terms, scope as scope_mod, spark_web_api
+    from .. import jobs, lead_terms, scope as scope_mod
     form = await request.form()
 
     def work():
@@ -2976,15 +2989,12 @@ async def lead_terms_accept(request: Request, db: Session = Depends(get_db)):
         ids = list(dict.fromkeys(v for v in str(form.get("advertiser_ids") or "").replace(" ", "").split(",") if v and sc.allows(v)))[:500]
         if not ids:
             return JSONResponse({"ok": False, "error": "no accounts picked"})
-        if not spark_web_api.load_cookies():
-            return JSONResponse({"ok": False, "error": "Paste the ads.tiktok.com cookies on the TikTok Cookies page first — accepting goes through that session."})
         if len(ids) > LEAD_TERMS_INLINE:
             job = jobs.enqueue(db, "lead_terms_accept", f"Accept Lead Generation Terms · {len(ids)} account(s)",
                                {"advertiser_ids": ids}, href="/jobs")
             return JSONResponse({"ok": True, "queued": True, "job_id": job.id,
                                  "msg": f"Accepting on {len(ids)} accounts in the background — the check refreshes when it's done."})
-        db.rollback()
-        res = {a: lead_terms.accept(a) for a in ids}
+        res = {a: lead_terms.accept(db, a) for a in ids}
         bad = {a: m for a, (ok, m) in res.items() if not ok}
         return JSONResponse({"ok": not bad, "done": [a for a, (ok, _m) in res.items() if ok], "failed": bad,
                              "msg": f"Accepted on {len(ids) - len(bad)} of {len(ids)} account(s)."

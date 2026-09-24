@@ -137,21 +137,19 @@
   // then point at Retry failed — no trip back to the Review step
   document.addEventListener("click", function (e) {
     var b = e.target.closest && e.target.closest(".lt-accept"); if (!b || b.disabled) return;
-    UI.confirm({ title: "Accept TikTok's Lead Generation Terms on " + b.dataset.name + "?",
-                 text: "This signs TikTok's Lead Generation Terms (https://ads.tiktok.com/i18n/official/policy/lead-gen-terms) for this ad account, as your TikTok login — the same thing Ads Manager does silently the first time a lead ad is built there.",
-                 ok: "Accept" }).then(function (yes) {
+    UI.leadTermsConfirm({ advertiserId: b.dataset.adv, name: b.dataset.name, count: 1 }).then(function (yes) {
       if (!yes) return;
       b.disabled = true; b.textContent = "Accepting…";
       UI.post("/campaigns/lead-terms/accept", { advertiser_ids: b.dataset.adv }).then(function (d) {
         if (d && d.ok) {
-          b.textContent = "✓ Accepted — now Retry failed"; b.classList.remove("primary");
+          b.textContent = "✓ Confirmed — now Retry failed"; b.classList.remove("primary");
           var r = document.querySelector('form[action$="/retry"] button'); if (r) { r.classList.add("primary"); r.style.color = ""; r.focus(); }
-          if (window.adopsToast) adopsToast("ok", "Lead Generation Terms accepted on " + b.dataset.name + " — press Retry failed.");
+          if (window.adopsToast) adopsToast("ok", "Lead Generation Terms confirmed on " + b.dataset.name + " — press Retry failed.");
         } else {
-          b.disabled = false; b.textContent = "✓ Accept Lead Generation Terms";
+          b.disabled = false; b.textContent = "✓ Confirm Lead Generation Terms";
           if (window.adopsToast) adopsToast("err", (d && (d.msg || d.error)) || "Couldn't accept them.");
         }
-      }, function () { b.disabled = false; b.textContent = "✓ Accept Lead Generation Terms"; });
+      }, function () { b.disabled = false; b.textContent = "✓ Confirm Lead Generation Terms"; });
     });
   });
 </script>

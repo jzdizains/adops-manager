@@ -1,5 +1,6 @@
-"""v155.13 — TikTok's Lead Generation Terms per ad account: read and, on the operator's button only,
-signed exactly as Ads Manager does (recorded 24 Sep 2026 on blue bat_260706030021)."""
+"""v155.15 — TikTok's Lead Generation Terms per ad account, through the official API (/term/check/,
+/term/get/, /term/confirm/): the term type is discovered from TikTok's own refusal, the state is read,
+and confirming happens ONLY from the operator's button."""
 import ast, importlib, json, os, sys, types
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -13,58 +14,56 @@ def read(p): return open(os.path.join(ROOT, p), encoding="utf-8").read()
 
 sys.modules.setdefault("app.diag", types.SimpleNamespace(record=lambda *a, **k: None))
 lt = importlib.import_module("app.lead_terms")
-web = lt.spark_web_api
+api = lt.tiktok_api
 
-# a stand-in TikTok: which (account, type) pairs are signed; every call recorded
-signed = {("014", 16): False, ("014", 70): False, ("021", 16): True, ("021", 70): True}
-calls = []
-class Resp:
-    def __init__(self, body): self.body = body
-def fake_send(method, path, *, params=None, payload=None, headers=None):
-    calls.append((method, path, dict(params or {}), payload, headers))
-    if path == lt.QUERY:
-        return Resp({"code": 0, "msg": "success", "data": {"is_exist": signed.get((params["aadvid"], params["setting_type"]), False)}})
-    if path == lt.SIGN:
-        signed[(params["aadvid"], payload["setting_type"])] = True
-        return Resp({"code": 0, "msg": "success", "data": {}})
-    return Resp({"code": 404})
-web._send = fake_send
-web._web_parse = lambda resp, path="": resp.body
-web.load_cookies = lambda: {"sessionid": "x", "csrftoken": "y"}
+print("-- pure --")
+refusal = "term_type: value must be one of ['TIKTOK_ADS_TERMS', 'LEAD_GENERATION_TERMS_OF_SERVICE', 'PANGLE_TERMS']"
+check("the lead-gen term type is picked out of TikTok's refusal", lt.pick_type(lt.CANDIDATES, refusal) == "LEAD_GENERATION_TERMS_OF_SERVICE")
+check("…nothing about leads in the list → nothing (never a guess)", lt.pick_type(lt.CANDIDATES, "must be one of ['A', 'B']") == "")
+check("the confirmed flag is read whatever TikTok calls it",
+      lt.confirmed_of({"is_confirmed": True}) is True and lt.confirmed_of({"status": "UNCONFIRMED"}) is False
+      and lt.confirmed_of({"is_signed": 0}) is False and lt.confirmed_of({"foo": 1}) is None)
 
-print("-- reading --")
-check("an account where a lead ad was built by hand reads as accepted", lt.status("021") is True)
-check("one where it never was reads as not accepted", lt.status("014") is False)
-calls.clear()
-check("…answers are cached (no second TikTok call)", lt.status("021") is True and lt.status("014") is False and calls == [])
-check("the check reads BOTH agreements Ads Manager signs (16/1 and 70/2)", lt.AGREEMENTS == ((16, 1), (70, 2)))
-web.load_cookies = lambda: {}
-check("no cookies → can't tell (None), never a guess", lt.status("999", fresh=True) is None)
-web.load_cookies = lambda: {"sessionid": "x", "csrftoken": "y"}
+print("-- through a stand-in TikTok --")
+state = {"types_ok": {"LEAD_GENERATION_TERMS_OF_SERVICE"}, "confirmed": {"021"}, "calls": []}
+settings = {}
+sys.modules["app.queries"] = types.SimpleNamespace(get_setting=lambda db, k, d="": settings.get(k, d), set_setting=lambda db, k, v: settings.__setitem__(k, v))
+def term_check(token, adv, tt):
+    state["calls"].append(("check", adv, tt))
+    if tt not in state["types_ok"]:
+        raise api.TikTokError(40002, refusal)
+    return {"is_confirmed": adv in state["confirmed"]}
+def term_confirm(token, adv, tt):
+    state["calls"].append(("confirm", adv, tt))
+    state["confirmed"].add(adv)
+    return {}
+api.term_check, api.term_confirm = term_check, term_confirm
+api.term_get = lambda token, adv, tt, lang="EN": {"term_content": "THE TERMS"}
+lt._token = lambda db, adv: "tok"
 
-print("-- accepting (only what the button calls) --")
-calls.clear()
-ok, msg = lt.accept("014")
-signs = [c for c in calls if c[1] == lt.SIGN]
-check("signs exactly as recorded: POST general_sign ?aadvid=…&req_src=ad_creation with 16/1 then 70/2",
-      [(c[0], c[2], c[3]) for c in signs] == [("POST", {"aadvid": "014", "req_src": "ad_creation"}, {"setting_type": 16, "setting_dimension": 1}),
-                                             ("POST", {"aadvid": "014", "req_src": "ad_creation"}, {"setting_type": 70, "setting_dimension": 2})], str(signs))
-check("…reads it back and reports accepted, cache updated", ok and msg == "accepted" and lt.status("014") is True)
-calls.clear()
-lt.accept("021")
-check("an account that already has them isn't signed again", not [c for c in calls if c[1] == lt.SIGN])
-check("the Referer is the account's own Ads Manager page", all("aadvid=" in (c[4] or {}).get("Referer", "") for c in calls))
-def refuse(method, path, **k):
-    if path == lt.SIGN:
-        return Resp({"code": 40002, "msg": "no"})
-    return fake_send(method, path, **k)
-web._send = refuse
-signed[("777", 16)] = False
-ok, msg = lt.accept("777")
-check("TikTok refusing → not accepted, with its answer", not ok and "40002" in msg)
-web._send = fake_send
+check("the term type is discovered once from the refusal and remembered", lt.term_type(None, "tok", "014") == "LEAD_GENERATION_TERMS_OF_SERVICE"
+      and settings["lead_term_type"] == "LEAD_GENERATION_TERMS_OF_SERVICE" and len([c for c in state["calls"] if c[0] == "check"]) == 1)
+state["calls"].clear()
+check("status: confirmed / not confirmed", lt.status(None, "021") is True and lt.status(None, "014") is False)
+check("…cached (no second TikTok call)", (lt.status(None, "021"), lt.status(None, "014")) == (True, False) and len(state["calls"]) == 2)
+check("the Terms' text is fetched for the dialog", lt.text(None, "014") == "THE TERMS")
+state["calls"].clear()
+ok, msg = lt.accept(None, "014")
+check("confirm: exactly one /term/confirm/ for that account, read back, remembered",
+      ok and msg == "confirmed" and [c for c in state["calls"] if c[0] == "confirm"] == [("confirm", "014", "LEAD_GENERATION_TERMS_OF_SERVICE")] and lt.status(None, "014") is True)
+state["calls"].clear()
+check("an already-confirmed account isn't confirmed again", lt.accept(None, "021") == (True, "already confirmed") and not [c for c in state["calls"] if c[0] == "confirm"])
+def refuse(token, adv, tt): raise api.TikTokError(40002, "no")
+api.term_confirm = refuse
+state["confirmed"].discard("777")
+ok, msg = lt.accept(None, "777")
+check("TikTok refusing → not confirmed, with its answer", not ok and "40002" in msg)
+lt._token = lambda db, adv: (_ for _ in ()).throw(lt.Unknown("that ad account isn't connected"))
+check("no token → can't tell (None) / a clear message", lt.status(None, "x", fresh=True) is None and lt.accept(None, "x")[1] == "that ad account isn't connected")
 
-print("-- review + launch wiring --")
+print("-- wiring --")
+ta = read("app/tiktok_api.py")
+check("the three official endpoints", all(p in ta for p in ('"/term/check/"', '"/term/get/"', '"/term/confirm/"')))
 lr = read("app/launch_review.py")
 ns = {}
 for n in ast.parse(lr).body:
@@ -72,22 +71,24 @@ for n in ast.parse(lr).body:
        (isinstance(n, ast.Assign) and ("TERMS_NOT" in ast.unparse(n.targets[0]) or ast.unparse(n.targets[0]).startswith("(OK, WARN"))):
         exec(compile(ast.Module([n], []), "lr", "exec"), ns)
 tc = ns["terms_cell"]
-check("review cell: accepted / not accepted (blocks, says why and what to do) / not checked (warns only)",
-      tc(True)["state"] == ns["OK"] and tc(False)["state"] == ns["BAD"] and "Accept" in tc(False)["hint"] and tc(None)["state"] == ns["WARN"])
-check("an account without the terms is blocked in Review — before anything is created",
+check("review cell: confirmed / not confirmed (blocks, with the way out) / not checked (warns only)",
+      tc(True)["state"] == ns["OK"] and tc(False)["state"] == ns["BAD"] and "Confirm" in tc(False)["hint"] and tc(None)["state"] == ns["WARN"])
+check("an account without the Terms is blocked in Review — before anything is created",
       ns["verdict"]({"terms": tc(False), "geo": ns["cell"](ns["OK"], "Any")})[0].startswith("TikTok's Lead Generation Terms"))
 cp = read("app/routes/campaigns.py")
 check("the launch stops an Instant Form launch on such an account before creating anything",
-      "if _lt_terms.status(acct.advertiser_id) is False:" in cp and cp.index("if _lt_terms.status(acct.advertiser_id) is False:") < cp.index('trace.inflight("Smart+ campaign")'))
-check("routes: read a few at a time; accept only the viewer's accounts, via the cookie session, >5 as a job",
-      '@router.post("/campaigns/review/lead-terms.json")' in cp and '@router.post("/campaigns/lead-terms/accept")' in cp
-      and "if v and sc.allows(v)" in cp.split('"/campaigns/lead-terms/accept"')[1][:1500] and '"lead_terms_accept"' in cp)
+      "if _lt_terms.status(db, acct.advertiser_id) is False:" in cp and cp.index("if _lt_terms.status(db, acct.advertiser_id) is False:") < cp.index('trace.inflight("Smart+ campaign")'))
+check("routes: read a few at a time; the Terms' text; confirm only the viewer's accounts, >5 as a job",
+      '@router.post("/campaigns/review/lead-terms.json")' in cp and '@router.get("/campaigns/lead-terms/text.json")' in cp
+      and '@router.post("/campaigns/lead-terms/accept")' in cp and "if v and sc.allows(v)" in cp.split('"/campaigns/lead-terms/accept"')[1][:1500] and '"lead_terms_accept"' in cp)
 check("the job exists", '@jobs.handler("lead_terms_accept")' in read("app/job_handlers.py") and '"lead_terms_accept"' in read("app/jobs.py"))
-js = read("app/static/launch-review.js")
-check("Review: a Lead terms column, an explicit confirm naming the terms before anything is signed",
-      '["terms", "Lead terms"]' in js and "UI.confirm({ title: \"Accept TikTok's Lead Generation Terms" in js and "lead-gen-terms" in js)
-check("nothing signs by itself: accept() is only called from the accept route and its job",
-      sum(read(p).count("lead_terms.accept(") for p in ("app/routes/campaigns.py", "app/job_handlers.py", "app/background.py", "app/launch_review.py")) == 2)
+ui = read("app/static/ui.js")
+check("one dialog for both buttons, showing TikTok's own Terms text before confirming",
+      "UI.leadTermsConfirm = function" in ui and "/campaigns/lead-terms/text.json" in ui and "lead-gen-terms" in ui
+      and "UI.leadTermsConfirm(" in read("app/static/launch-review.js") and "UI.leadTermsConfirm(" in read("app/templates/launch_result.html"))
+check("nothing confirms by itself: accept() is only called from the confirm route and its job",
+      sum(read(p).count("lead_terms.accept(") for p in ("app/routes/campaigns.py", "app/job_handlers.py", "app/background.py", "app/launch_review.py")) == 2
+      and "term_confirm(" not in read("app/background.py"))
 print("---")
 print(f"{len(fails)} failed" if fails else "all passed")
 sys.exit(1 if fails else 0)

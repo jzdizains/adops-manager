@@ -41,14 +41,14 @@ _PERMISSION_HINTS = re.compile(r"permission|not authorized|no access|无权限",
 
 # 40002 messages with a KNOWN cause — matched on TikTok's wording, checked in order
 _MESSAGE_HINTS: list[tuple[re.Pattern, str, str]] = [
-    # TikTok's Lead Generation Terms, per ad account (v155.13, recorded 24 Sep 2026): Ads Manager signs
-    # them silently (agreement/general_sign 16 + 70) at the first hand-built lead ad; the API can't.
+    # TikTok's Lead Generation Terms, per ad account, as the Marketing API records them (v155.15):
+    # /term/check/ + /term/confirm/ — separate from what Ads Manager signs on the web.
     (re.compile(r"lead generation agreement|agreement has not be(en)? signed|"
                 r"lead[- ]?gen(eration)? terms (of service )?(has|have)? ?not", re.I),
-     "TikTok's Lead Generation Terms aren't accepted on this ad account yet.",
-     "It's per ad account: Ads Manager signs it silently the first time a lead ad is built there by hand, "
-     "and the official API can't. Open the launch's Review step and press “Accept Lead Generation Terms” "
-     "(it signs them the same way, as your TikTok login), then Retry failed."),
+     "TikTok's Lead Generation Terms aren't confirmed for this ad account through TikTok's API yet.",
+     "It's per ad account, and separate from what Ads Manager records when a lead ad is built there by hand "
+     "(that's why one hand-built campaign didn't unlock it). Press “Confirm Lead Generation Terms” — here or "
+     "on the launch's Review step — read them, confirm, then Retry failed."),
     (re.compile(r"selected advanced creative is not supported", re.I),
      "TikTok won't run this creative on a Smart+ ad for this objective.",
      "The launch already retried without the display card and with a single button, so what is left is the "
@@ -152,10 +152,10 @@ def fix_for(log) -> dict | None:
     if re.search(r"lead generation agreement|agreement has not be(en)? signed|"
                  r"lead[- ]?gen(eration)? terms", raw + " " + low):
         # v155.14: the button ACCEPTS them for this account (after a confirm) — the page does it in place
-        return {"label": "Accept Lead Generation Terms", "href": "https://ads.tiktok.com/i18n/official/policy/lead-gen-terms",
+        return {"label": "Confirm Lead Generation Terms", "href": "https://ads.tiktok.com/i18n/official/policy/lead-gen-terms",
                 "accept_terms": adv,
-                "why": "Signs TikTok's Lead Generation Terms on this ad account (what Ads Manager does silently at the first "
-                       "hand-built lead ad), then Retry failed."}
+                "why": "Confirms TikTok's Lead Generation Terms for this ad account through TikTok's API (you read them first), "
+                       "then Retry failed."}
     if code == "SPARK":
         if "rejected the spark code" in low or "code is incorrect" in low:
             return {"label": "Replace the spark code", "href": f"/spark-codes?edit={spark_id}" if spark_id else "/spark-codes",

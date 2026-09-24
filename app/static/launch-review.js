@@ -55,7 +55,7 @@
         var missing = rows.some(function (r) { return ["page", "form"].some(function (k) { return r.cells[k] && r.cells[k].text === "missing"; }); });
         var head = '<div class="lr-top"><b>' + st.ready + " ready</b>" + (st.blocked ? ' · <span class="lr-bad">' + st.blocked + " blocked</span>" : "") + (warned ? ' · <span class="muted">' + warned + " with notes</span>" : "") +
           (missing ? '<button type="button" class="btn sm ghost lr-live" title="Ask TikTok again for the pages / forms the last sync didn\'t see">Re-check on TikTok</button>' : "") +
-          (noTerms.length ? '<button type="button" class="btn sm primary lr-terms" title="Signs TikTok\'s Lead Generation Terms on these ad accounts — what Ads Manager does silently the first time a lead ad is built there">Accept Lead Generation Terms · ' + noTerms.length + " account" + (noTerms.length === 1 ? "" : "s") + '</button> <a class="muted" style="font-size:11.5px;" href="' + TERMS_URL + '" target="_blank" rel="noopener">read the terms ↗</a>' : "") +
+          (noTerms.length ? '<button type="button" class="btn sm primary lr-terms" title="Confirms TikTok\'s Lead Generation Terms for these ad accounts through TikTok\'s API — what Ads Manager records the first time a lead ad is built there">Confirm Lead Generation Terms · ' + noTerms.length + " account" + (noTerms.length === 1 ? "" : "s") + '</button> <a class="muted" style="font-size:11.5px;" href="' + TERMS_URL + '" target="_blank" rel="noopener">read the terms ↗</a>' : "") +
           (st.blocked > 1 ? '<button type="button" class="btn sm ghost lr-share-all" title="Copy every blocked account and why, ready to paste">⧉ Share all ' + st.blocked + "</button>" : "") +
           (st.blocked ? '<label class="lr-leave"><input type="checkbox" class="lr-leave-cb"' + (leaveOut ? " checked" : "") + "> Leave out the " + st.blocked + " blocked account" + (st.blocked === 1 ? "" : "s") + "</label>" : "") + "</div>";
         var th = "<tr><th>Account</th>" + cols.map(function (c) { return "<th>" + c[1] + "</th>"; }).join("") + '<th title="&quot;Start now&quot; in the ad account\'s own timezone — TikTok reads the start time there">Starts</th></tr>';
@@ -116,9 +116,7 @@
       function acceptTerms(btn) {
         var ids = data.rows.filter(function (r) { return r.cells.terms && r.cells.terms.state === "bad"; }).map(function (r) { return r.id; });
         if (!ids.length) return;
-        UI.confirm({ title: "Accept TikTok's Lead Generation Terms on " + ids.length + " ad account" + (ids.length === 1 ? "" : "s") + "?",
-                     text: "This signs TikTok's Lead Generation Terms (" + TERMS_URL + ") for these ad accounts, as your TikTok login — the same thing Ads Manager does silently the first time a lead ad is built there. Instant Form ads can run on them afterwards.",
-                     ok: "Accept on " + ids.length })
+        UI.leadTermsConfirm({ advertiserId: ids[0], name: (data.rows.filter(function (r) { return r.id === ids[0]; })[0] || {}).name, count: ids.length })
           .then(function (yes) {
             if (!yes) return;
             btn.disabled = true; btn.textContent = "Accepting…";

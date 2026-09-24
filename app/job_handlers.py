@@ -144,17 +144,13 @@ def _lead_terms_accept(db: Session, p: dict, job: models.Job) -> dict:
     ids = [str(a) for a in (p.get("advertiser_ids") or [])]
     names = {a.advertiser_id: (a.advertiser_name or a.advertiser_id)
              for a in db.query(models.AdAccount).filter(models.AdAccount.advertiser_id.in_(ids or [""]))}
-    db.rollback()
     ok, failed = [], []
     for i, a in enumerate(ids):
         if jobs.should_stop(db, job):
             break
         jobs.progress(db, job, f"{i + 1} of {len(ids)} — {names.get(a, a)}")
-        good, msg = lead_terms.accept(a)
+        good, msg = lead_terms.accept(db, a)
         (ok.append(a) if good else failed.append(f"{names.get(a, a)}: {msg}"))
-        if "cookies" in msg.lower() or "expired" in msg.lower():
-            failed.append("stopped — the TikTok session needs fresh cookies")
-            break
     d = f"Lead Generation Terms accepted on {len(ok)} of {len(ids)} account(s)"
     if failed:
         d += " — " + " · ".join(failed)[:500]

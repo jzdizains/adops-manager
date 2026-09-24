@@ -282,9 +282,8 @@ def _live_recheck(db, models, rows: list, accounts: list, page_name: str, form_n
 
 
 # ---- TikTok's Lead Generation Terms (v155.13) --------------------------------------------------
-TERMS_NOT = ("TikTok's Lead Generation Terms aren't accepted on this ad account — TikTok refuses Instant Form ads "
-             "until they are. Accept them with the button above (Ads Manager does the same the first time "
-             "a lead ad is built there by hand).")
+TERMS_NOT = ("TikTok's Lead Generation Terms aren't confirmed for this ad account (API) — TikTok refuses Instant "
+             "Form ads until they are. Confirm them with the button above.")
 
 
 def terms_cell(state) -> dict:
@@ -293,7 +292,7 @@ def terms_cell(state) -> dict:
         return cell(OK, "accepted")
     if state is False:
         return {**cell(BAD, "not accepted", TERMS_NOT), "terms": False}
-    return cell(WARN, "not checked", "couldn't read the Lead Generation Terms state (TikTok cookies?) — the launch will try")
+    return cell(WARN, "not checked", "couldn't read the Lead Generation Terms state from TikTok — the launch will try")
 
 
 # ---- identities (library / carousel ads publish under the account's own identity) ------------
