@@ -111,7 +111,7 @@ def view_switch(request: Request) -> dict | None:
     One tiny users query, remembered 20 s per cookie value so pollers never hit the DB."""
     import time as _time
     me = getattr(getattr(request, "state", None), "user", None)
-    if me is None or not users.is_owner(me):
+    if me is None or not (users.is_owner(me) or users.viewable_ids(me)):
         return None
     from . import scope as _scope
     from .database import SessionLocal
@@ -122,7 +122,8 @@ def view_switch(request: Request) -> dict | None:
     db = SessionLocal()
     try:
         sc = _scope.current(request, db, me)
-        out = {"label": sc.label, "mode": sc.mode, "options": _scope.switch_options(db, sc), "user_id": sc.user_id}
+        out = {"label": sc.label, "mode": sc.mode, "options": _scope.switch_options(db, sc), "user_id": sc.user_id,
+               "owner": users.is_owner(me)}
     finally:
         db.close()
     if len(_VIEW_CACHE) > 200:

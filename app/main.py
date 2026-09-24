@@ -206,6 +206,10 @@ async def require_login(request: Request, call_next):
                     picked = _scope.parse_cookie(request.cookies.get(_scope.COOKIE))
                     owner = picked if picked is not None else user.id
                     view = picked                       # None = Everyone
+                else:
+                    picked = _scope.parse_cookie(request.cookies.get(_scope.COOKIE))
+                    if picked is not None and picked in _users.viewable_ids(user):     # v155.21 "Admin" grant
+                        owner = view = picked
                 _ctx.OWNER.set(owner)
                 _ctx.VIEW.set(view)
             except Exception:  # noqa: BLE001

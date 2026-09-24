@@ -36,14 +36,16 @@ def _back(request: Request) -> str:
 @router.post("/view")
 def set_view(request: Request, value: str = Form("all"), db=Depends(get_db)):
     me = getattr(request.state, "user", None)
-    if not users.is_owner(me):
+    owner = users.is_owner(me)
+    if not owner and not (me is not None and users.viewable_ids(me)):
         return RedirectResponse(_back(request), status_code=303)
     value = (value or "all").strip()
     if value != "all":
         uid = scope_mod.parse_cookie(value)
-        u = db.get(models.User, uid) if uid is not None else None
-        if u is None:
-            value = "all"
+        if not scope_mod.may_view(db, me, uid):
+            value = "all" if owner else f"u:{me.id}"
+    elif not owner:
+        value = f"u:{me.id}"                       # a grantee has no "Everyone"
     resp = RedirectResponse(_back(request), status_code=303)
     resp.set_cookie(scope_mod.COOKIE, value, max_age=scope_mod.COOKIE_MAX_AGE, httponly=True, samesite="lax",
                     secure=request.url.scheme == "https")

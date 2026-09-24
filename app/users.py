@@ -72,6 +72,39 @@ def is_owner(user) -> bool:
     return bool(user is not None and user.active and norm_email(user.email) == norm_email(config.OWNER_EMAIL))
 
 
+# ---- "Admin" grants (v155.21): a member may open selected other users' dashboards -------------
+def viewable_ids(user) -> set[int]:
+    """The user ids this user may look at besides their own. Pure."""
+    import json
+    try:
+        raw = json.loads(getattr(user, "can_view", "") or "[]")
+    except (TypeError, ValueError):
+        return set()
+    return {int(x) for x in raw if str(x).isdigit()} if isinstance(raw, list) else set()
+
+
+def set_viewable(db: Session, user: models.User, ids) -> set[int]:
+    """Store which other users this one may view — active, existing users, never themselves,
+    never the owner (the owner's workspace stays the owner's)."""
+    import json
+    want = set()
+    for x in ids or ():
+        try:
+            want.add(int(x))
+        except (TypeError, ValueError):
+            continue
+    want.discard(user.id)
+    ok = set()
+    for u in db.query(models.User).filter(models.User.id.in_(list(want))) if want else []:
+        if u.active and not is_owner(u):
+            ok.add(u.id)
+    user.can_view = json.dumps(sorted(ok))
+    db.commit()
+    queries.log(db, f"{user.email} may now view: " + (", ".join(u.email for u in db.query(models.User).filter(models.User.id.in_(list(ok)))) if ok else "nobody else"), source="auth")
+    _forget_cached_sessions()
+    return ok
+
+
 def by_email(db: Session, email: str) -> models.User | None:
     e = norm_email(email)
     return db.query(models.User).filter_by(email=e).first() if e else None

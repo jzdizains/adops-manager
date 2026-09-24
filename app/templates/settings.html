@@ -578,7 +578,7 @@
     {% for u in sec.users %}
       <tr {% if not u.active %}style="opacity:.55;"{% endif %}>
         <td>{{ u.email }}{% if u.id == sec.me.id %} <span class="muted">(you)</span>{% endif %}{% if not u.active %} <span class="pill err">deactivated</span>{% endif %}{% if u.must_change_password %} <span class="pill warn" title="Must pick their own password at next login">temp password</span>{% endif %}</td>
-        <td>{% if u.email == sec.owner_email|lower %}<span class="pill dim">owner</span>{% else %}<span class="muted">member</span>{% endif %}</td>
+        <td>{% if u.email == sec.owner_email|lower %}<span class="pill dim">owner</span>{% elif sec.views.get(u.id) %}<span class="pill ok" title="Can open the dashboards of {{ sec.views[u.id]|length }} other user(s) from the “Viewing” switch">admin · views {{ sec.views[u.id]|length }}</span>{% else %}<span class="muted">member</span>{% endif %}</td>
         <td>{% if u.totp_secret %}<span class="pill ok">on</span>{% else %}<span class="pill warn">off</span>{% endif %}</td>
         <td class="mono muted">{{ u.last_login_at.strftime('%b %d %H:%M') if u.last_login_at else "never" }}</td>
         <td style="font-size:11.5px;">{% if u.last_seen_at %}<div class="mono">{{ u.last_seen_at.strftime('%b %d %H:%M') }} UTC</div><div class="muted">{{ u.last_ip }}{% if sec.user_where.get(u.id) %} · {{ sec.user_where[u.id] }}{% endif %}</div><div class="muted">{{ sec.ua.parse(u.last_ua or "").summary }}</div>{% else %}<span class="muted">—</span>{% endif %}</td>
@@ -588,7 +588,8 @@
           <form method="post" action="/settings/users/{{ u.id }}/toggle" hidden></form>
           {% if u.totp_secret %}<form method="post" action="/settings/users/{{ u.id }}/2fa-reset" hidden></form>{% endif %}
           <form method="post" action="/settings/users/{{ u.id }}/delete" hidden></form>
-          <button type="button" class="btn sm us-menu" data-id="{{ u.id }}" data-email="{{ u.email }}" data-active="{{ '1' if u.active else '' }}" data-2fa="{{ '1' if u.totp_secret else '' }}">Manage ▾</button>
+          {% if u.email != sec.owner_email|lower %}<form method="post" action="/settings/users/{{ u.id }}/views" hidden><input type="hidden" name="ids" value=""></form>{% endif %}
+          <button type="button" class="btn sm us-menu" data-id="{{ u.id }}" data-email="{{ u.email }}" data-active="{{ '1' if u.active else '' }}" data-2fa="{{ '1' if u.totp_secret else '' }}" data-views="{{ sec.views.get(u.id, [])|join(',') }}" data-owner="{{ '1' if u.email == sec.owner_email|lower else '' }}">Manage ▾</button>
           {% endif %}
         </td>
       </tr>
@@ -596,7 +597,8 @@
     </tbody>
   </table>
   <div style="display:flex;gap:10px;align-items:center;margin-top:12px;"><button type="button" class="btn primary sm" id="usAddBtn">＋ Add user</button>
-    <span class="hint" style="margin:0;">Members use everything else in the app but never see this card. Nobody outside this list can log in.</span></div>
+    <span class="hint" style="margin:0;">Members use everything else in the app but never see this card. Nobody outside this list can log in. <b>Admin</b> (Manage › Can view other users) lets a member open selected users' dashboards from the top-bar “Viewing” switch — everything exactly as that user sees it; this card, the access log and the company-wide tools stay yours.</span></div>
+  <script id="usNames" type="application/json">{{ sec.user_names|js }}</script>
   <div id="usAddBox" hidden>
     <form method="post" action="/settings/users/create" autocomplete="off">
       <label class="field"><span class="field-label">Email</span><input type="email" name="email" placeholder="name@company.com" required autocomplete="off"></label>
@@ -756,6 +758,7 @@
     var html = '<div style="font-weight:700;margin-bottom:8px;">' + UI.esc(d.email) + '</div>' +
       '<div style="display:flex;gap:6px;margin-bottom:8px;"><input type="password" placeholder="new password ({{ sec.min_password }}+)" style="flex:1;font-size:12px;" autocomplete="new-password"><button type="button" class="btn sm" data-act="password">Set</button></div>' +
       '<div style="display:grid;gap:4px;">' +
+      (d.owner ? "" : '<button type="button" class="btn sm" data-act="views">Can view other users…' + (d.views ? ' <span class="muted">(' + d.views.split(",").length + ')</span>' : "") + '</button>') +
       '<button type="button" class="btn sm" data-act="toggle">' + (d.active ? "Deactivate (signs them out)" : "Reactivate") + '</button>' +
       (d["2fa"] ? '<button type="button" class="btn sm" data-act="2fa-reset">Reset 2FA (lost phone)</button>' : "") +
       '<button type="button" class="btn sm ghost danger" data-act="delete">Delete user</button></div>';
@@ -766,6 +769,20 @@
       if (act === "password") { var v = p.querySelector("input").value; if (v.length < {{ sec.min_password }}) { adopsToast && adopsToast("err", "Password needs {{ sec.min_password }}+ characters."); return; } f("password").password.value = v; f("password").submit(); return; }
       if (act === "toggle") { f("toggle").submit(); return; }
       p.close();
+      if (act === "views") {
+        var names = JSON.parse(document.getElementById("usNames").textContent || "{}"), have = d.views ? d.views.split(",") : [];
+        var body = document.createElement("div");
+        var list = Object.keys(names).filter(function (id) { return id !== d.id && !names[id].owner; });
+        body.innerHTML = '<div class="muted" style="font-size:12.5px;line-height:1.5;margin-bottom:10px;">' + UI.esc(d.email) + ' will be able to open each ticked user\'s dashboard from the “Viewing” switch in the top bar — exactly what that user sees and can do there. Untick everything to make them a plain member again.</div>' +
+          (list.length ? '<div style="display:grid;gap:6px;">' + list.map(function (id) { return '<label style="display:flex;gap:8px;align-items:center;font-size:13px;"><input type="checkbox" value="' + id + '"' + (have.indexOf(id) >= 0 ? " checked" : "") + ' style="width:auto;"> ' + UI.esc(names[id].email) + (names[id].active ? "" : ' <span class="pill err">deactivated</span>') + "</label>"; }).join("") + "</div>"
+                       : '<div class="muted">No other users yet.</div>');
+        UI.confirm({ title: "Who can " + d.email + " view?", text: body, ok: "Save" }).then(function (y) {
+          if (!y) return;
+          var ids = [].map.call(body.querySelectorAll("input:checked"), function (i) { return i.value; });
+          f("views").ids.value = ids.join(","); f("views").submit();
+        });
+        return;
+      }
       if (act === "2fa-reset") UI.confirm({ title: "Clear 2FA for " + d.email + "?", text: "They log in with the password only until they set it up again.", ok: "Reset 2FA" }).then(function (y) { if (y) f("2fa-reset").submit(); });
       if (act === "delete") UI.confirm({ title: "Delete " + d.email + "?", text: "This cannot be undone.", ok: "Delete", danger: true }).then(function (y) { if (y) f("delete").submit(); });
     });

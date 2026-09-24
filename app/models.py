@@ -228,6 +228,7 @@ class User(Base):
     last_seen_at = Column(DateTime, nullable=True)         # last request (updated at most every 5 min)
     last_ip = Column(String, default="")
     last_ua = Column(Text, default="")
+    can_view = Column(Text, default="[]")                  # v155.21: ids of the users whose dashboards this one may open (their "Admin" grant)
 
 
 class LoginAttempt(Base):

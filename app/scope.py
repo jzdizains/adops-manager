@@ -102,7 +102,32 @@ def current(request, db: Session, me: models.User | None) -> Scope:
             return Scope(mode="all", ids=None, label="Everyone", can_switch=True, me_id=me.id)
         return Scope(mode="user", ids=owned_ids(db, u.id), user_id=u.id,
                      label=("Mine" if u.id == me.id else u.email), can_switch=True, me_id=me.id)
+    # v155.21: a member with an "Admin" grant may open the dashboards of the users listed on
+    # it (their workspace exactly as they see it) — the same switch, without "Everyone"
+    grants = users.viewable_ids(me)
+    if grants:
+        uid = parse_cookie(request.cookies.get(COOKIE) if request is not None else "")
+        if uid is not None and uid != me.id and uid in grants:
+            u = db.get(models.User, uid)
+            if u is not None and u.active and not users.is_owner(u):
+                return Scope(mode="user", ids=owned_ids(db, u.id), user_id=u.id, label=u.email, can_switch=True, me_id=me.id)
+        return Scope(mode="user", ids=owned_ids(db, me.id), user_id=me.id, label="Mine", can_switch=True, me_id=me.id)
     return Scope(mode="user", ids=owned_ids(db, me.id), user_id=me.id, label="Mine", can_switch=False, me_id=me.id)
+
+
+def may_view(db: Session, me, uid: int | None) -> bool:
+    """May `me` switch to user `uid`'s view? The owner: anyone; a grantee: the users on their
+    grant; nobody else."""
+    if me is None or uid is None:
+        return False
+    if users.is_owner(me):
+        return db.get(models.User, uid) is not None
+    if uid == me.id:
+        return True
+    if uid not in users.viewable_ids(me):
+        return False
+    u = db.get(models.User, uid)
+    return u is not None and u.active and not users.is_owner(u)
 
 
 def for_request(request, db: Session) -> Scope:
@@ -114,10 +139,13 @@ def switch_options(db: Session, scope: Scope) -> list[dict]:
     """The top-bar choices for the super admin: Everyone, Mine, then every other active user."""
     if not scope.can_switch:
         return []
-    opts = [{"value": "all", "label": "Everyone", "on": scope.mode == "all"},
-            {"value": f"u:{scope.me_id}", "label": "Mine", "on": scope.mode == "user" and scope.user_id == scope.me_id}]
+    me = db.get(models.User, scope.me_id) if scope.me_id is not None else None
+    owner = users.is_owner(me)
+    grants = set() if owner else users.viewable_ids(me)
+    opts = ([{"value": "all", "label": "Everyone", "on": scope.mode == "all"}] if owner else []) + \
+           [{"value": f"u:{scope.me_id}", "label": "Mine", "on": scope.mode == "user" and scope.user_id == scope.me_id}]
     for u in db.query(models.User).filter(models.User.active == True).order_by(models.User.email):   # noqa: E712
-        if u.id == scope.me_id:
+        if u.id == scope.me_id or (not owner and (u.id not in grants or users.is_owner(u))):
             continue
         opts.append({"value": f"u:{u.id}", "label": u.email, "on": scope.mode == "user" and scope.user_id == u.id})
     return opts

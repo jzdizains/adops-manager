@@ -104,12 +104,12 @@
     {% if section_tabs %}<nav class="tabs" data-section-tabs>{% for href, label, on in section_tabs %}<a href="{{ href }}" class="{{ 'on' if on else '' }}">{{ label }}</a>{% endfor %}</nav>{% endif %}
     <div class="right">
       {% if view_switch %}<div class="viewsw-wrap">
-        <button type="button" class="viewsw {{ 'viewsw-user' if view_switch.mode == 'user' }}" id="viewSwBtn" aria-haspopup="true" title="Whose dashboard you are looking at — only the super admin has this">
+        <button type="button" class="viewsw {{ 'viewsw-user' if view_switch.mode == 'user' }}" id="viewSwBtn" aria-haspopup="true" title="Whose dashboard you are looking at{% if view_switch.owner %} — only the super admin has this{% else %} — the users you were given access to{% endif %}">
           <span class="vs-dot"></span><span class="vs-lab">Viewing</span><b class="vs-cur">{{ view_switch.label }}</b><span class="vs-chev">▾</span></button>
         <form method="post" action="/view" class="umenu viewsw-menu" id="viewSwMenu" hidden>
           <div class="vs-head">Whose dashboard</div>
           {% for o in view_switch.options %}<button type="submit" name="value" value="{{ o.value }}" class="{{ 'on' if o.on }}"><span class="vs-check">{{ '✓' if o.on else '' }}</span><span class="vs-name">{{ o.label }}</span>{% if o.value == 'all' %}<span class="vs-sub">the whole company</span>{% endif %}</button>{% endfor %}
-          <div class="vs-foot"><a href="/team">Team · P&amp;L per user →</a></div>
+          {% if view_switch.owner %}<div class="vs-foot"><a href="/team">Team · P&amp;L per user →</a></div>{% endif %}
         </form>
       </div>{% endif %}
       <a href="/jobs" class="jr-top" id="jobsRunning" hidden title="Background jobs running — click for the list"><span class="jr-dot"></span><span class="jr-t">running</span></a>
@@ -119,7 +119,7 @@
       <button type="button" class="avatar" id="userBtn" title="{{ me_email or 'Account' }}" aria-haspopup="true">{{ me_initials }}</button>
     </div>
     <div class="umenu" id="userMenu" hidden>
-      <div class="um-head"><span class="avatar">{{ me_initials }}</span><div class="um-who"><b>{{ me_email or 'Signed in' }}</b><span>{{ 'owner' if (me and is_owner(me)) else ('admin' if (me and me.is_admin) else 'member') }}{% if me and me.totp_secret %} · 2FA on{% endif %}</span></div></div>
+      <div class="um-head"><span class="avatar">{{ me_initials }}</span><div class="um-who"><b>{{ me_email or 'Signed in' }}</b><span>{{ 'owner' if (me and is_owner(me)) else ('admin' if (me and (me.is_admin or (view_switch and view_switch.options|length > 1))) else 'member') }}{% if me and me.totp_secret %} · 2FA on{% endif %}</span></div></div>
       <div class="um-theme" id="themeBtn" role="group" aria-label="Theme">
         <button type="button" data-th="system" title="Follow the system theme">{{ ic('system') }} Auto</button>
         <button type="button" data-th="light" title="Light theme">{{ ic('sun') }} Light</button>

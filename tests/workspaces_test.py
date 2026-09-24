@@ -53,7 +53,8 @@ class Owned:
     def __init__(self, owner=None): self.owner_user_id = owner
 models = _mod("app.models", User=User, AdAccount=AdAccount,
               **{n: type(n, (Owned,), {"owner_user_id": Col("owner_user_id")}) for n in ("Template", "Creative", "DisplayCard", "AdText", "SparkCode", "SparkCodeGroup", "Tag", "BusinessCenter", "PageTemplate")})
-_mod("app.users", is_owner=lambda u: bool(u) and u.email == "janis@glitchy.ai", norm_email=lambda e: (e or "").strip().lower())
+_mod("app.users", is_owner=lambda u: bool(u) and u.email == "janis@glitchy.ai", norm_email=lambda e: (e or "").strip().lower(),
+     viewable_ids=lambda u: set(getattr(u, "can_view", ()) or ()))
 
 import importlib
 scope = importlib.import_module("app.scope")
@@ -148,6 +149,36 @@ n = scope.backfill(db2)
 check("backfill(): owner-less rows and accounts go to the super admin; owned ones untouched",
       n == 3 and rows[models.Template][0].owner_user_id == 1 and rows[models.Template][1].owner_user_id == 2 and db2.accounts[0].owner_user_id == 1 and db2.commits == 1, str(n))
 check("backfill() with no super admin user is a no-op", scope.backfill(DB([marta], [AdAccount("9", None)])) == 0)
+
+print("\n-- an Admin grant (v155.21): a member may open selected users' dashboards --")
+eva = User(4, "eva@x.com")
+db3 = DB([janis, marta, bob, eva], accounts + [AdAccount("400", 4, "bc4")])
+marta.can_view = {4, 3}                      # eva (active) and bob (deactivated)
+sc = scope.current(Req("u:4", marta), db3, marta)
+check("Marta, granted Eva: the cookie opens Eva's workspace, labelled by her email", sc.mode == "user" and sc.user_id == 4 and sc.ids == {"400"} and sc.label == "eva@x.com" and sc.can_switch)
+check("…and anything created there belongs to Eva", sc.owner_for_new == 4)
+check("…but never the owner's, an ungranted user's or a deactivated one's (back to Mine)",
+      all(scope.current(Req(c, marta), db3, marta).user_id == 2 for c in ("u:1", "u:3", "u:99")) and scope.current(Req("u:1", marta), db3, marta).label == "Mine")
+check("…and never Everyone", scope.current(Req(None, marta), db3, marta).ids == {"200", "201"} and not scope.current(Req(None, marta), db3, marta).everything)
+opts = scope.switch_options(db3, scope.current(Req("u:4", marta), db3, marta))
+check("her switch: Mine, then the granted users only (no Everyone, no owner, no deactivated)", [o["label"] for o in opts] == ["Mine", "eva@x.com"] and opts[1]["on"], str(opts))
+check("may_view(): the grant, herself; not the owner, not the ungranted", scope.may_view(db3, marta, 4) and scope.may_view(db3, marta, 2) and not scope.may_view(db3, marta, 1) and not scope.may_view(db3, marta, 3))
+check("the owner may view anyone", scope.may_view(db3, janis, 2) and not scope.may_view(db3, janis, 99))
+marta.can_view = set()
+check("no grant: a plain member again", not scope.current(Req("u:4", marta), db3, marta).can_switch and scope.current(Req("u:4", marta), db3, marta).user_id == 2)
+def read(rel): return open(os.path.join(ROOT, rel), encoding="utf-8").read()
+tm, mn, sp, st = read("app/routes/team.py"), read("app/main.py"), read("app/routes/settings_page.py"), read("app/templates/settings.html")
+check("POST /view honours the grant and never gives a grantee Everyone", "scope_mod.may_view(db, me, uid)" in tm and 'value = "all" if owner else f"u:{me.id}"' in tm and 'elif not owner:\n        value = f"u:{me.id}"' in tm)
+check("what a grantee creates in that view belongs to the viewed user", "picked in _users.viewable_ids(user)" in mn and "owner = view = picked" in mn)
+check("the top-bar switch shows for grantees", "users.is_owner(me) or users.viewable_ids(me)" in read("app/templating.py"))
+check("Settings › Users: owner-only route stores the grant (active, non-owner users only); the card has the pop-up",
+      '@router.post("/settings/users/{user_id}/views")' in sp and "users.set_viewable(db, u, ids)" in sp and "not is_owner(u)" in read("app/users.py")
+      and 'data-act="views"' in st and "admin · views" in st and 'f("views").ids.value = ids.join(",")' in st)
+check("Team page and the Users card stay the owner's", "if not users.is_owner(me):" in tm and "{% if view_switch.owner %}<div class=\"vs-foot\">" in read("app/templates/base.html"))
+check("a grantee's Settings page shows and saves the viewed user's settings, labelled as theirs — never the server cards, Users, 2FA admin or the Access log",
+      "other = bool(me is not None and uid is not None and uid != me.id)" in sp and '"own_view": bool(me is not None and users.is_owner(me) and not other)' in sp
+      and "return me if users.is_owner(me) else None" in sp and st.count("{% if sec.own_view %}") >= 4)
+check("moving accounts between workspaces stays the owner's (Everyone view)", 'view.can_switch and view.everything %}<span class="ac-owner-bulk"' in read("app/templates/accounts.html"))
 check("parse_cookie", scope.parse_cookie("u:7") == 7 and scope.parse_cookie("all") is None and scope.parse_cookie("u:x") is None and scope.parse_cookie(None) is None)
 
 # ==== static checks over the shipped files ==============================================
@@ -241,7 +272,7 @@ check("launch engine: every 'next unused' creative / text pick is owner-scoped",
       and "db.query(models.AdText)\n                             .filter_by(status=\"available\")" not in seg)
 sl = read("app/routes/super_launcher.py")
 check("super launcher never launches to an account outside the view", 'advertiser_ids = [a for a in form.getlist("advertiser_ids") if sc.allows(a) and a not in skip]' in sl)
-check("STATIC_VERSION bumped", "STATIC_VERSION = \"170\"" in read("app/config.py"))
+check("STATIC_VERSION bumped", "STATIC_VERSION = \"172\"" in read("app/config.py"))
 
 print()
 print("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}")

@@ -23,7 +23,7 @@ def _workspace(request: Request, db: Session) -> dict:
     (Everyone / Mine): the only place the server-wide cards, Users and Access log show."""
     me = getattr(request.state, "user", None)
     uid = ctx.OWNER.get() or (me.id if me is not None else None)
-    other = bool(me is not None and users.is_owner(me) and uid != me.id)
+    other = bool(me is not None and uid is not None and uid != me.id)     # the owner, or an Admin grantee (v155.21), switched to a user
     u = db.get(models.User, uid) if other and uid is not None else me
     return {"user_id": uid, "email": (u.email if u is not None else ""), "other": other,
             "own_view": bool(me is not None and users.is_owner(me) and not other)}
@@ -289,6 +289,8 @@ def _security_ctx(request: Request, db: Session, own_view: bool | None = None) -
         "is_owner": users.is_owner(me), "own_view": own_view, "owner_email": config.OWNER_EMAIL,
         "allow_trust": sec.trusted_devices_allowed(db),
         "users": db.query(models.User).order_by(models.User.email).all() if own_view else [],
+        "views": ({u.id: sorted(users.viewable_ids(u)) for u in db.query(models.User)} if own_view else {}),   # v155.21 "Admin" grants
+        "user_names": ({str(u.id): {"email": u.email, "active": bool(u.active), "owner": users.is_owner(u)} for u in db.query(models.User)} if own_view else {}),
         "min_password": users.MIN_PASSWORD,
         "devices": _devices(db, me, request.session.get("sid") or ""),
         "audit": (__import__("app.audit", fromlist=["recent"]).recent(db, models, 60) if own_view else []),
@@ -502,6 +504,31 @@ def user_2fa_reset(user_id: int, request: Request, db: Session = Depends(get_db)
     from .. import audit
     audit.from_request(db, models, request, "2fa.reset_by_admin", target=u.email)
     return _back(ok=f"2FA cleared for {u.email} — they'll log in with the password only until they set it up again.")
+
+
+@router.post("/settings/users/{user_id}/views")
+async def user_views(user_id: int, request: Request, db: Session = Depends(get_db)):
+    """v155.21 "Admin" grant: which other users' dashboards this member may open (their
+    top-bar "Viewing" switch then lists them). Owner only. `ids` = comma-separated user ids;
+    empty = plain member again."""
+    me = _admin(request, db)
+    if not me:
+        return _back(err=NOT_OWNER.format(config.OWNER_EMAIL))
+    u = db.get(models.User, user_id)
+    if not u:
+        return _back(err="No such user.")
+    if users.is_owner(u):
+        return _back(err="The owner already sees everyone.")
+    form = await request.form()
+    ids = [x for x in str(form.get("ids") or "").replace(" ", "").split(",") if x.isdigit()]
+    got = users.set_viewable(db, u, ids)
+    from .. import templating as _templating
+    _templating.forget_view_cache()
+    from .. import audit
+    audit.from_request(db, models, request, "user.views", target=u.email, detail=f"{len(got)} user(s)")
+    names = [x.email for x in db.query(models.User).filter(models.User.id.in_(list(got)))] if got else []
+    return _back(ok=(f"{u.email} can now view: " + ", ".join(sorted(names)) + " (they pick one from the “Viewing” switch in the top bar).")
+                 if got else f"{u.email} is a plain member again — their own dashboard only.")
 
 
 @router.post("/settings/users/{user_id}/delete")
