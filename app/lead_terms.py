@@ -25,15 +25,18 @@ from . import tiktok_api
 log = logging.getLogger("adops.lead_terms")
 
 TERM_TYPE_KEY = "lead_term_type"
-# tried in this order until TikTok accepts one (or names the accepted values)
-CANDIDATES = ("LEAD_GEN_TERMS", "LEAD_GENERATION_TERMS", "LEAD_GEN", "LEAD_GENERATION", "LEADS_TERMS", "TIKTOK_LEAD_GEN_TERMS")
+# TikTok's own list (24 Sep 2026, /term/check/ refusing a wrong value): "correct is InstantPage,
+# LeadAds, Pixel, ReachFrequency". LeadAds is tried first; the rest of the discovery stays for the
+# day TikTok renames it.
+CANDIDATES = ("LeadAds", "LEAD_GEN_TERMS", "LEAD_GENERATION_TERMS")
 OK_TTL = 24 * 3600
 NO_TTL = 300
 _MAX = 2000
 _cache: dict = {}                 # advertiser_id → (expires, True | False)
 _lock = threading.Lock()
 _type_lock = threading.Lock()
-_quoted = re.compile(r"['\"]([A-Z][A-Z0-9_]{2,60})['\"]")
+_quoted = re.compile(r"['\"]([A-Za-z][A-Za-z0-9_]{2,60})['\"]")
+_listed = re.compile(r"(?:correct is|must be one of|allowed values? (?:are|is))\s*:?\s*\[?\s*([A-Za-z0-9_ ,'\"]+)", re.I)
 
 
 class Unknown(Exception):
@@ -42,9 +45,12 @@ class Unknown(Exception):
 
 def pick_type(candidates, message: str) -> str:
     """The lead-gen term type out of TikTok's "must be one of …" refusal. Pure."""
-    names = [n for n in _quoted.findall(message or "") if n not in candidates]
+    msg = message or ""
+    names = list(_quoted.findall(msg))
+    for m in _listed.finditer(msg):          # every "correct is … / one of …" list in the message
+        names += [x.strip(" '\"") for x in m.group(1).split(",")]
     for n in names:
-        if "LEAD" in n:
+        if n and n not in candidates and "lead" in n.lower():
             return n
     return ""
 

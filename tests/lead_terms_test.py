@@ -17,21 +17,23 @@ lt = importlib.import_module("app.lead_terms")
 api = lt.tiktok_api
 
 print("-- pure --")
-refusal = "term_type: value must be one of ['TIKTOK_ADS_TERMS', 'LEAD_GENERATION_TERMS_OF_SERVICE', 'PANGLE_TERMS']"
-check("the lead-gen term type is picked out of TikTok's refusal", lt.pick_type(lt.CANDIDATES, refusal) == "LEAD_GENERATION_TERMS_OF_SERVICE")
+refusal = "term_type: value is not one of the allowed values, value is TIKTOK_LEAD_GEN_TERMS ,correct is InstantPage, LeadAds, Pixel, ReachFrequency"
+check("LeadAds is tried first (TikTok's own list, 24 Sep)", lt.CANDIDATES[0] == "LeadAds")
+check("the lead-gen term type is picked out of TikTok's refusal (its real wording)", lt.pick_type(("X",), refusal) == "LeadAds")
+check("…and out of a quoted list", lt.pick_type(("X",), "must be one of ['Pixel', 'LEAD_GENERATION_TERMS_OF_SERVICE']") == "LEAD_GENERATION_TERMS_OF_SERVICE")
 check("…nothing about leads in the list → nothing (never a guess)", lt.pick_type(lt.CANDIDATES, "must be one of ['A', 'B']") == "")
 check("the confirmed flag is read whatever TikTok calls it",
       lt.confirmed_of({"is_confirmed": True}) is True and lt.confirmed_of({"status": "UNCONFIRMED"}) is False
       and lt.confirmed_of({"is_signed": 0}) is False and lt.confirmed_of({"foo": 1}) is None)
 
 print("-- through a stand-in TikTok --")
-state = {"types_ok": {"LEAD_GENERATION_TERMS_OF_SERVICE"}, "confirmed": {"021"}, "calls": []}
+state = {"types_ok": {"LeadAds"}, "confirmed": {"021"}, "calls": []}
 settings = {}
 sys.modules["app.queries"] = types.SimpleNamespace(get_setting=lambda db, k, d="": settings.get(k, d), set_setting=lambda db, k, v: settings.__setitem__(k, v))
 def term_check(token, adv, tt):
     state["calls"].append(("check", adv, tt))
     if tt not in state["types_ok"]:
-        raise api.TikTokError(40002, refusal)
+        raise api.TikTokError(40002, "term_type: value is not one of the allowed values, value is " + tt + " ,correct is " + ", ".join(sorted(state["types_ok"] | {"InstantPage", "Pixel"})))
     return {"is_confirmed": adv in state["confirmed"]}
 def term_confirm(token, adv, tt):
     state["calls"].append(("confirm", adv, tt))
@@ -41,8 +43,11 @@ api.term_check, api.term_confirm = term_check, term_confirm
 api.term_get = lambda token, adv, tt, lang="EN": {"term_content": "THE TERMS"}
 lt._token = lambda db, adv: "tok"
 
-check("the term type is discovered once from the refusal and remembered", lt.term_type(None, "tok", "014") == "LEAD_GENERATION_TERMS_OF_SERVICE"
-      and settings["lead_term_type"] == "LEAD_GENERATION_TERMS_OF_SERVICE" and len([c for c in state["calls"] if c[0] == "check"]) == 1)
+check("the term type is settled on the first call and remembered", lt.term_type(None, "tok", "014") == "LeadAds"
+      and settings["lead_term_type"] == "LeadAds" and len([c for c in state["calls"] if c[0] == "check"]) == 1)
+settings.clear(); state["types_ok"] = {"LEAD_GENERATION_TERMS_OF_SERVICE"}; state["calls"].clear()
+check("if TikTok ever renames it, the new name is read out of the refusal", lt.term_type(None, "tok", "014") == "LEAD_GENERATION_TERMS_OF_SERVICE")
+settings.clear(); settings["lead_term_type"] = "LeadAds"; state["types_ok"] = {"LeadAds"}
 state["calls"].clear()
 check("status: confirmed / not confirmed", lt.status(None, "021") is True and lt.status(None, "014") is False)
 check("…cached (no second TikTok call)", (lt.status(None, "021"), lt.status(None, "014")) == (True, False) and len(state["calls"]) == 2)
@@ -50,7 +55,7 @@ check("the Terms' text is fetched for the dialog", lt.text(None, "014") == "THE 
 state["calls"].clear()
 ok, msg = lt.accept(None, "014")
 check("confirm: exactly one /term/confirm/ for that account, read back, remembered",
-      ok and msg == "confirmed" and [c for c in state["calls"] if c[0] == "confirm"] == [("confirm", "014", "LEAD_GENERATION_TERMS_OF_SERVICE")] and lt.status(None, "014") is True)
+      ok and msg == "confirmed" and [c for c in state["calls"] if c[0] == "confirm"] == [("confirm", "014", "LeadAds")] and lt.status(None, "014") is True)
 state["calls"].clear()
 check("an already-confirmed account isn't confirmed again", lt.accept(None, "021") == (True, "already confirmed") and not [c for c in state["calls"] if c[0] == "confirm"])
 def refuse(token, adv, tt): raise api.TikTokError(40002, "no")
