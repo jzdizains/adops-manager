@@ -2186,10 +2186,11 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
             # v155.13/15: TikTok refuses the AD on an account whose lead-gen Terms aren't confirmed
             # through the API — only after the campaign and ad group exist. Stop here instead.
             from .. import lead_terms as _lt_terms
-            if _lt_terms.status(db, acct.advertiser_id) is False:
-                raise ConfigError("TikTok's Lead Generation Terms aren't accepted on this ad account, so TikTok would refuse the "
-                                  "Instant Form ad — nothing was created. Accept them on the launch's Review step "
-                                  "(“Accept Lead Generation Terms”), then Retry failed.")
+            _go, _why = _lt_terms.at_launch(db, acct.advertiser_id, fields.get("_launched_by"))
+            if not _go:
+                raise ConfigError(_why)
+            if _why:
+                _ll.push("info", f"{_why} on {acct.advertiser_name or acct.advertiser_id}", advertiser_id=str(acct.advertiser_id))
 
         pixel_id = str(fields.get("pixel_id") or "").strip()
         if pixel_id and not pixel_id.isdigit():
@@ -2954,7 +2955,8 @@ async def launch_review_lead_terms(request: Request, db: Session = Depends(get_d
     def work():
         sc = scope_mod.for_request(request, db)
         ids = [v for v in str(form.get("advertiser_ids") or "").replace(" ", "").split(",") if v and sc.allows(v)][:5]
-        return JSONResponse({"ok": True, "cells": {a: launch_review.terms_cell(lead_terms.status(db, a)) for a in ids}})
+        auto = launch_review.terms_auto_for(db, sc.owner_for_new)
+        return JSONResponse({"ok": True, "cells": {a: launch_review.terms_cell(lead_terms.status(db, a), auto=auto) for a in ids}})
     return await run_in_threadpool(work)
 
 

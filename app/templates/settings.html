@@ -149,6 +149,15 @@
 </div>
 </section>
 <section class="stab" data-tab="launch">
+<div class="card" id="leadterms">
+  <div class="card-header"><span class="card-title">Lead Generation Terms</span>
+    <span class="card-meta">TikTok needs them confirmed on every ad account before an Instant Form ad can run there</span></div>
+  <label style="display:flex;align-items:flex-start;gap:8px;font-weight:700;">
+    <input type="checkbox" name="lead_terms_auto" {{ 'checked' if s.lead_terms_auto }} style="width:auto;margin-top:3px;">
+    <span>Confirm them automatically on every ad account of mine that hasn't yet
+      <span class="hint" style="font-weight:400;">Ticking this means you have read <a href="https://ads.tiktok.com/i18n/official/policy/lead-gen-terms" target="_blank" rel="noopener">TikTok's Lead Generation Terms ↗</a> and agree to them on your ad accounts. The dashboard then confirms them quietly in the background on each connected account (a few at a time, each checked at most once a day), and at launch on any account it hasn't reached yet — so no launch ever waits for a button. Off, the launch's Review step (or the failed launch) has a button that shows the terms and confirms them per account. Every confirmation is posted to your Inbox.</span></span>
+  </label>
+</div>
 <div class="card" id="lifecycle">
   <div class="card-header"><span class="card-title">Account lifecycle</span><span class="card-meta">your accounts only — every user has their own thresholds</span></div>
   <div class="form-row-3">

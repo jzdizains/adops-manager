@@ -258,6 +258,14 @@ def _loop():
                 db.rollback()
                 _sched.fail("scaling", _e)
                 log.exception("scaling pass failed")
+            if slow:
+                try:                                 # v155.18: opt-in — confirm TikTok's Lead Generation Terms ahead of any launch
+                    from . import lead_terms as _lt
+                    beat("lead_terms"); _lt.sweep(db, _m)
+                except Exception as _e:  # noqa: BLE001
+                    db.rollback()
+                    _sched.fail("lead_terms", _e)
+                    log.exception("lead terms sweep failed")
             try:
                 from . import notify
                 beat("notify"); notify.dispatch(db)          # new error alerts → Telegram / email (per user, opt-in)

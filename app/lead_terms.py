@@ -161,6 +161,96 @@ def text(db, adv: str) -> str:
     return ""
 
 
+def at_launch(db, adv: str, owner_user_id) -> tuple[bool, str]:
+    """The launch's guard (v155.17). Returns (go on?, note). Confirms the Terms only when the
+    launcher's setting `lead_terms_auto` is on — their standing decision, posted to their Inbox
+    each time — otherwise stops the launch before anything is created."""
+    st = status(db, adv)
+    if st is not False:
+        return True, ""
+    from . import settings_store
+    if not settings_store.get_settings(db, owner_user_id).get("lead_terms_auto"):
+        return False, ("TikTok's Lead Generation Terms aren't confirmed on this ad account, so TikTok would refuse the "
+                       "Instant Form ad — nothing was created. Press “Confirm Lead Generation Terms” (here or on the "
+                       "Review step), or turn on automatic confirmation in Settings › Launch, then Retry failed.")
+    ok, msg = accept(db, adv)
+    if not ok:
+        return False, f"TikTok's Lead Generation Terms couldn't be confirmed on this ad account ({msg}) — nothing was created."
+    try:
+        from . import models
+        db.add(models.Alert(kind="rule_action", level="info", ref_id=str(adv),
+                            message="Lead Generation Terms confirmed on this ad account at launch (Settings › Launch › automatic confirmation).",
+                            href="/status"))
+        db.commit()
+    except Exception:  # noqa: BLE001
+        db.rollback()
+    return True, "lead-gen terms confirmed at launch"
+
+
+# ---- the quiet sweep (v155.18) ----------------------------------------------------------------
+SWEEP_PER_TICK = 40               # accounts asked per slow sweep (423 accounts → done in a few sweeps)
+SWEEP_TTL = 24 * 3600             # an account is re-asked at most once a day, whatever the answer
+_swept: dict = {}                 # advertiser_id → last asked (time)
+SKIP_STATUS = ("SUSPEND", "DISABLE", "CLOSE", "BANNED", "PUNISH")
+
+
+def sweep_plan(accounts, swept: dict, now: float, limit: int = SWEEP_PER_TICK) -> list:
+    """Which accounts to ask this tick: connected, not disabled/suspended, not asked in the last
+    day, oldest-asked first, at most `limit`. Pure."""
+    due = []
+    for a in accounts:
+        adv = str(getattr(a, "advertiser_id", "") or "")
+        if not adv or not getattr(a, "access_token", ""):
+            continue
+        st = str(getattr(a, "status", "") or "").upper()
+        if any(k in st for k in SKIP_STATUS):
+            continue
+        last = swept.get(adv, 0.0)
+        if now - last < SWEEP_TTL:
+            continue
+        due.append((last, adv))
+    due.sort()
+    return [adv for _, adv in due[:limit]]
+
+
+def sweep(db, models) -> int:
+    """Background (slow sweep): for every user who switched `lead_terms_auto` on, confirm the
+    Lead Generation Terms on each of their connected ad accounts that hasn't them yet — so a
+    launch never has to. A few accounts per tick, each at most once a day; every confirmation
+    is posted to that user's Inbox. Returns how many were confirmed."""
+    from . import settings_store
+    users = [(u, ids) for u, us, ids in settings_store.per_user(db) if us.get("lead_terms_auto")]
+    if not users:
+        return 0
+    now = time.time()
+    done = 0
+    for u, ids in users:
+        if not ids:
+            continue
+        accts = [a for a in db.query(models.AdAccount).filter(models.AdAccount.advertiser_id.in_(list(ids)))
+                 if str(a.advertiser_id) in ids]                       # theirs only, whatever the query returns
+        for adv in sweep_plan(accts, _swept, now):
+            _swept[adv] = now
+            if len(_swept) > _MAX:
+                _swept.clear()
+            st = status(db, adv, fresh=True)
+            if st is not False:
+                continue
+            ok, msg = accept(db, adv)
+            if ok:
+                done += 1
+                try:
+                    db.add(models.Alert(kind="rule_action", level="info", ref_id=str(adv),
+                                        message="Lead Generation Terms confirmed on this ad account (Settings › Launch › automatic confirmation).",
+                                        href="/status"))
+                    db.commit()
+                except Exception:  # noqa: BLE001
+                    db.rollback()
+            else:
+                _note("/term/confirm/", "sweep", f"couldn't confirm the Lead Generation Terms on {adv}: {msg}", {"advertiser_id": adv})
+    return done
+
+
 def accept(db, adv: str) -> tuple[bool, str]:
     """Confirm the lead-gen Terms for this ad account through the official API, then read it
     back. (ok, message). Only the operator's button calls this."""

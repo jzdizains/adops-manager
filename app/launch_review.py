@@ -61,6 +61,7 @@ def asset_name(db, models, fields: dict, kind: str, owner=None) -> tuple[str, ob
 
 
 def review(db, models, fields: dict, accounts: list, spark=None, identity: str = "account", live: bool = False) -> dict:
+    terms_auto = terms_auto_for(db, fields.get("_launched_by"))
     """{rows, blocked, ready, warned, asset: {page, form}} for a synthesized preset `fields`.
     identity: "spark" (one spark code — `spark`), "post" (each picked post's own profile), or
     "account" (library / carousel: the account's own identity, filled in by identities())."""
@@ -233,7 +234,7 @@ def review(db, models, fields: dict, accounts: list, spark=None, identity: str =
                 cells["terms"] = cell(NA, "checking…")
                 terms_pending = True
             else:
-                cells["terms"] = terms_cell(known_terms)
+                cells["terms"] = terms_cell(known_terms, auto=terms_auto)
         blocked, warns = verdict(cells)
         tz = a.timezone or ""
         rows.append({"id": aid, "name": a.advertiser_name or aid, "bc": (bcs[a.owner_bc_id].name if a.owner_bc_id in bcs else ""),
@@ -286,10 +287,26 @@ TERMS_NOT = ("TikTok's Lead Generation Terms aren't confirmed for this ad accoun
              "Form ads until they are. Confirm them with the button above.")
 
 
-def terms_cell(state) -> dict:
-    """The review cell for lead_terms.status(): True / False / None (couldn't tell). Pure."""
+TERMS_AUTO = ("TikTok's Lead Generation Terms aren't confirmed for this ad account yet — the launch confirms them "
+              "first (Settings › Launch › automatic confirmation is on), then creates the ad.")
+
+
+def terms_auto_for(db, user_id) -> bool:
+    """Whether this launcher switched on confirming the Terms at launch (v155.17)."""
+    try:
+        from . import settings_store
+        return bool(settings_store.get_settings(db, user_id).get("lead_terms_auto"))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def terms_cell(state, auto: bool = False) -> dict:
+    """The review cell for lead_terms.status(): True / False / None (couldn't tell). With `auto`
+    (the launcher confirms at launch) a missing confirmation is a note, not a block. Pure."""
     if state is True:
         return cell(OK, "accepted")
+    if state is False and auto:
+        return cell(WARN, "confirmed at launch", TERMS_AUTO)
     if state is False:
         return {**cell(BAD, "not accepted", TERMS_NOT), "terms": False}
     return cell(WARN, "not checked", "couldn't read the Lead Generation Terms state from TikTok — the launch will try")
