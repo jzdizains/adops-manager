@@ -65,8 +65,9 @@ check("it is NOT mistaken for a permission/connection error", e["is_permission"]
 r_ag = em.fix_for(Log(error_code="40002", error_message="TikTok rejected a field value.",
                       error_technical=AGREE, template_id=42, advertiser_id="123",
                       spark_code_id=None))
-check("the fix button links TikTok's Lead Generation Terms",
-      r_ag and "Lead Generation Terms" in r_ag["label"] and r_ag["href"] == "https://ads.tiktok.com/i18n/official/policy/lead-gen-terms")
+check("the fix button ACCEPTS them for this account (v155.14), with the terms still linked",
+      r_ag and r_ag["label"] == "Accept Lead Generation Terms" and r_ag.get("accept_terms") == "123"
+      and r_ag["href"] == "https://ads.tiktok.com/i18n/official/policy/lead-gen-terms")
 
 print()
 print("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}")

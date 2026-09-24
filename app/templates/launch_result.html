@@ -74,7 +74,12 @@
     <p style="margin:0 0 8px;font-weight:600;">{{ l.error_message }}</p>
     {% set fx = fix_for(l) %}
     {% if fx %}
+    {% if fx.accept_terms %}
+    <div class="lr-fix"><button type="button" class="btn sm primary lt-accept" data-adv="{{ fx.accept_terms }}" data-name="{{ l.advertiser_name or l.advertiser_id }}">✓ {{ fx.label }}</button>
+      <span class="muted" style="font-size:12px;">{{ fx.why }} <a href="{{ fx.href }}" target="_blank" rel="noopener">Read the terms ↗</a></span></div>
+    {% else %}
     <div class="lr-fix"><a class="btn sm primary" href="{{ fx.href }}">🛠 {{ fx.label }} →</a><span class="muted" style="font-size:12px;">{{ fx.why }}</span></div>
+    {% endif %}
     {% endif %}
     <details>
       <summary class="muted" style="cursor:pointer;font-size:12px;">technical details (copy for debugging)</summary>
@@ -127,4 +132,27 @@
 </script>
 {% endif %}
 {% if not logs %}<div class="card"><div class="empty"><div class="empty-title">Nothing here</div>That reference has no launches — it may have been cleared, or the link is old.<br><a class="btn" href="/status">Go to Campaigns</a></div></div>{% endif %}
+<script>
+  // v155.14: accept TikTok's Lead Generation Terms for the failed account right here (asks first),
+  // then point at Retry failed — no trip back to the Review step
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest && e.target.closest(".lt-accept"); if (!b || b.disabled) return;
+    UI.confirm({ title: "Accept TikTok's Lead Generation Terms on " + b.dataset.name + "?",
+                 text: "This signs TikTok's Lead Generation Terms (https://ads.tiktok.com/i18n/official/policy/lead-gen-terms) for this ad account, as your TikTok login — the same thing Ads Manager does silently the first time a lead ad is built there.",
+                 ok: "Accept" }).then(function (yes) {
+      if (!yes) return;
+      b.disabled = true; b.textContent = "Accepting…";
+      UI.post("/campaigns/lead-terms/accept", { advertiser_ids: b.dataset.adv }).then(function (d) {
+        if (d && d.ok) {
+          b.textContent = "✓ Accepted — now Retry failed"; b.classList.remove("primary");
+          var r = document.querySelector('form[action$="/retry"] button'); if (r) { r.classList.add("primary"); r.style.color = ""; r.focus(); }
+          if (window.adopsToast) adopsToast("ok", "Lead Generation Terms accepted on " + b.dataset.name + " — press Retry failed.");
+        } else {
+          b.disabled = false; b.textContent = "✓ Accept Lead Generation Terms";
+          if (window.adopsToast) adopsToast("err", (d && (d.msg || d.error)) || "Couldn't accept them.");
+        }
+      }, function () { b.disabled = false; b.textContent = "✓ Accept Lead Generation Terms"; });
+    });
+  });
+</script>
 {% endblock %}

@@ -151,10 +151,11 @@ def fix_for(log) -> dict | None:
     # points to TikTok's own setup steps. Matched on the raw wording (any error code).
     if re.search(r"lead generation agreement|agreement has not be(en)? signed|"
                  r"lead[- ]?gen(eration)? terms", raw + " " + low):
-        return {"label": "Read TikTok's Lead Generation Terms",
-                "href": "https://ads.tiktok.com/i18n/official/policy/lead-gen-terms",
-                "why": "Per ad account, signed silently by Ads Manager at the first hand-built lead ad. Press "
-                       "“Accept Lead Generation Terms” on the Review step for this account, then Retry failed."}
+        # v155.14: the button ACCEPTS them for this account (after a confirm) — the page does it in place
+        return {"label": "Accept Lead Generation Terms", "href": "https://ads.tiktok.com/i18n/official/policy/lead-gen-terms",
+                "accept_terms": adv,
+                "why": "Signs TikTok's Lead Generation Terms on this ad account (what Ads Manager does silently at the first "
+                       "hand-built lead ad), then Retry failed."}
     if code == "SPARK":
         if "rejected the spark code" in low or "code is incorrect" in low:
             return {"label": "Replace the spark code", "href": f"/spark-codes?edit={spark_id}" if spark_id else "/spark-codes",

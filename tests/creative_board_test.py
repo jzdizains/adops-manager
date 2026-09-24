@@ -229,7 +229,7 @@ cr = read("app/routes/creatives.py"); sp = read("app/routes/spark_codes.py")
 check("/creatives/upload answers JSON with the new rows to fetch callers", "if _wants_json(request):" in cr.split("async def upload_creatives")[1] and "new_rows.append(row)" in cr and '"poster": f"/creatives/{r.id}/poster"' in cr)
 check("/spark-codes/bulk answers JSON with the added (and already-known) codes, picker-shaped", "def pick_item(s, rv: dict | None = None) -> dict:" in sp and '"items": [pick_item(r) for r in touched]' in sp and "touched.append(had)" in sp)
 check("CSS: board, menu, strips, upload, chip", all(k in css for k in (".cb-tile", ".cb-add", ".cb-menu", ".cb-strip", ".cb-next", ".up-drop", ".sl-saved", ".sl-resume")))
-check("STATIC_VERSION bumped", 'STATIC_VERSION = "164"' in read("app/config.py"))
+check("STATIC_VERSION bumped", 'STATIC_VERSION = "165"' in read("app/config.py"))
 check("Single campaign page keeps its single spark picker", "UI.pickSpark({ selected:" in read("app/templates/campaign_launch.html") or "UI.pickSpark(" in read("app/templates/campaign_launch.html"))
 
 print()
