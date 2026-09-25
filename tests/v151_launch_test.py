@@ -21,11 +21,12 @@ check("UTC+5 account (Asia/Karachi): the same UTC instant — no longer 5 h in t
 check("European UTC+1 (Etc/GMT-1) and New York: the same", at.start_now("Etc/GMT-1", now=now) == "2026-09-08 10:01:00" and at.start_now("America/New_York", now=now) == "2026-09-08 10:01:00")
 check("unknown / empty timezone: still UTC, never an error", at.start_now("", now=now) == "2026-09-08 10:01:00" and at.start_now("Mars/Olympus", now=now) == "2026-09-08 10:01:00")
 check("the account timezone is still labelled for people (Ads Manager shows the start there)", at.label("Etc/GMT+5") == "UTC−5" and at.label("Asia/Karachi") == "UTC+5")
-print("-- v155.28: 'start earlier by N minutes' (Settings › Launch) — a safety valve, default 0 --")
-check("60 minutes back", at.start_for("Etc/GMT+5", 60, now=now) == "2026-09-08 09:01:00", at.start_for("Etc/GMT+5", 60, now=now))
-check("0 / empty / junk = plain start now; capped at 3 h", at.start_for("Etc/GMT+5", 0, now=now) == at.start_now("Etc/GMT+5", now=now)
-      and at.start_for("Etc/GMT+5", "", now=now) == at.start_now("Etc/GMT+5", now=now) and at.start_for("Etc/GMT+5", "x", now=now) == at.start_now("Etc/GMT+5", now=now)
-      and at.start_for("Etc/GMT+5", 999, now=now) == "2026-09-08 07:01:00")
+print("-- v155.34, the standing rule: every ad group is scheduled at least ONE HOUR in the past --")
+check("60 minutes back is the floor: 0 / empty / junk / 30 all give UTC now − 59 min", all(at.start_for("Etc/GMT+5", v, now=now) == "2026-09-08 09:01:00" for v in (0, "", "x", 30, 60, None)),
+      at.start_for("Etc/GMT+5", 0, now=now))
+check("more is allowed, capped at 3 h", at.start_for("Etc/GMT+5", 120, now=now) == "2026-09-08 08:01:00" and at.start_for("Etc/GMT+5", 999, now=now) == "2026-09-08 07:01:00")
+check("the default setting is 60 and the field can't go below it", '"start_back_min": 60' in open(os.path.join(ROOT, "app/settings_store.py"), encoding="utf-8").read()
+      and 'name="start_back_min" min="60"' in open(os.path.join(ROOT, "app/templates/settings.html"), encoding="utf-8").read() and at.START_BACK_FLOOR_MIN == 60)
 _cp = open(os.path.join(ROOT, "app/routes/campaigns.py"), encoding="utf-8").read()
 check("every 'start now' the launch sends (regular, Smart+, Smart+ Instant Form) applies the launcher's setting",
       _cp.count('acct_time.start_for(fields.get("_account_tz"), fields.get("_start_back_min"))') == 3 and 'acct_time.start_for(fields.get("_account_tz") or getattr(acct, "timezone", ""), fields.get("_start_back_min"))' in _cp
@@ -34,10 +35,14 @@ check("v155.31: the shift is ONE server-wide setting (whoever launches, whicheve
       '"start_back_min",' in open(os.path.join(ROOT, "app/settings_store.py"), encoding="utf-8").read().split("GLOBAL_KEYS = frozenset({")[1][:200]
       and "{% if sec.own_view %}" in open(os.path.join(ROOT, "app/templates/settings.html"), encoding="utf-8").read().split('id="starttime"')[1][:400])
 check("…and the start time actually sent is written to the launch's steps", 'trace.note(f"ad group start {base_payload[\'schedule_start_time\']}' in _cp and "Smart+ ad group start" in _cp)
+check("Review shows the start as Ads Manager will: the account's own clock, an hour before its now",
+      at.shown_in("Asia/Karachi", "2026-09-08 09:01:00") == "2026-09-08 14:01:00" and at.shown_in("Etc/GMT+5", "2026-09-08 09:01:00") == "2026-09-08 04:01:00"
+      and at.shown_in("", "2026-09-08 09:01:00") == "2026-09-08 09:01:00" and "acct_time.shown_in(tz, acct_time.start_for(tz, start_back))" in open(os.path.join(ROOT, "app/launch_review.py"), encoding="utf-8").read())
 check("the Review step shows the shifted time; the setting lives in Settings › Launch",
       'acct_time.start_for(tz, start_back)' in open(os.path.join(ROOT, "app/launch_review.py"), encoding="utf-8").read()
+      and 'trace.note(f"ad group start {base_payload[\'schedule_start_time\']} UTC = ' in _cp
       and 'name="start_back_min"' in open(os.path.join(ROOT, "app/templates/settings.html"), encoding="utf-8").read()
-      and '"start_back_min": 0' in open(os.path.join(ROOT, "app/settings_store.py"), encoding="utf-8").read())
+      and '"start_back_min": 60' in open(os.path.join(ROOT, "app/settings_store.py"), encoding="utf-8").read())
 check("offset spellings still parse for the label: UTC+08:00, GMT-5, +0530", at.label("UTC+08:00") == "UTC+8" and at.label("GMT-5") == "UTC−5" and at.label("+0530") == "UTC+5:30")
 check("unknown / empty / garbage → UTC (the old behaviour), never an error",
       at.start_now("", now=now) == "2026-09-08 10:01:00" and at.start_now("Mars/Olympus", now=now) == "2026-09-08 10:01:00"

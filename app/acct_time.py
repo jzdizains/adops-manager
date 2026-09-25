@@ -58,16 +58,30 @@ def start_now(tz_name: str | None, lead_s: int = LEAD_S, now: datetime | None = 
 
 
 START_BACK_MAX_MIN = 180
+START_BACK_FLOOR_MIN = 60     # v155.34, the operator's standing rule: every ad group is scheduled at least ONE HOUR
+                              # in the past, so no clock reading — TikTok's or ours — can ever hold a launch for later
 
 
-def start_for(tz_name: str | None, back_min=0, now: datetime | None = None) -> str:
-    """"Start now" moved `back_min` minutes EARLIER (Settings › Launch › "Start ad groups
-    earlier") — a safety valve; with UTC start times (v155.32) it should stay 0. Pure."""
+def start_for(tz_name: str | None, back_min=START_BACK_FLOOR_MIN, now: datetime | None = None) -> str:
+    """"Start now" moved `back_min` minutes EARLIER — never less than START_BACK_FLOOR_MIN (an hour),
+    whatever the setting says. TikTok takes a start in the past as "start at once". Pure."""
     try:
-        back = max(0, min(int(back_min or 0), START_BACK_MAX_MIN))
+        back = min(int(back_min or 0), START_BACK_MAX_MIN)
     except (TypeError, ValueError):
         back = 0
+    back = max(back, START_BACK_FLOOR_MIN)
     return start_now(tz_name, lead_s=LEAD_S - back * 60, now=now)
+
+
+def shown_in(tz_name: str | None, utc_str: str) -> str:
+    """A TikTok UTC time ("YYYY-MM-DD HH:MM:SS") as Ads Manager will DISPLAY it for this account
+    (its own timezone). Unknown zone → the UTC value. Pure."""
+    try:
+        when = datetime.strptime(utc_str[:19], FMT).replace(tzinfo=timezone.utc)
+    except ValueError:
+        return utc_str
+    z = zone(tz_name)
+    return when.astimezone(z).strftime(FMT) if z is not None else utc_str
 
 
 def label(tz_name: str | None) -> str:

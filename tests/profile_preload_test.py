@@ -41,7 +41,7 @@ r = subprocess.run(["node", "-e", "new Function(require('fs').readFileSync('app/
 check("picker.js is syntactically valid", r.returncode == 0, r.stderr[:200])
 
 print("-- version --")
-check("STATIC_VERSION bumped", 'STATIC_VERSION = "180"' in read("app/config.py"))
+check("STATIC_VERSION bumped", 'STATIC_VERSION = "181"' in read("app/config.py"))
 
 print()
 print("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}")

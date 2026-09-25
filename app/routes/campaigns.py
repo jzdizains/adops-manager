@@ -2385,8 +2385,8 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                     continue
                 base_payload = build_adgroup_payload(fields, acct, campaign_id, i, bid, pixel_id)
                 if i == 0 and base_payload.get("schedule_start_time"):   # v155.31: what was sent, on the record
-                    trace.note(f"ad group start {base_payload['schedule_start_time']} UTC (Ads Manager shows it in {acct_time.label(fields.get('_account_tz'))})"
-                               + (f", {fields.get('_start_back_min')} min earlier" if fields.get("_start_back_min") else ""))
+                    trace.note(f"ad group start {base_payload['schedule_start_time']} UTC = {acct_time.shown_in(fields.get('_account_tz'), base_payload['schedule_start_time'])[11:16]} "
+                               f"on the account's clock ({acct_time.label(fields.get('_account_tz'))}), {max(int(fields.get('_start_back_min') or 0), acct_time.START_BACK_FLOOR_MIN)} min before now")
                 if not base_payload.get("location_ids"):
                     base_payload.pop("location_ids", None)      # account-default geo: TikTok uses the account's own
                 # lead-gen web accounts differ in which promotion combination they

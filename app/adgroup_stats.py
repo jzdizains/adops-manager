@@ -125,6 +125,10 @@ def write_account(db: Session, acct: models.AdAccount, day: str, fetched) -> int
         row.conversions = int(_f(m, "conversion"))
         n += 1
     try:
+        watch_future_starts(db, acct, groups)   # v155.33: an ad group we launched that TikTok holds for later → Inbox, at once
+    except Exception:  # noqa: BLE001
+        log.exception("future-start watch failed for %s", acct.advertiser_id)
+    try:
         update_states(db, acct, groups)     # current status per ad group + "left review" notices: same data, no extra calls
     except Exception:  # noqa: BLE001 — must never break the spend sync
         log.exception("ad group state update failed for %s", acct.advertiser_id)
@@ -399,3 +403,66 @@ def states_for(db: Session, campaign_ids: list[str]) -> dict[str, list[dict]]:
                                                        "secondary_status": st.secondary_status,
                                                        "since": st.status_since})
     return out
+
+
+# ---- future-start watch (v155.33) ----------------------------------------------------------------
+# 25 Sep 2026: for eleven days every ad group on a UTC+ account was created with a start hours in
+# the future (the start time was sent in the account's clock; TikTok reads it in UTC) and nobody
+# saw it until Ads Manager said "Scheduled". This reads the same ad-group listing the sync already
+# has: an ad group of a campaign the dashboard launched, whose start is more than FUTURE_MIN
+# minutes after its creation, raises one Inbox notice — so a clock mistake is visible within a
+# sweep of the launch, never eleven days later.
+FUTURE_MIN = 20
+_future_seen: set = set()
+
+
+def future_start_gap_min(g: dict) -> float:
+    """Minutes between an ad group's creation and its scheduled start (both TikTok strings, UTC).
+    0 when either is missing or unreadable. Pure."""
+    from datetime import datetime as _dt
+    try:
+        st = _dt.strptime(str(g.get("schedule_start_time") or "")[:19], "%Y-%m-%d %H:%M:%S")
+        ct = _dt.strptime(str(g.get("create_time") or "")[:19], "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return 0.0
+    return (st - ct).total_seconds() / 60.0
+
+
+def watch_future_starts(db: Session, acct: models.AdAccount, groups: list) -> int:
+    """One Inbox notice per offending ad group (remembered in-process; the notice itself is the
+    durable record). Returns notices raised."""
+    from datetime import datetime as _dt, timezone as _tz
+    suspects = [g for g in groups if str(g.get("operation_status") or "") == "ENABLE" and future_start_gap_min(g) > FUTURE_MIN
+                and str(g.get("adgroup_id") or "") not in _future_seen]
+    if not suspects:
+        return 0
+    ours = {r[0] for r in db.query(models.LaunchLog.campaign_id).filter(models.LaunchLog.advertiser_id == acct.advertiser_id,
+                                                                        models.LaunchLog.ok == True)}    # noqa: E712
+    raised = 0
+    for g in suspects:
+        agid = str(g.get("adgroup_id") or "")
+        _future_seen.add(agid)
+        if len(_future_seen) > 5000:
+            _future_seen.clear()
+        if str(g.get("campaign_id") or "") not in ours:
+            continue                                   # hand-built in Ads Manager: their schedule, their business
+        if db.query(models.Alert.id).filter(models.Alert.kind == "account_error", models.Alert.ref_id == str(acct.advertiser_id),
+                                            models.Alert.message.like(f"%ad group {agid}%")).first():
+            continue
+        gap = future_start_gap_min(g)
+        db.add(models.Alert(kind="account_error", level="warn", ref_id=str(acct.advertiser_id),
+                            message=(f"“{(g.get('adgroup_name') or agid)[:80]}” on {acct.advertiser_name or acct.advertiser_id} is held until "
+                                     f"{str(g.get('schedule_start_time') or '')[:16]} UTC — {gap / 60:.1f} h after it was created (ad group {agid}). "
+                                     "The launcher sent a start time TikTok read as later than intended; switch the ad group's start to now in "
+                                     "Ads Manager and send this notice to support."),
+                            href=f"/status?state=all&open={g.get('campaign_id') or ''}"))
+        raised += 1
+        try:
+            from . import diag
+            diag.record("app", "launch", "future-start", f"ad group {agid} starts {gap:.0f} min after creation",
+                        {"advertiser_id": str(acct.advertiser_id), "schedule_start_time": g.get("schedule_start_time"), "create_time": g.get("create_time")})
+        except Exception:  # noqa: BLE001
+            pass
+    if raised:
+        db.commit()
+    return raised
