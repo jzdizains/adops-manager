@@ -41,6 +41,28 @@ class AccountAccess(Base):
     created_at = Column(DateTime, default=utcnow)
 
 
+class TikTokLogin(Base):
+    """v155.39 — every connected TikTok for Business login and WHOSE it is. Until now the sweep
+    re-synced each login as the owner of a sample account carrying its token — wrong the moment a
+    user's login also lists someone else's accounts (its new BCs then landed in the wrong
+    workspace, and the user "didn't see their BCs"). Written by Connect TikTok / manual connect;
+    de-duplicated by TikTok's core_user_id when /user/info/ answers, else by token."""
+    __tablename__ = "tiktok_logins"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, index=True, nullable=True)      # the dashboard user who connected it
+    core_user_id = Column(String, default="", index=True)     # TikTok's id of the login ("" when unknown)
+    display_name = Column(String, default="")
+    email = Column(String, default="")                        # as TikTok reports it (masked)
+    access_token = Column(EncryptedText, default="")
+    refresh_token = Column(EncryptedText, default="")
+    token_expires_at = Column(DateTime, nullable=True)
+    refresh_expires_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+    last_synced_at = Column(DateTime, nullable=True)
+    last_result = Column(String, default="")                  # "N accounts across M BCs" / the error
+
+
 class BusinessCenter(Base):
     """One row per Business Center under the connected TikTok login.
 

@@ -82,7 +82,8 @@ class _Col:
     def __eq__(self, v): return ("eq", self.n, v)
     __hash__ = object.__hash__
 models = _mod("app.models", AdAccount=type("AdAccount", (Row,), {}), BusinessCenter=type("BusinessCenter", (Row,), {"bc_id": _Col("bc_id"), "retired": _Col("retired")}),
-              AccountAccess=type("AccountAccess", (Row,), {"user_id": _Col("user_id"), "advertiser_id": _Col("advertiser_id")}))
+              AccountAccess=type("AccountAccess", (Row,), {"user_id": _Col("user_id"), "advertiser_id": _Col("advertiser_id")}),
+              TikTokLogin=type("TikTokLogin", (Row,), {"access_token": _Col("access_token"), "core_user_id": _Col("core_user_id"), "user_id": _Col("user_id")}))
 
 import importlib
 oauth = importlib.import_module("app.routes.oauth")
@@ -126,6 +127,17 @@ check("login B's sync: its own missing account is retired, login A's accounts ar
       st["GONE"] == (False, "ACCESS_LOST") and st["OLD1"] == (True, "") and st["OLD2"] == (True, "") and st["NEW1"][0] is True, str(st))
 bst = {b.bc_id: b.status for b in db5.rows["BusinessCenter"]}
 check("…and login A's Business Center keeps its status", bst["bcA"] == "" and bst["bcB"] == "", str(bst))
+print("-- v155.39: every login syncs as the user who connected it (the registry), never as a sample account's owner --")
+oa2 = read("app/routes/oauth.py"); q2 = read("app/queries.py"); bal = read("app/balances.py")
+check("Connect TikTok / manual connect register the login (who + which dashboard user) before syncing",
+      oa2.count("_register(db, access_token, refresh_token,") == 2 and "def register_login(" in q2 and 'core_user_id == core' in q2)
+check("Sync all and the background re-sync walk the registry with each login's OWN user",
+      "queries.logins(db, None if sc.everything else sc.user_id)" in oa2 and "user_id=lg.user_id" in oa2 and "for lg in queries.logins(db):" in bal and "user_id=lg.user_id" in bal
+      and "user_id=acct.owner_user_id" not in oa2 and "user_id=acct.owner_user_id" not in bal)
+check("a token found only on account rows is registered with the old guess, once — nothing is lost", "for tok, acct in distinct_tokens(db):" in q2 and "if tok not in known:" in q2)
+check("Refresh TikTok token touches only THAT login's rows (it used to restamp every account with one token)",
+      "filter(models.AdAccount.access_token == old)" in oa2 and "for row in db.query(models.AdAccount).all():\n        row.access_token = access_token" not in oa2)
+check("the Accounts page shows the view's connected logins with the last sync's result", "_logins_for_page(db, sc, people)" in read("app/routes/dashboard.py") and "Connected TikTok login" in read("app/templates/accounts.html"))
 src = read("app/routes/oauth.py")
 check("the OAuth callback shows a message (and rolls back) if the sync fails after a successful login, instead of a 500",
       "except Exception as e:  # noqa: BLE001 — the login worked" in src and "db.rollback()" in src.split("def sync_accounts")[0])

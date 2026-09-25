@@ -178,6 +178,7 @@ def accounts_page(request: Request, db: Session = Depends(get_db)):
         "accounts": accounts, "title": "Ad accounts", "facts": facts, "counts": counts, "groups": groups, "notes": notes,
         "view": sc, "people": people, "people_sorted": sorted(people.values(), key=lambda u: u.email),
         "lost_count": len(lost), "show_lost": show_lost, "n_bc": len(bcs), "retired_count": len(retired_ids), "retired_accts": len(retired_accts),
+        "logins": _logins_for_page(db, sc, people),
         "tot": {"spend": sum(f["spend"] for f in facts.values()), "revenue": sum(f["revenue"] for f in facts.values())},
         "ok": request.query_params.get("ok", ""), "err": request.query_params.get("err", ""),
         "synced_at": queries.get_setting(db, "accounts_synced_at", ""),
@@ -267,6 +268,22 @@ async def accounts_geo_policy(request: Request, db: Session = Depends(get_db)):
                      f"{n} account(s) → {policy}", request=request)
     return JSONResponse({"ok": True, "changed": int(n or 0), "policy": policy,
                          "label": dict((k, l) for k, l, _ in geo_fit.POLICIES)[policy]})
+
+
+def _logins_for_page(db: Session, sc, people: dict) -> list[dict]:
+    """The connected TikTok logins of this view (v155.39) — name, TikTok email, whose workspace,
+    what the last sync found — so "my BCs don't show up" is answerable from the page itself."""
+    try:
+        rows = queries.logins(db, None if sc.everything else sc.user_id)
+    except Exception:  # noqa: BLE001
+        db.rollback()
+        return []
+    out = []
+    for lg in rows:
+        u = people.get(lg.user_id) if people else None
+        out.append({"name": lg.display_name or "(no name yet)", "email": lg.email or "", "user": (u.email if u else ""),
+                    "result": lg.last_result or "", "at": lg.last_synced_at})
+    return out
 
 
 def _retire_bc(db: Session, sc, bc_id: str, retire: bool):

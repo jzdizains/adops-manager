@@ -25,6 +25,32 @@ log = logging.getLogger("adops.oauth")
 router = APIRouter()
 
 
+def _register(db: Session, access_token: str, refresh_token: str, exp_at, rexp_at, user_id):
+    """The login registry (v155.39): who this TikTok login is (one read-only /user/info/) and
+    which dashboard user connected it."""
+    info = None
+    try:
+        info = tiktok_api.user_info(access_token)
+    except Exception:  # noqa: BLE001
+        info = None
+    try:
+        queries.register_login(db, access_token, refresh_token, exp_at, rexp_at, user_id, info)
+    except Exception:  # noqa: BLE001 — never keep a connection from completing
+        db.rollback()
+        log.exception("login registry write failed")
+
+
+def _note_login(db: Session, access_token: str, result: str) -> None:
+    try:
+        row = db.query(models.TikTokLogin).filter(models.TikTokLogin.access_token == access_token).first()
+        if row is not None:
+            row.last_synced_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            row.last_result = result[:300]
+            db.commit()
+    except Exception:  # noqa: BLE001
+        db.rollback()
+
+
 def _owner_for(request: Request, db: Session) -> int | None:
     """Whose workspace a TikTok login connects into. /oauth/callback is a public path
     (TikTok redirects there), so the auth middleware hasn't stamped the user — read the
@@ -80,11 +106,13 @@ def callback(request: Request, db: Session = Depends(get_db)):
     expires_in = int(tokens.get("expires_in") or tokens.get("access_token_expire_in") or 86400)
     refresh_expires = int(tokens.get("refresh_token_expire_in") or 30 * 86400)
 
+    who = _owner_for(request, db)
+    exp_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+    rexp_at = datetime.now(timezone.utc) + timedelta(seconds=refresh_expires)
+    _register(db, access_token, refresh_token, exp_at, rexp_at, who)
     try:
-        result = sync_accounts(db, access_token, refresh_token,
-                               datetime.now(timezone.utc) + timedelta(seconds=expires_in),
-                               datetime.now(timezone.utc) + timedelta(seconds=refresh_expires),
-                               user_id=_owner_for(request, db))
+        result = sync_accounts(db, access_token, refresh_token, exp_at, rexp_at, user_id=who)
+        _note_login(db, access_token, f"{result['count']} accounts across {result.get('bc_count', 0)} BCs")
     except Exception as e:  # noqa: BLE001 — the login worked; a sync hiccup must not read as a failed connection
         db.rollback()
         log.exception("account sync after connect failed")
@@ -307,10 +335,15 @@ def refresh(db: Session = Depends(get_db)):
     refresh_token = tokens.get("refresh_token", acct.refresh_token)
     expires_in = int(tokens.get("expires_in") or 86400)
     exp = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
-    for row in db.query(models.AdAccount).all():
+    old = acct.access_token
+    for row in db.query(models.AdAccount).filter(models.AdAccount.access_token == old):   # v155.39: THIS login's rows only
         row.access_token = access_token
         row.refresh_token = refresh_token
         row.token_expires_at = exp
+    for row in db.query(models.TikTokLogin).filter(models.TikTokLogin.access_token == old):
+        row.access_token, row.refresh_token, row.token_expires_at = access_token, refresh_token, exp
+    for row in db.query(models.AccountAccess).filter(models.AccountAccess.access_token == old):
+        row.access_token = access_token
     db.commit()
     return RedirectResponse("/accounts?ok=refreshed", status_code=303)
 
@@ -343,9 +376,11 @@ def manual_connect(request: Request, auth_code: str = Form(""), access_token: st
     if not access_token:
         return render(request, "oauth_result.html", {"ok": False,
                       "detail": "Paste either an auth code or an access token."})
+    who = _owner_for(request, db)
+    _register(db, access_token, refresh_token, expires_at, refresh_expires_at, who)
     try:
-        result = sync_accounts(db, access_token, refresh_token, expires_at, refresh_expires_at,
-                               user_id=_owner_for(request, db))
+        result = sync_accounts(db, access_token, refresh_token, expires_at, refresh_expires_at, user_id=who)
+        _note_login(db, access_token, f"{result['count']} accounts across {result.get('bc_count', 0)} BCs")
     except tiktok_api.TikTokError as e:
         return render(request, "oauth_result.html", {"ok": False,
                       "detail": f"Token rejected by TikTok (code {e.code}): {e.message}"})
@@ -364,13 +399,16 @@ def resync(request: Request, db: Session = Depends(get_db)):
     view's own login inside a user's view."""
     from .. import scope as scope_mod
     sc = scope_mod.for_request(request, db)
-    logins = queries.distinct_tokens(db)
-    if not sc.everything:
-        mine = queries.token_for_user(db, sc.user_id)
-        logins = [(t, a) for t, a in logins if t == mine]
-    if not logins:
+    rows = queries.logins(db, None if sc.everything else sc.user_id)     # v155.39: each login syncs as ITS user
+    if not rows:
         return RedirectResponse("/accounts?err=notoken", status_code=303)
-    for token, acct in logins:
-        sync_accounts(db, token, acct.refresh_token or "", acct.token_expires_at, acct.refresh_expires_at,
-                      user_id=acct.owner_user_id)
-    return RedirectResponse("/accounts?ok=synced", status_code=303)
+    n_acc = n_bc = 0
+    for lg in rows:
+        try:
+            r = sync_accounts(db, lg.access_token, lg.refresh_token or "", lg.token_expires_at, lg.refresh_expires_at, user_id=lg.user_id)
+            n_acc += int(r.get("count") or 0); n_bc += int(r.get("bc_count") or 0)
+            _note_login(db, lg.access_token, f"{r.get('count', 0)} accounts across {r.get('bc_count', 0)} BCs")
+        except Exception as e:  # noqa: BLE001 — one login's trouble never stops the others
+            db.rollback()
+            _note_login(db, lg.access_token, f"failed: {type(e).__name__}: {str(e)[:160]}")
+    return RedirectResponse(f"/accounts?ok=synced+{len(rows)}+login(s)+·+{n_acc}+accounts+across+{n_bc}+BCs", status_code=303)

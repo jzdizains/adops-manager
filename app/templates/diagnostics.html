@@ -177,7 +177,7 @@
       if (!d.connections.length) { box.textContent = "No connected ad accounts."; return; }
       box.innerHTML = '<table class="data dense" style="font-size:12px;"><thead><tr><th>TikTok login</th><th class="num">Ad accounts</th><th>Which</th></tr></thead><tbody>' +
         d.connections.map(function (c) {
-          var who = c.error ? '<span style="color:var(--err);">' + esc(c.error) + "</span>" : "<b>" + esc(c.name || "(no name)") + "</b>" + (c.email ? ' <span class="muted">' + esc(c.email) + "</span>" : "") + (c.id ? '<div class="mono muted" style="font-size:10.5px;">user ' + esc(c.id) + "</div>" : "");
+          var who = c.error ? '<span style="color:var(--err);">' + esc(c.error) + "</span>" : "<b>" + esc(c.name || "(no name)") + "</b>" + (c.email ? ' <span class="muted">' + esc(c.email) + "</span>" : "") + (c.user ? ' <span class="pill dim" title="the dashboard user whose workspace this login syncs into">' + esc(c.user) + "</span>" : "") + (c.id ? '<div class="mono muted" style="font-size:10.5px;">user ' + esc(c.id) + "</div>" : "");
           return "<tr><td>" + who + '</td><td class="num">' + c.n + '</td><td><span class="clip" style="max-width:520px;" title="' + esc(c.accounts.join(", ")) + '">' + esc(c.accounts.slice(0, 6).join(", ")) + (c.n > 6 ? " +" + (c.n - 6) + " more" : "") + "</span></td></tr>";
         }).join("") + "</tbody></table>" + (d.more ? '<div class="muted">+' + d.more + " more connections not checked</div>" : "");
     }, function () { box.textContent = "Couldn't check."; done = false; });

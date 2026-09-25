@@ -84,8 +84,15 @@ def connections_json(request: Request, db: Session = Depends(get_db)):
     from .. import tiktok_api
     groups = group_connections(db.query(models.AdAccount).filter(models.AdAccount.enabled == True).all())   # noqa: E712
     db.rollback()                      # no DB connection held while TikTok answers
+    by_token = {}
+    try:
+        users = {u.id: u.email for u in db.query(models.User)}
+        by_token = {lg.access_token: (users.get(lg.user_id) or f"user {lg.user_id}") for lg in db.query(models.TikTokLogin)}
+    except Exception:  # noqa: BLE001
+        db.rollback()
     out = []
     for g in groups[:25]:
+        g["user"] = by_token.get(g["token"], "")
         hit = _WHO.get(g["key"])
         if hit and hit[0] > _time.time():
             info, err = hit[1], ""
@@ -96,7 +103,7 @@ def connections_json(request: Request, db: Session = Depends(get_db)):
                 _WHO[g["key"]] = (_time.time() + _WHO_TTL, info)
             except tiktok_api.TikTokError as e:
                 info, err = {}, f"{e.message} (code {e.code})"
-        out.append({"key": g["key"], "n": len(g["accounts"]), "accounts": sorted(g["accounts"])[:400], **info, "error": err})
+        out.append({"key": g["key"], "n": len(g["accounts"]), "accounts": sorted(g["accounts"])[:400], "user": g.get("user", ""), **info, "error": err})
     return JSONResponse({"ok": True, "connections": out, "more": max(0, len(groups) - 25)})
 
 

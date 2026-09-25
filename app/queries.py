@@ -142,3 +142,51 @@ def campaigns_synced_ago(db: Session) -> str:
 def log(db: Session, message: str, level: str = "info", source: str = ""):
     db.add(models.AppLog(level=level, source=source, message=message))
     db.commit()
+
+
+# ---- connected TikTok logins (v155.39) --------------------------------------------------------
+def register_login(db: Session, access_token: str, refresh_token: str, token_expires_at, refresh_expires_at,
+                   user_id, info: dict | None = None):
+    """Upsert the TikTokLogin row for this token: the same TikTok login reconnected (same
+    core_user_id) updates its row — new token, and the connecting user becomes its owner."""
+    core = str((info or {}).get("core_user_id") or "")
+    row = None
+    if core:
+        row = db.query(models.TikTokLogin).filter(models.TikTokLogin.core_user_id == core).first()
+    if row is None:
+        row = db.query(models.TikTokLogin).filter(models.TikTokLogin.access_token == access_token).first()
+    if row is None:
+        row = models.TikTokLogin()
+        db.add(row)
+    row.access_token = access_token
+    row.refresh_token = refresh_token or row.refresh_token or ""
+    row.token_expires_at = token_expires_at or row.token_expires_at
+    row.refresh_expires_at = refresh_expires_at or row.refresh_expires_at
+    if user_id is not None:
+        row.user_id = int(user_id)
+    if core:
+        row.core_user_id = core
+    if info:
+        row.display_name = str(info.get("display_name") or row.display_name or "")[:120]
+        row.email = str(info.get("email") or row.email or "")[:200]
+    db.commit()
+    return row
+
+
+def logins(db: Session, user_id=None) -> list:
+    """Connected logins (registry first; any token found only on account rows is registered
+    on the spot with the sample account's owner — the old guess, kept only for rows made
+    before the registry). `user_id` narrows to one user's."""
+    rows = list(db.query(models.TikTokLogin).filter(models.TikTokLogin.access_token != ""))
+    known = {r.access_token for r in rows}
+    added = False
+    for tok, acct in distinct_tokens(db):
+        if tok not in known:
+            rows.append(models.TikTokLogin(user_id=acct.owner_user_id, access_token=tok, refresh_token=acct.refresh_token or "",
+                                           token_expires_at=acct.token_expires_at, refresh_expires_at=acct.refresh_expires_at))
+            db.add(rows[-1]); added = True
+    if added:
+        db.commit()
+    if user_id is not None:
+        rows = [r for r in rows if r.user_id == int(user_id)]
+    return rows

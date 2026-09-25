@@ -262,8 +262,8 @@ pages = {
     "app/routes/display_cards.py": ["owner_user_id=sc.owner_for_new", "if not card or not sc.owns(card):"],
     "app/routes/creatives.py": ["sc.owned(db.query(models.Creative), models.Creative)", "_owned_creatives(db).filter_by(md5=md5)", "def _owned_creatives"],
     "app/routes/pixels.py": ["scope_mod.pixels_in_view(db, sc,", "_scope(db, scope, sc)"],
-    "app/routes/oauth.py": ["user_id=_owner_for(request, db))", "auth_mod.current_user(request, db)", "mine_before = {", "if row.advertiser_id in mine_before and row.advertiser_id not in seen_ids", "bc_row.access_token = access_token", "queries.distinct_tokens(db)"],
-    "app/balances.py": ["queries.token_for_bc(db, bc.bc_id)", "queries.distinct_tokens(db)"],
+    "app/routes/oauth.py": ["who = _owner_for(request, db)", "auth_mod.current_user(request, db)", "mine_before = {", "if row.advertiser_id in mine_before and row.advertiser_id not in seen_ids", "bc_row.access_token = access_token", "queries.logins(db"],
+    "app/balances.py": ["queries.token_for_bc(db, bc.bc_id)", "queries.logins(db)"],
     "app/queries.py": ["def token_for_bc", "def token_for_user", "def distinct_tokens"],
     "app/inbox.py": ["def build(db: Session, scope=None)", "if lost[0] and ids is None:"],
     "app/assistant.py": ["scope_mod.from_ctx(db)", "_slices(db, s, e, _scope(db))", "inbox_mod.build(db, sc)"],
@@ -293,7 +293,7 @@ check("launch engine: every 'next unused' creative / text pick is owner-scoped",
       and "db.query(models.AdText)\n                             .filter_by(status=\"available\")" not in seg)
 sl = read("app/routes/super_launcher.py")
 check("super launcher never launches to an account outside the view", 'advertiser_ids = [a for a in form.getlist("advertiser_ids") if sc.allows(a) and a not in skip]' in sl)
-check("STATIC_VERSION bumped", "STATIC_VERSION = \"184\"" in read("app/config.py"))
+check("STATIC_VERSION bumped", "STATIC_VERSION = \"185\"" in read("app/config.py"))
 
 print()
 print("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}")

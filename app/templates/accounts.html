@@ -44,6 +44,9 @@
   {% if view and view.can_switch and view.everything %}<span class="ac-owner-bulk" style="display:inline-flex;align-items:center;gap:6px;"><span class="muted" style="font-size:12px;">Owner</span><select id="acOwnerSel" class="sm">{% for u in people_sorted %}<option value="{{ u.id }}">{{ u.email }}</option>{% endfor %}</select><button type="button" class="btn sm" data-ac="owner" title="Move the selected accounts (and their campaigns, P&L and audience data) into this user's workspace">Move to user</button></span>{% endif %}
   <button type="button" class="btn sm ghost" data-ac="clear">Clear</button><span class="hint-k">click a row for details</span></div>
 
+{% if logins %}<div class="muted" style="font-size:12px;margin:-4px 0 10px;">Connected TikTok login{{ 's' if logins|length != 1 }}:
+  {% for l in logins %}<span style="white-space:nowrap;"><b>{{ l.name }}</b>{% if l.email %} {{ l.email }}{% endif %}{% if l.user and view.everything %} <span class="pill dim">{{ l.user }}</span>{% endif %}{% if l.result %} · {{ l.result }}{% if l.at %} ({{ l.at|ago }}){% endif %}{% endif %}</span>{% if not loop.last %} &nbsp;·&nbsp; {% endif %}{% endfor %}
+  &nbsp;·&nbsp; <a href="/oauth/connect">Connect another →</a></div>{% endif %}
 <div id="acGroups" style="display:flex;flex-direction:column;gap:12px;">
 {% for g in groups %}
 <div class="card ac-bc" data-bc="{{ g.key }}" style="padding:0;overflow:hidden;">

@@ -73,12 +73,16 @@ def resync_structure(db: Session) -> dict:
     """Re-pull the BC list + account↔BC mapping with the stored token — the
     same sync 'Connect' runs. Heals: BCs synced before multi-BC support,
     accounts whose access was lost/regained, and BC ownership changes."""
-    from .routes.oauth import sync_accounts  # local import — no cycle at load time
+    from .routes.oauth import sync_accounts, _note_login  # local import — no cycle at load time
     total = {"count": 0, "bc_count": 0}
-    for token, acct in queries.distinct_tokens(db):      # every connected TikTok login (v116)
-        r = sync_accounts(db, token, acct.refresh_token or "", acct.token_expires_at, acct.refresh_expires_at,
-                          user_id=acct.owner_user_id)
-        total["count"] += int(r.get("count") or 0); total["bc_count"] += int(r.get("bc_count") or 0)
+    for lg in queries.logins(db):                        # every connected TikTok login, as ITS user (v155.39)
+        try:
+            r = sync_accounts(db, lg.access_token, lg.refresh_token or "", lg.token_expires_at, lg.refresh_expires_at, user_id=lg.user_id)
+            total["count"] += int(r.get("count") or 0); total["bc_count"] += int(r.get("bc_count") or 0)
+            _note_login(db, lg.access_token, f"{r.get('count', 0)} accounts across {r.get('bc_count', 0)} BCs")
+        except Exception as e:  # noqa: BLE001 — one login's trouble never stops the others
+            db.rollback()
+            _note_login(db, lg.access_token, f"failed: {type(e).__name__}: {str(e)[:160]}")
     return total
 
 

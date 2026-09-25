@@ -91,7 +91,7 @@ except ValueError:
 # extra origins allowed to POST to the dashboard (comma-separated, e.g. a second domain)
 ALLOWED_ORIGINS = [o.strip().rstrip("/").lower() for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o.strip()]
 
-STATIC_VERSION = "184"  # bump to cache-bust CSS/JS (§9.9)
+STATIC_VERSION = "185"  # bump to cache-bust CSS/JS (§9.9)
 
 
 CODE_SUFFIXES = (".py", ".html", ".js", ".css")
