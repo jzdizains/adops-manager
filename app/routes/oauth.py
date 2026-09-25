@@ -205,6 +205,7 @@ def sync_accounts(db: Session, access_token: str, refresh_token: str = "",
     mine_before = {r.advertiser_id for r in db.query(models.AdAccount)
                    if (r.access_token and r.access_token == access_token) or (user_id is not None and r.owner_user_id == user_id)}
     seen_ids: set[str] = set()
+    retired_bcs = {r[0] for r in db.query(models.BusinessCenter.bc_id).filter(models.BusinessCenter.retired == True)}   # noqa: E712  v155.27
     rows_now: dict[str, models.AdAccount] = {}     # v155.23: the session doesn't autoflush — an account listed twice
     for adv in advertisers:                        # (two BCs, or twice on one) must reuse the row just added, never a second INSERT
         if not adv["advertiser_id"]:
@@ -216,8 +217,8 @@ def sync_accounts(db: Session, access_token: str, refresh_token: str = "",
             row = models.AdAccount(advertiser_id=adv["advertiser_id"], owner_user_id=user_id)
             db.add(row)
             rows_now[adv["advertiser_id"]] = row
-        elif row.status == "ACCESS_LOST":
-            row.enabled = True         # access came back — reactivate
+        elif row.status == "ACCESS_LOST" and (adv.get("bc_id") or row.owner_bc_id or "") not in retired_bcs:
+            row.enabled = True         # access came back — reactivate (never under a BC the operator removed)
             row.status = ""
         if row.owner_user_id is None and user_id is not None:
             row.owner_user_id = user_id

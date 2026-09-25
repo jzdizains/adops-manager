@@ -131,7 +131,7 @@ t = read("app/templates/lead_forms.html")
 check("a Preview button carries the form id + owner account (group + per-account)", 'lf-preview' in t and 'data-form="{{ g.rep_form_id }}"' in t and 'data-form="{{ a.form_id }}"' in t)
 check("clicking it reads the form live and renders it in the TikTok-style phone (no raw-JSON dump)",
       '/lead-forms/inspect?form_id=' in t and 'j.fields' in t and 'lfp-phone' in t and 'lf-inspect' not in t and 'lf-json' not in t)
-check("STATIC_VERSION bumped", 'STATIC_VERSION = "175"' in read("app/config.py"))
+check("STATIC_VERSION bumped", 'STATIC_VERSION = "176"' in read("app/config.py"))
 
 print()
 print("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}")

@@ -56,6 +56,16 @@
       body.hidden = !open; $(".ac-chev", h).style.transform = open ? "" : "rotate(-90deg)";
     });
   });
+  // v155.27: Remove a Business Center — asks first (nothing is deleted; Restore undoes it)
+  $$(".ac-bc-remove").forEach(function (fm) {
+    fm.addEventListener("submit", function (e) {
+      if (fm.dataset.ok) return;
+      e.preventDefault();
+      UI.confirm({ title: "Remove " + fm.dataset.name + "?", ok: "Remove", danger: true,
+        text: "Its " + fm.dataset.n + " account" + (fm.dataset.n === "1" ? "" : "s") + " are switched off and the whole Business Center disappears from every page, picker and alert. Nothing is deleted — history and P&L stay, and “Restore” (under “hidden” at the top of this page) brings it all back." })
+        .then(function (y) { if (y) { fm.dataset.ok = "1"; fm.requestSubmit ? fm.requestSubmit() : fm.submit(); } });
+    });
+  });
   var pre = new URLSearchParams(location.search).get("state");
   if (pre) { var pb = $('#acFilter [data-f="' + CSS.escape(pre) + '"]'); if (pb) pb.click(); }
   apply();

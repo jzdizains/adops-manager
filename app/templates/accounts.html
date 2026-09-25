@@ -5,7 +5,7 @@
 <div class="page-head" style="margin-bottom:10px;">
   <div><h1>Ad accounts</h1>
     <div class="muted" style="font-size:12.5px;">{{ accounts|length }} across {{ n_bc }} Business Center{{ 's' if n_bc != 1 }}{% if synced_at %} · synced {{ synced_at|ago }}{% endif %}
-      {% if lost_count and not show_lost %} · <a href="/accounts?show_lost=1">{{ lost_count }} lost-access hidden</a>{% elif show_lost and lost_count %} · showing {{ lost_count }} lost-access · <a href="/accounts">hide</a>{% endif %}
+      {% if (lost_count or retired_count) and not show_lost %} · <a href="/accounts?show_lost=1">{% if lost_count %}{{ lost_count }} lost-access{% endif %}{% if lost_count and retired_count %} + {% endif %}{% if retired_count %}{{ retired_count }} removed BC{{ 's' if retired_count != 1 }}{% endif %} hidden</a>{% elif show_lost and (lost_count or retired_count) %} · showing {% if lost_count %}{{ lost_count }} lost-access{% endif %}{% if lost_count and retired_count %} + {% endif %}{% if retired_count %}{{ retired_count }} removed BC{{ 's' if retired_count != 1 }} ({{ retired_accts }} accounts){% endif %} · <a href="/accounts">hide</a>{% endif %}
       {% if tot.spend %} · today <b style="color:var(--text);">{{ money0(tot.spend) }}</b> spend → <span class="profit-cell {{ 'pos' if tot.revenue - tot.spend >= 0 else 'neg' }}">{{ '+' if tot.revenue - tot.spend > 0 }}{{ money0(tot.revenue - tot.spend) }}</span>{% endif %}</div></div>
   <div class="actions">
     <form method="post" action="/oauth/sync-accounts" style="display:inline;"><button class="btn" type="submit" title="Re-pull every Business Center and account from TikTok">↻ Sync all</button></form>
@@ -50,13 +50,15 @@
   <div class="ac-bc-h" style="display:flex;align-items:center;gap:10px;padding:11px 14px;cursor:pointer;">
     <span class="ac-chev" style="display:inline-block;width:14px;color:var(--text-dim);transition:transform .12s;">▾</span>
     <b style="font-size:13.5px;">{{ g.name }}</b>
-    {% if g.block %}<span class="pill err">BC {{ g.block }}</span>{% endif %}
+    {% if g.retired %}<span class="pill dim" title="Removed — hidden everywhere, its accounts switched off, no balance checks or alerts">removed</span>{% elif g.block %}<span class="pill err">BC {{ g.block }}</span>{% endif %}
     <span class="muted" style="font-size:12px;"><span class="ac-bc-n">{{ g.n }}</span> accounts · {{ g.fresh }} fresh · {{ g.live }} live · <span style="{{ 'color:var(--err);' if g.blocked }}">{{ g.blocked }} blocked</span></span>
     <span style="margin-left:auto;display:flex;align-items:center;gap:8px;font-size:12px;">
       {% if g.spend %}<span class="muted">today</span> <b>{{ money0(g.spend) }}</b> <span class="profit-cell {{ 'pos' if g.profit >= 0 else 'neg' }}">{{ '+' if g.profit > 0 }}{{ money0(g.profit) }}</span>{% endif %}
       {% if g.bc %}<span class="muted">balance</span> <b style="{{ 'color:var(--err);' if g.low }}" title="Alert below {{ '$%.0f'|format(g.threshold) }}">{{ g.bc.currency or 'USD' }} {{ "%.0f"|format(g.bc.balance or 0) }}</b>
         <a class="btn sm" href="{{ g.portal }}" target="_blank" rel="noopener" title="Open this Business Center on TikTok to add funds">{{ 'Top up ↗' if g.low else 'Portal ↗' }}</a>
-        {% if g.fresh and not g.block %}<a class="btn sm" href="/super-launcher?bc={{ g.name|urlencode }}&state=fresh">Launch to {{ g.fresh }} fresh</a>{% endif %}
+        {% if g.fresh and not g.block and not g.retired %}<a class="btn sm" href="/super-launcher?bc={{ g.name|urlencode }}&state=fresh">Launch to {{ g.fresh }} fresh</a>{% endif %}
+        {% if g.can_remove %}{% if g.retired %}<form method="post" action="/accounts/bc/{{ g.key }}/restore" style="display:inline;"><button class="btn sm" type="submit" title="Bring this Business Center and its accounts back">Restore</button></form>
+        {% else %}<form method="post" action="/accounts/bc/{{ g.key }}/remove" class="ac-bc-remove" data-name="{{ g.name }}" data-n="{{ g.n }}" style="display:inline;"><button class="btn sm ghost danger" type="submit" title="No longer using this Business Center? Hide it and switch its accounts off — nothing is deleted, Restore brings it back">Remove</button></form>{% endif %}{% endif %}
       {% endif %}
     </span>
   </div>

@@ -42,6 +42,7 @@ class BusinessCenter(Base):
     alert_threshold = Column(Float, default=50.0)
     last_synced_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=utcnow)
+    retired = Column(Boolean, default=False)      # v155.27: removed by the operator — hidden, its accounts switched off, no sweeps
     # v116 — several TikTok logins: the token of the login that lists this BC, and
     # whose workspace it shows in (a BC seen by two logins keeps its first owner)
     access_token = Column(EncryptedText, default="")       # sealed at rest (secrets_box.py)

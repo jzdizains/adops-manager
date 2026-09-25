@@ -47,6 +47,7 @@ class Row:
         self.__dict__.update(kw)
 class Q:
     def __init__(self, rows): self.rows = rows
+    def filter(self, *a): return self
     def filter_by(self, **kw): return Q([r for r in self.rows if all(getattr(r, k) == v for k, v in kw.items())])
     def first(self): return self.rows[0] if self.rows else None
     def all(self): return list(self.rows)
@@ -54,7 +55,10 @@ class Q:
 class DB:
     """No autoflush: a query never sees a row added since the last commit — like the real one."""
     def __init__(self): self.rows = {"AdAccount": [], "BusinessCenter": []}; self.pending = []; self.commits = 0
-    def query(self, model): return Q(self.rows[model.__name__])
+    def query(self, model):
+        if isinstance(model, _Col):                      # column query (retired BC ids): tuples, filtered by the flag
+            return Q([(r.bc_id,) for r in self.rows["BusinessCenter"] if r.__dict__.get("retired", False)])
+        return Q(self.rows[model.__name__])
     def add(self, r): self.pending.append(r)
     def commit(self):
         for r in self.pending:
@@ -64,7 +68,11 @@ class DB:
             self.rows[key].append(r)
         self.pending = []; self.commits += 1
     def rollback(self): self.pending = []
-models = _mod("app.models", AdAccount=type("AdAccount", (Row,), {}), BusinessCenter=type("BusinessCenter", (Row,), {}))
+class _Col:
+    def __init__(self, n): self.n = n
+    def __eq__(self, v): return ("eq", self.n, v)
+    __hash__ = object.__hash__
+models = _mod("app.models", AdAccount=type("AdAccount", (Row,), {}), BusinessCenter=type("BusinessCenter", (Row,), {"bc_id": _Col("bc_id"), "retired": _Col("retired")}))
 
 import importlib
 oauth = importlib.import_module("app.routes.oauth")
@@ -79,6 +87,11 @@ check("…the sync still reports what it saw", r["count"] >= 2)
 db2 = DB(); db2.rows["AdAccount"].append(models.AdAccount(advertiser_id="999", owner_user_id=1, access_token="old"))
 oauth.sync_accounts(db2, "tok2", user_id=5)
 check("an account another user already owns keeps its owner", [a.owner_user_id for a in db2.rows["AdAccount"] if a.advertiser_id == "999"] == [1] and len(db2.rows["AdAccount"]) == 2)
+db4 = DB(); db4.rows["BusinessCenter"].append(models.BusinessCenter(bc_id="bc2", retired=True))
+db4.rows["AdAccount"].append(models.AdAccount(advertiser_id="999", owner_user_id=1, access_token="old", status="ACCESS_LOST", enabled=False, owner_bc_id="bc2"))
+api.list_bc_advertisers = lambda tok, bc, page=1: {"list": [x for x in listed if (x["asset_id"] == "999") == (bc == "bc2")], "page_info": {"total_page": 1}}
+oauth.sync_accounts(db4, "tok", user_id=1)
+check("v155.27: an account under a removed Business Center is never switched back on by a sync", [a.enabled for a in db4.rows["AdAccount"] if a.advertiser_id == "999"] == [False])
 src = read("app/routes/oauth.py")
 check("the OAuth callback shows a message (and rolls back) if the sync fails after a successful login, instead of a 500",
       "except Exception as e:  # noqa: BLE001 — the login worked" in src and "db.rollback()" in src.split("def sync_accounts")[0])

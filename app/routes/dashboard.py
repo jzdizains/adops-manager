@@ -5,6 +5,7 @@ Also /accounts (the synced list) and /admin/cookie-check."""
 from __future__ import annotations
 
 import json
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -99,7 +100,7 @@ def overview(request: Request, db: Session = Depends(get_db)):
     all_accounts = db.query(models.AdAccount).all()
     accounts = [a for a in all_accounts if sc.allows(a.advertiser_id)]
     ctx = sl.account_picker_context(db, accounts)
-    bcs = db.query(models.BusinessCenter).order_by(models.BusinessCenter.name).all()
+    bcs = [b for b in db.query(models.BusinessCenter).order_by(models.BusinessCenter.name).all() if not b.retired]
     spend_by_aid = {r[0]: float(r[1] or 0) for r in db.query(models.CampaignRecord.advertiser_id, func.sum(models.CampaignRecord.spend_today)).group_by(models.CampaignRecord.advertiser_id)}
     src_map = pnl_data.campaign_source_map(db, ids)
     pb = pnl_data.revenue_by_source(db, start_utc, end_utc, ids)
@@ -141,12 +142,15 @@ def accounts_page(request: Request, db: Session = Depends(get_db)):
     from .. import scope as scope_mod
     sc = scope_mod.for_request(request, db)
     show_lost = request.query_params.get("show_lost") == "1"
+    all_bcs = db.query(models.BusinessCenter).order_by(models.BusinessCenter.name).all()
+    retired_ids = {b.bc_id for b in all_bcs if b.retired}          # v155.27: removed Business Centers stay out of sight
     all_accounts = [a for a in db.query(models.AdAccount).order_by(models.AdAccount.advertiser_name).all() if sc.allows(a.advertiser_id)]
-    lost = [a for a in all_accounts if a.status == "ACCESS_LOST"]
-    accounts = all_accounts if show_lost else [a for a in all_accounts if a.status != "ACCESS_LOST"]
+    lost = [a for a in all_accounts if a.status == "ACCESS_LOST" and (a.owner_bc_id or "") not in retired_ids]
+    retired_accts = [a for a in all_accounts if (a.owner_bc_id or "") in retired_ids]
+    accounts = all_accounts if show_lost else [a for a in all_accounts if a.status != "ACCESS_LOST" and (a.owner_bc_id or "") not in retired_ids]
     ctx = sl.account_picker_context(db, accounts)
     facts = _account_facts(db, accounts, ctx)
-    bcs = db.query(models.BusinessCenter).order_by(models.BusinessCenter.name).all()
+    bcs = all_bcs if show_lost else [b for b in all_bcs if not b.retired]
     by_bc: dict[str, list] = {}
     for a in accounts:
         by_bc.setdefault(a.owner_bc_id or "", []).append(a)
@@ -161,7 +165,8 @@ def accounts_page(request: Request, db: Session = Depends(get_db)):
         st = [facts[a.advertiser_id]["state"] for a in members]
         sp = sum(facts[a.advertiser_id]["spend"] for a in members); rv = sum(facts[a.advertiser_id]["revenue"] for a in members)
         thr = bal_mod.bc_threshold(b) if b else 0.0
-        groups.append({"bc": b, "key": key, "name": b.name if b else "No Business Center", "members": members,
+        groups.append({"bc": b, "key": key, "name": b.name if b else "No Business Center", "members": members, "retired": bool(b and b.retired),
+                       "can_remove": bool(b) and (sc.everything or all(sc.allows(a.advertiser_id) for a in members)),
                        "n": len(members), "fresh": st.count("fresh"), "live": st.count("active"), "blocked": st.count("blocked") + st.count("cooldown"),
                        "spend": sp, "revenue": rv, "profit": rv - sp, "low": bool(b) and (b.balance or 0) < thr, "threshold": thr,
                        "block": sl.bc_block(b) if b else "", "portal": bal_mod.bc_portal_url(b.bc_id) if b else ""})
@@ -172,7 +177,7 @@ def accounts_page(request: Request, db: Session = Depends(get_db)):
     return render(request, "accounts.html", {
         "accounts": accounts, "title": "Ad accounts", "facts": facts, "counts": counts, "groups": groups, "notes": notes,
         "view": sc, "people": people, "people_sorted": sorted(people.values(), key=lambda u: u.email),
-        "lost_count": len(lost), "show_lost": show_lost, "n_bc": len(bcs),
+        "lost_count": len(lost), "show_lost": show_lost, "n_bc": len(bcs), "retired_count": len(retired_ids), "retired_accts": len(retired_accts),
         "tot": {"spend": sum(f["spend"] for f in facts.values()), "revenue": sum(f["revenue"] for f in facts.values())},
         "ok": request.query_params.get("ok", ""), "err": request.query_params.get("err", ""),
         "synced_at": queries.get_setting(db, "accounts_synced_at", ""),
@@ -262,6 +267,52 @@ async def accounts_geo_policy(request: Request, db: Session = Depends(get_db)):
                      f"{n} account(s) → {policy}", request=request)
     return JSONResponse({"ok": True, "changed": int(n or 0), "policy": policy,
                          "label": dict((k, l) for k, l, _ in geo_fit.POLICIES)[policy]})
+
+
+def _retire_bc(db: Session, sc, bc_id: str, retire: bool):
+    """v155.27 — Remove / restore a Business Center the operator no longer uses. Removing hides
+    it and its accounts from every page and picker, switches those accounts off (no launcher
+    touches them) and stops the balance / alert sweeps for it; nothing is deleted — history,
+    P&L and launches stay, and Restore brings it all back. Returns (bc, accounts touched, error)."""
+    b = db.query(models.BusinessCenter).filter_by(bc_id=bc_id).first()
+    if b is None:
+        return None, 0, "No such Business Center."
+    members = list(db.query(models.AdAccount).filter(models.AdAccount.owner_bc_id == bc_id))
+    if not (sc.everything or (members and all(sc.allows(a.advertiser_id) for a in members))):
+        return None, 0, "That Business Center isn't in your view."
+    n = 0
+    for a in members:
+        if retire and a.enabled:
+            a.enabled = False
+            n += 1
+        elif not retire and not a.enabled and a.status != "ACCESS_LOST":
+            a.enabled = True
+            n += 1
+    b.retired = bool(retire)
+    db.commit()
+    return b, n, ""
+
+
+@router.post("/accounts/bc/{bc_id}/remove")
+def bc_remove(request: Request, bc_id: str, db: Session = Depends(get_db)):
+    sc = scope_mod.for_request(request, db)
+    b, n, err = _retire_bc(db, sc, bc_id, True)
+    if err:
+        return RedirectResponse("/accounts?err=" + quote(err), status_code=303)
+    from .. import audit
+    audit.from_request(db, models, request, "bc.removed", target=b.name or bc_id, detail=f"{n} account(s) switched off")
+    return RedirectResponse("/accounts?ok=" + quote(f"Removed {b.name or bc_id} — {n} account(s) switched off and hidden. Undo under “hidden”."), status_code=303)
+
+
+@router.post("/accounts/bc/{bc_id}/restore")
+def bc_restore(request: Request, bc_id: str, db: Session = Depends(get_db)):
+    sc = scope_mod.for_request(request, db)
+    b, n, err = _retire_bc(db, sc, bc_id, False)
+    if err:
+        return RedirectResponse("/accounts?err=" + quote(err), status_code=303)
+    from .. import audit
+    audit.from_request(db, models, request, "bc.restored", target=b.name or bc_id, detail=f"{n} account(s) switched on")
+    return RedirectResponse("/accounts?ok=" + quote(f"Restored {b.name or bc_id} — {n} account(s) switched back on."), status_code=303)
 
 
 @router.get("/accounts/bc/{bc_id}/detail")

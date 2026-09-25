@@ -90,7 +90,7 @@ def sync_bc_balances(db: Session) -> int:
     now = datetime.now(timezone.utc)
     skip = finance_skip(db)
     for bc in db.query(models.BusinessCenter).all():
-        if bc.bc_id in skip:
+        if bc.bc_id in skip or bc.retired:
             continue
         token = queries.token_for_bc(db, bc.bc_id)          # the login that can see this BC
         try:
@@ -136,7 +136,7 @@ def sync_account_balances(db: Session) -> int:
     errors: list[str] = []
     skip = finance_skip(db)
     for bc in db.query(models.BusinessCenter).all():
-        if bc.bc_id in skip:
+        if bc.bc_id in skip or bc.retired:
             continue
         token = queries.token_for_bc(db, bc.bc_id)          # the login that can see this BC
         page = 1
@@ -251,6 +251,8 @@ def evaluate_bc_alerts(db: Session) -> list[models.Alert]:
     created: list[models.Alert] = []
     now = datetime.now(timezone.utc)
     for bc in db.query(models.BusinessCenter).all():
+        if bc.retired:
+            continue                                   # v155.27: a removed BC never nags about its wallet
         threshold = bc_threshold(bc)
         label = bc.name or bc.bc_id
         if bc.balance is not None and bc.balance < threshold:
