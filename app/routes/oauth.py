@@ -8,6 +8,7 @@ advertisers under the BC.
 from __future__ import annotations
 
 import json
+import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -18,6 +19,8 @@ from sqlalchemy.orm import Session
 from .. import config, models, queries, tiktok_api
 from ..database import get_db
 from ..templating import render
+
+log = logging.getLogger("adops.oauth")
 
 router = APIRouter()
 
@@ -77,10 +80,18 @@ def callback(request: Request, db: Session = Depends(get_db)):
     expires_in = int(tokens.get("expires_in") or tokens.get("access_token_expire_in") or 86400)
     refresh_expires = int(tokens.get("refresh_token_expire_in") or 30 * 86400)
 
-    result = sync_accounts(db, access_token, refresh_token,
-                           datetime.now(timezone.utc) + timedelta(seconds=expires_in),
-                           datetime.now(timezone.utc) + timedelta(seconds=refresh_expires),
-                           user_id=_owner_for(request, db))
+    try:
+        result = sync_accounts(db, access_token, refresh_token,
+                               datetime.now(timezone.utc) + timedelta(seconds=expires_in),
+                               datetime.now(timezone.utc) + timedelta(seconds=refresh_expires),
+                               user_id=_owner_for(request, db))
+    except Exception as e:  # noqa: BLE001 — the login worked; a sync hiccup must not read as a failed connection
+        db.rollback()
+        log.exception("account sync after connect failed")
+        return render(request, "oauth_result.html", {"ok": False, "detail":
+                      "TikTok accepted the login, but reading its ad accounts into the dashboard failed "
+                      f"({type(e).__name__}: {str(e)[:160]}). Nothing was lost — press Connect TikTok again; "
+                      "if it happens twice, send this message to support."})
     from .. import audit
     audit.from_request(db, models, request, "tiktok.connected", detail=f"{result['count']} ad account(s)")
     return render(request, "oauth_result.html", {"ok": True, "detail":
@@ -194,14 +205,17 @@ def sync_accounts(db: Session, access_token: str, refresh_token: str = "",
     mine_before = {r.advertiser_id for r in db.query(models.AdAccount)
                    if (r.access_token and r.access_token == access_token) or (user_id is not None and r.owner_user_id == user_id)}
     seen_ids: set[str] = set()
-    for adv in advertisers:
+    rows_now: dict[str, models.AdAccount] = {}     # v155.23: the session doesn't autoflush — an account listed twice
+    for adv in advertisers:                        # (two BCs, or twice on one) must reuse the row just added, never a second INSERT
         if not adv["advertiser_id"]:
             continue
         seen_ids.add(adv["advertiser_id"])
-        row = db.query(models.AdAccount).filter_by(advertiser_id=adv["advertiser_id"]).first()
+        row = rows_now.get(adv["advertiser_id"]) or db.query(models.AdAccount).filter_by(advertiser_id=adv["advertiser_id"]).first()
+        rows_now[adv["advertiser_id"]] = row
         if not row:
             row = models.AdAccount(advertiser_id=adv["advertiser_id"], owner_user_id=user_id)
             db.add(row)
+            rows_now[adv["advertiser_id"]] = row
         elif row.status == "ACCESS_LOST":
             row.enabled = True         # access came back — reactivate
             row.status = ""
@@ -233,7 +247,7 @@ def sync_accounts(db: Session, access_token: str, refresh_token: str = "",
     }))
     # enrich with advertiser info (status, currency, timezone) — best effort
     try:
-        ids = [a["advertiser_id"] for a in advertisers if a["advertiser_id"]]
+        ids = list(dict.fromkeys(a["advertiser_id"] for a in advertisers if a["advertiser_id"]))
         for chunk in (ids[i:i + 100] for i in range(0, len(ids), 100)):     # every account, 100 per call (v151)
             for info in tiktok_api.get_advertiser_info(access_token, chunk):
                 row = db.query(models.AdAccount).filter_by(
