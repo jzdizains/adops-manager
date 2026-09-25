@@ -1616,20 +1616,35 @@ def _diag_note(where: str, code: str, message: str, ctx: dict | None = None) -> 
         pass
 
 
+def _first_music_id(data: dict) -> str:
+    for m in (data or {}).get("musics") or []:
+        if m.get("music_id"):
+            return str(m["music_id"])
+    return ""
+
+
 def image_music(db: Session, acct: models.AdAccount, image: models.Creative, image_url: str) -> str:
-    """The soundtrack for a single-image (photo) ad on this account: the image's own track if it has
-    one, else TikTok's recommendation for that image, else a track already confirmed usable in
-    carousels, else "" (the ad then goes out as SINGLE_IMAGE)."""
+    """The soundtrack for a single-image (photo) ad on this account — a photo post NEEDS one (25 Sep
+    2026, live: without it the only other shape, SINGLE_IMAGE, is refused with "Incorrect source
+    field" on the TikTok placement). In order: the image's own track; TikTok's recommendation for
+    the image (the endpoint insists on at least TWO image urls — the same one twice is fine);
+    TikTok's Commercial Music Library in the carousel scene; a track already confirmed usable in
+    carousels. "" only when every one of those is empty — the launch then stops before creating
+    anything."""
     if (image.music_id or "").strip():
         return image.music_id.strip()
+    tries = []
     if image_url:
+        tries.append(("recommend", lambda: tiktok_api.get_music(acct.access_token, acct.advertiser_id, "SEARCH_BY_RECOMMEND", image_urls=[image_url, image_url])))
+    tries.append(("library", lambda: tiktok_api.get_music(acct.access_token, acct.advertiser_id, "SEARCH_BY_SOURCE", sources=["SYSTEM"], page_size=20)))
+    tries.append(("history", lambda: tiktok_api.get_music(acct.access_token, acct.advertiser_id, "SEARCH_BY_HISTORY", page_size=20)))
+    for label, call in tries:
         try:
-            data = tiktok_api.get_music(acct.access_token, acct.advertiser_id, "SEARCH_BY_RECOMMEND", image_urls=[image_url])
-            for m in (data.get("musics") or []):
-                if m.get("music_id"):
-                    return str(m["music_id"])
+            mid = _first_music_id(call())
+            if mid:
+                return mid
         except tiktok_api.TikTokError as e:
-            _diag_note("/file/music/get/", "image-music", f"music recommendation failed for image {image.id}: {e.message}"[:300],
+            _diag_note("/file/music/get/", "image-music", f"music ({label}) failed for image {image.id}: {e.message}"[:300],
                        {"advertiser_id": str(acct.advertiser_id)})
     try:
         row = db.query(models.MusicTrack).filter(models.MusicTrack.carousel_ok == True).order_by(models.MusicTrack.id.desc()).first()   # noqa: E712
@@ -2063,7 +2078,11 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
             carousel_image_ids = [u[0] for u in uploads]
             if use_image:
                 image_music_id = image_music(db, acct, carousel, uploads[0][1])
-                trace.note("image ad: with TikTok's music track " + image_music_id if image_music_id else "image ad: no music track found — sent as a plain image ad")
+                if not image_music_id:
+                    raise ConfigError(f"No music track could be found for image “{carousel.name}” on this account — TikTok runs a single image "
+                                      "as a photo post, which needs a soundtrack, and refuses a plain image ad on the TikTok placement. "
+                                      "Nothing was created. Open Diagnostics for TikTok's answers to the music lookups, then Retry failed.")
+                trace.note("image ad: photo post with TikTok's music track " + image_music_id)
             identity_choices = identity_candidates(db, acct)
             creative_identity = (identity_choices[0] if identity_choices
                                  else resolve_account_identity(db, acct))
@@ -2500,20 +2519,12 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                     trace.inflight(_lt.ad_inflight(i))
                     resp = None
                     if carousel is not None and carousel.kind == "image":
-                        # v155.25: a photo post (one image + music) first — what Ads Manager makes of a single
-                        # image; if TikTok won't take it as one, once more as a plain SINGLE_IMAGE ad
-                        try:
-                            resp, creative_identity = create_ad_trying_identities(
-                                acct, lambda ident: _uniq(build_image_ad_payload(fields, adgroup_id, ident, carousel_image_ids[0], image_music_id)),
-                                identity_choices or [creative_identity])
-                        except tiktok_api.TikTokError as e_photo:
-                            if not image_music_id:
-                                raise
-                            _diag_note("/ad/create/", "image-photo-refused", f"photo post refused, trying SINGLE_IMAGE: {e_photo.message}"[:300],
-                                       {"advertiser_id": str(acct.advertiser_id), "creative_id": carousel.id})
-                            resp, creative_identity = create_ad_trying_identities(
-                                acct, lambda ident: _uniq(build_image_ad_payload(fields, adgroup_id, ident, carousel_image_ids[0], "")),
-                                identity_choices or [creative_identity])
+                        # v155.25/35: a photo post (one image + music) — what Ads Manager makes of a single image.
+                        # (A plain SINGLE_IMAGE ad is refused on the TikTok placement: "Incorrect source field",
+                        # live 25 Sep 2026 — so there is no second shape to fall back to.)
+                        resp, creative_identity = create_ad_trying_identities(
+                            acct, lambda ident: _uniq(build_image_ad_payload(fields, adgroup_id, ident, carousel_image_ids[0], image_music_id)),
+                            identity_choices or [creative_identity])
                         creative_committed = True
                         ad_created = True
                         if not carousel.used_campaign_id:

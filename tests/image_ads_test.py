@@ -50,12 +50,14 @@ check("the launch: an image rides the carousel path with one slide and no music 
       and src.index("if use_image:\n                if not carousel.file_path") < src.index("slides = carousel_slides(db, carousel)"))
 check("…objective rule stays carousel-only; Smart+ / Smart Creative refused for both, in words",
       'if not use_image and fields["objective_type"] not in CAROUSEL_OBJECTIVES' in src and 'noun = "Image ads" if use_image else "Carousel Ads"' in src)
-check("…the ad goes out as a photo post first, then once more as SINGLE_IMAGE if TikTok refuses the photo",
+check("…the ad goes out as a photo post (one image + music); there is NO plain-image fallback (TikTok: 'Incorrect source field', live 25 Sep)",
       'if carousel is not None and carousel.kind == "image":' in src and "build_image_ad_payload(fields, adgroup_id, ident, carousel_image_ids[0], image_music_id)" in src
-      and 'build_image_ad_payload(fields, adgroup_id, ident, carousel_image_ids[0], "")' in src and '"image-photo-refused"' in src)
-check("the track: the image's own, else TikTok's recommendation for that image, else a carousel-confirmed one",
-      "def image_music(" in src and '"SEARCH_BY_RECOMMEND", image_urls=[image_url]' in src and "MusicTrack.carousel_ok == True" in src
-      and "image_music_id = image_music(db, acct, carousel, uploads[0][1])" in src)
+      and '"image-photo-refused"' not in src and 'build_image_ad_payload(fields, adgroup_id, ident, carousel_image_ids[0], "")' not in src)
+check("the track: the image's own; TikTok's recommendation (TWO urls — the endpoint's minimum); the Commercial Music Library; history; a carousel-confirmed one",
+      "def image_music(" in src and 'image_urls=[image_url, image_url]' in src and '"SEARCH_BY_SOURCE", sources=["SYSTEM"]' in src and '"SEARCH_BY_HISTORY"' in src
+      and "MusicTrack.carousel_ok == True" in src and "image_music_id = image_music(db, acct, carousel, uploads[0][1])" in src)
+check("no track at all → the launch stops BEFORE creating the campaign, in words, with the way out",
+      "if not image_music_id:\n                    raise ConfigError(" in src and src.index("if not image_music_id:") < src.index('trace.inflight("Smart+ campaign")'))
 check("the image is uploaded into each account through the cached slide upload (delivery size)",
       "uploads = [_upload_image_to_account(db, acct, img) for img in slides]" in src and "carousel_image_ids = [u[0] for u in uploads]" in src)
 check("Review: no display card on image ads either", 'in ("carousel", "image")' in read("app/launch_review.py"))
