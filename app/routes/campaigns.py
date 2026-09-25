@@ -125,6 +125,10 @@ class SparkResolveError(Exception):
 # Spark identity resolution (§9.2–9.4) — never guess.
 # ---------------------------------------------------------------------------
 
+IDENTITY_BC_MAX = 12          # Business Centers asked for a profile per launch (one listing call each)
+IDENTITY_TRY_MAX = 12         # identities tried on /ad/create/ before giving up
+
+
 def _bc_candidates(db: Session | None, acct: models.AdAccount) -> list[str]:
     """Business Centers that might have authorized a TikTok profile for this ad account.
 
@@ -138,7 +142,16 @@ def _bc_candidates(db: Session | None, acct: models.AdAccount) -> list[str]:
     for bc in (acct.owner_bc_id or "", _main_bc(db)):
         if bc and bc not in out:
             out.append(bc)
-    return out
+    # v155.26: then every other Business Center this account's login can see — a profile
+    # shared from any of them is usable here, and only that BC answers for it
+    if db is not None:
+        try:
+            for (bc,) in db.query(models.BusinessCenter.bc_id).filter(models.BusinessCenter.access_token == acct.access_token):
+                if bc and bc not in out:
+                    out.append(bc)
+        except Exception:  # noqa: BLE001
+            pass
+    return out[:IDENTITY_BC_MAX]
 
 
 def _main_bc(db: Session | None) -> str:
@@ -208,7 +221,10 @@ def identity_candidates(db: Session | None, acct: models.AdAccount) -> list[dict
 
     def rank(i: dict) -> tuple:
         bc, itype = i.get("_bc") or "", i.get("identity_type") or ""
-        return (0 if bc and bc == main else (1 if bc else 2),
+        # real TikTok profiles first (TT_USER / BC_AUTH_TT), a custom name + avatar last — TikTok
+        # is retiring those ("Custom identity is no longer supported", Ads Manager, Sep 2026)
+        return (1 if itype == "CUSTOMIZED_USER" else 0,
+                0 if bc and bc == main else (1 if bc else 2),
                 0 if itype == "BC_AUTH_TT" else 1)
 
     out = []
@@ -1105,7 +1121,7 @@ def lead_form_as_smart_plus(fields: dict) -> bool:
     """An Instant Form launch with a Spark post goes out as Smart+ (see launch_to_account). Library
     videos and carousels aren't supported on the Smart+ path here, so those stay regular. Pure."""
     return (fields.get("destination_type") == "lead_form"
-            and fields.get("creative_source") not in ("library", "carousel")
+            and fields.get("creative_source") not in LIBRARY_SOURCES
             and not fields.get("smart_creative"))
 
 
@@ -1319,7 +1335,9 @@ def resolve_account_identity(db: Session, acct: models.AdAccount) -> dict:
 
 _IDENTITY_REFUSED = re.compile(
     r"no longer have access to the TikTok account used in this ad|"
-    r"select a new identity and creative material", re.I)
+    r"select a new identity and creative material|"
+    r"custom identity|customized_user|identity.{0,60}(?:no longer|not) (?:supported|available|valid)|"
+    r"identity_id.{0,40}(?:invalid|not exist|does not exist)", re.I)          # v155.26: move on to the next profile
 
 
 def create_ad_trying_identities(acct: models.AdAccount, build, candidates: list[dict]):
@@ -1332,7 +1350,7 @@ def create_ad_trying_identities(acct: models.AdAccount, build, candidates: list[
     """
     tried: list[str] = []
     last: Exception | None = None
-    for ident in (candidates or [{}])[:4]:
+    for ident in (candidates or [{}])[:IDENTITY_TRY_MAX]:
         try:
             return tiktok_api.create_ad(acct.access_token, acct.advertiser_id, build(ident)), ident
         except tiktok_api.TikTokError as e:
@@ -1492,6 +1510,8 @@ def _upload_creative_to_account(db: Session, acct: models.AdAccount,
 
 
 CAROUSEL_OBJECTIVES = ("APP_PROMOTION", "WEB_CONVERSIONS", "TRAFFIC", "LEAD_GENERATION", "REACH")
+LIBRARY_SOURCES = ("library", "carousel", "image")      # v155.24: image = one still image → SINGLE_IMAGE ad
+SOURCE_OF_KIND = {"carousel": "carousel", "image": "image"}   # Creative.kind → creative_source (video → library)
 
 
 def carousel_slides(db: Session, carousel: models.Creative) -> list[models.Creative]:
@@ -1564,6 +1584,58 @@ def build_carousel_ad_payload(fields: dict, adgroup_id: str, identity: dict,
     if identity.get("identity_authorized_bc_id"):
         creative["identity_authorized_bc_id"] = identity["identity_authorized_bc_id"]
     return {"adgroup_id": adgroup_id, "creatives": [creative]}
+
+
+def build_image_ad_payload(fields: dict, adgroup_id: str, identity: dict, image_id: str, music_id: str = "") -> dict:
+    """v155.24/25 — one still image as an ad. With a music track it is what Ads Manager makes of a
+    single image on the TikTok placement: a PHOTO post — ad_format CAROUSEL_ADS, one image_id, one
+    music_id ("1 image · 1 music track"). Without music: ad_format SINGLE_IMAGE (Pangle / Global
+    App Bundle style). The preset's text + CTA, identity, destination. Pure."""
+    creative: dict = {
+        "ad_name": f"{fields['template_name']} image"[:512],
+        "ad_format": "CAROUSEL_ADS" if music_id else "SINGLE_IMAGE",
+        "ad_text": fields["ad_text"] or " ",
+        **_cta(fields),
+        "image_ids": [image_id],
+        "identity_id": identity["identity_id"],
+        "identity_type": identity["identity_type"],
+    }
+    if music_id:
+        creative["music_id"] = music_id
+    apply_destination(creative, fields)      # website URL, or an Instant Page / Instant Form page_id
+    if identity.get("identity_authorized_bc_id"):
+        creative["identity_authorized_bc_id"] = identity["identity_authorized_bc_id"]
+    return {"adgroup_id": adgroup_id, "creatives": [creative]}
+
+
+def _diag_note(where: str, code: str, message: str, ctx: dict | None = None) -> None:
+    try:
+        from .. import diag
+        diag.record("app", where, code, message, ctx or {})
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def image_music(db: Session, acct: models.AdAccount, image: models.Creative, image_url: str) -> str:
+    """The soundtrack for a single-image (photo) ad on this account: the image's own track if it has
+    one, else TikTok's recommendation for that image, else a track already confirmed usable in
+    carousels, else "" (the ad then goes out as SINGLE_IMAGE)."""
+    if (image.music_id or "").strip():
+        return image.music_id.strip()
+    if image_url:
+        try:
+            data = tiktok_api.get_music(acct.access_token, acct.advertiser_id, "SEARCH_BY_RECOMMEND", image_urls=[image_url])
+            for m in (data.get("musics") or []):
+                if m.get("music_id"):
+                    return str(m["music_id"])
+        except tiktok_api.TikTokError as e:
+            _diag_note("/file/music/get/", "image-music", f"music recommendation failed for image {image.id}: {e.message}"[:300],
+                       {"advertiser_id": str(acct.advertiser_id)})
+    try:
+        row = db.query(models.MusicTrack).filter(models.MusicTrack.carousel_ok == True).order_by(models.MusicTrack.id.desc()).first()   # noqa: E712
+        return str(row.music_id) if row else ""
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 def build_library_ad_payload(fields: dict, adgroup_id: str, identity: dict,
@@ -1712,6 +1784,7 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
     creative: models.Creative | None = None      # library creative (reserved below)
     carousel: models.Creative | None = None      # carousel creative (reserved below)
     carousel_image_ids: list[str] = []            # per-account uploaded slide ids
+    image_music_id = ""                           # v155.25: the photo post's track for a single image
     pool_text: models.AdText | None = None
     creative_committed = False                    # True once an ad actually exists
     new_campaign_id = ""                          # campaign THIS launch created (for cleanup)
@@ -1724,10 +1797,10 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
     resume = (fields.get("_resume_by_account") or {}).get(str(acct.advertiser_id)) or None
     if resume:
         fields = dict(fields)
-        if resume.get("creative_id") and fields.get("creative_source") in ("library", "carousel"):
+        if resume.get("creative_id") and fields.get("creative_source") in LIBRARY_SOURCES:
             fields["creative_id"] = int(resume["creative_id"])
             fields["allow_creative_reuse"] = True
-        elif resume.get("spark_code_id") and fields.get("creative_source") not in ("library", "carousel"):
+        elif resume.get("spark_code_id") and fields.get("creative_source") not in LIBRARY_SOURCES:
             fields["spark_code_id"] = int(resume["spark_code_id"])
     from .. import launch_trace as _lt
     trace = _lt.Trace(db, models, batch_ref, acct.advertiser_id, fields)
@@ -1744,19 +1817,21 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
         # v155.13 found the real cause — TikTok's Lead Generation Terms per ad account, see lead_terms —
         # so the preset's own Smart+ switch decides again. Smart+ Instant Form ad groups stay supported.)
         use_library = fields.get("creative_source") == "library"
-        use_carousel = fields.get("creative_source") == "carousel"
+        use_image = fields.get("creative_source") == "image"          # v155.24: a single still image (SINGLE_IMAGE)
+        use_carousel = fields.get("creative_source") == "carousel" or use_image   # the image path IS the carousel path with one slide, no music
         if use_carousel:
+            noun = "Image ads" if use_image else "Carousel Ads"
             # TikTok "Create Carousel Ads" rules for Standard Carousel Ads
-            if fields["objective_type"] not in CAROUSEL_OBJECTIVES:
+            if not use_image and fields["objective_type"] not in CAROUSEL_OBJECTIVES:
                 raise ConfigError("Carousel Ads need one of these objectives: Leads, Website "
                                   "engagements (conversions), Click (traffic), Reach or App "
                                   f"promotion — this preset uses {fields['objective_type']}.")
             if fields.get("smart_plus"):
-                raise ConfigError("Carousel Ads can't run on Smart+ campaigns — "
-                                  + ("Engaged session always runs as Smart+; pick Click or Landing page view for a carousel."
+                raise ConfigError(f"{noun} can't run on Smart+ campaigns — "
+                                  + ("Engaged session always runs as Smart+; pick Click or Landing page view."
                                      if fields.get("_smart_plus_implied") else "turn Smart+ off."))
             if fields.get("smart_creative"):
-                raise ConfigError("Carousel Ads can't use Smart Creative (TikTok requires ACO off) — "
+                raise ConfigError(f"{noun} can't use Smart Creative (TikTok requires ACO off) — "
                                   "turn Smart Creative off.")
             if fields["destination_type"] not in ("website", "pixel") or not fields.get("landing_page_url"):
                 raise ConfigError("Carousel presets need a Website destination with a landing page URL.")
@@ -1927,32 +2002,40 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
         identity_choices: list[dict] = []       # ordered fallbacks; TikTok picks the winner
         if use_carousel:
             reuse = bool(fields.get("allow_creative_reuse"))
+            want_kind = "image" if use_image else "carousel"
             if fields.get("creative_id"):
                 cid = int(fields["creative_id"])
                 carousel = db.get(models.Creative, cid) if cid > 0 else None
-                if not carousel or carousel.kind != "carousel":
-                    raise ConfigError("The picked creative isn't a carousel.")
+                if not carousel or carousel.kind != want_kind:
+                    raise ConfigError(f"The picked creative isn't {'an image' if use_image else 'a carousel'}.")
                 if carousel.status != "available" and not (reuse and carousel.status == "used"):
-                    raise ConfigError(f"Carousel “{carousel.name}” has already launched.")
+                    raise ConfigError(f"{'Image' if use_image else 'Carousel'} “{carousel.name}” has already launched.")
             else:
-                carousel = (_owned(db.query(models.Creative), models.Creative, fields).filter_by(status="available", kind="carousel", archived=False)
+                carousel = (_owned(db.query(models.Creative), models.Creative, fields).filter_by(status="available", kind=want_kind, archived=False)
                             .order_by(models.Creative.id).first())
                 if not carousel:
-                    raise ConfigError("No available carousels — build one on the Creatives page (Carousels tab).")
+                    raise ConfigError("No available images — upload some on the Creatives page (Images tab)." if use_image
+                                      else "No available carousels — build one on the Creatives page (Carousels tab).")
             trace.assets(creative_id=carousel.id)
             log.creative_id = carousel.id
-            slides = carousel_slides(db, carousel)
-            if len(slides) < 2:
-                raise ConfigError(f"Carousel “{carousel.name}” has fewer than 2 slides.")
-            if not (carousel.music_id or "").strip():
-                raise ConfigError(f"Carousel “{carousel.name}” has no soundtrack — TikTok requires one.")
+            if use_image:
+                if not carousel.file_path:
+                    raise ConfigError(f"Image “{carousel.name}” has no file — upload it again.")
+                slides = [carousel]
+            else:
+                slides = carousel_slides(db, carousel)
+                if len(slides) < 2:
+                    raise ConfigError(f"Carousel “{carousel.name}” has fewer than 2 slides.")
+                if not (carousel.music_id or "").strip():
+                    raise ConfigError(f"Carousel “{carousel.name}” has no soundtrack — TikTok requires one.")
             # caption: the carousel's own text wins; else the preset's fixed text; else the pool
             own_text = (carousel.ad_text or "").strip()
             if own_text:
                 fields = dict(fields); fields["ad_text"] = own_text; fields["ad_text_mode"] = "fixed"
             elif not (fields.get("ad_text") or "").strip() and fields.get("ad_text_mode") != "pool":
-                raise ConfigError(f"Carousel “{carousel.name}” has no caption and the preset has no ad text — "
-                                  "add a caption to the carousel (Creatives → Carousels → open it) or ad text to the preset.")
+                raise ConfigError(f"{'Image' if use_image else 'Carousel'} “{carousel.name}” has no caption and the preset has no ad text — "
+                                  + ("add ad text to the preset (or pull from the Ad Texts list)." if use_image
+                                     else "add a caption to the carousel (Creatives → Carousels → open it) or ad text to the preset."))
             if carousel.status == "available":
                 carousel.status = "used"
                 carousel.used_advertiser_id = acct.advertiser_id
@@ -1968,7 +2051,11 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                 pool_text.used_at = datetime.now(timezone.utc)
                 db.flush()
                 fields = dict(fields); fields["ad_text"] = pool_text.text
-            carousel_image_ids = [_upload_image_to_account(db, acct, img)[0] for img in slides]
+            uploads = [_upload_image_to_account(db, acct, img) for img in slides]
+            carousel_image_ids = [u[0] for u in uploads]
+            if use_image:
+                image_music_id = image_music(db, acct, carousel, uploads[0][1])
+                trace.note("image ad: with TikTok's music track " + image_music_id if image_music_id else "image ad: no music track found — sent as a plain image ad")
             identity_choices = identity_candidates(db, acct)
             creative_identity = (identity_choices[0] if identity_choices
                                  else resolve_account_identity(db, acct))
@@ -2401,7 +2488,28 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                         return p
                     trace.inflight(_lt.ad_inflight(i))
                     resp = None
-                    if carousel is not None:
+                    if carousel is not None and carousel.kind == "image":
+                        # v155.25: a photo post (one image + music) first — what Ads Manager makes of a single
+                        # image; if TikTok won't take it as one, once more as a plain SINGLE_IMAGE ad
+                        try:
+                            resp, creative_identity = create_ad_trying_identities(
+                                acct, lambda ident: _uniq(build_image_ad_payload(fields, adgroup_id, ident, carousel_image_ids[0], image_music_id)),
+                                identity_choices or [creative_identity])
+                        except tiktok_api.TikTokError as e_photo:
+                            if not image_music_id:
+                                raise
+                            _diag_note("/ad/create/", "image-photo-refused", f"photo post refused, trying SINGLE_IMAGE: {e_photo.message}"[:300],
+                                       {"advertiser_id": str(acct.advertiser_id), "creative_id": carousel.id})
+                            resp, creative_identity = create_ad_trying_identities(
+                                acct, lambda ident: _uniq(build_image_ad_payload(fields, adgroup_id, ident, carousel_image_ids[0], "")),
+                                identity_choices or [creative_identity])
+                        creative_committed = True
+                        ad_created = True
+                        if not carousel.used_campaign_id:
+                            carousel.used_campaign_id = campaign_id
+                        if pool_text is not None and not pool_text.used_campaign_id:
+                            pool_text.used_campaign_id = campaign_id
+                    elif carousel is not None:
                         resp, creative_identity = create_ad_trying_identities(
                             acct,
                             lambda ident: _uniq(build_carousel_ad_payload(
@@ -2658,14 +2766,14 @@ def run_batch_assigned(db: Session, pairs: list, base_fields: dict,
     first_kind = next((kinds.get(cid) for _, cid in pairs if cid), None)
     # the recipe remembers WHICH creative each account got, so "Retry failed" relaunches
     # the same one there (v123 — the board's picks are exact, not "next unused")
-    _remember_batch(db, batch_ref, {**base_fields, "creative_source": "carousel" if first_kind == "carousel" else "library",
+    _remember_batch(db, batch_ref, {**base_fields, "creative_source": SOURCE_OF_KIND.get(first_kind, "library"),
                                     "_creative_by_account": {str(a.advertiser_id): int(cid) for a, cid in pairs if cid is not None}})
     pace = _launch_pace(db)
     for i, (acct, cid) in enumerate(pairs):
         if i and pace:
             _time.sleep(pace)
         fields = dict(base_fields)
-        fields["creative_source"] = "carousel" if kinds.get(cid) == "carousel" else "library"
+        fields["creative_source"] = SOURCE_OF_KIND.get(kinds.get(cid), "library")
         if cid is not None:
             fields["creative_id"] = cid
             fields["allow_creative_reuse"] = True
@@ -2866,7 +2974,7 @@ async def launch_submit(request: Request, db: Session = Depends(get_db)):
         # a library pick wins over a spark preset (video or carousel, by kind)
         overrides["creative_id"] = int(creative_id)
         picked = db.get(models.Creative, int(creative_id))
-        overrides["creative_source"] = "carousel" if (picked and picked.kind == "carousel") else "library"
+        overrides["creative_source"] = SOURCE_OF_KIND.get(picked.kind if picked else None, "library")
     # duplication overrides from the Review step (0 / empty = the preset's own settings)
     for key, cap in (("duplicates", 50), ("ads_per_group", 20)):
         try:
@@ -2933,12 +3041,12 @@ def _launch_review(request: Request, db: Session, form):
         overrides["creative_source"] = "carousel" if mode == "carousel" else "library"
     fields = launch_mod.synthesize(template, overrides)
     fields["_launched_by"] = sc.owner_for_new
-    if spark is None and fields.get("creative_source") not in ("library", "carousel") and str(fields.get("spark_code_id") or "").isdigit():
+    if spark is None and fields.get("creative_source") not in LIBRARY_SOURCES and str(fields.get("spark_code_id") or "").isdigit():
         spark = db.get(models.SparkCode, int(fields["spark_code_id"]))       # the preset's own spark
     if mode in ("profile", "items") and spark is None:
         identity = "post" if (mode == "profile" or form.get("all_sparks") == "1") else "account"
     else:
-        identity = "spark" if (spark is not None and fields.get("creative_source") not in ("library", "carousel")) else "account"
+        identity = "spark" if (spark is not None and fields.get("creative_source") not in LIBRARY_SOURCES) else "account"
     accounts = _review_accounts(db, sc, form, fields)
     out = launch_review.review(db, models, fields, accounts, spark=spark, identity=identity, live=form.get("live") == "1")
     return JSONResponse({"ok": True, **out})

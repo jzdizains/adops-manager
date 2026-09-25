@@ -57,7 +57,7 @@ sys.modules["app.bc_assets"] = bc_assets
 # import only the helpers, not the whole 1500-line route module
 import importlib.util
 src = open(os.path.join(ROOT, "app", "routes", "campaigns.py")).read()
-start = src.index("def _bc_candidates(")
+start = src.index("IDENTITY_BC_MAX = ")
 end = src.index("def _identity_lists_item(")
 helpers = types.ModuleType("app.routes.campaigns")
 # the real module resolves `from .. import bc_assets` against its package — give the
@@ -203,6 +203,24 @@ except TikTokError as e:
     check("an unrelated error raises immediately", e.message == "Budget is too low.", e.message)
 check("and is NOT retried across identities", len(calls) == 1, str(calls))
 
+print("\n-- v155.26: every BC the login can see is asked; custom identities last; a retired custom identity moves on --")
+class _BCQ:
+    def __init__(self, rows): self.rows = rows
+    def filter(self, *a): return self
+    def __iter__(self): return iter(self.rows)
+class _DB:
+    def query(self, *a): return _BCQ([("BC-OTHER",), (SAT,), ("",)])
+models.BusinessCenter = types.SimpleNamespace(bc_id="bc_id", access_token="access_token")
+bcs = helpers._bc_candidates(_DB(), acct)
+check("owner BC, main BC, then the login's other Business Centers — each once", bcs[:2] == [SAT, MAIN] and "BC-OTHER" in bcs and len(bcs) == 3, str(bcs))
+check("…capped, so a login with dozens of BCs doesn't turn one launch into dozens of calls", helpers.IDENTITY_BC_MAX <= 15 and helpers.IDENTITY_TRY_MAX >= 8)
+mixed = [{"identity_id": "CUSTOM-1", "identity_type": "CUSTOMIZED_USER", "_bc": MAIN}, {"identity_id": "IDENT-A", "identity_type": "BC_AUTH_TT", "_bc": MAIN}, {"identity_id": "TT-1", "identity_type": "TT_USER"}]
+helpers._account_identities = lambda a, db=None: [dict(i) for i in mixed]
+order = [c["identity_id"] for c in helpers.identity_candidates(object(), acct)]
+check("real TikTok profiles before a custom name + avatar (TikTok is retiring those)", order == ["IDENT-A", "TT-1", "CUSTOM-1"], str(order))
+check("'Custom identity is no longer supported' counts as an identity refusal → next profile",
+      helpers._IDENTITY_REFUSED.search("Custom identity is no longer supported. Using a TikTok account maximizes ad engagement")
+      and helpers._IDENTITY_REFUSED.search("identity_type CUSTOMIZED_USER is not supported") and not helpers._IDENTITY_REFUSED.search("Budget is too low."))
 tiktok_api.list_identities = fake_list
 
 print("\n-- the error is explained as an identity problem, not a dead connection --")

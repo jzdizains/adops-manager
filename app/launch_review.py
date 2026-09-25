@@ -70,7 +70,7 @@ def review(db, models, fields: dict, accounts: list, spark=None, identity: str =
     from . import rules as rules_mod
 
     dest = fields.get("destination_type") or ""
-    use_carousel = fields.get("creative_source") == "carousel"
+    use_carousel = fields.get("creative_source") in ("carousel", "image")     # no display card on either
     ids = [a.advertiser_id for a in accounts]
     bcs = {b.bc_id: b for b in db.query(models.BusinessCenter).all()}
     punished = sl.account_level_blocks(db)

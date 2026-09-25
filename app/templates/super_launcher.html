@@ -307,7 +307,7 @@
   var board = document.getElementById("slBoard"), grid = document.getElementById("slBoardGrid"), bar = document.getElementById("slBoardBar");
   var perInput = document.querySelector('[name="accounts_per_creative"]'), countInput = document.querySelector('[name="creatives_count"]');
   function itemKey(it) { return it.kind + ":" + (it.kind === "profile" ? it.item_id : it.id); }
-  function fromLibrary(c) { var car = c.kind === "carousel"; return { kind: "library", id: c.id, name: c.name || ("#" + c.id), cover: c.poster || ("/creatives/" + c.id + "/poster"), video: car ? "" : (c.file || ("/creatives/" + c.id + "/file")), type: car ? "carousel" : (c.kind || "video"), slides: c.slide_ids || [], sub: car ? ((c.slides || (c.slide_ids || []).length || "") + " slides").trim() : "video", state: c.state || "" }; }
+  function fromLibrary(c) { var car = c.kind === "carousel", img = c.kind === "image"; return { kind: "library", id: c.id, name: c.name || ("#" + c.id), cover: c.poster || ("/creatives/" + c.id + "/poster"), video: (car || img) ? "" : (c.file || ("/creatives/" + c.id + "/file")), type: car ? "carousel" : (c.kind || "video"), slides: c.slide_ids || [], sub: car ? ((c.slides || (c.slide_ids || []).length || "") + " slides").trim() : (img ? "image" : "video"), state: c.state || "" }; }
   function fromSpark(x) { return { kind: "spark", id: x.id, name: x.name || ("#" + x.id), cover: x.thumb || "", video: "", type: x.type || "video", creator: x.creator || "", url: x.post_url || "", sub: (x.creator ? "@" + x.creator.replace(/^@/, "") : (x.type || "video")), state: x.state || "" }; }
   function fromProfile(v) { return { kind: "profile", item_id: String(v.item_id), identity_id: v.identity_id, identity_type: v.identity_type, bc_id: v.bc_id, handle: v.handle, text: v.text, cover: v.cover || "", video: v.preview || "", type: v.type || "video", auth_code: v.auth_code, url: v.url, name: v.text || ("post " + String(v.item_id).slice(-6)), sub: "@" + (v.handle || "?") }; }
   function serialise() {
@@ -354,14 +354,14 @@
       '<button type="button" data-src="library"><span class="ico">📚</span><span>Library<small>videos &amp; carousels you uploaded</small></span></button>' +
       '<button type="button" data-src="profile"><span class="ico">👤</span><span>Profile posts<small>from the profiles your Business Centers share</small></span></button>' +
       '<button type="button" data-src="spark"><span class="ico">✦</span><span>Spark codes<small>creator posts you saved</small></span></button><hr>' +
-      '<button type="button" data-src="upload"><span class="ico">⬆</span><span>Upload videos<small>new files — they land in the library and here</small></span></button>' +
+      '<button type="button" data-src="upload"><span class="ico">⬆</span><span>Upload videos or images<small>new files — they land in the library and here</small></span></button>' +
       '<button type="button" data-src="paste"><span class="ico">⌨</span><span>Paste spark codes<small>new codes — saved and added here</small></span></button></div>', { onClose: function () { anchor.classList.remove("open"); } });
     pop.addEventListener("click", function (e) { var b = e.target.closest("[data-src]"); if (!b) return; pop.close(); openSource(b.dataset.src); });
   }
   function openSource(src) {
     if (src === "library") {
       var lib = items.filter(function (it) { return it.kind === "library"; });
-      UI.pickCreatives({ multi: true, kind: lib.length ? lib[0].type : "video", kinds: ["video", "carousel"], selected: lib.map(function (it) { return it.id; }), title: "Pick from the library", hint: "Each creative runs on its share of the selected accounts." }).then(function (res) {
+      UI.pickCreatives({ multi: true, kind: lib.length ? lib[0].type : "video", kinds: ["video", "carousel", "image"], selected: lib.map(function (it) { return it.id; }), title: "Pick from the library", hint: "Each creative runs on its share of the selected accounts — an image runs as a single-image ad." }).then(function (res) {
         if (!res) return;
         var keep = {}; res.forEach(function (c) { keep["library:" + c.id] = 1; });
         items = items.filter(function (it) { return it.kind !== "library" || keep[itemKey(it)]; });   // un-ticked in the picker = removed here
@@ -384,7 +384,7 @@
         addItems(res.map(function (x) { return x.name ? fromSpark(x) : (findItem("spark:" + x.id) || fromSpark(x)); }), false); adopsToast && adopsToast("ok", res.length + " spark code" + (res.length === 1 ? "" : "s") + " on the board");
       });
     } else if (src === "upload") {
-      UI.uploadCreatives().then(function (res) { if (res && res.length) addItems(res.filter(function (c) { return c.kind !== "image"; }).map(fromLibrary)); else if (res) adopsToast && adopsToast("err", "Nothing usable was uploaded."); });
+      UI.uploadCreatives().then(function (res) { if (res && res.length) addItems(res.map(fromLibrary)); else if (res) adopsToast && adopsToast("err", "Nothing usable was uploaded."); });
     } else if (src === "paste") {
       UI.pasteSparks().then(function (res) { if (res && res.length) addItems(res.map(fromSpark)); });
     }
