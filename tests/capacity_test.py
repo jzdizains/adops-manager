@@ -97,6 +97,13 @@ dg = read("app/routes/diagnostics.py")
 check("Diagnostics › Capacity: owner-only JSON with DB/WAL/disk/media sizes, table counts, memory, sweep timing, retention plan",
       '@router.get("/diagnostics/capacity.json")' in dg and "def capacity_report(db)" in dg and "shutil.disk_usage(config.DATA_DIR)" in dg
       and '"tables": counts' in dg and 'retention.plan()' in dg and 'id="capacity"' in read("app/templates/diagnostics.html") and "/diagnostics/capacity.json" in read("app/templates/diagnostics.html"))
+print("-- uptime & incidents (v155.36) --")
+mn = read("app/main.py")
+check("every (re)start writes a boot line (build, pid, memory limit) to the app log", '"app started: build ' in mn and 'source="boot"' in mn)
+check("a failed sweep is on the record too", 'source="sweep"' in bg and "sweep {sweep_n} failed:" in bg)
+check("Diagnostics › Uptime: owner-only timeline of boots with the lines just before each, memory breadcrumbs, 500s; an OOM is named as such",
+      '@router.get("/diagnostics/uptime.json")' in dg and "def uptime_report(db" in dg and '("boot", "mem", "sweep", "http")' in dg
+      and "out of memory (memory breadcrumbs right before the restart)" in dg and 'id="uptime"' in read("app/templates/diagnostics.html") and "/diagnostics/uptime.json" in read("app/templates/diagnostics.html"))
 print("---")
 print(f"{len(fails)} failed" if fails else "all passed")
 sys.exit(1 if fails else 0)

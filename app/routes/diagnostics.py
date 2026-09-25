@@ -220,3 +220,42 @@ def capacity_json(request: Request, db: Session = Depends(get_db)):
     if not guard.is_owner(request):
         return JSONResponse({"ok": False, "error": guard.OWNER_ONLY_MSG}, status_code=403)
     return capacity_report(db)
+
+
+# ---- uptime & incidents (v155.36) ----------------------------------------------------------------
+_PROCESS_STARTED = __import__("time").time()
+UPTIME_HOURS = 72
+
+
+def uptime_report(db, hours: int = UPTIME_HOURS) -> dict:
+    """The last `hours` of the app log that explain an outage: every (re)start ("boot"), the
+    memory breadcrumbs ("mem"), request crashes (500s), and the sweep's own failures — as one
+    timeline, newest first, plus the process uptime and the last sweep. A boot line with nothing
+    but memory lines before it is the signature of an out-of-memory kill."""
+    import time as _time
+    from datetime import datetime, timedelta
+    from .. import background, sched
+    since = datetime.utcnow() - timedelta(hours=hours)
+    rows = (db.query(models.AppLog).filter(models.AppLog.created_at >= since)
+            .filter((models.AppLog.source.in_(("boot", "mem", "sweep", "http"))) | (models.AppLog.level.in_(("error", "critical"))))
+            .order_by(models.AppLog.id.desc()).limit(400).all())
+    lines = [{"at": r.created_at.strftime("%Y-%m-%d %H:%M:%S") if r.created_at else "", "level": r.level or "", "source": r.source or "",
+              "message": (r.message or "")[:400]} for r in rows]
+    boots = [x for x in lines if x["source"] == "boot"]
+    # for each boot, what the log said just before it (the last few lines of the previous life)
+    incidents = []
+    for i, b in enumerate(boots):
+        before = [x for x in lines if x["at"] < b["at"]][:6]
+        incidents.append({"boot": b, "before": before,
+                          "looks_like": ("out of memory (memory breadcrumbs right before the restart)" if any(x["source"] == "mem" for x in before[:3])
+                                         else ("a deploy / manual restart" if not before else "a crash or restart — see the lines before"))})
+    return {"ok": True, "hours": hours, "uptime_s": int(_time.time() - _PROCESS_STARTED), "build": config.build_id(),
+            "memory": {"rss_mb": round(background.rss_mb()), "limit_mb": background.mem_limit_mb()},
+            "sweep": sched.snapshot()["sweep"], "boots": len(boots), "incidents": incidents, "lines": lines[:150]}
+
+
+@router.get("/diagnostics/uptime.json")
+def uptime_json(request: Request, db: Session = Depends(get_db)):
+    if not guard.is_owner(request):
+        return JSONResponse({"ok": False, "error": guard.OWNER_ONLY_MSG}, status_code=403)
+    return uptime_report(db)

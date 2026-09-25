@@ -118,7 +118,7 @@ check("model: Lander table, LanderEvent bucket/inapp/os", "class Lander(Base):" 
 check("editor: rules rows, escape selects, pixel, live/baked split explained", "function ruleRow(r)" in th and 'name="escape_android"' in th and 'name="pixel_event"' in th and "re-download after changing" in th and "live — changes apply without re-uploading" in th)
 check("runtime: env detection, live config with budget, beacon, pixel only on demand, rules, escape with in-app fallback (no fake error), age brackets",
       "L.detect = env" in js and "live_budget_ms" in js and "/t/lp" in js and "L.pixel = function" in js and "L.match = function" in js and "escape_miss" in js and "L.age = {" in js and "fake" not in js.lower().replace("never a fake error", ""))
-check("STATIC_VERSION bumped", 'STATIC_VERSION = "181"' in read("app/config.py"))
+check("STATIC_VERSION bumped", 'STATIC_VERSION = "183"' in read("app/config.py"))
 
 print()
 print("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}")

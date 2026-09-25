@@ -332,6 +332,13 @@ def _loop():
             except Exception:  # noqa: BLE001
                 pass
             log.exception("background sweep failed")
+            try:                                     # v155.36: on the record for Diagnostics › Uptime
+                from . import queries as _q
+                db.rollback()
+                _q.log(db, f"sweep {sweep_n} failed: {type(_e).__name__}: {str(_e)[:300]}", level="error", source="sweep")
+                db.commit()
+            except Exception:  # noqa: BLE001
+                pass
         finally:
             db.close()
         gc.collect()   # release sweep garbage promptly — RSS must not ratchet

@@ -332,6 +332,16 @@ try:
         _scope.backfill(_d)          # v116: everything made before per-user workspaces belongs to the super admin
         from . import settings_store as _ss
         _ss.get_settings(_d)         # v119: the pre-workspaces settings row (and its postback key) becomes the super admin's
+        # v155.36: every (re)start on the record — an OOM kill or a crash shows as a boot line with
+        # no "stopped" before it, so Diagnostics › Uptime can say WHEN the site went down and what
+        # the last memory breadcrumb was
+        try:
+            import os as _os
+            from . import queries as _q
+            _q.log(_d, f"app started: build {config.build_id()} pid {_os.getpid()} · memory limit {background.mem_limit_mb() or '?'} MB",
+                   level="info", source="boot")
+        except Exception:  # noqa: BLE001
+            pass
     finally:
         _d.close()
 except Exception:  # noqa: BLE001 — never keep the app from starting

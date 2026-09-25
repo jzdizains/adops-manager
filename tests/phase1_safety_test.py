@@ -133,7 +133,7 @@ check("clear-finished / cancel-queued only touch your own jobs",
       "jobs.clear_finished(db, _view_owner_ids(request, db))" in jp and "jobs.cancel_queued(db, _view_owner_ids(request, db))" in jp)
 ck = read("app/routes/cookies_admin.py"); dg = read("app/routes/diagnostics.py")
 check("the company-wide TikTok cookie is owner-only (page, save, extension push)", ck.count("guard.is_owner(request)") == 3)
-check("the cross-workspace error feed is owner-only (page, json, seen)", dg.count("guard.is_owner(request)") == 6)   # + the test-mode switch (v153), + who connected TikTok (v155.12), + capacity (v155.30)
+check("the cross-workspace error feed is owner-only (page, json, seen)", dg.count("guard.is_owner(request)") == 7)   # + the test-mode switch (v153), + who connected TikTok (v155.12), + capacity (v155.30), + uptime (v155.36)
 check("Cookies is hidden from buyers' tabs and ⌘K", '"/cookies"' in read("app/nav.py").split("OWNER_ONLY_TABS")[1][:80]
       and '"/cookies"' in read("app/templating.py").split("OWNER_ONLY_JUMP")[1][:160])
 ib = read("app/inbox.py"); al = read("app/routes/alerts.py"); ir = read("app/routes/inbox.py")

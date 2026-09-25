@@ -33,6 +33,12 @@
   <div id="whoBox" class="muted" style="font-size:12.5px;">Open to check (one read-only TikTok call per connection).</div>
 </details>
 
+<details class="card" id="uptime" style="margin-bottom:12px;">
+  <summary class="card-header"><span class="card-title">Uptime &amp; incidents</span>
+    <span class="card-meta">every restart of the last 3 days with what the log said just before it — memory breadcrumbs, crashes, sweep failures</span></summary>
+  <div id="upBox" class="muted" style="font-size:12.5px;">Open to read the log.</div>
+</details>
+
 <details class="card" id="capacity" style="margin-bottom:12px;">
   <summary class="card-header"><span class="card-title">Capacity</span>
     <span class="card-meta">what the dashboard holds and the room left — database, disk, memory, the sweep's timing, retention</span></summary>
@@ -107,6 +113,30 @@
 </div>
 {% endif %}
 <script>
+(function () {
+  var box = document.getElementById("upBox"), card = document.getElementById("uptime"), done = false;
+  if (!box || !card) return;
+  var esc = UI.esc;
+  function dur(s) { var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60); return h ? h + " h " + m + " min" : m + " min"; }
+  card.addEventListener("toggle", function () {
+    if (!card.open || done) return; done = true;
+    box.textContent = "Reading…";
+    UI.get("/diagnostics/uptime.json").then(function (d) {
+      if (!d || !d.ok) { box.textContent = (d && d.error) || "Couldn't read."; done = false; return; }
+      var head = '<div style="font-size:12.5px;margin-bottom:10px;">This process has been up <b>' + dur(d.uptime_s) + '</b> (build ' + esc(d.build) + ') · memory ' + d.memory.rss_mb + (d.memory.limit_mb ? ' of ' + d.memory.limit_mb : '') + ' MB · ' +
+        (d.boots ? '<b>' + d.boots + ' restart' + (d.boots === 1 ? '' : 's') + '</b> in the last ' + d.hours + ' h' : 'no restart in the last ' + d.hours + ' h') +
+        (d.sweep && d.sweep.error ? ' · <span style="color:var(--err);">last sweep failed: ' + esc(d.sweep.error) + '</span>' : '') + '</div>';
+      var inc = d.incidents.map(function (x) {
+        return '<div style="border:1px solid var(--border);border-radius:10px;padding:8px 10px;margin-bottom:8px;"><div><b>' + esc(x.boot.at) + ' UTC — restarted</b> <span class="muted">· looks like ' + esc(x.looks_like) + '</span></div>' +
+          (x.before.length ? '<div class="muted" style="font-size:11.5px;margin-top:4px;">just before it:</div><ul style="margin:2px 0 0 16px;padding:0;font-size:11.5px;">' + x.before.map(function (l) { return '<li><span class="mono">' + esc(l.at.slice(11)) + '</span> <span class="pill ' + (l.level === 'error' ? 'err' : (l.source === 'mem' ? 'warn' : 'dim')) + '">' + esc(l.source || l.level) + '</span> ' + esc(l.message) + '</li>'; }).join('') + '</ul>'
+                            : '<div class="muted" style="font-size:11.5px;margin-top:4px;">nothing logged before it — a deploy, or a kill with no warning</div>') + '</div>';
+      }).join('');
+      var all = d.lines.length ? '<details style="margin-top:6px;"><summary class="muted" style="cursor:pointer;font-size:12px;">every logged line (' + d.lines.length + ')</summary><ul style="margin:6px 0 0 16px;padding:0;font-size:11.5px;">' +
+        d.lines.map(function (l) { return '<li><span class="mono">' + esc(l.at) + '</span> <span class="pill ' + (l.level === 'error' ? 'err' : (l.source === 'mem' ? 'warn' : 'dim')) + '">' + esc(l.source || l.level) + '</span> ' + esc(l.message) + '</li>'; }).join('') + '</ul></details>' : '';
+      box.innerHTML = head + (inc || '<div class="muted">No restarts recorded (boot lines exist from build v155.36 on).</div>') + all;
+    }, function () { box.textContent = "Couldn't read."; done = false; });
+  });
+})();
 (function () {
   var box = document.getElementById("capBox"), card = document.getElementById("capacity"), done = false;
   if (!box || !card) return;

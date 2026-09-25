@@ -91,6 +91,16 @@ check("objective filter", bf(R("1"), **{**base, "obj": "WEB_CONVERSIONS"}) and n
 check("no offer matched = no source", not bf(R("1"), **{**base, "offer": "none"}) and bf(R("3"), **{**base, "offer": "none"}))
 check("warm-ups left out when asked", not bf(R("1"), **{**base, "warm": {"1"}}))
 check("objective names read like TikTok's", ns["objective_label"]("WEB_CONVERSIONS") == "Website conversions" and ns["objective_label"]("SOME_NEW") == "Some New")
+for node in tree.body:
+    if isinstance(node, ast.FunctionDef) and node.name == "row_matches":
+        exec(compile(ast.Module([node], []), "status", "exec"), ns)
+rm = ns["row_matches"]
+check("search (v155.37): name, account, and a campaign id or account id — whole or its tail",
+      rm("playful", "USA_Playful_170801", "Faubulous", "1877301201948002", "7461668704875528209") and rm("faub", "x", "Faubulous +5", "1", "2")
+      and rm("1877301201948002", "x", "y", "1877301201948002", "7461668704875528209") and rm("8002", "x", "y", "1877301201948002", "7461668704875528209")
+      and rm("7461668704875528209", "x", "y", "1877301201948002", "7461668704875528209") and not rm("9999", "x", "y", "1877301201948002", "7461668704875528209")
+      and rm("", "x", "y", "1", "2"))
+check("…both row loops use it", src.count("row_matches(q, r.campaign_name") == 2)
 rows = [{"r": R("1", adv="A"), "m": {"spend": 100}, "revenue": 180}, {"r": R("2", adv="A", st="DISABLE"), "m": {"spend": 50}, "revenue": 20},
         {"r": R("3", adv="B"), "m": {"spend": 10}, "revenue": 5}, {"r": R("4", adv="Z"), "m": {"spend": 1}, "revenue": 0}]
 lb = ns["leaderboard"](rows, {"A": 1, "B": 2}, {1: "ana", 2: "ben"})

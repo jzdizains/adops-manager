@@ -70,6 +70,19 @@ def hidden_campaigns(db, sc) -> set:
         return set()
 
 
+def row_matches(q: str, campaign_name, account_name, campaign_id, advertiser_id) -> bool:
+    """The board's search box (v155.37): campaign name, account name, and — pasted from Ads
+    Manager or a TikTok URL — the campaign id or the ad account id (whole or a tail). Pure."""
+    q = (q or "").strip().lower()
+    if not q:
+        return True
+    if q in (campaign_name or "").lower() or q in (account_name or "").lower():
+        return True
+    if q.isdigit():
+        return q in str(campaign_id or "") or q in str(advertiser_id or "")
+    return False
+
+
 def board_filter(r, *, hidden: set, show_hidden: bool, obj: str, offer: str, sources: dict, warm: set) -> bool:
     """The v155 board filters for one campaign record. Pure."""
     if (r.campaign_id in hidden) != show_hidden:
@@ -327,7 +340,7 @@ def status_page(request: Request, db: Session = Depends(get_db)):
             continue
         acct = accounts.get(r.advertiser_id)
         name = (acct.advertiser_name if acct else r.advertiser_id) or r.advertiser_id
-        if q and q not in r.campaign_name.lower() and q not in name.lower():
+        if q and not row_matches(q, r.campaign_name, name, r.campaign_id, r.advertiser_id):
             continue
         h = healths.get(r.campaign_id)
         tab, blocked = bucket_of(r, acct, h)
@@ -442,7 +455,7 @@ def status_page(request: Request, db: Session = Depends(get_db)):
         if source_f and sources.get(r.campaign_id, "") != source_f:
             continue
         nm = ((acct_.advertiser_name if acct_ else r.advertiser_id) or r.advertiser_id).lower()
-        if q and q not in (r.campaign_name or "").lower() and q not in nm:
+        if q and not row_matches(q, r.campaign_name, nm, r.campaign_id, r.advertiser_id):
             continue
         if not board_filter(r, **_bf):
             continue

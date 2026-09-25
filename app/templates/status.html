@@ -108,7 +108,7 @@
 
 {# ---- filter row ---- #}
 <form method="get" action="/status" id="filterForm" class="filterbar" style="margin-bottom:12px;">
-  <div class="search-wrap" style="max-width:230px;"><input type="text" name="q" value="{{ q }}" placeholder="Search campaign, account…"></div>
+  <div class="search-wrap" style="max-width:230px;"><input type="text" name="q" value="{{ q }}" placeholder="Search campaign, account, campaign ID…" title="Campaign name, ad account name, or a campaign / ad account id (paste it from Ads Manager)"></div>
   <div class="seg" id="stateSeg">
     {% for k, lbl in [('active', 'Active'), ('pending', 'Pending'), ('blocked', 'Blocked'), ('paused', 'Paused'), ('all', 'All')] %}<button type="button" class="{{ 'on' if state == k }}" data-state="{{ k }}">{{ lbl }} <span class="n">{{ state_counts[k] }}</span></button>{% endfor %}
   </div>
