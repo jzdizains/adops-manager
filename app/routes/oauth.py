@@ -177,12 +177,21 @@ def sync_accounts(db: Session, access_token: str, refresh_token: str = "",
     db.commit()
     # BCs that vanished from THIS login's list: mark, don't delete — only the BCs this
     # login (or this user) had listed before; other users' BCs are not this login's to judge
+    # v155.29: "this login's" = stamped with this token, or (same user AND not stamped with
+    # another live login's token). One user with two TikTok logins used to have each login's
+    # sync retire the other's accounts — every sweep, the last login synced won.
+    other_tokens = {t for t, _ in queries.distinct_tokens(db)} - {access_token}
+
+    def _theirs(token: str, owner) -> bool:
+        if token and token == access_token:
+            return True
+        if token and token in other_tokens:
+            return False                       # another connected login's — not this one's to judge
+        return (user_id is not None and owner == user_id) or (not token and owner is None)
+
     if fetch_complete and bcs is not None:
         for bc_row in db.query(models.BusinessCenter).all():
-            theirs = (bc_row.access_token and bc_row.access_token == access_token) or \
-                     (user_id is not None and bc_row.owner_user_id == user_id) or \
-                     (not bc_row.access_token and bc_row.owner_user_id is None)
-            if theirs and bc_row.bc_id not in bc_ids:
+            if _theirs(bc_row.access_token or "", bc_row.owner_user_id) and bc_row.bc_id not in bc_ids:
                 bc_row.status = "ACCESS_LOST"
     if not advertisers:
         try:
@@ -202,8 +211,7 @@ def sync_accounts(db: Session, access_token: str, refresh_token: str = "",
             row.owner_bc_id = ""     # unknown until its real BC lists it
 
     # what this login had before (the retire step below is confined to these)
-    mine_before = {r.advertiser_id for r in db.query(models.AdAccount)
-                   if (r.access_token and r.access_token == access_token) or (user_id is not None and r.owner_user_id == user_id)}
+    mine_before = {r.advertiser_id for r in db.query(models.AdAccount) if _theirs(r.access_token or "", r.owner_user_id)}
     seen_ids: set[str] = set()
     retired_bcs = {r[0] for r in db.query(models.BusinessCenter.bc_id).filter(models.BusinessCenter.retired == True)}   # noqa: E712  v155.27
     rows_now: dict[str, models.AdAccount] = {}     # v155.23: the session doesn't autoflush — an account listed twice

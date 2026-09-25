@@ -29,7 +29,13 @@ _mod("app.config", TIKTOK_APP_ID="", TIKTOK_SECRET="", APP_BASE_URL="")
 _mod("app.database", get_db=lambda: None)
 _mod("app.templating", render=lambda *a, **k: None)
 settings = {}
-_mod("app.queries", set_setting=lambda db, k, v: settings.__setitem__(k, v), get_setting=lambda db, k, d="": settings.get(k, d), log=lambda *a, **k: None)
+def _distinct_tokens(db):
+    seen = {}
+    for a in db.rows["AdAccount"]:
+        if a.access_token: seen.setdefault(a.access_token, a)
+    return list(seen.items())
+_mod("app.queries", set_setting=lambda db, k, v: settings.__setitem__(k, v), get_setting=lambda db, k, d="": settings.get(k, d), log=lambda *a, **k: None,
+     distinct_tokens=_distinct_tokens)
 
 class TikTokError(Exception):
     def __init__(self, code, message=""): self.code, self.message = code, message
@@ -92,6 +98,20 @@ db4.rows["AdAccount"].append(models.AdAccount(advertiser_id="999", owner_user_id
 api.list_bc_advertisers = lambda tok, bc, page=1: {"list": [x for x in listed if (x["asset_id"] == "999") == (bc == "bc2")], "page_info": {"total_page": 1}}
 oauth.sync_accounts(db4, "tok", user_id=1)
 check("v155.27: an account under a removed Business Center is never switched back on by a sync", [a.enabled for a in db4.rows["AdAccount"] if a.advertiser_id == "999"] == [False])
+print("-- v155.29: one user, two TikTok logins — a sync of one never retires the other's accounts --")
+db5 = DB()
+db5.rows["AdAccount"] += [models.AdAccount(advertiser_id="OLD1", owner_user_id=1, access_token="tokA", enabled=True),
+                          models.AdAccount(advertiser_id="OLD2", owner_user_id=1, access_token="tokA", enabled=True),
+                          models.AdAccount(advertiser_id="GONE", owner_user_id=1, access_token="tokB", enabled=True)]
+db5.rows["BusinessCenter"] += [models.BusinessCenter(bc_id="bcA", access_token="tokA", owner_user_id=1), models.BusinessCenter(bc_id="bcB", access_token="tokB", owner_user_id=1)]
+api.list_business_centers = lambda tok: [{"bc_id": "bcB", "name": "BC B"}]
+api.list_bc_advertisers = lambda tok, bc, page=1: {"list": [{"asset_id": "NEW1", "asset_name": "new"}], "page_info": {"total_page": 1}}
+oauth.sync_accounts(db5, "tokB", user_id=1)
+st = {a.advertiser_id: (a.enabled, a.status) for a in db5.rows["AdAccount"]}
+check("login B's sync: its own missing account is retired, login A's accounts are left alone, the new one is added",
+      st["GONE"] == (False, "ACCESS_LOST") and st["OLD1"] == (True, "") and st["OLD2"] == (True, "") and st["NEW1"][0] is True, str(st))
+bst = {b.bc_id: b.status for b in db5.rows["BusinessCenter"]}
+check("…and login A's Business Center keeps its status", bst["bcA"] == "" and bst["bcB"] == "", str(bst))
 src = read("app/routes/oauth.py")
 check("the OAuth callback shows a message (and rolls back) if the sync fails after a successful login, instead of a 500",
       "except Exception as e:  # noqa: BLE001 — the login worked" in src and "db.rollback()" in src.split("def sync_accounts")[0])
