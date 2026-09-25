@@ -75,7 +75,7 @@
           (noTerms.length ? '<button type="button" class="btn sm primary lr-terms" title="Confirms TikTok\'s Lead Generation Terms for these ad accounts through TikTok\'s API — what Ads Manager records the first time a lead ad is built there">Confirm Lead Generation Terms · ' + noTerms.length + " account" + (noTerms.length === 1 ? "" : "s") + '</button> <a class="muted" style="font-size:11.5px;" href="' + TERMS_URL + '" target="_blank" rel="noopener">read the terms ↗</a>' : "") +
           (st.blocked > 1 ? '<button type="button" class="btn sm ghost lr-share-all" title="Copy every blocked account and why, ready to paste">⧉ Share all ' + st.blocked + "</button>" : "") +
           (st.blocked ? '<label class="lr-leave"><input type="checkbox" class="lr-leave-cb"' + (leaveOut ? " checked" : "") + "> Leave out the " + st.blocked + " blocked account" + (st.blocked === 1 ? "" : "s") + "</label>" : "") + "</div>";
-        var th = "<tr><th>Account</th>" + cols.map(function (c) { return "<th>" + c[1] + "</th>"; }).join("") + '<th title="&quot;Start now&quot; in the ad account\'s own timezone — TikTok reads the start time there">Starts</th></tr>';
+        var th = "<tr><th>Account</th>" + cols.map(function (c) { return "<th>" + c[1] + "</th>"; }).join("") + '<th title="&quot;Start now&quot; — TikTok reads an ad group\'s start time in UTC; Ads Manager shows it in the account\'s own timezone">Starts</th></tr>';
         var tb = rows.map(function (r) {
           var tds = cols.map(function (c) {
             var x = r.cells[c[0]];

@@ -33,6 +33,12 @@
   <div id="whoBox" class="muted" style="font-size:12.5px;">Open to check (one read-only TikTok call per connection).</div>
 </details>
 
+<details class="card" id="capacity" style="margin-bottom:12px;">
+  <summary class="card-header"><span class="card-title">Capacity</span>
+    <span class="card-meta">what the dashboard holds and the room left — database, disk, memory, the sweep's timing, retention</span></summary>
+  <div id="capBox" class="muted" style="font-size:12.5px;">Open to measure (a few row counts and a look at the disk).</div>
+</details>
+
 <details class="card" id="migrations" style="margin-bottom:12px;">
   <summary class="card-header"><span class="card-title">Database migrations</span>
     <span class="card-meta">{{ migrations|length }} of {{ migrations_total }} applied{% if migrations|length < migrations_total %} · <span style="color:var(--warn);">{{ migrations_total - migrations|length }} pending — see the log</span>{% endif %}</span></summary>
@@ -101,6 +107,34 @@
 </div>
 {% endif %}
 <script>
+(function () {
+  var box = document.getElementById("capBox"), card = document.getElementById("capacity"), done = false;
+  if (!box || !card) return;
+  var esc = UI.esc, mb = function (x) { return x >= 1000 ? (x / 1000).toFixed(2) + " GB" : (x || 0) + " MB"; }, num = function (x) { return (x == null ? "—" : Number(x).toLocaleString()); };
+  card.addEventListener("toggle", function () {
+    if (!card.open || done) return; done = true;
+    box.textContent = "Measuring…";
+    UI.get("/diagnostics/capacity.json").then(function (d) {
+      if (!d || !d.ok) { box.textContent = (d && d.error) || "Couldn't measure."; done = false; return; }
+      var m = d.memory, s = d.sweep, ls = s.last_sync || {};
+      var memPct = m.limit_mb ? Math.round(100 * m.rss_mb / m.limit_mb) : null;
+      var tiles = '<div class="kpis kpis-4" style="gap:8px;margin-bottom:10px;">' +
+        '<div class="kpi"><div class="lab">Database</div><div class="val">' + mb(d.size.db_mb) + '</div><div class="sub">+ ' + mb(d.size.wal_mb) + ' write-ahead log' + (d.disk.free_gb != null ? ' · disk ' + d.disk.free_gb + ' GB free of ' + d.disk.total_gb : '') + '</div></div>' +
+        '<div class="kpi"><div class="lab">Media on disk</div><div class="val">' + mb(d.media.mb) + '</div><div class="sub">' + num(d.media.files) + ' creative files · ' + mb(d.media.thumbs_mb) + ' thumbnails</div></div>' +
+        '<div class="kpi"><div class="lab">Memory</div><div class="val"' + (memPct != null && memPct >= 75 ? ' style="color:var(--warn);"' : '') + '>' + m.rss_mb + ' MB</div><div class="sub">' + (m.limit_mb ? 'of ' + m.limit_mb + ' MB (' + memPct + '%)' : 'no limit reported') + ' · optional steps pause above ' + m.shed_mb + ' MB</div></div>' +
+        '<div class="kpi"><div class="lab">Accounts</div><div class="val">' + num(d.accounts.enabled) + '</div><div class="sub">' + num(d.accounts.total) + ' rows · ' + num(d.accounts.lost) + ' lost-access · ' + d.accounts.logins + ' TikTok login' + (d.accounts.logins === 1 ? '' : 's') + '</div></div></div>';
+      var sweep = '<div style="font-size:12.5px;margin-bottom:10px;">Sweep #' + num(s.n) + ' took <b>' + (s.last_s || 0) + ' s</b>' + (s.slow ? ' (slow)' : '') + ' · runs every ' + s.interval + ' s · the slow sweep syncs every account with something running, then the next ' + s.full_batch + ' idle accounts (at most ' + s.full_budget_s + ' s), rotating' +
+        (ls.synced != null ? ' · last pass: ' + num(ls.synced) + ' synced, ' + num(ls.left || 0) + ' left for the next, ' + num(ls.errors) + ' errors' : '') + '</div>';
+      var rows = Object.keys(d.tables).sort(function (a, b) { return d.tables[b] - d.tables[a]; });
+      var tbl = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;"><div><div class="muted" style="font-size:11.5px;margin-bottom:4px;">Biggest tables</div><table class="data dense" style="font-size:12px;"><tbody>' +
+        rows.map(function (t) { return '<tr><td class="mono">' + esc(t) + '</td><td class="num">' + num(d.tables[t]) + '</td></tr>'; }).join('') + '</tbody></table></div>' +
+        '<div><div class="muted" style="font-size:11.5px;margin-bottom:4px;">Retention (trimmed on the slow sweep, oldest first)</div><table class="data dense" style="font-size:12px;"><tbody>' +
+        d.retention.map(function (r) { return '<tr><td>' + esc(r.what) + '</td><td class="num" style="white-space:nowrap;">' + r.days + ' days</td></tr>'; }).join('') +
+        '<tr><td>campaign rows of accounts whose access is gone</td><td class="num">30 days</td></tr></tbody></table></div></div>';
+      box.innerHTML = tiles + sweep + tbl;
+    }, function () { box.textContent = "Couldn't measure."; done = false; });
+  });
+})();
 (function () {
   var box = document.getElementById("whoBox"), card = document.getElementById("connections"), done = false;
   if (!box || !card) return;

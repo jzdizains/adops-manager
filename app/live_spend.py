@@ -22,14 +22,20 @@ def _f(m: dict, key: str) -> float:
         return 0.0
 
 
-def sync_campaigns(db: Session, accounts: list[models.AdAccount] | None = None) -> dict:
+def sync_campaigns(db: Session, accounts: list[models.AdAccount] | None = None, budget_s: float | None = None) -> dict:
     """Pull campaign lists + today's spend for every enabled account into
-    CampaignRecord rows. Returns {synced, errors}."""
+    CampaignRecord rows. Returns {synced, errors, left}. With `budget_s` (v155.30) the pass
+    stops when the time is up and reports how many accounts it didn't reach."""
     import time as _time
     accounts = accounts or queries.enabled_accounts(db)
     today = timeutil.local_date_str()
     synced, errors = 0, []
+    t0 = _time.monotonic()
+    left = 0
     for _idx, acct in enumerate(accounts, 1):
+        if budget_s is not None and _time.monotonic() - t0 > budget_s:
+            left = len(accounts) - _idx + 1
+            break
         if not acct.access_token:
             continue
         try:
@@ -146,9 +152,9 @@ def sync_campaigns(db: Session, accounts: list[models.AdAccount] | None = None) 
     import json as _json
     from datetime import datetime as _dt, timezone as _tz
     queries.set_setting(db, "campaign_sync_report", _json.dumps({
-        "at": _dt.now(_tz.utc).isoformat(), "synced": synced, "errors": errors[:30]}))
+        "at": _dt.now(_tz.utc).isoformat(), "synced": synced, "errors": errors[:30], "left": left}))
     db.commit()
-    return {"synced": synced, "errors": errors}
+    return {"synced": synced, "errors": errors, "left": left}
 
 
 def account_day_metrics(acct: models.AdAccount, start_date: str, end_date: str) -> dict:

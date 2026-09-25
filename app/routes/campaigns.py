@@ -1740,6 +1740,13 @@ def _launch_smart_plus(acct: models.AdAccount, fields: dict, spark_ref: dict | N
     ladder = [float(x) for x in fields.get("cost_cap_ladder") or []]
     bid = ladder[0] if ladder else None      # smart+ = single ad group; first cap wins
     ag_payload = build_spc_adgroup_payload(fields, campaign_id, spark_ref, pixel_id, bid)
+    if log is not None and ag_payload.get("schedule_start_time"):
+        try:
+            from .. import live_log as _ll2
+            _ll2.push("info", f"Smart+ ad group start {ag_payload['schedule_start_time']} on {acct.advertiser_name or acct.advertiser_id}"
+                      + (f" ({fields.get('_start_back_min')} min earlier)" if fields.get("_start_back_min") else ""), advertiser_id=str(acct.advertiser_id))
+        except Exception:  # noqa: BLE001
+            pass
     ag = tiktok_api.smart_plus_adgroup_create(acct.access_token, acct.advertiser_id, ag_payload)
     adgroup_id = str(ag.get("adgroup_id"))
     ad_payload = build_spc_ad_payload(fields, adgroup_id, spark_ref, spark)
@@ -2377,6 +2384,9 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                     trace.skipped(i)
                     continue
                 base_payload = build_adgroup_payload(fields, acct, campaign_id, i, bid, pixel_id)
+                if i == 0 and base_payload.get("schedule_start_time"):   # v155.31: what was sent, on the record
+                    trace.note(f"ad group start {base_payload['schedule_start_time']} UTC (Ads Manager shows it in {acct_time.label(fields.get('_account_tz'))})"
+                               + (f", {fields.get('_start_back_min')} min earlier" if fields.get("_start_back_min") else ""))
                 if not base_payload.get("location_ids"):
                     base_payload.pop("location_ids", None)      # account-default geo: TikTok uses the account's own
                 # lead-gen web accounts differ in which promotion combination they

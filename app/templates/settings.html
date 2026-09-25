@@ -160,10 +160,14 @@
 </div>
 <div class="card" id="starttime">
   <div class="card-header"><span class="card-title">Start time</span>
-    <span class="card-meta">when an ad group's “start now” is set on the account's clock</span></div>
+    <span class="card-meta">when an ad group's “start now” is set on the account's clock · one setting for the whole server, every launch by every user</span></div>
+  {% if sec.own_view %}
   <label class="field"><span class="field-label">Start ad groups earlier by <span class="muted">· minutes, 0–180</span></span>
     <input type="number" name="start_back_min" min="0" max="180" step="5" value="{{ s.start_back_min or 0 }}" style="max-width:120px;"></label>
-  <div class="hint">Every launch sends the account's own time + 1 minute as the start. If Ads Manager shows your ad groups starting an hour later than that (its clock and the one the API reads disagree by an hour on some accounts), set 60 here: the start is moved 60 minutes back so the ad group runs at once. The Review step's “Starts” column shows the time that will be sent.</div>
+  <div class="hint">Every launch sends “now + 1 minute” in UTC as the start — TikTok reads ad-group start times in UTC (Ads Manager just displays them in the account's own timezone), so ad groups start at once on every account and this should stay at 0. It's a safety valve: if TikTok ever shows launches as “Scheduled” again, the number here moves the start that many minutes back. The Review step's “Starts” column shows the UTC time that will be sent.</div>
+  {% else %}
+  <div class="hint">Ad groups start <b>{{ s.start_back_min or 0 }} minutes</b> earlier than the account's clock — set by the owner in their own Settings (it applies to every launch on this server).</div>
+  {% endif %}
 </div>
 <div class="card" id="lifecycle">
   <div class="card-header"><span class="card-title">Account lifecycle</span><span class="card-meta">your accounts only — every user has their own thresholds</span></div>

@@ -1,11 +1,14 @@
-"""Times TikTok reads in the AD ACCOUNT's own timezone.
+"""When an ad group starts — and in whose clock.
 
-An ad group's `schedule_start_time` ("YYYY-MM-DD HH:MM:SS") is read in the ad account's
-timezone (/advertiser/info `timezone`, e.g. "Etc/GMT+5" = UTC−5), not in UTC. Sending UTC
-"now" made a UTC−5 account start 5 hours late, and a UTC+8 account's "now" lie 8 hours in
-the past (refused or back-dated). "Start now" is therefore the account's own clock + 60 s.
+v155.32 (25 Sep 2026, verified on a live ad group): TikTok's API reads an ad group's
+`schedule_start_time` ("YYYY-MM-DD HH:MM:SS") in **UTC+0**, whatever the ad account's own
+timezone. v151 had it the other way round — it sent the account's local clock — which on a
+UTC+5 account (Asia/Karachi) put the start 5 hours into the future ("Scheduled" in Ads
+Manager), on a European UTC+1 account 1 hour, and on a UTC−5 account 5 hours into the past
+(so those started at once and nobody noticed). Ads Manager DISPLAYS the start in the
+account's timezone, which is what made the UTC value look "5 hours late" back then.
 
-Unknown or unreadable timezone → UTC (the old behaviour), never an error.
+"Start now" is therefore UTC now + 60 s. The account timezone is still kept for labels.
 """
 from __future__ import annotations
 
@@ -41,15 +44,15 @@ def zone(name: str | None) -> tzinfo | None:
 
 
 def tiktok_time(when: datetime, tz_name: str | None) -> str:
-    """`when` (aware, or naive = UTC) as TikTok wants it for this account. Pure."""
+    """`when` (aware, or naive = UTC) as TikTok wants it: UTC+0 — `tz_name` is ignored (kept in
+    the signature so every caller reads the same). Pure."""
     if when.tzinfo is None:
         when = when.replace(tzinfo=timezone.utc)
-    z = zone(tz_name) or timezone.utc
-    return when.astimezone(z).strftime(FMT)
+    return when.astimezone(timezone.utc).strftime(FMT)
 
 
 def start_now(tz_name: str | None, lead_s: int = LEAD_S, now: datetime | None = None) -> str:
-    """"Start now" for an ad group on this account: its own clock + `lead_s` seconds."""
+    """"Start now" for an ad group: UTC now + `lead_s` seconds (TikTok reads it in UTC+0)."""
     now = now or datetime.now(timezone.utc)
     return tiktok_time(now + timedelta(seconds=lead_s), tz_name)
 
@@ -58,9 +61,8 @@ START_BACK_MAX_MIN = 180
 
 
 def start_for(tz_name: str | None, back_min=0, now: datetime | None = None) -> str:
-    """"Start now" moved `back_min` minutes EARLIER on the account's clock (v155.28, Settings ›
-    Launch › "Start ad groups earlier"): for accounts whose Ads Manager shows the start an hour
-    later than the clock the API reads. 0 = plain start now. Pure."""
+    """"Start now" moved `back_min` minutes EARLIER (Settings › Launch › "Start ad groups
+    earlier") — a safety valve; with UTC start times (v155.32) it should stay 0. Pure."""
     try:
         back = max(0, min(int(back_min or 0), START_BACK_MAX_MIN))
     except (TypeError, ValueError):

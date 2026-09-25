@@ -19,6 +19,12 @@ import time
 log = logging.getLogger("adops.background")
 
 ISSUE_SCAN_EVERY_S = 15 * 60   # the issue scan pages through every ad of every account — not on every slow cycle
+# v155.30 capacity: the slow sweep's full campaign pass is a rotating window with a time budget,
+# so 2,000 accounts take a few slow sweeps instead of one hour-long sweep that starves the rest
+FULL_SYNC_MAX = 150            # cold accounts per slow sweep (hot ones sync every fast sweep anyway)
+FULL_SYNC_BUDGET_S = 150.0
+MEM_SHED_MB = 400              # above this RSS, the optional heavy steps sit out the sweep
+_full_cursor = 0
 MEM_TRAIL_MB = 300     # once a sweep step starts above this RSS, log a "mem trail" breadcrumb naming it (512 MB box)
 MEM_PROBE_MB = 330     # the always-on sampler logs a "mem" line only once RSS climbs past this
 MEM_SAMPLE_SEC = 6     # how often the sampler reads process RSS (no DB write unless RSS is high)
@@ -85,6 +91,25 @@ def _posters_pass(db, limit: int = 3) -> int:
     except Exception:  # noqa: BLE001
         log.exception("poster pass failed")
     return n
+
+
+def _full_sync_batch(db, hot_ids: set, limit: int = FULL_SYNC_MAX) -> list:
+    """The next `limit` cold enabled accounts (round robin over the whole list, remembered
+    across sweeps) — the slow sweep's share of the full pass. Hot accounts are left to the
+    fast sweeps."""
+    global _full_cursor
+    from . import queries
+    cold = [a for a in queries.enabled_accounts(db) if a.advertiser_id not in hot_ids and a.access_token]
+    if not cold:
+        _full_cursor = 0
+        return []
+    if _full_cursor >= len(cold):
+        _full_cursor = 0
+    batch = cold[_full_cursor:_full_cursor + limit]
+    _full_cursor += len(batch)
+    if _full_cursor >= len(cold):
+        _full_cursor = 0
+    return batch
 
 
 def _accounts_with_active_campaigns(db):
@@ -192,18 +217,25 @@ def _loop():
                 return mb
             beat("start")
 
+            shed = rss_mb() >= MEM_SHED_MB                     # v155.30: high memory → the optional heavy steps sit this one out
+            if shed:
+                log.warning("memory %s MB: optional steps skipped this sweep", round(rss_mb()))
             if slow:
                 # full pass: every account, balances, alerts, top-ups, inventory
                 beat("resync_structure"); balances.resync_structure(db)   # BC list + account mapping + access-lost
-                beat("sync_campaigns"); live_spend.sync_campaigns(db)
+                hot = _accounts_with_active_campaigns(db)
+                beat("sync_campaigns(hot)"); live_spend.sync_campaigns(db, hot) if hot else None
+                cold = _full_sync_batch(db, {a.advertiser_id for a in hot})
+                if cold:
+                    beat("sync_campaigns(cold)"); live_spend.sync_campaigns(db, cold, budget_s=FULL_SYNC_BUDGET_S)
                 beat("balances"); balances.sync_bc_balances(db); balances.sync_account_balances(db)
                 balances.evaluate_bc_alerts(db)
                 for u, us, ids in settings_store.per_user(db):     # each user's thresholds over their own accounts
                     rules.evaluate_topups(db, us, ids)
                     rules.check_fresh_inventory(db, us, u.id)
                     rules.check_pool_inventory(db, us, u.id)
-                if _sched.due("issues.scan", ISSUE_SCAN_EVERY_S):   # it reads every ad of every account: every 15 min, not every slow cycle
-                    beat("issues.scan"); issues.scan(db)
+                if not shed and _sched.due("issues.scan", ISSUE_SCAN_EVERY_S):   # it reads every ad of every account: every 15 min, not every slow cycle
+                    beat("issues.scan"); jobs.enqueue_once(db, "issues_scan", "Scan every ad for rejections / issues", {}, href="/issues", quiet=True)   # as a job: the sweep never waits on it (v155.30)
                 partners.poll(db)               # TikTok-account assignments waiting on accepted invites
                 try:
                     from . import invite_autoaccept
@@ -213,6 +245,13 @@ def _loop():
                 jobs.prune(db)
                 bid_bump.prune(db)
                 _prune_logins(db)
+                try:                                                  # v155.30: the growing tables' retention, in a time budget
+                    from . import models as _m2, retention as _ret
+                    beat("retention"); _ret.run(db, _m2)
+                except Exception as _e:  # noqa: BLE001
+                    db.rollback()
+                    _sched.fail("retention", _e)
+                    log.exception("retention failed")
                 beat("audience_daily"); _audience_daily(db)           # once a day: audience breakdowns + hourly heatmap
                 beat("music_monthly"); _music_monthly(db)             # TikTok's Audio Library cache, refreshed monthly (doc's advice)
             beat("audience_quick"); _audience_quick(db, settings)     # every N minutes: today's hours / today+yesterday breakdowns, active accounts
@@ -242,7 +281,8 @@ def _loop():
             try:                                     # v147 stocking: code-check retries, covers, pages
                 from . import models, page_stock, spark_check, thumbs, tiktok_api
                 beat("spark_check"); spark_check.run(db, models, tiktok_api, ids=None, limit=10)
-                beat("thumbs"); thumbs.process_pending(db, models, limit=10)
+                if not shed:
+                    beat("thumbs"); thumbs.process_pending(db, models, limit=10)
                 if slow:
                     beat("page_stock"); page_stock.schedule(db, models)
             except Exception as _e:  # noqa: BLE001
@@ -273,13 +313,15 @@ def _loop():
                 db.rollback()
                 _sched.fail("notify", _e)
                 log.exception("alert notifications failed")
-            beat("tensorpix"); tensorpix_worker.process_pending(db, limit=6)   # advance variant jobs
+            if not shed:
+                beat("tensorpix"); tensorpix_worker.process_pending(db, limit=6)   # advance variant jobs
             try:
                 from .routes.creatives import recover_stuck_ai
                 recover_stuck_ai(db, max_age_min=20)          # an AI edit that never came back (thread died) → failed + Retry
             except Exception:  # noqa: BLE001
                 pass
-            beat("posters"); _posters_pass(db)                # pre-make a few missing video posters, one at a time
+            if not shed:
+                beat("posters"); _posters_pass(db)            # pre-make a few missing video posters, one at a time
             log.info("sweep %s done (slow=%s) rss=%.0fMB peak=%.0fMB@%s", sweep_n, slow, rss_mb(), peak["mb"], peak["step"])
             _sched.end_sweep()
         except Exception as _e:  # one bad sweep must never kill the worker

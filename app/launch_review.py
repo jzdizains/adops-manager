@@ -244,7 +244,7 @@ def review(db, models, fields: dict, accounts: list, spark=None, identity: str =
         tz = a.timezone or ""
         rows.append({"id": aid, "name": a.advertiser_name or aid, "bc": (bcs[a.owner_bc_id].name if a.owner_bc_id in bcs else ""),
                      "cells": cells, "blocked": blocked, "warnings": warns,
-                     "tz": acct_time.label(tz), "starts": acct_time.start_for(tz, start_back)[11:16] if tz else "",
+                     "tz": "UTC", "starts": acct_time.start_for(tz, start_back)[11:16],
                      "identity_pending": identity == "account" and not blocked, "terms_pending": terms_pending})
     if live:
         _live_recheck(db, models, rows, accounts, page_name, form_name)

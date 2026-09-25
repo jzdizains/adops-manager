@@ -140,3 +140,83 @@ def diagnostics_seen(request: Request, db: Session = Depends(get_db)):
         return RedirectResponse("/settings?err=" + quote(guard.OWNER_ONLY_MSG), status_code=303)
     diag.mark_seen(db)
     return RedirectResponse("/diagnostics?" + quote("ok=1"), status_code=303)
+
+
+# ---- capacity (v155.30) ------------------------------------------------------------------------
+BIG_TABLES = ("ad_accounts", "campaign_records", "spend_snapshots", "launch_logs", "launch_traces", "adgroup_snapshots",
+              "adgroup_states", "alerts", "clicks", "postback_events", "lander_events", "hourly_metrics", "audience_stats",
+              "diag_events", "app_logs", "jobs", "audit_logs", "activity_events", "rule_actions", "creatives", "creative_uploads")
+
+
+def _dir_size(path, cap_files: int = 40000) -> tuple[int, int]:
+    """(bytes, files) under `path`, at most cap_files entries walked."""
+    import os
+    total = n = 0
+    try:
+        for root, _dirs, files in os.walk(path):
+            for f in files:
+                try:
+                    total += os.stat(os.path.join(root, f)).st_size
+                    n += 1
+                except OSError:
+                    continue
+                if n >= cap_files:
+                    return total, n
+    except OSError:
+        pass
+    return total, n
+
+
+def capacity_report(db) -> dict:
+    """What the dashboard holds and how much room is left: database + WAL size, disk, the biggest
+    tables' row counts, memory against the limit, the sweep's timing and the retention windows."""
+    import os
+    import shutil
+    from sqlalchemy import text
+    from .. import background, retention, sched
+    dbp = config.DB_PATH
+    size = {"db_mb": 0.0, "wal_mb": 0.0}
+    try:
+        size["db_mb"] = round(os.stat(dbp).st_size / 1e6, 1)
+        size["wal_mb"] = round(os.stat(str(dbp) + "-wal").st_size / 1e6, 1) if os.path.exists(str(dbp) + "-wal") else 0.0
+    except OSError:
+        pass
+    try:
+        du = shutil.disk_usage(config.DATA_DIR)
+        disk = {"total_gb": round(du.total / 1e9, 2), "free_gb": round(du.free / 1e9, 2), "used_pct": round(100 * (du.total - du.free) / du.total, 1) if du.total else 0}
+    except OSError:
+        disk = {}
+    media_b, media_n = _dir_size(config.DATA_DIR / "creatives")
+    thumbs_b, thumbs_n = _dir_size(config.DATA_DIR / "thumbs")
+    counts = {}
+    for t in BIG_TABLES:
+        try:
+            counts[t] = int(db.execute(text(f"SELECT COUNT(*) FROM {t}")).scalar() or 0)
+        except Exception:  # noqa: BLE001 — a table that doesn't exist on this build
+            db.rollback()
+    accounts = {"total": counts.get("ad_accounts", 0),
+                "enabled": int(db.query(models.AdAccount).filter(models.AdAccount.enabled == True).count()),        # noqa: E712
+                "lost": int(db.query(models.AdAccount).filter(models.AdAccount.status == "ACCESS_LOST").count()),
+                "logins": len({r[0] for r in db.query(models.AdAccount.access_token).filter(models.AdAccount.access_token != "")})}
+    sw = dict(sched.SWEEP)
+    from .. import queries
+    import json as _json
+    try:
+        rep = _json.loads(queries.get_setting(db, "campaign_sync_report", "") or "{}")
+    except ValueError:
+        rep = {}
+    return {"ok": True, "size": size, "disk": disk, "media": {"mb": round(media_b / 1e6, 1), "files": media_n, "thumbs_mb": round(thumbs_b / 1e6, 1), "thumbs": thumbs_n},
+            "tables": counts, "accounts": accounts,
+            "memory": {"rss_mb": round(background.rss_mb()), "limit_mb": background.mem_limit_mb(), "shed_mb": background.MEM_SHED_MB},
+            "sweep": {"n": sw.get("n"), "last_s": sw.get("dur"), "slow": sw.get("slow"), "interval": sw.get("interval"),
+                      "full_batch": background.FULL_SYNC_MAX, "full_budget_s": background.FULL_SYNC_BUDGET_S,
+                      "last_sync": {"synced": rep.get("synced"), "left": rep.get("left"), "errors": len(rep.get("errors") or []), "at": rep.get("at")}},
+            "retention": retention.plan()}
+
+
+@router.get("/diagnostics/capacity.json")
+def capacity_json(request: Request, db: Session = Depends(get_db)):
+    """Owner only; read-only. A few COUNT(*) queries and a walk of the media folder."""
+    if not guard.is_owner(request):
+        return JSONResponse({"ok": False, "error": guard.OWNER_ONLY_MSG}, status_code=403)
+    return capacity_report(db)

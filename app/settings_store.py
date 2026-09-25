@@ -149,6 +149,7 @@ AUDIENCE_BREAKDOWN_MIN = 15     # floor: ~8 calls per active account per run
 
 
 GLOBAL_KEYS = frozenset({
+    "start_back_min",              # v155.31: one clock correction for the whole server — every launch, whoever launches
     "sweep_interval_sec", "slow_every_n_sweeps", "queue_per_sweep", "launch_retry_max", "launch_pace_sec",
     "audience_hours_every_min", "audience_breakdown_every_min", "assistant_model", "issue_max_age_days",
 })

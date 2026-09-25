@@ -13,31 +13,36 @@ def check(name, cond, extra=""):
 def read(p): return open(os.path.join(ROOT, p), encoding="utf-8").read()
 
 # =======================================================================================
-print("-- start time in the account's timezone --")
+print("-- start time: TikTok reads it in UTC+0 (v155.32 — verified on a live UTC+5 ad group) --")
 at = importlib.import_module("app.acct_time")
 now = datetime(2026, 9, 8, 10, 0, 0, tzinfo=timezone.utc)
-check("UTC−5 account (Etc/GMT+5): its clock + 60 s", at.start_now("Etc/GMT+5", now=now) == "2026-09-08 05:01:00", at.start_now("Etc/GMT+5", now=now))
-check("UTC+8 account: its clock + 60 s (not 8 h in the past)", at.start_now("Asia/Shanghai", now=now) == "2026-09-08 18:01:00")
-check("DST honoured (New York in September = UTC−4)", at.start_now("America/New_York", now=now) == "2026-09-08 06:01:00")
-print("-- v155.28: 'start earlier by N minutes' (Settings › Launch) --")
-check("60 minutes back on the account's clock", at.start_for("Etc/GMT+5", 60, now=now) == "2026-09-08 04:01:00", at.start_for("Etc/GMT+5", 60, now=now))
+check("UTC−5 account (Etc/GMT+5): UTC now + 60 s, NOT its local clock", at.start_now("Etc/GMT+5", now=now) == "2026-09-08 10:01:00", at.start_now("Etc/GMT+5", now=now))
+check("UTC+5 account (Asia/Karachi): the same UTC instant — no longer 5 h in the future ('Scheduled')", at.start_now("Asia/Karachi", now=now) == "2026-09-08 10:01:00")
+check("European UTC+1 (Etc/GMT-1) and New York: the same", at.start_now("Etc/GMT-1", now=now) == "2026-09-08 10:01:00" and at.start_now("America/New_York", now=now) == "2026-09-08 10:01:00")
+check("unknown / empty timezone: still UTC, never an error", at.start_now("", now=now) == "2026-09-08 10:01:00" and at.start_now("Mars/Olympus", now=now) == "2026-09-08 10:01:00")
+check("the account timezone is still labelled for people (Ads Manager shows the start there)", at.label("Etc/GMT+5") == "UTC−5" and at.label("Asia/Karachi") == "UTC+5")
+print("-- v155.28: 'start earlier by N minutes' (Settings › Launch) — a safety valve, default 0 --")
+check("60 minutes back", at.start_for("Etc/GMT+5", 60, now=now) == "2026-09-08 09:01:00", at.start_for("Etc/GMT+5", 60, now=now))
 check("0 / empty / junk = plain start now; capped at 3 h", at.start_for("Etc/GMT+5", 0, now=now) == at.start_now("Etc/GMT+5", now=now)
       and at.start_for("Etc/GMT+5", "", now=now) == at.start_now("Etc/GMT+5", now=now) and at.start_for("Etc/GMT+5", "x", now=now) == at.start_now("Etc/GMT+5", now=now)
-      and at.start_for("Etc/GMT+5", 999, now=now) == "2026-09-08 02:01:00")
+      and at.start_for("Etc/GMT+5", 999, now=now) == "2026-09-08 07:01:00")
 _cp = open(os.path.join(ROOT, "app/routes/campaigns.py"), encoding="utf-8").read()
 check("every 'start now' the launch sends (regular, Smart+, Smart+ Instant Form) applies the launcher's setting",
       _cp.count('acct_time.start_for(fields.get("_account_tz"), fields.get("_start_back_min"))') == 3 and 'acct_time.start_for(fields.get("_account_tz") or getattr(acct, "timezone", ""), fields.get("_start_back_min"))' in _cp
       and '"_start_back_min": get_settings(db, fields.get("_launched_by")).get("start_back_min") or 0' in _cp)
+check("v155.31: the shift is ONE server-wide setting (whoever launches, whichever workspace) — the owner sets it, others see it",
+      '"start_back_min",' in open(os.path.join(ROOT, "app/settings_store.py"), encoding="utf-8").read().split("GLOBAL_KEYS = frozenset({")[1][:200]
+      and "{% if sec.own_view %}" in open(os.path.join(ROOT, "app/templates/settings.html"), encoding="utf-8").read().split('id="starttime"')[1][:400])
+check("…and the start time actually sent is written to the launch's steps", 'trace.note(f"ad group start {base_payload[\'schedule_start_time\']}' in _cp and "Smart+ ad group start" in _cp)
 check("the Review step shows the shifted time; the setting lives in Settings › Launch",
       'acct_time.start_for(tz, start_back)' in open(os.path.join(ROOT, "app/launch_review.py"), encoding="utf-8").read()
       and 'name="start_back_min"' in open(os.path.join(ROOT, "app/templates/settings.html"), encoding="utf-8").read()
       and '"start_back_min": 0' in open(os.path.join(ROOT, "app/settings_store.py"), encoding="utf-8").read())
-check("offset spellings: UTC+08:00, GMT-5, +0530", at.start_now("UTC+08:00", now=now) == "2026-09-08 18:01:00"
-      and at.start_now("GMT-5", now=now) == "2026-09-08 05:01:00" and at.start_now("+0530", now=now) == "2026-09-08 15:31:00")
+check("offset spellings still parse for the label: UTC+08:00, GMT-5, +0530", at.label("UTC+08:00") == "UTC+8" and at.label("GMT-5") == "UTC−5" and at.label("+0530") == "UTC+5:30")
 check("unknown / empty / garbage → UTC (the old behaviour), never an error",
       at.start_now("", now=now) == "2026-09-08 10:01:00" and at.start_now("Mars/Olympus", now=now) == "2026-09-08 10:01:00"
       and at.start_now(None, now=now) == "2026-09-08 10:01:00")
-check("naive datetimes are UTC", at.tiktok_time(datetime(2026, 1, 1, 12, 0, 0), "Etc/GMT-3") == "2026-01-01 15:00:00")
+check("naive datetimes are UTC, and stay UTC whatever zone is named", at.tiktok_time(datetime(2026, 1, 1, 12, 0, 0), "Etc/GMT-3") == "2026-01-01 12:00:00")
 check("labels", at.label("Etc/GMT+5") == "UTC−5" and at.label("Asia/Kolkata") == "UTC+5:30" and at.label("UTC") == "UTC" and at.label("") == "UTC (timezone unknown)")
 
 class FakeDB:

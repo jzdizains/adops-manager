@@ -108,6 +108,8 @@ def emoji_bitmap(seq: str) -> Image.Image | None:
                 out = im.crop(box)
         except (OSError, ValueError):
             out = None
+    if len(_emoji_cache) >= 400:          # v155.30: rendered emoji are small, but never let them pile up forever
+        _emoji_cache.clear()
     _emoji_cache[seq] = out
     return out
 
