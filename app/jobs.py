@@ -211,7 +211,12 @@ def run_job(db: Session, job: models.Job) -> None:
         if not fn:
             raise RuntimeError(f"no handler for job kind {job.kind!r}")
         payload = json.loads(job.payload or "{}")
-        res = fn(db, payload, job) or {}
+        from . import ctx as _ctx
+        _tok = _ctx.OWNER.set(getattr(job, "owner_user_id", None))     # v155.38: the job runs in its workspace (its user's TikTok session)
+        try:
+            res = fn(db, payload, job) or {}
+        finally:
+            _ctx.OWNER.reset(_tok)
         job.status = "done" if res.get("ok", True) else "error"
         job.detail = str(res.get("detail") or "")[:600]
         if job.status == "error":

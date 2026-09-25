@@ -141,7 +141,7 @@ def section_key(path: str) -> str | None:
     return None
 
 
-OWNER_ONLY_TABS = frozenset({"/partners", "/cookies"})
+OWNER_ONLY_TABS = frozenset({"/partners"})
 
 
 def tabs(request) -> list:

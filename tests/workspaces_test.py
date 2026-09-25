@@ -51,7 +51,10 @@ class AdAccount:
 class Owned:
     owner_user_id = Col("owner_user_id")
     def __init__(self, owner=None): self.owner_user_id = owner
-models = _mod("app.models", User=User, AdAccount=AdAccount,
+class AccountAccess:
+    advertiser_id = Col("advertiser_id"); user_id = Col("user_id")
+    def __init__(self, adv, uid): self.advertiser_id, self.user_id = adv, uid
+models = _mod("app.models", User=User, AdAccount=AdAccount, AccountAccess=AccountAccess,
               **{n: type(n, (Owned,), {"owner_user_id": Col("owner_user_id")}) for n in ("Template", "Creative", "DisplayCard", "AdText", "SparkCode", "SparkCodeGroup", "Tag", "BusinessCenter", "PageTemplate")})
 _mod("app.users", is_owner=lambda u: bool(u) and u.email == "janis@glitchy.ai", norm_email=lambda e: (e or "").strip().lower(),
      viewable_ids=lambda u: set(getattr(u, "can_view", ()) or ()))
@@ -93,12 +96,15 @@ class DB:
             cols = list(what)
             name = cols[0].name
             model = AdAccount if name in ("advertiser_id", "owner_bc_id") or any(c.name == "advertiser_id" for c in cols) else User
+            if cols[0] is AccountAccess.advertiser_id or cols[0] is AccountAccess.user_id:
+                model = AccountAccess
             if name == "owner_user_id" and cols[0] is AdAccount.owner_user_id:
                 model = AdAccount
-        rows = {User: self.users, AdAccount: self.accounts}.get(model, self.owned.get(model, []))
+        rows = {User: self.users, AdAccount: self.accounts, AccountAccess: getattr(self, "access", [])}.get(model, self.owned.get(model, []))
         return Q(rows, cols)
     def get(self, model, pk): return next((u for u in self.users if u.id == pk), None)
     def commit(self): self.commits += 1
+    def rollback(self): pass
 
 janis, marta, bob = User(1, "janis@glitchy.ai"), User(2, "marta@x.com"), User(3, "bob@x.com", active=False)
 accounts = [AdAccount("100", 1, "bc1"), AdAccount("200", 2, "bc2"), AdAccount("201", 2, "bc2"), AdAccount("300", None, "bc3")]
@@ -124,6 +130,21 @@ check("an inactive user's view falls back to Everyone", scope.current(Req("u:3",
 check("an unknown user id falls back to Everyone", scope.current(Req("u:99", janis), db, janis).mode == "all" and scope.current(Req("garbage", janis), db, janis).mode == "all")
 check("not logged in → nothing", scope.current(Req(), db, None).ids == set())
 check("Everyone creates for the super admin themselves", scope.current(Req(None, janis), db, janis).owner_for_new == 1)
+
+print("\n-- v155.38: an account another user's login also lists is in BOTH workspaces --")
+db.access = [AccountAccess("100", 2)]                 # Marta's login lists Janis's account 100
+sc = scope.current(Req(None, marta), db, marta)
+check("Marta's workspace now includes 100 as well as her own", sc.ids == {"100", "200", "201"} and sc.allows("100"))
+check("Janis still owns it and still sees it on Mine", scope.current(Req("u:1", janis), db, janis).ids == {"100"})
+db.access = []
+check("without the row, back to her own", scope.current(Req(None, marta), db, marta).ids == {"200", "201"})
+oa = read("app/routes/oauth.py") if "read" in dir() else open(os.path.join(ROOT, "app/routes/oauth.py"), encoding="utf-8").read()
+check("the sync writes the access row for an account someone else owns (and never changes the owner)",
+      "elif user_id is not None and row.owner_user_id != user_id:" in oa and "models.AccountAccess(advertiser_id=adv[\"advertiser_id\"], user_id=user_id)" in oa)
+check("rules / pickers / launchers / stock / cards / spark checks all go through the same visibility",
+      all("_scope.account_filter(" in open(os.path.join(ROOT, p), encoding="utf-8").read() for p in ("app/spark_check.py", "app/display_cards.py", "app/page_stock.py", "app/routes/super_launcher.py"))
+      and "_workspace_accounts(db, models, tpl.owner_user_id)" in open(os.path.join(ROOT, "app/asset_builds.py"), encoding="utf-8").read()
+      and "models.AccountAccess.advertiser_id, models.AccountAccess.user_id" in open(os.path.join(ROOT, "app/settings_store.py"), encoding="utf-8").read())
 
 print("\n-- owned rows --")
 sc_m = scope.current(Req(), db, marta)
@@ -272,7 +293,7 @@ check("launch engine: every 'next unused' creative / text pick is owner-scoped",
       and "db.query(models.AdText)\n                             .filter_by(status=\"available\")" not in seg)
 sl = read("app/routes/super_launcher.py")
 check("super launcher never launches to an account outside the view", 'advertiser_ids = [a for a in form.getlist("advertiser_ids") if sc.allows(a) and a not in skip]' in sl)
-check("STATIC_VERSION bumped", "STATIC_VERSION = \"183\"" in read("app/config.py"))
+check("STATIC_VERSION bumped", "STATIC_VERSION = \"184\"" in read("app/config.py"))
 
 print()
 print("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}")

@@ -108,7 +108,8 @@ def anchor_account(db, models, owner_user_id):
                                            models.AdAccount.access_token != "")
          .order_by(models.AdAccount.advertiser_id))
     if owner_user_id is not None:
-        q = q.filter(models.AdAccount.owner_user_id == owner_user_id)
+        from . import scope as _scope
+        q = _scope.account_filter(db, q, owner_user_id)
     for a in q.limit(50):
         st = str(a.status or "").upper()
         if not st or "ENABLE" in st:

@@ -132,10 +132,19 @@ check("cancel refuses a job outside your workspace", "That job isn't in your wor
 check("clear-finished / cancel-queued only touch your own jobs",
       "jobs.clear_finished(db, _view_owner_ids(request, db))" in jp and "jobs.cancel_queued(db, _view_owner_ids(request, db))" in jp)
 ck = read("app/routes/cookies_admin.py"); dg = read("app/routes/diagnostics.py")
-check("the company-wide TikTok cookie is owner-only (page, save, extension push)", ck.count("guard.is_owner(request)") == 3)
+check("the SHARED TikTok cookie can only be written by the owner (a member's save lands in their own file — page, save, extension push)", ck.count("owner = guard.is_owner(request)") == 1 and ck.count("shared = owner and") == 3)
 check("the cross-workspace error feed is owner-only (page, json, seen)", dg.count("guard.is_owner(request)") == 7)   # + the test-mode switch (v153), + who connected TikTok (v155.12), + capacity (v155.30), + uptime (v155.36)
-check("Cookies is hidden from buyers' tabs and ⌘K", '"/cookies"' in read("app/nav.py").split("OWNER_ONLY_TABS")[1][:80]
-      and '"/cookies"' in read("app/templating.py").split("OWNER_ONLY_JUMP")[1][:160])
+check("v155.38: Cookies is open to every user (each workspace has its own session; Partners stays the owner's)",
+      '"/cookies"' not in read("app/nav.py").split("OWNER_ONLY_TABS")[1][:80] and '"/partners"' in read("app/nav.py").split("OWNER_ONLY_TABS")[1][:80]
+      and '"/cookies"' not in read("app/templating.py").split("OWNER_ONLY_JUMP")[1][:160])
+ca = read("app/routes/cookies_admin.py"); swa = read("app/spark_web_api.py")
+check("…a member saves their OWN cookie file; the owner on Everyone / Mine saves the shared one; the extension push follows the same rule",
+      "shared = owner and (sc.everything or sc.user_id == me.id)" in ca and ca.count("spark_web_api.save_cookies(raw, user_id=uid, shared=shared)") == 2
+      and "def user_cookie_file(user_id)" in swa and 'f"tiktok_cookies_u{int(user_id)}.json"' in swa)
+check("…every web call picks the session of the workspace it runs in (request or job), falling back to the shared one",
+      "uid = user_id if user_id is not None else _ctx_user()" in swa and "return _read(cookie_file(uid))" in swa
+      and "_tok = _ctx.OWNER.set(getattr(job, \"owner_user_id\", None))" in read("app/jobs.py") and "_ctx.OWNER.reset(_tok)" in read("app/jobs.py")
+      and 'sorted(config.DATA_DIR.glob("tiktok_cookies_u*.json"))' in read("app/secrets_box.py"))
 ib = read("app/inbox.py"); al = read("app/routes/alerts.py"); ir = read("app/routes/inbox.py")
 check("one visibility rule shared by the inbox list and the dismiss actions", "def alert_visible(a" in ib and "if not alert_visible(a, scope):" in ib)
 check("ack-all / dismiss-all clear only what THIS person sees",

@@ -271,6 +271,11 @@ def per_user(db: Session) -> list[tuple]:
     owned: dict = {}
     for aid, uid in db.query(models.AdAccount.advertiser_id, models.AdAccount.owner_user_id):
         owned.setdefault(uid if uid is not None else oid, set()).add(aid)
+    try:                                              # v155.38: shared accounts are in the sharing user's workspace too
+        for aid, uid in db.query(models.AccountAccess.advertiser_id, models.AccountAccess.user_id):
+            owned.setdefault(uid, set()).add(aid)
+    except Exception:  # noqa: BLE001
+        db.rollback()
     out = []
     for u in db.query(models.User).filter(models.User.active == True).order_by(models.User.id):  # noqa: E712
         out.append((u, get_settings(db, u.id), owned.get(u.id, set())))

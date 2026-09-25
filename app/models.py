@@ -26,6 +26,21 @@ def utcnow():
 # Accounts & auth
 # ---------------------------------------------------------------------------
 
+class AccountAccess(Base):
+    """v155.38 — an ad account that a second user's TikTok login also reaches. The account keeps
+    ONE owner (`AdAccount.owner_user_id`, the first login that listed it); every other user whose
+    login lists it gets a row here, and the account then shows in THEIR workspace too — pickers,
+    launchers, boards, rules. Written by the account sync, never by hand."""
+    __tablename__ = "account_access"
+    __table_args__ = (UniqueConstraint("advertiser_id", "user_id", name="uq_account_access"),)
+
+    id = Column(Integer, primary_key=True)
+    advertiser_id = Column(String, index=True, nullable=False)
+    user_id = Column(Integer, index=True, nullable=False)
+    access_token = Column(EncryptedText, default="")     # that user's login token for it (sealed at rest)
+    created_at = Column(DateTime, default=utcnow)
+
+
 class BusinessCenter(Base):
     """One row per Business Center under the connected TikTok login.
 

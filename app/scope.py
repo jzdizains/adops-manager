@@ -77,9 +77,25 @@ class Scope:
 
 
 def owned_ids(db: Session, user_id: int | None) -> set[str]:
+    """The ad accounts in a user's workspace: the ones they own PLUS the ones another user owns but
+    THEIR TikTok login also lists (AccountAccess, v155.38) — one account can be in several
+    workspaces."""
     if user_id is None:
         return set()
-    return {r[0] for r in db.query(models.AdAccount.advertiser_id).filter(models.AdAccount.owner_user_id == int(user_id))}
+    out = {r[0] for r in db.query(models.AdAccount.advertiser_id).filter(models.AdAccount.owner_user_id == int(user_id))}
+    try:
+        out |= {r[0] for r in db.query(models.AccountAccess.advertiser_id).filter(models.AccountAccess.user_id == int(user_id))}
+    except Exception:  # noqa: BLE001 — table not there yet (first start on an old database)
+        db.rollback()
+    return out
+
+
+def account_filter(db: Session, query, user_id):
+    """Restrict an AdAccount query to a user's workspace (owned + shared). None = no restriction."""
+    if user_id is None:
+        return query
+    ids = owned_ids(db, user_id)
+    return query.filter(models.AdAccount.advertiser_id.in_(list(ids) or [""]))
 
 
 def parse_cookie(raw: str | None) -> int | None:
@@ -221,7 +237,7 @@ def view_bc_ids(db: Session, sc: Scope) -> set[str] | None:
     listed); None = every BC."""
     if sc.everything:
         return None
-    out = {r[0] for r in db.query(models.AdAccount.owner_bc_id).filter(models.AdAccount.owner_user_id == sc.user_id) if r[0]}
+    out = {r[0] for r in db.query(models.AdAccount.owner_bc_id).filter(models.AdAccount.advertiser_id.in_(list(sc.ids or set()) or [""])) if r[0]}
     out |= {r[0] for r in db.query(models.BusinessCenter.bc_id).filter(models.BusinessCenter.owner_user_id == sc.user_id)}
     return out
 

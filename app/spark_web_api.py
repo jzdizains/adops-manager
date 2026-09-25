@@ -45,38 +45,71 @@ class WebAuthError(Exception):
 # Cookie storage (persisted on the data disk — survives redeploys, §9.8)
 # ---------------------------------------------------------------------------
 
-def save_cookies(raw: str) -> dict:
+# v155.38 — one TikTok web session PER USER. The owner's is the shared default (config.COOKIE_FILE,
+# as before); any other user may paste their own (tiktok_cookies_u<id>.json), which is then used
+# for everything done in THEIR workspace — form / page copies, profile posts, web reads. Which
+# session a call uses follows the request's workspace (ctx.OWNER; set for jobs too), so nothing
+# else had to change; a user without a session of their own falls back to the owner's.
+def cookie_file(user_id=None):
+    """The cookie file for this user: their own when it exists, else the shared (owner's) one."""
+    if user_id is not None:
+        p = config.DATA_DIR / f"tiktok_cookies_u{int(user_id)}.json"
+        if p.exists():
+            return p
+    return config.COOKIE_FILE
+
+
+def user_cookie_file(user_id):
+    return config.DATA_DIR / f"tiktok_cookies_u{int(user_id)}.json"
+
+
+def _ctx_user():
+    try:
+        from . import ctx
+        return ctx.OWNER.get()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def save_cookies(raw: str, user_id=None, shared: bool = True) -> dict:
     """Accepts a Cookie-Editor JSON export (list of {name, value, ...}) or a
-    plain `k=v; k2=v2` header string. Normalizes to {name: value} and persists.
-    Returns the validation verdict."""
+    plain `k=v; k2=v2` header string. Normalizes to {name: value} and persists —
+    the shared file (owner) or the user's own file (`shared=False`). Returns the verdict."""
     cookies = _parse_cookie_input(raw)
     verdict = validate_cookies(cookies)
     if not verdict["ok"]:
         raise WebAuthError(verdict["reason"])
     payload = {"cookies": cookies, "saved_at": datetime.now(timezone.utc).isoformat()}
     from . import secrets_box
-    secrets_box.write_json(config.COOKIE_FILE, payload)          # sealed at rest
+    target = config.COOKIE_FILE if (shared or user_id is None) else user_cookie_file(user_id)
+    secrets_box.write_json(target, payload)          # sealed at rest
     return verdict
 
 
-def load_cookies() -> dict[str, str]:
-    if not config.COOKIE_FILE.exists():
+def _read(path) -> dict:
+    if not path.exists():
         return {}
     try:
         from . import secrets_box
-        return (secrets_box.read_json(config.COOKIE_FILE, {}) or {}).get("cookies", {})
+        return secrets_box.read_json(path, {}) or {}
     except Exception:
         return {}
 
 
-def cookies_saved_at() -> str:
-    if not config.COOKIE_FILE.exists():
-        return ""
-    try:
-        from . import secrets_box
-        return (secrets_box.read_json(config.COOKIE_FILE, {}) or {}).get("saved_at", "")
-    except Exception:
-        return ""
+def load_cookies(user_id=None) -> dict[str, str]:
+    """The cookies for this workspace: `user_id`'s own when they pasted some, else the shared
+    ones. No argument = the workspace of the current request / job."""
+    uid = user_id if user_id is not None else _ctx_user()
+    return _read(cookie_file(uid)).get("cookies", {})
+
+
+def cookies_saved_at(user_id=None) -> str:
+    uid = user_id if user_id is not None else _ctx_user()
+    return _read(cookie_file(uid)).get("saved_at", "")
+
+
+def has_own_cookies(user_id) -> bool:
+    return user_id is not None and user_cookie_file(user_id).exists()
 
 
 def _parse_cookie_input(raw: str) -> dict[str, str]:

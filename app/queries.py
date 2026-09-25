@@ -87,6 +87,12 @@ def token_for_user(db: Session, user_id) -> str:
                 .filter(models.AdAccount.owner_user_id == int(user_id), models.AdAccount.access_token != "").first())
         if acct:
             return acct.access_token
+        try:                                          # v155.38: a user whose login only lists others' accounts
+            acc = db.query(models.AccountAccess).filter(models.AccountAccess.user_id == int(user_id), models.AccountAccess.access_token != "").first()
+            if acc:
+                return acc.access_token
+        except Exception:  # noqa: BLE001
+            db.rollback()
         bc = (db.query(models.BusinessCenter)
               .filter(models.BusinessCenter.owner_user_id == int(user_id), models.BusinessCenter.access_token != "").first())
         if bc:

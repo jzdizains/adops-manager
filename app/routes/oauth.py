@@ -214,6 +214,8 @@ def sync_accounts(db: Session, access_token: str, refresh_token: str = "",
     mine_before = {r.advertiser_id for r in db.query(models.AdAccount) if _theirs(r.access_token or "", r.owner_user_id)}
     seen_ids: set[str] = set()
     retired_bcs = {r[0] for r in db.query(models.BusinessCenter.bc_id).filter(models.BusinessCenter.retired == True)}   # noqa: E712  v155.27
+    access_rows: dict[str, models.AccountAccess] = ({r.advertiser_id: r for r in db.query(models.AccountAccess).filter(models.AccountAccess.user_id == user_id)}
+                                                    if user_id is not None else {})
     rows_now: dict[str, models.AdAccount] = {}     # v155.23: the session doesn't autoflush — an account listed twice
     for adv in advertisers:                        # (two BCs, or twice on one) must reuse the row just added, never a second INSERT
         if not adv["advertiser_id"]:
@@ -230,14 +232,32 @@ def sync_accounts(db: Session, access_token: str, refresh_token: str = "",
             row.status = ""
         if row.owner_user_id is None and user_id is not None:
             row.owner_user_id = user_id
+        elif user_id is not None and row.owner_user_id != user_id:
+            # v155.38: someone else's account that THIS user's login also reaches → in their workspace too
+            acc = access_rows.get(adv["advertiser_id"])
+            if acc is None:
+                acc = models.AccountAccess(advertiser_id=adv["advertiser_id"], user_id=user_id)
+                db.add(acc)
+                access_rows[adv["advertiser_id"]] = acc
+            acc.access_token = access_token
         row.advertiser_name = adv["advertiser_name"] or row.advertiser_name
-        row.access_token = access_token
-        row.refresh_token = refresh_token or row.refresh_token
-        row.token_expires_at = token_expires_at
-        row.refresh_expires_at = refresh_expires_at
+        if user_id is None or row.owner_user_id in (None, user_id) or not row.access_token:
+            # the owner's login stamps the account; another user's login only stamps their
+            # access row (v155.38) — so losing THEIR access never retires the owner's account
+            row.access_token = access_token
+            row.refresh_token = refresh_token or row.refresh_token
+            row.token_expires_at = token_expires_at
+            row.refresh_expires_at = refresh_expires_at
         row.owner_bc_id = adv.get("bc_id") or row.owner_bc_id
         row.last_synced_at = now
 
+    # v155.38: shared access this login no longer has → out of this user's workspace again
+    # (the owner's row is untouched; only THIS login's access rows, and only on a complete fetch)
+    if fetch_complete and seen_ids:
+        for adv_id, acc in list(access_rows.items()):
+            if adv_id not in seen_ids and (acc.access_token or "") == access_token:
+                db.delete(acc)
+                access_rows.pop(adv_id, None)
     # Retire accounts that no longer came back — ONLY when the fetch was
     # complete (a partial/failed fetch must never mass-disable real accounts).
     if fetch_complete and seen_ids:

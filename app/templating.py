@@ -136,7 +136,7 @@ def forget_view_cache() -> None:
     _VIEW_CACHE.clear()
 
 
-OWNER_ONLY_JUMP = frozenset({"/settings#users", "/settings#access", "/team", "/partners", "/cookies"})
+OWNER_ONLY_JUMP = frozenset({"/settings#users", "/settings#access", "/team", "/partners"})
 
 
 def render(request: Request, name: str, ctx: dict | None = None):

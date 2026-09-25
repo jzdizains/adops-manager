@@ -98,7 +98,8 @@ def after_result(st: dict, ok: bool, label: str, error: str = "") -> dict:
 def targets(db, models, user_id) -> list:
     q = db.query(models.AdAccount).filter(models.AdAccount.enabled == True)      # noqa: E712
     if user_id is not None:
-        q = q.filter(models.AdAccount.owner_user_id == user_id)
+        from . import scope as _scope
+        q = _scope.account_filter(db, q, user_id)
     out = []
     for a in q.order_by(models.AdAccount.advertiser_name):
         st = str(a.status or "").upper()

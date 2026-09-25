@@ -60,7 +60,7 @@ class Q:
     def __iter__(self): return iter(self.rows)
 class DB:
     """No autoflush: a query never sees a row added since the last commit — like the real one."""
-    def __init__(self): self.rows = {"AdAccount": [], "BusinessCenter": []}; self.pending = []; self.commits = 0
+    def __init__(self): self.rows = {"AdAccount": [], "BusinessCenter": [], "AccountAccess": []}; self.pending = []; self.commits = 0
     def query(self, model):
         if isinstance(model, _Col):                      # column query (retired BC ids): tuples, filtered by the flag
             return Q([(r.bc_id,) for r in self.rows["BusinessCenter"] if r.__dict__.get("retired", False)])
@@ -68,17 +68,21 @@ class DB:
     def add(self, r): self.pending.append(r)
     def commit(self):
         for r in self.pending:
-            key = "AdAccount" if hasattr(r, "advertiser_id") and r.advertiser_id else "BusinessCenter"
+            key = type(r).__name__ if type(r).__name__ in self.rows else ("AdAccount" if hasattr(r, "advertiser_id") and r.advertiser_id else "BusinessCenter")
             if key == "AdAccount" and any(x.advertiser_id == r.advertiser_id for x in self.rows["AdAccount"]):
                 raise RuntimeError("UNIQUE constraint failed: ad_accounts.advertiser_id")
             self.rows[key].append(r)
         self.pending = []; self.commits += 1
     def rollback(self): self.pending = []
+    def delete(self, r):
+        for k in self.rows: 
+            if r in self.rows[k]: self.rows[k].remove(r)
 class _Col:
     def __init__(self, n): self.n = n
     def __eq__(self, v): return ("eq", self.n, v)
     __hash__ = object.__hash__
-models = _mod("app.models", AdAccount=type("AdAccount", (Row,), {}), BusinessCenter=type("BusinessCenter", (Row,), {"bc_id": _Col("bc_id"), "retired": _Col("retired")}))
+models = _mod("app.models", AdAccount=type("AdAccount", (Row,), {}), BusinessCenter=type("BusinessCenter", (Row,), {"bc_id": _Col("bc_id"), "retired": _Col("retired")}),
+              AccountAccess=type("AccountAccess", (Row,), {"user_id": _Col("user_id"), "advertiser_id": _Col("advertiser_id")}))
 
 import importlib
 oauth = importlib.import_module("app.routes.oauth")
@@ -93,6 +97,16 @@ check("…the sync still reports what it saw", r["count"] >= 2)
 db2 = DB(); db2.rows["AdAccount"].append(models.AdAccount(advertiser_id="999", owner_user_id=1, access_token="old"))
 oauth.sync_accounts(db2, "tok2", user_id=5)
 check("an account another user already owns keeps its owner", [a.owner_user_id for a in db2.rows["AdAccount"] if a.advertiser_id == "999"] == [1] and len(db2.rows["AdAccount"]) == 2)
+check("v155.38: …and the second user gets an access row for it (their workspace shows it too), stamped with their token",
+      [(r.advertiser_id, r.user_id, r.access_token) for r in db2.rows["AccountAccess"]] == [("999", 5, "tok2")], str([r.__dict__ for r in db2.rows["AccountAccess"]]))
+oauth.sync_accounts(db2, "tok2", user_id=5)
+check("…a second sync reuses the row, never duplicates it", len(db2.rows["AccountAccess"]) == 1)
+api.list_bc_advertisers = lambda tok, bc, page=1: {"list": [x for x in listed if x["asset_id"] != "999"], "page_info": {"total_page": 1}}
+oauth.sync_accounts(db2, "tok2", user_id=5)
+check("…and when that login stops listing it, the access row goes; the owner's account is untouched — still enabled, still the owner's token",
+      db2.rows["AccountAccess"] == [] and [(a.owner_user_id, a.enabled, a.status, a.access_token) for a in db2.rows["AdAccount"] if a.advertiser_id == "999"] == [(1, True, "", "old")],
+      str([a.__dict__ for a in db2.rows["AdAccount"] if a.advertiser_id == "999"]))
+api.list_bc_advertisers = lambda tok, bc, page=1: {"list": listed, "page_info": {"total_page": 1}}
 db4 = DB(); db4.rows["BusinessCenter"].append(models.BusinessCenter(bc_id="bc2", retired=True))
 db4.rows["AdAccount"].append(models.AdAccount(advertiser_id="999", owner_user_id=1, access_token="old", status="ACCESS_LOST", enabled=False, owner_bc_id="bc2"))
 api.list_bc_advertisers = lambda tok, bc, page=1: {"list": [x for x in listed if (x["asset_id"] == "999") == (bc == "bc2")], "page_info": {"total_page": 1}}

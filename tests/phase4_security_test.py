@@ -75,10 +75,10 @@ check("the Events API token inside settings JSON is sealed / opened",
       and sb.settings_seal({"events_access_token": "EA1"})["events_access_token"].startswith("enc:v1:"))
 md = read("app/models.py")
 check("columns sealed: account + BC tokens, refresh token, TOTP secret",
-      md.count("Column(EncryptedText") == 4 and "totp_secret = Column(EncryptedText" in md and "refresh_token = Column(EncryptedText" in md)
+      md.count("Column(EncryptedText") == 5 and "totp_secret = Column(EncryptedText" in md and "refresh_token = Column(EncryptedText" in md)
 check("existing plaintext is sealed at start (raw SQL, idempotent), files too",
       "_seal()" in read("app/main.py") and "def seal_existing(engine)" in read("app/secrets_box.py") and "seal_files()" in read("app/database.py"))
-check("cookie + mailbox files written sealed", "secrets_box.write_json(config.COOKIE_FILE" in read("app/spark_web_api.py")
+check("cookie + mailbox files written sealed", "secrets_box.write_json(target, payload)" in read("app/spark_web_api.py") and "target = config.COOKIE_FILE if" in read("app/spark_web_api.py")
       and "secrets_box.write_json(INVITE_MAIL_FILE" in read("app/invite_mail.py"))
 check("settings rows are sealed on every write", read("app/settings_store.py").count("json.dumps(_sealed(") == 5)
 check("cryptography is a requirement", "cryptography>=" in read("requirements.txt"))

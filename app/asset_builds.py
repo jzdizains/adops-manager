@@ -207,12 +207,28 @@ def active_for(db, models, kind: str, advertiser_id: str, name: str = ""):
     return q.first()
 
 
+def _workspace_accounts(db, models, user_id) -> list:
+    """The AdAccount rows of a user's workspace: owned + shared through AccountAccess (v155.38).
+    `models` is the injected module (tests pass a stub without AccountAccess)."""
+    rows = list(db.query(models.AdAccount).filter(models.AdAccount.owner_user_id == user_id))
+    access = getattr(models, "AccountAccess", None)
+    if access is not None:
+        try:
+            shared = [r[0] for r in db.query(access.advertiser_id).filter(access.user_id == user_id)]
+            if shared:
+                have = {a.advertiser_id for a in rows}
+                rows += [a for a in db.query(models.AdAccount).filter(models.AdAccount.advertiser_id.in_(shared)) if a.advertiser_id not in have]
+        except Exception:  # noqa: BLE001
+            db.rollback()
+    return rows
+
+
 def _master_page(db, models, tpl, acct):
     """(page_id, owner) to copy: the template's own master, else a PUBLISHED page of the
     template's name on an account of the same workspace (same Business Center first)."""
     if tpl.master_page_id and tpl.master_advertiser_id:
         return tpl.master_page_id, tpl.master_advertiser_id
-    owners = {a.advertiser_id: a for a in db.query(models.AdAccount).filter(models.AdAccount.owner_user_id == tpl.owner_user_id)} \
+    owners = {a.advertiser_id: a for a in _workspace_accounts(db, models, tpl.owner_user_id)} \
         if tpl.owner_user_id is not None else None
     rows = [r for r in db.query(models.InstantPage).filter(models.InstantPage.name == tpl.name,
                                                          models.InstantPage.status == "PUBLISHED",

@@ -116,7 +116,8 @@ def push_targets(db: Session, owner_user_id) -> list[models.AdAccount]:
     """Enabled, connected, delivering-capable accounts of the card's workspace."""
     q = db.query(models.AdAccount).filter(models.AdAccount.enabled == True)       # noqa: E712
     if owner_user_id is not None:
-        q = q.filter(models.AdAccount.owner_user_id == owner_user_id)
+        from . import scope as _scope
+        q = _scope.account_filter(db, q, owner_user_id)
     out = []
     for a in q.order_by(models.AdAccount.advertiser_name):
         st = str(a.status or "").upper()

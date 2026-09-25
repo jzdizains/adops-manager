@@ -537,7 +537,8 @@ def eligible_accounts(db: Session, policy: str, limit: int, owner_user_id: int |
     """
     aq = db.query(models.AdAccount).filter(models.AdAccount.enabled == True)  # noqa: E712
     if owner_user_id is not None:
-        aq = aq.filter(models.AdAccount.owner_user_id == owner_user_id)
+        from .. import scope as _scope
+        aq = _scope.account_filter(db, aq, owner_user_id)
     accounts = aq.order_by(models.AdAccount.advertiser_name).all()
     with_campaigns = {r[0] for r in db.query(models.CampaignRecord.advertiser_id).distinct()}
     with_active = {r[0] for r in (db.query(models.CampaignRecord.advertiser_id)

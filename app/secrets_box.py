@@ -229,7 +229,7 @@ def seal_files() -> list[str]:
     """The cookie file and the invite mailbox file, sealed if they're still plain."""
     from . import config
     done = []
-    paths = [config.COOKIE_FILE, config.DATA_DIR / "invite_mail.json"]
+    paths = [config.COOKIE_FILE, config.DATA_DIR / "invite_mail.json"] + sorted(config.DATA_DIR.glob("tiktok_cookies_u*.json"))
     for p in paths:
         try:
             if p.exists():
