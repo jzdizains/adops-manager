@@ -54,6 +54,20 @@ def start_now(tz_name: str | None, lead_s: int = LEAD_S, now: datetime | None = 
     return tiktok_time(now + timedelta(seconds=lead_s), tz_name)
 
 
+START_BACK_MAX_MIN = 180
+
+
+def start_for(tz_name: str | None, back_min=0, now: datetime | None = None) -> str:
+    """"Start now" moved `back_min` minutes EARLIER on the account's clock (v155.28, Settings ›
+    Launch › "Start ad groups earlier"): for accounts whose Ads Manager shows the start an hour
+    later than the clock the API reads. 0 = plain start now. Pure."""
+    try:
+        back = max(0, min(int(back_min or 0), START_BACK_MAX_MIN))
+    except (TypeError, ValueError):
+        back = 0
+    return start_now(tz_name, lead_s=LEAD_S - back * 60, now=now)
+
+
 def label(tz_name: str | None) -> str:
     """Short human label: "UTC−5", "UTC+8", "UTC" (unknown → "UTC (unknown)"). Pure."""
     z = zone(tz_name)

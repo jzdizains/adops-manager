@@ -53,7 +53,9 @@ DEFAULTS: dict = {
     "profit_lookback": "today",    # the window profit rules judge: today | yesterday | 3d | 7d
     "profit_roas_min": 0.0,        # also pause a source whose ROAS over that window is below this (0 = off)
     # --- scaling (v155) -----------------------------------------------------------
-    "lead_terms_auto": False,      # v155.17: confirm TikTok's Lead Generation Terms (LeadAds) on an ad account at
+    "lead_terms_auto": False,
+    "start_back_min": 0,           # v155.28: minutes to move an ad group's "start now" EARLIER on the account's clock (0–180)
+      # v155.17: confirm TikTok's Lead Generation Terms (LeadAds) on an ad account at
                                    # launch when it hasn't — opt-in: the operator has read them and says so
     "scale_min_spend": 50.0,       # a campaign is recommended for Scale / Expand only past this LIFETIME spend…
     "scale_min_roas": 1.5,         # …at or above this lifetime ROAS

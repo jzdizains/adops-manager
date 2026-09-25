@@ -795,7 +795,7 @@ def build_adgroup_payload(fields: dict, acct: models.AdAccount, campaign_id: str
             payload["schedule_end_time"] = fields["schedule_end_time"]
     elif fields["schedule_type"] == "SCHEDULE_FROM_NOW":
         # read by TikTok in the ACCOUNT's timezone: its own clock + 60 s (v151)
-        payload["schedule_start_time"] = acct_time.start_now(fields.get("_account_tz") or getattr(acct, "timezone", ""))
+        payload["schedule_start_time"] = acct_time.start_for(fields.get("_account_tz") or getattr(acct, "timezone", ""), fields.get("_start_back_min"))
 
     # budget: ABO = per-ad-group; CBO = campaign carries it (BUDGET_MODE_INFINITE here)
     if (fields.get("campaign_budget_mode") or "ABO") == "ABO":
@@ -1161,7 +1161,7 @@ def build_spc_adgroup_payload(fields: dict, campaign_id: str, spark_ref: dict | 
             payload["schedule_end_time"] = fields["schedule_end_time"]
     else:
         payload["schedule_type"] = "SCHEDULE_FROM_NOW"
-        payload["schedule_start_time"] = acct_time.start_now(fields.get("_account_tz"))   # the account's clock + 60 s
+        payload["schedule_start_time"] = acct_time.start_for(fields.get("_account_tz"), fields.get("_start_back_min"))   # the account's clock + 60 s, minus the operator's shift
     # budget: ABO carries it on the ad group; CBO (or a campaign budget TikTok insisted
     # on — fields["_spc_budget_on_campaign"]) was set at campaign level
     if (fields.get("campaign_budget_mode") or "ABO") == "ABO" and not fields.get("_spc_budget_on_campaign"):
@@ -1233,7 +1233,7 @@ def _spc_lead_form_adgroup(fields: dict, campaign_id: str, spark_ref: dict | Non
             payload["schedule_end_time"] = fields["schedule_end_time"]
     else:
         payload["schedule_type"] = "SCHEDULE_FROM_NOW"
-        payload["schedule_start_time"] = acct_time.start_now(fields.get("_account_tz"))
+        payload["schedule_start_time"] = acct_time.start_for(fields.get("_account_tz"), fields.get("_start_back_min"))
     if (fields.get("campaign_budget_mode") or "ABO") == "ABO" and not fields.get("_spc_budget_on_campaign"):
         # Smart+'s own budget enum: the preset's BUDGET_MODE_DAY is "Invalid budget type" here
         # (24 Sep, /smart_plus/adgroup/create/); the working ad group carries DYNAMIC_DAILY_BUDGET
@@ -1806,7 +1806,8 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
     trace = _lt.Trace(db, models, batch_ref, acct.advertiser_id, fields)
     try:
         # schedule times are read by TikTok in the account's own timezone (v151)
-        fields = {**fields, "_account_tz": acct_time.account_tz(db, acct)}
+        fields = {**fields, "_account_tz": acct_time.account_tz(db, acct),
+                  "_start_back_min": get_settings(db, fields.get("_launched_by")).get("start_back_min") or 0}
         # -- config validation FIRST (free, local — before any API calls) ------
         if is_engaged(fields) and not fields.get("smart_plus"):
             # Engaged session only exists on Smart+ campaigns (Ads Manager stores them as
@@ -2420,7 +2421,7 @@ def launch_to_account(db: Session, acct: models.AdAccount, fields: dict, batch_r
                             elif "end_time" in (e.message or "") and "schedule_end_time" not in ag_payload:
                                 from datetime import timedelta
                                 start = ag_payload.get("schedule_start_time") or \
-                                    acct_time.start_now(fields.get("_account_tz"))
+                                    acct_time.start_for(fields.get("_account_tz"), fields.get("_start_back_min"))
                                 end = (datetime.strptime(start, "%Y-%m-%d %H:%M:%S")
                                        + timedelta(days=365)).strftime("%Y-%m-%d %H:%M:%S")
                                 ag_payload = {**ag_payload, "schedule_type": "SCHEDULE_START_END",

@@ -69,7 +69,7 @@ t = read("app/templates/monitor.html")
 check("the Issues table iterates the FOLDED rows, not the raw items", "{% for it in issue_rows %}" in t and "{% for it in items %}" not in t)
 check("a folded row shows a × count chip and carries data-count", 'data-count="{{ it.count }}"' in t and "× {{ it.count }}" in t and "it.count > 1" in t)
 check("a '+N more' line appears when the cap folds extra rows", "{% if issue_hidden %}" in t and "more distinct message" in t)
-check("STATIC_VERSION bumped", 'STATIC_VERSION = "176"' in read("app/config.py"))
+check("STATIC_VERSION bumped", 'STATIC_VERSION = "177"' in read("app/config.py"))
 
 print()
 print("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}")

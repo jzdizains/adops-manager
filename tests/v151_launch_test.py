@@ -19,6 +19,19 @@ now = datetime(2026, 9, 8, 10, 0, 0, tzinfo=timezone.utc)
 check("UTC−5 account (Etc/GMT+5): its clock + 60 s", at.start_now("Etc/GMT+5", now=now) == "2026-09-08 05:01:00", at.start_now("Etc/GMT+5", now=now))
 check("UTC+8 account: its clock + 60 s (not 8 h in the past)", at.start_now("Asia/Shanghai", now=now) == "2026-09-08 18:01:00")
 check("DST honoured (New York in September = UTC−4)", at.start_now("America/New_York", now=now) == "2026-09-08 06:01:00")
+print("-- v155.28: 'start earlier by N minutes' (Settings › Launch) --")
+check("60 minutes back on the account's clock", at.start_for("Etc/GMT+5", 60, now=now) == "2026-09-08 04:01:00", at.start_for("Etc/GMT+5", 60, now=now))
+check("0 / empty / junk = plain start now; capped at 3 h", at.start_for("Etc/GMT+5", 0, now=now) == at.start_now("Etc/GMT+5", now=now)
+      and at.start_for("Etc/GMT+5", "", now=now) == at.start_now("Etc/GMT+5", now=now) and at.start_for("Etc/GMT+5", "x", now=now) == at.start_now("Etc/GMT+5", now=now)
+      and at.start_for("Etc/GMT+5", 999, now=now) == "2026-09-08 02:01:00")
+_cp = open(os.path.join(ROOT, "app/routes/campaigns.py"), encoding="utf-8").read()
+check("every 'start now' the launch sends (regular, Smart+, Smart+ Instant Form) applies the launcher's setting",
+      _cp.count('acct_time.start_for(fields.get("_account_tz"), fields.get("_start_back_min"))') == 3 and 'acct_time.start_for(fields.get("_account_tz") or getattr(acct, "timezone", ""), fields.get("_start_back_min"))' in _cp
+      and '"_start_back_min": get_settings(db, fields.get("_launched_by")).get("start_back_min") or 0' in _cp)
+check("the Review step shows the shifted time; the setting lives in Settings › Launch",
+      'acct_time.start_for(tz, start_back)' in open(os.path.join(ROOT, "app/launch_review.py"), encoding="utf-8").read()
+      and 'name="start_back_min"' in open(os.path.join(ROOT, "app/templates/settings.html"), encoding="utf-8").read()
+      and '"start_back_min": 0' in open(os.path.join(ROOT, "app/settings_store.py"), encoding="utf-8").read())
 check("offset spellings: UTC+08:00, GMT-5, +0530", at.start_now("UTC+08:00", now=now) == "2026-09-08 18:01:00"
       and at.start_now("GMT-5", now=now) == "2026-09-08 05:01:00" and at.start_now("+0530", now=now) == "2026-09-08 15:31:00")
 check("unknown / empty / garbage → UTC (the old behaviour), never an error",
@@ -50,7 +63,7 @@ check("launch: the account's timezone is read once per account, before anything 
       '"_account_tz": acct_time.account_tz(db, acct)' in cp
       and cp.index('"_account_tz": acct_time.account_tz(db, acct)') < cp.index("# -- config validation FIRST"))
 check("every 'start now' goes through it (manual, Smart+, Smart+ Instant Form, the end-time retry)",
-      cp.count("acct_time.start_now(") == 4 and 'datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")' not in cp)
+      cp.count("acct_time.start_for(") == 4 and cp.count("acct_time.start_now(") == 0 and 'datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")' not in cp)
 check("ad-group copies that need a future start use the account's clock too", "acct_time.start_now(tz_name, lead_s=600)" in read("app/adgroup_copy.py")
       and "_future_start(payload, acct_time.account_tz(db, acct))" in read("app/adgroup_copy.py"))
 oa = read("app/routes/oauth.py")

@@ -388,7 +388,7 @@ check("v155.13: the preset's own Smart+ switch decides again (no forced Smart+),
 tf = open(os.path.join(ROOT, "app", "templates", "template_form.html"), encoding="utf-8").read()
 check("the preset form says so under the attribution fields", "Instant Form lead gen always uses TikTok’s default" in tf)
 cfg = open(os.path.join(ROOT, "app", "config.py"), encoding="utf-8").read()
-check("static version bumped", 'STATIC_VERSION = "176"' in cfg)
+check("static version bumped", 'STATIC_VERSION = "177"' in cfg)
 
 print()
 print("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}")

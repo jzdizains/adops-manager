@@ -158,6 +158,13 @@
       <span class="hint" style="font-weight:400;">Ticking this means you have read <a href="https://ads.tiktok.com/i18n/official/policy/lead-gen-terms" target="_blank" rel="noopener">TikTok's Lead Generation Terms ↗</a> and agree to them on your ad accounts. The dashboard then confirms them quietly in the background on each connected account (a few at a time, each checked at most once a day), and at launch on any account it hasn't reached yet — so no launch ever waits for a button. Off, the launch's Review step (or the failed launch) has a button that shows the terms and confirms them per account. Every confirmation is posted to your Inbox.</span></span>
   </label>
 </div>
+<div class="card" id="starttime">
+  <div class="card-header"><span class="card-title">Start time</span>
+    <span class="card-meta">when an ad group's “start now” is set on the account's clock</span></div>
+  <label class="field"><span class="field-label">Start ad groups earlier by <span class="muted">· minutes, 0–180</span></span>
+    <input type="number" name="start_back_min" min="0" max="180" step="5" value="{{ s.start_back_min or 0 }}" style="max-width:120px;"></label>
+  <div class="hint">Every launch sends the account's own time + 1 minute as the start. If Ads Manager shows your ad groups starting an hour later than that (its clock and the one the API reads disagree by an hour on some accounts), set 60 here: the start is moved 60 minutes back so the ad group runs at once. The Review step's “Starts” column shows the time that will be sent.</div>
+</div>
 <div class="card" id="lifecycle">
   <div class="card-header"><span class="card-title">Account lifecycle</span><span class="card-meta">your accounts only — every user has their own thresholds</span></div>
   <div class="form-row-3">

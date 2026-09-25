@@ -62,6 +62,11 @@ def asset_name(db, models, fields: dict, kind: str, owner=None) -> tuple[str, ob
 
 def review(db, models, fields: dict, accounts: list, spark=None, identity: str = "account", live: bool = False) -> dict:
     terms_auto = terms_auto_for(db, fields.get("_launched_by"))
+    try:
+        from . import settings_store as _ss
+        start_back = int(_ss.get_settings(db, fields.get("_launched_by")).get("start_back_min") or 0)
+    except Exception:  # noqa: BLE001
+        start_back = 0
     """{rows, blocked, ready, warned, asset: {page, form}} for a synthesized preset `fields`.
     identity: "spark" (one spark code — `spark`), "post" (each picked post's own profile), or
     "account" (library / carousel: the account's own identity, filled in by identities())."""
@@ -239,7 +244,7 @@ def review(db, models, fields: dict, accounts: list, spark=None, identity: str =
         tz = a.timezone or ""
         rows.append({"id": aid, "name": a.advertiser_name or aid, "bc": (bcs[a.owner_bc_id].name if a.owner_bc_id in bcs else ""),
                      "cells": cells, "blocked": blocked, "warnings": warns,
-                     "tz": acct_time.label(tz), "starts": acct_time.start_now(tz)[11:16] if tz else "",
+                     "tz": acct_time.label(tz), "starts": acct_time.start_for(tz, start_back)[11:16] if tz else "",
                      "identity_pending": identity == "account" and not blocked, "terms_pending": terms_pending})
     if live:
         _live_recheck(db, models, rows, accounts, page_name, form_name)
